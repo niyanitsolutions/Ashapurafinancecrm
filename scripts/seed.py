@@ -7,10 +7,12 @@ Currently seeds:
     something real to work with. Does NOT seed example roles — which roles an org wants
     (Branch Manager, Loan Officer, ...) is business configuration for the Owner to create
     via the real UI, not something to invent here.
-  - bootstrap Owner account: Owner/Employee have no self-signup (see
+  - bootstrap Primary Owner account: Owner/Employee have no self-signup (see
     docs/decisions/DECISIONS.md #007), so without this there is no way to ever log in.
-    Requires BOOTSTRAP_OWNER_MOBILE + BOOTSTRAP_OWNER_PASSWORD env vars; skipped with a
-    warning if unset (e.g. in CI) rather than failing the whole script.
+    Requires BOOTSTRAP_OWNER_MOBILE + BOOTSTRAP_OWNER_PASSWORD + BOOTSTRAP_OWNER_NAME +
+    BOOTSTRAP_OWNER_EMAIL env vars; skipped with a warning if unset (e.g. in CI) rather
+    than failing the whole script. Idempotent: never overwrites an existing Primary Owner
+    (see Owner Account Management — owner/service.py, owner/models.py).
   - departments/designations/branches: minimal starter master data (Loan/Insurance
     departments per the brief) so Employee creation has something to reference before a
     future Settings (Master Data) module provides real management screens.
@@ -70,6 +72,9 @@ from app.features.integrations.constants import IntegrationType
 from app.features.integrations.models import IntegrationProvider
 from app.features.lead_capture.constants import CaptureSourceKey
 from app.features.lead_capture.models import CaptureSource
+from app.features.owner.constants import OwnerType
+from app.features.owner.indexes import ensure_owner_indexes
+from app.features.owner.models import OwnerProfile
 from app.features.reminders.constants import ReminderRuleType
 from app.features.reminders.models import ReminderRule
 from app.features.reporting.constants import ReportCategory, ReportType
@@ -224,22 +229,55 @@ async def seed_permission_catalog() -> None:
 
 
 async def seed_bootstrap_owner() -> None:
+    """Bootstraps the one and only Primary Owner from environment variables — never from
+    a hardcoded credential in this file. Owner/Employee have no self-signup (see
+    docs/decisions/DECISIONS.md #007), so without this there is no way to ever log in on
+    a fresh environment. Idempotent and safe against a pre-existing Primary Owner: if one
+    already exists (by owner_type, not merely by this mobile number), this is a no-op —
+    it never overwrites or resets an existing Owner's password.
+    """
     mobile = os.environ.get("BOOTSTRAP_OWNER_MOBILE")
     password = os.environ.get("BOOTSTRAP_OWNER_PASSWORD")
-    if not mobile or not password:
-        print("bootstrap owner: skipped (set BOOTSTRAP_OWNER_MOBILE + BOOTSTRAP_OWNER_PASSWORD to enable)")
+    full_name = os.environ.get("BOOTSTRAP_OWNER_NAME")
+    email = os.environ.get("BOOTSTRAP_OWNER_EMAIL")
+    if not mobile or not password or not full_name or not email:
+        print(
+            "bootstrap owner: skipped (set BOOTSTRAP_OWNER_MOBILE + BOOTSTRAP_OWNER_PASSWORD + "
+            "BOOTSTRAP_OWNER_NAME + BOOTSTRAP_OWNER_EMAIL to enable)"
+        )
         return
 
     db = get_database()
+    # Ensures the owner_type backfill/indexes exist before checking for an existing
+    # Primary Owner — this script can run standalone, before the app's own lifespan
+    # startup has ever called ensure_owner_indexes.
+    await ensure_owner_indexes(db)
+
+    owner_profiles = db["owner_profiles"]
     users = db["users"]
-    existing = await users.find_one({"mobile": mobile})
-    if existing:
-        print(f"bootstrap owner: {mobile} already exists, skipped")
+    # Checked two ways: a real owner_profiles row (the normal case), and — since a
+    # pre-fix version of this same script used to insert directly into `users` with no
+    # matching profile — any owner-role `users` row at all. Either one means an Owner
+    # already exists and this bootstrap must not create a second one, matching the "at
+    # most one Owner ever" invariant this script has always upheld (see
+    # docs/decisions/DECISIONS.md #007 and Owner Account Management's owner_type field).
+    existing_primary = await owner_profiles.find_one({"owner_type": OwnerType.PRIMARY, "is_deleted": False})
+    existing_owner_user = await users.find_one({"role": OWNER, "is_deleted": False})
+    if existing_primary or existing_owner_user:
+        print("bootstrap owner: an Owner account already exists, skipped")
         return
 
-    owner = User(mobile=mobile, role=OWNER, status=ACCOUNT_STATUS_ACTIVE, password_hash=hash_password(password))
-    await users.insert_one(owner.model_dump(by_alias=True, exclude={"id"}))
-    print(f"bootstrap owner: created {mobile}")
+    owner = User(
+        mobile=mobile, role=OWNER, status=ACCOUNT_STATUS_ACTIVE,
+        password_hash=hash_password(password), is_mobile_verified=True,
+    )
+    result = await users.insert_one(owner.model_dump(by_alias=True, exclude={"id"}))
+    user_id = str(result.inserted_id)
+
+    profile = OwnerProfile(user_id=user_id, full_name=full_name, mobile=mobile, email=email, owner_type=OwnerType.PRIMARY)
+    await owner_profiles.insert_one(profile.model_dump(by_alias=True, exclude={"id"}))
+
+    print(f"bootstrap owner: created Primary Owner {mobile}")
 
 
 async def seed_master_data() -> None:
@@ -386,6 +424,12 @@ async def seed_dashboard_catalog() -> None:
     nav_items = db["nav_items"]
     nav_defs = [
         NavItem(key="dashboard", label="Dashboard", route="/", order=0),
+        # Owner Account Management — owner_only mirrors how the route is actually
+        # protected (RequireOwner-equivalent at the nav-catalog level; the real,
+        # Primary-Owner-only restriction is enforced server-side per request by
+        # require_primary_owner, not by this catalog entry — see decision 033's "gate
+        # must mirror how the target route is protected" note on NavItem.owner_only).
+        NavItem(key="owner_accounts", label="Owner Management", route="/owner-accounts", order=5, owner_only=True),
         NavItem(key="employees", label="Employees", route="/employees", order=10, owner_only=True),
         NavItem(key="roles", label="Roles & Permissions", route="/roles", order=20, owner_only=True),
         NavItem(

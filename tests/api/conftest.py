@@ -63,12 +63,12 @@ async def _seed_staff_user(mock_db, client, *, mobile: str, role: str, password:
 
 @pytest.fixture
 async def owner_headers(mock_db, client):
-    return await _seed_staff_user(mock_db, client, mobile="9000000001", role="owner", password="OwnerPass1")
+    return await _seed_staff_user(mock_db, client, mobile="9000000001", role="owner", password="OwnerPass1!")
 
 
 @pytest.fixture
 async def employee_headers(mock_db, client):
-    return await _seed_staff_user(mock_db, client, mobile="9000000002", role="employee", password="EmployeePass1")
+    return await _seed_staff_user(mock_db, client, mobile="9000000002", role="employee", password="EmployeePass1!")
 
 
 @pytest.fixture

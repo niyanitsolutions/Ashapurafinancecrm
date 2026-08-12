@@ -153,22 +153,28 @@ class AuthService:
 
     # ---------------------------------------------------------------- password set/reset/change
 
-    async def consume_otp_verified_ticket(self, otp_verified_token: str, *, expected_purpose: str) -> str:
+    async def consume_otp_verified_ticket(self, otp_verified_token: str, *, expected_purposes: tuple[str, ...]) -> str:
         """Decodes an OTP-verified ticket (see `verify_otp`) and marks it single-use via
         Redis, raising `InvalidTicketError` if it's invalid, expired, already spent, or
-        was issued for a different purpose (e.g. a SIGNUP ticket must never be usable to
-        reset an existing account's password — `verify_otp` stamps whatever purpose the
-        client asked to verify onto the ticket without checking it belongs to this
-        mobile's actual situation, so the purpose has to be re-checked here, at the one
-        place a ticket is actually spent). Extracted out of `reset_password` so the
-        replay-protection logic has one place to live if another caller ever needs the
-        same "prove this OTP was verified" check. Returns the verified mobile number."""
+        was issued for a purpose this caller doesn't accept. `reset_password` (the one
+        caller) accepts both SIGNUP and FORGOT_PASSWORD tickets — the frontend and every
+        OTP-invite flow route both "complete my first-time signup" and "I forgot my
+        password" through this same endpoint (see docs/AUTHENTICATION.md). This is safe:
+        a SIGNUP-purpose ticket can only ever exist for a mobile whose account is NOT yet
+        active — `send_otp` refuses to issue a signup OTP to an already-active account
+        (`AlreadyRegisteredError`), and `verify_otp` checks the presented OTP against the
+        Redis key it was actually issued under (`purpose` included), so a purpose can
+        never be laundered from one flow into the other at verify time. A SIGNUP ticket
+        therefore can never be used to overwrite an existing active account's password.
+        Extracted out of `reset_password` so the replay-protection logic has one place to
+        live if another caller ever needs the same "prove this OTP was verified" check.
+        Returns the verified mobile number."""
         try:
             payload = decode_token(otp_verified_token, TokenType.OTP_VERIFIED)
         except TokenError as exc:
             raise InvalidTicketError("This link/ticket is invalid or has expired.") from exc
 
-        if payload.get("purpose") != expected_purpose:
+        if payload.get("purpose") not in expected_purposes:
             raise InvalidTicketError("This link/ticket is invalid or has expired.")
 
         jti = payload.get("jti")
@@ -212,7 +218,10 @@ class AuthService:
             await self._sessions.update(session.require_id(), {"status": SESSION_STATUS_LOGGED_OUT, "logout_at": utc_now()})
 
     async def reset_password(self, *, otp_verified_token: str, new_password: str) -> None:
-        mobile = await self.consume_otp_verified_ticket(otp_verified_token, expected_purpose=OtpPurpose.FORGOT_PASSWORD)
+        """The one endpoint behind both "complete my first-time signup" (SIGNUP-purpose
+        ticket) and "I forgot my password" (FORGOT_PASSWORD-purpose ticket) — see
+        `consume_otp_verified_ticket`'s docstring for why accepting either is safe."""
+        mobile = await self.consume_otp_verified_ticket(otp_verified_token, expected_purposes=OtpPurpose.ALL)
         await self.activate_user_with_password(mobile=mobile, new_password=new_password)
 
     async def change_password(self, *, user_id: str, current_password: str, new_password: str) -> None:

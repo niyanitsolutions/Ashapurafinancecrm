@@ -57,6 +57,10 @@ import { ReferralPartnerCommissionHistoryPage } from "@/features/referral_partne
 import { ReferralPartnerDashboardPage } from "@/features/referral_partner_management/pages/ReferralPartnerDashboardPage";
 import { ReferralPartnerLeadsPage } from "@/features/referral_partner_management/pages/ReferralPartnerLeadsPage";
 import { CreateAccountPage } from "@/features/owner/pages/CreateAccountPage";
+import { RequirePrimaryOwner } from "@/features/owner/components/RequirePrimaryOwner";
+import { CreateSecondaryOwnerPage } from "@/features/owner/pages/CreateSecondaryOwnerPage";
+import { EditSecondaryOwnerPage } from "@/features/owner/pages/EditSecondaryOwnerPage";
+import { OwnerAccountListPage } from "@/features/owner/pages/OwnerAccountListPage";
 import { NotificationListPage } from "@/features/reminders/pages/NotificationListPage";
 import { DepartmentsPage } from "@/features/system_settings/pages/DepartmentsPage";
 import { DesignationsPage } from "@/features/system_settings/pages/DesignationsPage";
@@ -257,6 +261,20 @@ export const router = createBrowserRouter([
                   { path: "/geo-exceptions", element: <GeoExceptionPage /> },
                 ],
               },
+            ],
+          },
+          {
+            // Owner Account Management — Primary Owner creating/editing/deactivating
+            // Secondary Owner accounts. Not part of the Administration ComingSoon bundle
+            // above (Employees/Roles/etc.): this is a real, shipping feature of its own,
+            // gated by RequirePrimaryOwner (Secondary Owners are redirected away, same as
+            // RequireOwner does to a non-Owner elsewhere) — the backend independently
+            // enforces the same restriction on every request (see require_primary_owner).
+            element: <RequirePrimaryOwner />,
+            children: [
+              { path: "/owner-accounts", element: <OwnerAccountListPage /> },
+              { path: "/owner-accounts/new", element: <CreateSecondaryOwnerPage /> },
+              { path: "/owner-accounts/:ownerId/edit", element: <EditSecondaryOwnerPage /> },
             ],
           },
           {

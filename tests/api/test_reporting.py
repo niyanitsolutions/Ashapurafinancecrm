@@ -151,7 +151,7 @@ async def _login(client, mobile, password):
 
 async def _create_employee(client, owner_headers, master_data, mobile, email):
     payload = {
-        "mobile": mobile, "initial_password": "InitialPass1", "first_name": "Staff", "last_name": "Member", "email": email,
+        "mobile": mobile, "initial_password": "InitialPass1!", "first_name": "Staff", "last_name": "Member", "email": email,
         "department_id": master_data["department_id"], "designation_id": master_data["designation_id"], "branch_id": master_data["branch_id"],
         "joining_date": "2026-01-15", "employment_type": "full_time",
     }
@@ -191,7 +191,7 @@ async def test_reports_permission_gating_and_catalog(client, owner_headers, empl
 
     employee = await _create_employee(client, owner_headers, master_data, mobile="9800000101", email="reports.viewer@example.com")
     await _grant_permission(client, owner_headers, employee["id"], module="reporting", resource="reports", actions=["view", "export"])
-    granted_headers = await _login(client, "9800000101", "InitialPass1")
+    granted_headers = await _login(client, "9800000101", "InitialPass1!")
 
     r = await client.get("/api/v1/reports/lead_by_source", headers=granted_headers)
     assert r.status_code == 200, r.text

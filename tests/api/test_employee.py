@@ -7,7 +7,7 @@ boundaries, and the Auth-reuse actions (reset-password, force-logout, sessions).
 def _create_payload(master_data, mobile="9111111111", email="jane.doe@example.com"):
     return {
         "mobile": mobile,
-        "initial_password": "InitialPass1",
+        "initial_password": "InitialPass1!",
         "first_name": "Jane",
         "last_name": "Doe",
         "email": email,
@@ -33,7 +33,7 @@ async def test_create_employee_success(client, owner_headers, master_data):
     assert employee["department_name"] == "Loan"
     assert employee["status"] == "active"
 
-    r = await client.post("/api/v1/auth/login", json={"mobile": "9111111111", "password": "InitialPass1"})
+    r = await client.post("/api/v1/auth/login", json={"mobile": "9111111111", "password": "InitialPass1!"})
     assert r.status_code == 200, r.text
     assert r.json()["data"]["role"] == "employee"
 
@@ -101,7 +101,7 @@ async def test_employee_cannot_view_other_employee(client, owner_headers, employ
 
 async def test_self_profile_get_and_update(client, owner_headers, master_data):
     await _create_employee(client, owner_headers, master_data)
-    r = await client.post("/api/v1/auth/login", json={"mobile": "9111111111", "password": "InitialPass1"})
+    r = await client.post("/api/v1/auth/login", json={"mobile": "9111111111", "password": "InitialPass1!"})
     self_headers = {"Authorization": f"Bearer {r.json()['data']['access_token']}"}
 
     r = await client.get("/api/v1/employees/me", headers=self_headers)
@@ -115,7 +115,7 @@ async def test_self_profile_get_and_update(client, owner_headers, master_data):
 
 async def test_self_update_ignores_restricted_fields(client, owner_headers, master_data):
     employee = await _create_employee(client, owner_headers, master_data)
-    r = await client.post("/api/v1/auth/login", json={"mobile": "9111111111", "password": "InitialPass1"})
+    r = await client.post("/api/v1/auth/login", json={"mobile": "9111111111", "password": "InitialPass1!"})
     self_headers = {"Authorization": f"Bearer {r.json()['data']['access_token']}"}
 
     # department_id isn't part of SelfUpdateEmployeeRequest — sending it is a no-op, not an error
@@ -126,7 +126,7 @@ async def test_self_update_ignores_restricted_fields(client, owner_headers, mast
 
 async def test_self_photo_upload_flow(client, owner_headers, master_data):
     await _create_employee(client, owner_headers, master_data)
-    r = await client.post("/api/v1/auth/login", json={"mobile": "9111111111", "password": "InitialPass1"})
+    r = await client.post("/api/v1/auth/login", json={"mobile": "9111111111", "password": "InitialPass1!"})
     self_headers = {"Authorization": f"Bearer {r.json()['data']['access_token']}"}
 
     r = await client.post("/api/v1/employees/me/photo/upload-url", headers=self_headers)
@@ -146,14 +146,14 @@ async def test_deactivate_blocks_login_then_activate_restores(client, owner_head
     assert r.status_code == 200, r.text
     assert r.json()["data"]["status"] == "inactive"
 
-    r = await client.post("/api/v1/auth/login", json={"mobile": "9111111111", "password": "InitialPass1"})
+    r = await client.post("/api/v1/auth/login", json={"mobile": "9111111111", "password": "InitialPass1!"})
     assert r.status_code == 401, r.text
 
     r = await client.patch(f"/api/v1/employees/{employee['id']}/activate", headers=owner_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["status"] == "active"
 
-    r = await client.post("/api/v1/auth/login", json={"mobile": "9111111111", "password": "InitialPass1"})
+    r = await client.post("/api/v1/auth/login", json={"mobile": "9111111111", "password": "InitialPass1!"})
     assert r.status_code == 200, r.text
 
 
@@ -162,12 +162,12 @@ async def test_status_suspended_blocks_login_on_leave_does_not(client, owner_hea
 
     r = await client.patch(f"/api/v1/employees/{employee['id']}", json={"status": "suspended"}, headers=owner_headers)
     assert r.status_code == 200, r.text
-    r = await client.post("/api/v1/auth/login", json={"mobile": "9111111111", "password": "InitialPass1"})
+    r = await client.post("/api/v1/auth/login", json={"mobile": "9111111111", "password": "InitialPass1!"})
     assert r.status_code == 401
 
     r = await client.patch(f"/api/v1/employees/{employee['id']}", json={"status": "on_leave"}, headers=owner_headers)
     assert r.status_code == 200, r.text
-    r = await client.post("/api/v1/auth/login", json={"mobile": "9111111111", "password": "InitialPass1"})
+    r = await client.post("/api/v1/auth/login", json={"mobile": "9111111111", "password": "InitialPass1!"})
     assert r.status_code == 200, r.text
 
 
@@ -184,7 +184,7 @@ async def test_reset_employee_password_triggers_forgot_password_flow(client, moc
 
 async def test_force_logout_revokes_active_sessions(client, mock_db, owner_headers, master_data):
     employee = await _create_employee(client, owner_headers, master_data)
-    r = await client.post("/api/v1/auth/login", json={"mobile": "9111111111", "password": "InitialPass1"})
+    r = await client.post("/api/v1/auth/login", json={"mobile": "9111111111", "password": "InitialPass1!"})
     tokens = r.json()["data"]
 
     r = await client.post(f"/api/v1/employees/{employee['id']}/force-logout", headers=owner_headers)
@@ -197,7 +197,7 @@ async def test_force_logout_revokes_active_sessions(client, mock_db, owner_heade
 
 async def test_owner_views_employee_sessions_and_login_history(client, owner_headers, master_data):
     employee = await _create_employee(client, owner_headers, master_data)
-    await client.post("/api/v1/auth/login", json={"mobile": "9111111111", "password": "InitialPass1"})
+    await client.post("/api/v1/auth/login", json={"mobile": "9111111111", "password": "InitialPass1!"})
 
     r = await client.get(f"/api/v1/employees/{employee['id']}/sessions", headers=owner_headers)
     assert r.status_code == 200, r.text
@@ -216,7 +216,7 @@ async def test_owner_views_employee_sessions_and_login_history(client, owner_hea
 
 async def test_self_sessions_and_login_history(client, owner_headers, master_data):
     await _create_employee(client, owner_headers, master_data)
-    r = await client.post("/api/v1/auth/login", json={"mobile": "9111111111", "password": "InitialPass1"})
+    r = await client.post("/api/v1/auth/login", json={"mobile": "9111111111", "password": "InitialPass1!"})
     self_headers = {"Authorization": f"Bearer {r.json()['data']['access_token']}"}
 
     r = await client.get("/api/v1/employees/me/sessions", headers=self_headers)

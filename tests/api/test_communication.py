@@ -43,7 +43,7 @@ async def _login(client, mobile, password):
 
 async def _create_employee(client, owner_headers, master_data, mobile, email):
     payload = {
-        "mobile": mobile, "initial_password": "InitialPass1", "first_name": "Staff", "last_name": "Member", "email": email,
+        "mobile": mobile, "initial_password": "InitialPass1!", "first_name": "Staff", "last_name": "Member", "email": email,
         "department_id": master_data["department_id"], "designation_id": master_data["designation_id"], "branch_id": master_data["branch_id"],
         "joining_date": "2026-01-15", "employment_type": "full_time",
     }
@@ -80,7 +80,7 @@ async def test_template_management_crud_and_permissions(client, mock_db, owner_h
 
     employee = await _create_employee(client, owner_headers, master_data, mobile="9900000301", email="comm.staff@example.com")
     await _grant_permission(client, owner_headers, employee["id"], module="communication", resource="templates", actions=["view", "create", "edit"])
-    granted_headers = await _login(client, "9900000301", "InitialPass1")
+    granted_headers = await _login(client, "9900000301", "InitialPass1!")
 
     r = await client.post(
         "/api/v1/communication/templates",
@@ -229,7 +229,7 @@ async def test_manual_retry_action_and_queue_history_views(client, mock_db, owne
 
     employee = await _create_employee(client, owner_headers, master_data, mobile="9900000401", email="retry.staff@example.com")
     await _grant_permission(client, owner_headers, employee["id"], module="communication", resource="queue", actions=["view", "edit"])
-    granted_headers = await _login(client, "9900000401", "InitialPass1")
+    granted_headers = await _login(client, "9900000401", "InitialPass1!")
 
     async def _fake_send_success(*, recipient, subject, body, config):
         return communication_adapters.DeliveryOutcome(True, "MSGID2", None, is_transient=False)
@@ -245,7 +245,7 @@ async def test_manual_retry_action_and_queue_history_views(client, mock_db, owne
     assert len(r.json()["data"]) == 1
 
     await _grant_permission(client, owner_headers, employee["id"], module="communication", resource="history", actions=["view"])
-    granted_headers = await _login(client, "9900000401", "InitialPass1")
+    granted_headers = await _login(client, "9900000401", "InitialPass1!")
     r = await client.get("/api/v1/communication/history", headers=granted_headers)
     assert r.status_code == 200, r.text
     assert len(r.json()["data"]) == 1

@@ -17,7 +17,7 @@ from app.worker.tasks.reminders import check_re_eligible_cases, check_task_remin
 
 async def _create_employee(client, owner_headers, master_data, mobile, email):
     payload = {
-        "mobile": mobile, "initial_password": "InitialPass1", "first_name": "Staff", "last_name": "Member", "email": email,
+        "mobile": mobile, "initial_password": "InitialPass1!", "first_name": "Staff", "last_name": "Member", "email": email,
         "department_id": master_data["department_id"], "designation_id": master_data["designation_id"], "branch_id": master_data["branch_id"],
         "joining_date": "2026-01-15", "employment_type": "full_time",
     }
@@ -57,7 +57,7 @@ async def _login(client, mobile, password):
 async def test_task_lifecycle_and_assignment_notification(client, mock_db, owner_headers, master_data):
     employee = await _create_employee(client, owner_headers, master_data, mobile="9700000101", email="task.officer@example.com")
     await _grant_permission(client, owner_headers, employee["id"], module="reminders", resource="tasks", actions=["view", "create", "edit"])
-    employee_headers = await _login(client, "9700000101", "InitialPass1")
+    employee_headers = await _login(client, "9700000101", "InitialPass1!")
 
     due_at = (utc_now() + timedelta(hours=2)).isoformat()
     r = await client.post(
@@ -82,7 +82,7 @@ async def test_task_lifecycle_and_assignment_notification(client, mock_db, owner
 
     other_employee = await _create_employee(client, owner_headers, master_data, mobile="9700000102", email="other.officer@example.com")
     await _grant_permission(client, owner_headers, other_employee["id"], module="reminders", resource="tasks", actions=["view"])
-    other_headers = await _login(client, "9700000102", "InitialPass1")
+    other_headers = await _login(client, "9700000102", "InitialPass1!")
     r = await client.get(f"/api/v1/tasks/{task['id']}", headers=other_headers)
     assert r.status_code == 403, r.text  # not assigned to them
 
@@ -94,7 +94,7 @@ async def test_task_lifecycle_and_assignment_notification(client, mock_db, owner
 
 async def test_employee_denied_task_creation_without_permission(client, mock_db, owner_headers, master_data):
     employee = await _create_employee(client, owner_headers, master_data, mobile="9700000103", email="unpermitted.task@example.com")
-    employee_headers = await _login(client, "9700000103", "InitialPass1")
+    employee_headers = await _login(client, "9700000103", "InitialPass1!")
 
     r = await client.post(
         "/api/v1/tasks", json={"title": "X", "assigned_to": employee["id"], "due_at": utc_now().isoformat()}, headers=employee_headers
@@ -102,7 +102,7 @@ async def test_employee_denied_task_creation_without_permission(client, mock_db,
     assert r.status_code == 403, r.text
 
     await _grant_permission(client, owner_headers, employee["id"], module="reminders", resource="tasks", actions=["view", "create"])
-    employee_headers = await _login(client, "9700000103", "InitialPass1")
+    employee_headers = await _login(client, "9700000103", "InitialPass1!")
     r = await client.post(
         "/api/v1/tasks", json={"title": "X", "assigned_to": employee["id"], "due_at": utc_now().isoformat()}, headers=employee_headers
     )
@@ -142,7 +142,7 @@ async def test_reminder_rule_crud_and_activation(client, owner_headers):
 async def test_notification_inbox_read_archive_dismiss_and_ownership(client, mock_db, owner_headers, master_data):
     employee = await _create_employee(client, owner_headers, master_data, mobile="9700000104", email="inbox.officer@example.com")
     await _grant_permission(client, owner_headers, employee["id"], module="reminders", resource="tasks", actions=["view", "create"])
-    employee_headers = await _login(client, "9700000104", "InitialPass1")
+    employee_headers = await _login(client, "9700000104", "InitialPass1!")
 
     r = await client.post(
         "/api/v1/tasks", json={"title": "Inbox test task", "assigned_to": employee["id"], "due_at": utc_now().isoformat()}, headers=owner_headers
@@ -198,7 +198,7 @@ async def test_poll_audit_events_creates_lead_assigned_notification_once(client,
     )
 
     await poll_audit_events({})
-    employee_headers = await _login(client, "9700000105", "InitialPass1")
+    employee_headers = await _login(client, "9700000105", "InitialPass1!")
     r = await client.get("/api/v1/notifications", headers=employee_headers)
     assert r.status_code == 200, r.text
     matches = [n for n in r.json()["data"] if n["notification_type"] == "lead_assigned"]
@@ -213,7 +213,7 @@ async def test_poll_audit_events_creates_lead_assigned_notification_once(client,
 async def test_check_re_eligible_cases_notifies_assigned_employee_once(client, mock_db, owner_headers, master_data, monkeypatch):
     monkeypatch.setattr("app.worker.tasks.reminders.get_database", lambda: mock_db)
     employee = await _create_employee(client, owner_headers, master_data, mobile="9700000106", email="reeligible.officer@example.com")
-    employee_headers = await _login(client, "9700000106", "InitialPass1")
+    employee_headers = await _login(client, "9700000106", "InitialPass1!")
 
     rule = ReminderRule(rule_type="re_eligibility", label="Test Loan Re-Eligibility", case_type="loan", eligible_after_days=90, notify_before_days=[10])
     await mock_db["reminder_rules"].insert_one(rule.model_dump(by_alias=True, exclude={"id"}))
@@ -253,7 +253,7 @@ async def test_check_re_eligible_cases_notifies_assigned_employee_once(client, m
 async def test_check_re_eligible_cases_fires_each_configured_trigger_point_independently(client, mock_db, owner_headers, master_data, monkeypatch):
     monkeypatch.setattr("app.worker.tasks.reminders.get_database", lambda: mock_db)
     employee = await _create_employee(client, owner_headers, master_data, mobile="9700000108", email="multitrigger.officer@example.com")
-    employee_headers = await _login(client, "9700000108", "InitialPass1")
+    employee_headers = await _login(client, "9700000108", "InitialPass1!")
 
     # Two trigger points: 30 days before eligibility, and 10 days before.
     rule = ReminderRule(rule_type="re_eligibility", label="Multi-Trigger Loan Re-Eligibility", case_type="loan", eligible_after_days=90, notify_before_days=[30, 10])
@@ -295,7 +295,7 @@ async def test_check_re_eligible_cases_fires_each_configured_trigger_point_indep
 async def test_task_due_and_escalation_ladder_ends_with_owner_notification(client, mock_db, owner_headers, master_data, monkeypatch):
     monkeypatch.setattr("app.worker.tasks.reminders.get_database", lambda: mock_db)
     employee = await _create_employee(client, owner_headers, master_data, mobile="9700000107", email="escalation.officer@example.com")
-    employee_headers = await _login(client, "9700000107", "InitialPass1")
+    employee_headers = await _login(client, "9700000107", "InitialPass1!")
 
     rule = ReminderRule(rule_type="task_due", label="Test Task Due", notify_before_minutes=[30], escalation_repeat_minutes=60, escalation_max_repeats=2)
     await mock_db["reminder_rules"].insert_one(rule.model_dump(by_alias=True, exclude={"id"}))

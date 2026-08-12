@@ -447,7 +447,7 @@ class CustomerService:
         (the same primitives `reset_password` uses) — no duplicate password/OTP logic.
         Does not issue a session: per the production login flow, a freshly-registered
         customer always logs in explicitly afterward, exactly like everyone else."""
-        mobile = await self._auth.consume_otp_verified_ticket(payload.otp_verified_token, expected_purpose=OtpPurpose.SIGNUP)
+        mobile = await self._auth.consume_otp_verified_ticket(payload.otp_verified_token, expected_purposes=(OtpPurpose.SIGNUP,))
         if mobile != payload.mobile:
             raise ForbiddenError("This verification code does not match this mobile number.")
 

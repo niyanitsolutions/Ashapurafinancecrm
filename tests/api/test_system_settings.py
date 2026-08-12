@@ -32,7 +32,7 @@ async def _create_role_with_permission(client, owner_headers, employee_id, *, re
 async def _create_employee(client, owner_headers, master_data, mobile="9311111111", email="settings.test@example.com"):
     payload = {
         "mobile": mobile,
-        "initial_password": "InitialPass1",
+        "initial_password": "InitialPass1!",
         "first_name": "Settings",
         "last_name": "Tester",
         "email": email,
@@ -237,7 +237,7 @@ async def test_employee_with_granted_permission_is_allowed(client, owner_headers
     # EmployeeRepository.find_by_user_id) — then logged in as itself, not via the
     # employee_headers fixture (which has no Employee profile behind it).
     employee = await _create_employee(client, owner_headers, master_data, mobile="9322222222", email="perm.employee@example.com")
-    r = await client.post("/api/v1/auth/login", json={"mobile": "9322222222", "password": "InitialPass1"})
+    r = await client.post("/api/v1/auth/login", json={"mobile": "9322222222", "password": "InitialPass1!"})
     assert r.status_code == 200, r.text
     own_headers = {"Authorization": f"Bearer {r.json()['data']['access_token']}"}
 

@@ -14,7 +14,7 @@ from app.utils.datetime import utc_now
 def _employee_payload(master_data, mobile="9211111111", email="access.test@example.com"):
     return {
         "mobile": mobile,
-        "initial_password": "InitialPass1",
+        "initial_password": "InitialPass1!",
         "first_name": "Access",
         "last_name": "Tester",
         "email": email,

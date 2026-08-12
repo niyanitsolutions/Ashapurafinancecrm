@@ -45,7 +45,7 @@ async def _create_lead(client, headers, lead_master_data, **overrides):
 async def _create_employee(client, owner_headers, master_data, mobile="9511111111", email="lead.employee@example.com"):
     payload = {
         "mobile": mobile,
-        "initial_password": "InitialPass1",
+        "initial_password": "InitialPass1!",
         "first_name": "Lead",
         "last_name": "Handler",
         "email": email,
@@ -245,7 +245,7 @@ async def test_leads_require_permission_for_employee(client, mock_db, owner_head
 async def test_leads_grantable_to_employee_via_role(client, mock_db, owner_headers, master_data):
     lmd = await _lead_master_data(mock_db)
     employee = await _create_employee(client, owner_headers, master_data, mobile="9655555555", email="grantee@example.com")
-    r = await client.post("/api/v1/auth/login", json={"mobile": "9655555555", "password": "InitialPass1"})
+    r = await client.post("/api/v1/auth/login", json={"mobile": "9655555555", "password": "InitialPass1!"})
     own_headers = {"Authorization": f"Bearer {r.json()['data']['access_token']}"}
 
     r = await client.post("/api/v1/leads", json=_lead_payload(lmd), headers=own_headers)
@@ -440,7 +440,7 @@ async def test_eligible_assignees_prefers_same_branch_as_assigning_employee(clie
     # The assigning employee themselves sits in `master_data`'s branch ("Head Office").
     assigner = await _create_employee(client, owner_headers, master_data, mobile="9788888881", email="assigner@example.com")
     await _grant_leads_assign(client, owner_headers, assigner["id"], role_name="Assigner Role")
-    r = await client.post("/api/v1/auth/login", json={"mobile": "9788888881", "password": "InitialPass1"})
+    r = await client.post("/api/v1/auth/login", json={"mobile": "9788888881", "password": "InitialPass1!"})
     assigner_headers = {"Authorization": f"Bearer {r.json()['data']['access_token']}"}
 
     same_branch = await _create_employee(client, owner_headers, master_data, mobile="9788888882", email="samebranch@example.com")

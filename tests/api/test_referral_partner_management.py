@@ -28,7 +28,7 @@ async def _seed_referral_source_and_loan_product(mock_db) -> dict:
 
 async def _create_employee(client, owner_headers, master_data, mobile, email):
     payload = {
-        "mobile": mobile, "initial_password": "InitialPass1", "first_name": "Staff", "last_name": "Member", "email": email,
+        "mobile": mobile, "initial_password": "InitialPass1!", "first_name": "Staff", "last_name": "Member", "email": email,
         "department_id": master_data["department_id"], "designation_id": master_data["designation_id"], "branch_id": master_data["branch_id"],
         "joining_date": "2026-01-15", "employment_type": "full_time",
     }
@@ -43,7 +43,7 @@ async def _login(client, mobile, password):
     return {"Authorization": f"Bearer {r.json()['data']['access_token']}"}
 
 
-async def _create_and_approve_partner(client, mock_db, owner_headers, *, mobile="9700000001", password="PartnerPass1") -> tuple[dict, dict]:
+async def _create_and_approve_partner(client, mock_db, owner_headers, *, mobile="9700000001", password="PartnerPass1!") -> tuple[dict, dict]:
     """Owner creates a Referral Partner (invite path — a real `users` row is created
     pending_password). Tests don't re-exercise Auth's own OTP mechanism (already covered
     by test_auth.py) — the invited user's password is set directly in mock_db, the same
@@ -76,9 +76,9 @@ async def test_partner_approval_lifecycle_and_pre_approval_restrictions(client, 
     partner = r.json()["data"]
 
     await mock_db["users"].update_one(
-        {"mobile": "9700000002"}, {"$set": {"password_hash": hash_password("PartnerPass1"), "status": ACCOUNT_STATUS_ACTIVE}}
+        {"mobile": "9700000002"}, {"$set": {"password_hash": hash_password("PartnerPass1!"), "status": ACCOUNT_STATUS_ACTIVE}}
     )
-    partner_headers = await _login(client, "9700000002", "PartnerPass1")
+    partner_headers = await _login(client, "9700000002", "PartnerPass1!")
 
     # Login works before approval; portal actions don't.
     r = await client.get("/api/v1/referral-partners/me", headers=partner_headers)

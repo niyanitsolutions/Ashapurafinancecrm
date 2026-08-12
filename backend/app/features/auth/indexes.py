@@ -9,13 +9,16 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 async def ensure_auth_indexes(db: AsyncIOMotorDatabase[Any]) -> None:
     await db["users"].create_index("mobile", unique=True)
-    # DB-level "only one Owner ever" guarantee (see app/features/owner/service.py's
-    # application-code pre-check, which this backs up under a race) — a partial unique
-    # index, not a full one, since it must never constrain Employee/Customer/Referral
-    # Partner rows sharing the same `role` field.
-    await db["users"].create_index(
-        "role", unique=True, partialFilterExpression={"role": "owner", "is_deleted": False}
-    )
+
+    # Historical: a partial unique index on role="owner" used to enforce "at most one
+    # Owner ever" at the DB level. Superseded by Owner Account Management (Primary +
+    # Secondary Owners, both role="owner") — that invariant now lives on
+    # owner_profiles.owner_type="primary" instead (see owner/indexes.py), since this
+    # collection has no way to distinguish the two. Dropped idempotently: a no-op once
+    # already removed, and harmless on a fresh install that never created it.
+    existing_indexes = await db["users"].index_information()
+    if "role_1" in existing_indexes:
+        await db["users"].drop_index("role_1")
 
     await db["sessions"].create_index("token_id", unique=True)
     await db["sessions"].create_index("user_id")

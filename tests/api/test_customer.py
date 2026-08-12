@@ -48,7 +48,7 @@ async def _create_lead_doc(mock_db, product, *, mobile="9711111111", full_name="
 
 async def _create_employee(client, owner_headers, master_data, mobile="9511111111", email="staff@example.com"):
     payload = {
-        "mobile": mobile, "initial_password": "InitialPass1", "first_name": "Staff", "last_name": "Member", "email": email,
+        "mobile": mobile, "initial_password": "InitialPass1!", "first_name": "Staff", "last_name": "Member", "email": email,
         "department_id": master_data["department_id"], "designation_id": master_data["designation_id"], "branch_id": master_data["branch_id"],
         "joining_date": "2026-01-15", "employment_type": "full_time",
     }
@@ -63,7 +63,7 @@ async def _login(client, mobile, password):
     return {"Authorization": f"Bearer {r.json()['data']['access_token']}"}
 
 
-async def _signup_via_otp(client, mobile: str, dev_otp: str, password: str = "CustomerPass1") -> dict:
+async def _signup_via_otp(client, mobile: str, dev_otp: str, password: str = "CustomerPass1!") -> dict:
     r = await client.post("/api/v1/auth/verify-otp", json={"mobile": mobile, "otp": dev_otp, "purpose": "signup"})
     assert r.status_code == 200, r.text
     assert r.json()["data"]["is_new_user"] is True
@@ -383,11 +383,11 @@ async def test_owner_lists_and_assigns_application_employee_scoped_to_assignment
     assert r.status_code == 200, r.text
     assert r.json()["data"]["assigned_to"] == employee["id"]
 
-    assignee_headers = await _login(client, "9566666666", "InitialPass1")
+    assignee_headers = await _login(client, "9566666666", "InitialPass1!")
     r = await client.get(f"/api/v1/applications/{application_id}", headers=assignee_headers)
     assert r.status_code == 200, r.text
 
-    other_headers = await _login(client, "9577777777", "InitialPass1")
+    other_headers = await _login(client, "9577777777", "InitialPass1!")
     r = await client.get(f"/api/v1/applications/{application_id}", headers=other_headers)
     assert r.status_code == 403, r.text
 
@@ -419,7 +419,7 @@ async def test_unassigned_applications_queue_is_owner_only(client, mock_db, owne
     assert any(a["id"] == application_id for a in r.json()["data"])
 
     bystander = await _create_employee(client, owner_headers, master_data, mobile="9500000003", email="bystander@example.com")
-    bystander_headers = await _login(client, "9500000003", "InitialPass1")
+    bystander_headers = await _login(client, "9500000003", "InitialPass1!")
     r = await client.get("/api/v1/applications?unassigned_only=true", headers=bystander_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"] == []  # unassigned_only is ignored for Employees, not proxied through

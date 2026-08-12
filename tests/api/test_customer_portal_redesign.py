@@ -91,7 +91,7 @@ async def test_unassigned_employee_cannot_verify_document(client, mock_db, owner
     application_id, document_id = await _create_application_with_document(client, mock_db, product, customer_headers)
 
     employee = await _create_employee(client, owner_headers, master_data, mobile="9511122204", email="notassigned@example.com")
-    r = await client.post("/api/v1/auth/login", json={"mobile": "9511122204", "password": "InitialPass1"})
+    r = await client.post("/api/v1/auth/login", json={"mobile": "9511122204", "password": "InitialPass1!"})
     employee_headers = {"Authorization": f"Bearer {r.json()['data']['access_token']}"}
 
     r = await client.patch(f"/api/v1/applications/{application_id}/documents/{document_id}/verify", headers=employee_headers)

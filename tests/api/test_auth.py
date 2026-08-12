@@ -29,7 +29,7 @@ async def _complete_signup(client, mobile: str, otp: str, password: str, purpose
     return body
 
 
-async def _signup_customer(client, owner_headers, mobile: str = CUSTOMER_MOBILE, password: str = "SuperSecret1") -> None:
+async def _signup_customer(client, owner_headers, mobile: str = CUSTOMER_MOBILE, password: str = "SuperSecret1!") -> None:
     otp = await _invite(client, owner_headers, mobile, "customer")
     body = await _complete_signup(client, mobile, otp, password)
     assert body["is_new_user"] is True
@@ -43,7 +43,7 @@ async def _login(client, mobile: str, password: str) -> dict:
 
 async def test_full_customer_signup_login_profile_refresh_logout(client, owner_headers):
     await _signup_customer(client, owner_headers)
-    tokens = await _login(client, CUSTOMER_MOBILE, "SuperSecret1")
+    tokens = await _login(client, CUSTOMER_MOBILE, "SuperSecret1!")
     assert tokens["role"] == "customer"
     access_token = tokens["access_token"]
 
@@ -104,9 +104,9 @@ async def test_employee_can_invite_customer_but_not_referral_partner(client, emp
 
 async def test_owner_can_invite_referral_partner(client, owner_headers):
     otp = await _invite(client, owner_headers, REFERRAL_MOBILE, "referral_partner")
-    body = await _complete_signup(client, REFERRAL_MOBILE, otp, "PartnerPass1")
+    body = await _complete_signup(client, REFERRAL_MOBILE, otp, "PartnerPass1!")
     assert body["is_new_user"] is True
-    tokens = await _login(client, REFERRAL_MOBILE, "PartnerPass1")
+    tokens = await _login(client, REFERRAL_MOBILE, "PartnerPass1!")
     assert tokens["role"] == "referral_partner"
 
 
@@ -164,7 +164,7 @@ async def test_login_lockout_after_max_attempts(client, owner_headers):
         assert r.status_code == 401
 
     r = await client.post(
-        "/api/v1/auth/login", json={"mobile": CUSTOMER_MOBILE, "password": "SuperSecret1"}
+        "/api/v1/auth/login", json={"mobile": CUSTOMER_MOBILE, "password": "SuperSecret1!"}
     )
     assert r.status_code == 423, r.text
     assert r.json()["error"]["code"] == "account_locked"
@@ -189,15 +189,15 @@ async def test_forgot_password_flow_changes_password(client, owner_headers):
 
     r = await client.post(
         "/api/v1/auth/reset-password",
-        json={"otp_verified_token": ticket, "new_password": "BrandNewPass1"},
+        json={"otp_verified_token": ticket, "new_password": "BrandNewPass1!"},
     )
     assert r.status_code == 200, r.text
 
     r = await client.post(
-        "/api/v1/auth/login", json={"mobile": CUSTOMER_MOBILE, "password": "SuperSecret1"}
+        "/api/v1/auth/login", json={"mobile": CUSTOMER_MOBILE, "password": "SuperSecret1!"}
     )
     assert r.status_code == 401
-    tokens = await _login(client, CUSTOMER_MOBILE, "BrandNewPass1")
+    tokens = await _login(client, CUSTOMER_MOBILE, "BrandNewPass1!")
     assert tokens["role"] == "customer"
 
 
@@ -216,12 +216,12 @@ async def test_reset_password_ticket_is_single_use(client, owner_headers):
     ticket = r.json()["data"]["otp_verified_token"]
 
     r = await client.post(
-        "/api/v1/auth/reset-password", json={"otp_verified_token": ticket, "new_password": "FirstPass1"}
+        "/api/v1/auth/reset-password", json={"otp_verified_token": ticket, "new_password": "FirstPass1!"}
     )
     assert r.status_code == 200
 
     r = await client.post(
-        "/api/v1/auth/reset-password", json={"otp_verified_token": ticket, "new_password": "SecondPass1"}
+        "/api/v1/auth/reset-password", json={"otp_verified_token": ticket, "new_password": "SecondPass1!"}
     )
     assert r.status_code == 401, r.text
     assert r.json()["error"]["code"] == "invalid_or_expired_ticket"
@@ -230,27 +230,27 @@ async def test_reset_password_ticket_is_single_use(client, owner_headers):
 async def test_change_password_requires_auth(client):
     r = await client.post(
         "/api/v1/auth/change-password",
-        json={"current_password": "a", "new_password": "SuperSecret2"},
+        json={"current_password": "a", "new_password": "SuperSecret2!"},
     )
     assert r.status_code == 401
 
 
 async def test_change_password_success(client, owner_headers):
     await _signup_customer(client, owner_headers)
-    tokens = await _login(client, CUSTOMER_MOBILE, "SuperSecret1")
+    tokens = await _login(client, CUSTOMER_MOBILE, "SuperSecret1!")
 
     r = await client.post(
         "/api/v1/auth/change-password",
-        json={"current_password": "SuperSecret1", "new_password": "SuperSecret2"},
+        json={"current_password": "SuperSecret1!", "new_password": "SuperSecret2!"},
         headers={"Authorization": f"Bearer {tokens['access_token']}"},
     )
     assert r.status_code == 200, r.text
 
     r = await client.post(
-        "/api/v1/auth/login", json={"mobile": CUSTOMER_MOBILE, "password": "SuperSecret1"}
+        "/api/v1/auth/login", json={"mobile": CUSTOMER_MOBILE, "password": "SuperSecret1!"}
     )
     assert r.status_code == 401
-    await _login(client, CUSTOMER_MOBILE, "SuperSecret2")
+    await _login(client, CUSTOMER_MOBILE, "SuperSecret2!")
 
 
 async def test_profile_requires_auth(client):
@@ -260,7 +260,7 @@ async def test_profile_requires_auth(client):
 
 async def test_audit_logs_are_written_for_key_events(client, mock_db, owner_headers):
     await _signup_customer(client, owner_headers)
-    await _login(client, CUSTOMER_MOBILE, "SuperSecret1")
+    await _login(client, CUSTOMER_MOBILE, "SuperSecret1!")
     await client.post("/api/v1/auth/login", json={"mobile": CUSTOMER_MOBILE, "password": "wrong"})
 
     events = {doc["event_type"] async for doc in mock_db["audit_logs"].find({})}
@@ -281,7 +281,7 @@ async def test_failed_login_audit_log_captures_reason(client, mock_db, owner_hea
 
 async def test_session_captures_login_history_fields(client, mock_db, owner_headers):
     await _signup_customer(client, owner_headers)
-    await _login(client, CUSTOMER_MOBILE, "SuperSecret1")
+    await _login(client, CUSTOMER_MOBILE, "SuperSecret1!")
 
     session = await mock_db["sessions"].find_one({"user_id": {"$exists": True}}, sort=[("login_at", -1)])
     assert session is not None
@@ -301,7 +301,7 @@ async def test_session_captures_login_history_fields(client, mock_db, owner_head
 
 async def test_refresh_reuse_revokes_entire_family(client, mock_db, owner_headers):
     await _signup_customer(client, owner_headers)
-    tokens = await _login(client, CUSTOMER_MOBILE, "SuperSecret1")
+    tokens = await _login(client, CUSTOMER_MOBILE, "SuperSecret1!")
 
     r = await client.post("/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
     assert r.status_code == 200, r.text

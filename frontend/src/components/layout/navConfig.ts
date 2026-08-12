@@ -126,4 +126,11 @@ export const NAV_SECTIONS: NavSection[] = [
     label: null,
     items: [{ label: "Settings", to: "/settings", icon: "settings", matchKey: ["settings", "reminder_rules"], employeeTo: "/reminder-rules" }],
   },
+  {
+    label: null,
+    // Server-gated to the Primary Owner only (see RequirePrimaryOwner + backend's
+    // require_primary_owner) — a Secondary Owner who somehow sees this link (e.g. a
+    // stale cached nav response) is redirected away rather than reaching the page.
+    items: [{ label: "Owner Management", to: "/owner-accounts", icon: "shield-check", matchKey: "owner_accounts" }],
+  },
 ];

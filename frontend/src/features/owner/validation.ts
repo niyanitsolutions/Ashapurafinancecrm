@@ -17,3 +17,17 @@ export const ownerRegisterSchema = z
   });
 
 export type OwnerRegisterFormValues = z.infer<typeof ownerRegisterSchema>;
+
+export const createSecondaryOwnerSchema = z.object({
+  full_name: z.string().min(1, "Full name is required"),
+  mobile: mobileSchema,
+  email: z.string().email("Enter a valid email address"),
+  initial_password: passwordSchema,
+});
+export type CreateSecondaryOwnerFormValues = z.infer<typeof createSecondaryOwnerSchema>;
+
+export const updateSecondaryOwnerSchema = z.object({
+  full_name: z.string().min(1, "Full name is required"),
+  email: z.string().email("Enter a valid email address"),
+});
+export type UpdateSecondaryOwnerFormValues = z.infer<typeof updateSecondaryOwnerSchema>;

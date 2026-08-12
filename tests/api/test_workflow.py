@@ -94,7 +94,7 @@ async def _seed_product_and_form(mock_db, *, category="loan", product_name="Pers
 
 async def _create_employee(client, owner_headers, master_data, mobile, email):
     payload = {
-        "mobile": mobile, "initial_password": "InitialPass1", "first_name": "Staff", "last_name": "Member", "email": email,
+        "mobile": mobile, "initial_password": "InitialPass1!", "first_name": "Staff", "last_name": "Member", "email": email,
         "department_id": master_data["department_id"], "designation_id": master_data["designation_id"], "branch_id": master_data["branch_id"],
         "joining_date": "2026-01-15", "employment_type": "full_time",
     }
@@ -124,7 +124,7 @@ async def _login(client, mobile, password):
     return {"Authorization": f"Bearer {r.json()['data']['access_token']}"}
 
 
-async def _signup_via_otp(client, mobile: str, dev_otp: str, password: str = "CustomerPass1") -> dict:
+async def _signup_via_otp(client, mobile: str, dev_otp: str, password: str = "CustomerPass1!") -> dict:
     r = await client.post("/api/v1/auth/verify-otp", json={"mobile": mobile, "otp": dev_otp, "purpose": "signup"})
     assert r.status_code == 200, r.text
     ticket = r.json()["data"]["otp_verified_token"]
@@ -190,7 +190,7 @@ async def test_loan_pipeline_happy_path_to_disbursed(client, mock_db, owner_head
     assert cases[0]["current_status"] == "new_customer"
 
     employee = await _create_employee(client, owner_headers, master_data, mobile="9611111111", email="loan.officer@example.com")
-    employee_headers = await _login(client, "9611111111", "InitialPass1")
+    employee_headers = await _login(client, "9611111111", "InitialPass1!")
 
     await _grant_case_permission(client, owner_headers, employee["id"], module="loan_management", actions=["view", "edit", "approve", "reject", "assign"])
 
@@ -491,7 +491,7 @@ async def test_employee_denied_without_permission_then_scoped_once_assigned(clie
     _customer_headers, application_id = await _submitted_application(client, mock_db, product, mobile="9600000006")
 
     employee = await _create_employee(client, owner_headers, master_data, mobile="9622222222", email="unpermitted@example.com")
-    employee_headers = await _login(client, "9622222222", "InitialPass1")
+    employee_headers = await _login(client, "9622222222", "InitialPass1!")
 
     r = await client.get("/api/v1/loan-cases", headers=employee_headers)
     assert r.status_code == 403, r.text
@@ -535,7 +535,7 @@ async def test_unassigned_loan_cases_queue_is_owner_only(client, mock_db, owner_
 
     employee = await _create_employee(client, owner_headers, master_data, mobile="9644444444", email="queue.officer@example.com")
     await _grant_case_permission(client, owner_headers, employee["id"], module="loan_management", actions=["view"])
-    employee_headers = await _login(client, "9644444444", "InitialPass1")
+    employee_headers = await _login(client, "9644444444", "InitialPass1!")
 
     r = await client.get("/api/v1/loan-cases?unassigned_only=true", headers=employee_headers)
     assert r.status_code == 200, r.text

@@ -85,6 +85,27 @@ POST /auth/reset-password { otp_verified_token, new_password }
 Password changed — same endpoint as Create Password, different starting state
 ```
 
+### Primary Owner Password Recovery
+
+The Primary Owner has no special recovery mechanism and needs none — the Forgot
+Password flow above (`POST /auth/forgot-password` → OTP → `POST /auth/reset-password`)
+already works for any active account regardless of role, Primary Owner included. There
+is intentionally **no admin override, backdoor, or master password** anywhere in this
+system: Owner Account Management (see the `owner` feature) explicitly forbids even a
+Secondary Owner from touching the Primary Owner's account, so self-service reset via a
+verified OTP is the only path by design.
+
+**Production caveat:** the OTP is only actually delivered once a real SMS provider is
+configured (see Known Gaps below — `NotConfiguredSmsClient` is a stub today). Until then,
+if the Primary Owner is locked out, the only recovery path is a manual, audited
+intervention by whoever holds production database access — e.g. directly setting a new
+bcrypt password hash on that one `users` document (`app/security/password.hash_password`
+run offline, never a plaintext write) and reviewing/rotating that access afterward. This
+is an exceptional break-glass action, not a documented API or application feature, and
+should be logged outside the application (e.g. in your ops/incident tracker) since the
+app's own audit log only records actions taken through its own APIs. Configuring a real
+SMS provider before go-live removes the need for this path entirely.
+
 ### Refresh (rotation + reuse detection)
 
 ```

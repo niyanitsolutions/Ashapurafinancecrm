@@ -48,7 +48,7 @@ async def _login(client, mobile, password):
 
 async def _create_employee(client, owner_headers, master_data, mobile, email):
     payload = {
-        "mobile": mobile, "initial_password": "InitialPass1", "first_name": "Staff", "last_name": "Member", "email": email,
+        "mobile": mobile, "initial_password": "InitialPass1!", "first_name": "Staff", "last_name": "Member", "email": email,
         "department_id": master_data["department_id"], "designation_id": master_data["designation_id"], "branch_id": master_data["branch_id"],
         "joining_date": "2026-01-15", "employment_type": "full_time",
     }
@@ -160,7 +160,7 @@ async def test_manual_capture_is_permission_gated(client, mock_db, owner_headers
 
     employee = await _create_employee(client, owner_headers, master_data, mobile="9900000201", email="capture.staff@example.com")
     await _grant_permission(client, owner_headers, employee["id"], module="lead_capture", resource="captures", actions=["create"])
-    granted_headers = await _login(client, "9900000201", "InitialPass1")
+    granted_headers = await _login(client, "9900000201", "InitialPass1!")
 
     r = await client.post(
         "/api/v1/lead-capture/manual", json={"full_name": "Manual Lead", "mobile": "9876500001", "product_category": "loan", "product_id": product_id},

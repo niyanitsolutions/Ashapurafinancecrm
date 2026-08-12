@@ -36,7 +36,7 @@ async def _seed_nav_item(mock_db, **overrides):
 async def _create_employee(client, owner_headers, master_data, mobile="9411111111", email="dashboard.test@example.com"):
     payload = {
         "mobile": mobile,
-        "initial_password": "InitialPass1",
+        "initial_password": "InitialPass1!",
         "first_name": "Dash",
         "last_name": "Tester",
         "email": email,
@@ -51,7 +51,7 @@ async def _create_employee(client, owner_headers, master_data, mobile="941111111
     return r.json()["data"]
 
 
-async def _login(client, mobile, password="InitialPass1"):
+async def _login(client, mobile, password="InitialPass1!"):
     r = await client.post("/api/v1/auth/login", json={"mobile": mobile, "password": password})
     assert r.status_code == 200, r.text
     return {"Authorization": f"Bearer {r.json()['data']['access_token']}"}
