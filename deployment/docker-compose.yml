@@ -1,0 +1,105 @@
+name: afs-crm
+
+services:
+  mongo:
+    build:
+      context: ..
+      dockerfile: docker/mongodb/Dockerfile
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mongo-init:
+    image: mongo:7
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: >
+      mongosh --host mongo:27017 --quiet --eval
+      "try { rs.status() } catch (e) { rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'mongo:27017'}]}) }"
+
+  redis:
+    build:
+      context: ..
+      dockerfile: docker/redis/Dockerfile
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/backend/Dockerfile
+    env_file:
+      - ../backend/.env.development
+    environment:
+      MONGO_URI: mongodb://mongo:27017/?replicaSet=rs0
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../backend/logs:/app/logs
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/backend/Dockerfile
+    command: ["arq", "app.worker.worker_settings.WorkerSettings"]
+    env_file:
+      - ../backend/.env.development
+    environment:
+      MONGO_URI: mongodb://mongo:27017/?replicaSet=rs0
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ../backend/logs:/app/logs
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/frontend/Dockerfile
+      target: dev
+    env_file:
+      - ../frontend/.env.development
+    ports:
+      - "5173:5173"
+    volumes:
+      - ../frontend/src:/app/src
+    depends_on:
+      - backend
+
+  nginx:
+    build:
+      context: ..
+      dockerfile: docker/nginx/Dockerfile
+    profiles: ["prod"]
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  mongo_data:
+  redis_data:

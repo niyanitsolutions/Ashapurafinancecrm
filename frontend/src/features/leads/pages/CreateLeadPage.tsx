@@ -1,0 +1,201 @@
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { ErrorBanner } from "@/components/forms/ErrorBanner";
+import { FormField } from "@/components/forms/FormField";
+import { SubmitButton } from "@/components/forms/SubmitButton";
+import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { checkDuplicate, createLead } from "@/features/leads/api";
+import { getErrorMessage } from "@/features/leads/errors";
+import { getFieldErrors } from "@/shared/api/errors";
+import { insuranceProductsApi, leadSourcesApi, loanProductsApi, type NamedMasterData } from "@/features/system_settings/api";
+
+// Deliberately basic — an Employee taking a Create Lead call only ever knows Name/Mobile/
+// Product/Source, never the customer's own business details (GST/turnover/etc). Those
+// belong to the Dynamic Product Form the Customer fills in themselves after the Secure
+// Link flow (see docs/decisions/DECISIONS.md) — this page no longer renders the Product
+// Schema Engine's Basic Information fields at all.
+//
+// Source/Product dropdowns depend on Settings' own data (`system_settings:lead_sources`
+// etc.) — a role granted `leads:leads` but not those Settings permissions will see this
+// form fail to populate them. Documented as a known limitation, not a bug: each
+// resource's read is gated by its own permission, not bundled automatically.
+export function CreateLeadPage() {
+  const navigate = useNavigate();
+  const [sources, setSources] = useState<NamedMasterData[]>([]);
+  const [loanProducts, setLoanProducts] = useState<NamedMasterData[]>([]);
+  const [insuranceProducts, setInsuranceProducts] = useState<NamedMasterData[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const [fullName, setFullName] = useState("");
+  const [mobile, setMobile] = useState("");
+  const [email, setEmail] = useState("");
+  const [sourceId, setSourceId] = useState("");
+  const [productCategory, setProductCategory] = useState<"loan" | "insurance">("loan");
+  const [productId, setProductId] = useState("");
+  const [city, setCity] = useState("");
+  const [preferredAmount, setPreferredAmount] = useState("");
+  const [remarks, setRemarks] = useState("");
+
+  const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    Promise.all([leadSourcesApi.list(), loanProductsApi.list(), insuranceProductsApi.list()])
+      .then(([s, lp, ip]) => {
+        setSources(s);
+        setLoanProducts(lp);
+        setInsuranceProducts(ip);
+        // Employees adding a lead directly aren't "sourcing" from anywhere —
+        // default to Manual so the field needs no thought for the common case,
+        // while staying editable for e.g. a phoned-in partner referral.
+        const manual = s.find((source) => source.name.toLowerCase() === "manual");
+        if (manual) setSourceId(manual.id);
+      })
+      .catch((err) => setLoadError(getErrorMessage(err)));
+  }, []);
+
+  useEffect(() => {
+    setProductId("");
+  }, [productCategory]);
+
+  const onMobileBlur = async () => {
+    if (!/^[6-9]\d{9}$/.test(mobile)) return;
+    try {
+      const { matches } = await checkDuplicate(mobile);
+      setDuplicateWarning(matches.length > 0 ? `${matches.length} existing lead(s) already use this mobile number.` : null);
+    } catch {
+      setDuplicateWarning(null);
+    }
+  };
+
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setFieldErrors({});
+    setIsSubmitting(true);
+    try {
+      const lead = await createLead({
+        full_name: fullName,
+        mobile,
+        email: email || undefined,
+        source_id: sourceId,
+        product_category: productCategory,
+        product_id: productId,
+        city: city || undefined,
+        preferred_amount: preferredAmount ? Number(preferredAmount) : undefined,
+        remarks: remarks || undefined,
+      });
+      navigate(`/leads/${lead.id}`);
+    } catch (err) {
+      setError(getErrorMessage(err));
+      setFieldErrors(getFieldErrors(err) ?? {});
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const products = productCategory === "loan" ? loanProducts : insuranceProducts;
+
+  return (
+    <SimplePageLayout title="Create Lead" backTo="/leads">
+      <ErrorBanner message={loadError} />
+      <ErrorBanner message={error} />
+      {duplicateWarning && (
+        <div className="mb-4 rounded border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">{duplicateWarning}</div>
+      )}
+
+      <form onSubmit={onSubmit} noValidate className="max-w-2xl bg-card border border-border rounded-card shadow-card p-6">
+        <div className="grid grid-cols-2 gap-x-4">
+          <FormField
+            label="Full Name"
+            required
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            error={fieldErrors.full_name}
+          />
+          <FormField
+            label="Mobile"
+            required
+            maxLength={10}
+            value={mobile}
+            onChange={(e) => setMobile(e.target.value)}
+            onBlur={onMobileBlur}
+            error={fieldErrors.mobile}
+          />
+          <FormField
+            label="Email (optional)"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            error={fieldErrors.email}
+          />
+
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-text mb-1">Lead Source</label>
+            <select value={sourceId} onChange={(e) => setSourceId(e.target.value)} required className="w-full rounded border border-border px-3 py-2 text-sm">
+              <option value="">Select a source</option>
+              {sources.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-text mb-1">Product Category</label>
+            <select
+              value={productCategory}
+              onChange={(e) => setProductCategory(e.target.value as "loan" | "insurance")}
+              className="w-full rounded border border-border px-3 py-2 text-sm"
+            >
+              <option value="loan">Loan</option>
+              <option value="insurance">Insurance</option>
+            </select>
+          </div>
+
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-text mb-1">Product</label>
+            <select value={productId} onChange={(e) => setProductId(e.target.value)} required className="w-full rounded border border-border px-3 py-2 text-sm">
+              <option value="">Select a product</option>
+              {products.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <FormField
+            label="City (optional)"
+            value={city}
+            onChange={(e) => setCity(e.target.value)}
+            error={fieldErrors.city}
+          />
+          <FormField
+            label="Preferred Loan Amount (optional)"
+            type="number"
+            min={1}
+            value={preferredAmount}
+            onChange={(e) => setPreferredAmount(e.target.value)}
+            error={fieldErrors.preferred_amount}
+          />
+        </div>
+
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-text mb-1">Remarks (optional)</label>
+          <textarea
+            className="w-full rounded border border-border px-3 py-2 text-sm"
+            rows={3}
+            value={remarks}
+            onChange={(e) => setRemarks(e.target.value)}
+          />
+        </div>
+
+        <SubmitButton isSubmitting={isSubmitting}>Create Lead</SubmitButton>
+      </form>
+    </SimplePageLayout>
+  );
+}

@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-background text-text antialiased;
+  line-height: 1.55;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  line-height: 1.3;
+}
+
+label {
+  @apply text-text;
+}
+
+/* Enterprise redesign pass — shared motion utilities, used across cards/buttons/rows
+   instead of each component hand-rolling its own transition classes. Deliberately
+   subtle (small translate, soft shadow swap) per the brief's "smooth, nothing flashy". */
+@layer utilities {
+  .hover-lift {
+    @apply transition-all duration-200 ease-out;
+  }
+  .hover-lift:hover {
+    @apply -translate-y-0.5 shadow-cardHover;
+  }
+
+  .skeleton {
+    @apply animate-shimmer rounded bg-gradient-to-r from-border via-background to-border bg-[length:200%_100%];
+  }
+}

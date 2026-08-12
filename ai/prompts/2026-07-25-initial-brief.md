@@ -1,0 +1,5 @@
+# 2026-07-25 — Initial Project Brief
+
+The user's opening prompt for AFS Financial CRM was a full project brief covering: tech stack (React 19 + FastAPI + MongoDB + Redis + S3, Docker), four portals (Owner/Employee/Customer/Referral Partner) on one backend for future React web + Flutter mobile, mobile+password auth with OTP, security rules (JWT/refresh/rate-limiting/account-lock/audit), fintech dark-sidebar/light-content theme with a specified color palette, sidebar/dashboard-widget lists, per-role workflows, a Lead Status pipeline, a Reminder Engine, integration list (Meta/WhatsApp/SMS/SMTP/Maps), a recommended root folder layout, and an explicit instruction: review architecture and get approval before implementing anything.
+
+Full text is preserved in the conversation this session originated from — this entry is a locator, not a duplicate. The living, current version of these requirements is `docs/REQUIREMENTS.md`; this file is the historical record of what was originally asked, kept separate so `docs/REQUIREMENTS.md` can evolve without losing the original framing.

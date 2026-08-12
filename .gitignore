@@ -1,0 +1,35 @@
+# Environments (per-stage files are local; only .env.example is committed with real content)
+.env
+.env.local
+.env.development
+.env.staging
+.env.production
+!**/.env.example
+
+# Development Mode runtime state (PIDs/logs for start-local.sh/.ps1, start-worker, stop-local)
+scripts/dev/.local-run/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+backups/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Logs
+backend/logs/*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
