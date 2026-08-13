@@ -240,7 +240,7 @@ class CustomerService:
         await self._log_lead_timeline(link.lead_id, event_type, {"link_id": link_id, "by": actor.require_id()})
 
     def build_secure_link_url(self, secure_code: str) -> str:
-        base = get_settings().cors_origins.split(",")[0].strip()
+        base = get_settings().frontend_base_url.rstrip("/")
         return f"{base}/apply/{secure_code}"
 
     async def resolve_secure_link_creator_contact(self, user_id: str | None) -> dict[str, str | None] | None:
