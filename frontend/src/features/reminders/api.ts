@@ -11,6 +11,9 @@ export interface Task {
   status: string;
   completed_at: string | null;
   owner_escalated: boolean;
+  priority: string;
+  related_entity_type: string | null;
+  related_entity_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -52,11 +55,17 @@ export interface PaginatedResponse<T> {
 
 // ---- Tasks ----
 
-export function createTask(payload: { title: string; description?: string; assigned_to: string; due_at: string }) {
+export function createTask(payload: {
+  title: string; description?: string; assigned_to: string; due_at: string;
+  priority?: string; related_entity_type?: string; related_entity_id?: string;
+}) {
   return apiRequest<Task>("/tasks", { method: "POST", body: JSON.stringify(payload) });
 }
 
-export async function listTasks(params: { page?: number; page_size?: number; status?: string }): Promise<PaginatedResponse<Task>> {
+export async function listTasks(params: {
+  page?: number; page_size?: number; status?: string; priority?: string;
+  related_entity_type?: string; related_entity_id?: string;
+}): Promise<PaginatedResponse<Task>> {
   const usp = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && value !== "") usp.set(key, String(value));

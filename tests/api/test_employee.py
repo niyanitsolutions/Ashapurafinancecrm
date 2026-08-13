@@ -277,3 +277,114 @@ async def test_employee_document_upload_flow(client, owner_headers, master_data)
     assert r.status_code == 200, r.text
     assert len(r.json()["data"]) == 1
     assert r.json()["data"][0]["document_type"] == "pan"
+
+
+async def test_list_all_employee_documents_owner_only(client, owner_headers, employee_headers, master_data):
+    r = await client.get("/api/v1/employees/documents", headers=employee_headers)
+    assert r.status_code == 403, r.text
+
+    employee = await _create_employee(client, owner_headers, master_data)
+    r = await client.post(
+        f"/api/v1/employees/{employee['id']}/documents/upload-url",
+        json={"document_type": "pan", "file_name": "pan.pdf", "content_type": "application/pdf"},
+        headers=owner_headers,
+    )
+    s3_key = r.json()["data"]["s3_key"]
+    await client.post(
+        f"/api/v1/employees/{employee['id']}/documents",
+        json={"document_type": "pan", "file_name": "pan.pdf", "s3_key": s3_key},
+        headers=owner_headers,
+    )
+
+    r = await client.get("/api/v1/employees/documents", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert any(d["employee_id"] == employee["id"] and d["employee_name"] == employee["display_name"] for d in r.json()["data"])
+
+
+async def test_list_all_employee_documents_filters_by_employee_and_type(client, owner_headers, master_data):
+    employee_one = await _create_employee(client, owner_headers, master_data, mobile="9111111121", email="doc.one@example.com")
+    employee_two = await _create_employee(client, owner_headers, master_data, mobile="9111111122", email="doc.two@example.com")
+
+    for employee, doc_type in ((employee_one, "pan"), (employee_two, "aadhaar")):
+        r = await client.post(
+            f"/api/v1/employees/{employee['id']}/documents/upload-url",
+            json={"document_type": doc_type, "file_name": f"{doc_type}.pdf", "content_type": "application/pdf"},
+            headers=owner_headers,
+        )
+        s3_key = r.json()["data"]["s3_key"]
+        await client.post(
+            f"/api/v1/employees/{employee['id']}/documents",
+            json={"document_type": doc_type, "file_name": f"{doc_type}.pdf", "s3_key": s3_key},
+            headers=owner_headers,
+        )
+
+    r = await client.get(f"/api/v1/employees/documents?employee_id={employee_one['id']}", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert {d["employee_id"] for d in r.json()["data"]} == {employee_one["id"]}
+
+    r = await client.get("/api/v1/employees/documents?document_type=aadhaar", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert {d["employee_id"] for d in r.json()["data"]} == {employee_two["id"]}
+
+
+async def test_list_all_employee_activity_owner_only(client, owner_headers, employee_headers):
+    r = await client.get("/api/v1/employees/activity", headers=employee_headers)
+    assert r.status_code == 403, r.text
+
+    r = await client.get("/api/v1/employees/activity", headers=owner_headers)
+    assert r.status_code == 200, r.text
+
+
+async def test_list_all_employee_activity_filters_by_employee_id(client, owner_headers, master_data):
+    # `write_audit_log` for owner-initiated actions like deactivate/activate attributes
+    # the event to the *actor* (Owner), not the employee acted upon — same reason
+    # `list_employee_login_history` only ever surfaces an employee's own self-initiated
+    # events. A real login is the one event genuinely attributed to the employee's own
+    # user_id, so use that as the distinguishable per-employee activity here.
+    employee_one = await _create_employee(client, owner_headers, master_data, mobile="9111111131", email="activity.one@example.com")
+    employee_two = await _create_employee(client, owner_headers, master_data, mobile="9111111132", email="activity.two@example.com")
+
+    r = await client.post("/api/v1/auth/login", json={"mobile": "9111111131", "password": "InitialPass1!"})
+    assert r.status_code == 200, r.text
+
+    r = await client.get(f"/api/v1/employees/activity?employee_id={employee_one['id']}", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    entries = r.json()["data"]
+    assert len(entries) > 0
+    assert all(e["employee_id"] == employee_one["id"] for e in entries)
+    assert all(e["employee_id"] != employee_two["id"] for e in entries)
+
+
+async def test_list_all_employee_activity_date_range_filter(client, owner_headers, master_data):
+    from datetime import timedelta
+    from urllib.parse import quote
+
+    from app.utils.datetime import utc_now
+
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9111111133", email="activity.range@example.com")
+    r = await client.post("/api/v1/auth/login", json={"mobile": "9111111133", "password": "InitialPass1!"})
+    assert r.status_code == 200, r.text
+
+    future_start = quote((utc_now() + timedelta(days=1)).isoformat())
+    r = await client.get(f"/api/v1/employees/activity?employee_id={employee['id']}&date_from={future_start}", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"] == []
+
+    past_start = quote((utc_now() - timedelta(days=1)).isoformat())
+    r = await client.get(f"/api/v1/employees/activity?employee_id={employee['id']}&date_from={past_start}", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert len(r.json()["data"]) > 0
+
+
+async def test_employees_documents_and_activity_routes_not_shadowed_by_employee_id_param(client, owner_headers):
+    # Regression guard: `/employees/documents` and `/employees/activity` must be
+    # registered ahead of `/employees/{employee_id}` — otherwise FastAPI would match
+    # "documents"/"activity" as an employee_id and this would 404 (NotFoundError,
+    # "Employee not found.") or 422 instead of returning the real list endpoint.
+    r = await client.get("/api/v1/employees/documents", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert isinstance(r.json()["data"], list)
+
+    r = await client.get("/api/v1/employees/activity", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert isinstance(r.json()["data"], list)

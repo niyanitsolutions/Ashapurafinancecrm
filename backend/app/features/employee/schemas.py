@@ -249,3 +249,24 @@ class EmployeeDocumentResponse(BaseModel):
     s3_key: str
     content_type: str | None
     created_at: datetime
+
+
+class EmployeeDocumentOverviewItem(BaseModel):
+    id: str
+    employee_id: str
+    employee_name: str
+    document_type: str
+    file_name: str
+    s3_key: str
+    content_type: str | None
+    created_at: datetime
+
+
+class EmployeeActivityEntry(BaseModel):
+    event_type: str
+    employee_id: str | None
+    employee_name: str | None
+    ip_address: str | None
+    user_agent: str | None
+    metadata: dict[str, Any] | None
+    created_at: datetime

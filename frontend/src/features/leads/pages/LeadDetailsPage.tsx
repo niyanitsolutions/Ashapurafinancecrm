@@ -6,6 +6,7 @@ import { FormField } from "@/components/forms/FormField";
 import { SubmitButton } from "@/components/forms/SubmitButton";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { GenerateLinkModal } from "@/features/leads/components/GenerateLinkModal";
+import { AddTaskModal } from "@/features/reminders/components/AddTaskModal";
 import {
   addNote,
   assignLead,
@@ -105,6 +106,7 @@ export function LeadDetailsPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
+  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
 
   const resetFormFields = (l: LeadDetail) => {
     setRemarks(l.remarks ?? "");
@@ -176,6 +178,7 @@ export function LeadDetailsPage() {
               <HeaderButton icon="print" label="Print" onClick={() => window.print()} />
               <HeaderButton icon="download" label="Download PDF" onClick={() => undefined} disabled title="Coming soon" />
               <HeaderButton icon="link" label="Generate Link" onClick={() => setIsLinkModalOpen(true)} />
+              <HeaderButton icon="tasks" label="Add Task" onClick={() => setIsTaskModalOpen(true)} />
               <HeaderButton icon="edit" label="Edit" onClick={() => setIsEditing(true)} primary />
             </>
           )}
@@ -297,6 +300,15 @@ export function LeadDetailsPage() {
       </div>
 
       {isLinkModalOpen && <GenerateLinkModal leadId={leadId} leadCode={lead.lead_code} onClose={() => setIsLinkModalOpen(false)} />}
+      {isTaskModalOpen && (
+        <AddTaskModal
+          relatedEntityType="lead"
+          relatedEntityId={leadId}
+          entityLabel={`Lead ${lead.lead_code}`}
+          onClose={() => setIsTaskModalOpen(false)}
+          onCreated={() => setMessage("Task added.")}
+        />
+      )}
     </SimplePageLayout>
   );
 }

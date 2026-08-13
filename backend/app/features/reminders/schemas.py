@@ -8,12 +8,18 @@ class CreateTaskRequest(BaseModel):
     description: str | None = None
     assigned_to: str
     due_at: datetime
+    priority: str = "medium"
+    related_entity_type: str | None = None
+    related_entity_id: str | None = None
 
 
 class UpdateTaskRequest(BaseModel):
     title: str | None = None
     description: str | None = None
     due_at: datetime | None = None
+    priority: str | None = None
+    related_entity_type: str | None = None
+    related_entity_id: str | None = None
 
 
 class TaskResponse(BaseModel):
@@ -27,6 +33,9 @@ class TaskResponse(BaseModel):
     status: str
     completed_at: datetime | None
     owner_escalated: bool
+    priority: str
+    related_entity_type: str | None
+    related_entity_id: str | None
     created_at: datetime
     updated_at: datetime
 

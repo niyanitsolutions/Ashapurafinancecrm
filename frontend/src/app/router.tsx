@@ -34,11 +34,19 @@ import { SupportPage } from "@/features/customer/pages/SupportPage";
 import { StaffApplicationDetailsPage } from "@/features/customer/pages/StaffApplicationDetailsPage";
 import { StaffApplicationListPage } from "@/features/customer/pages/StaffApplicationListPage";
 import { CreateEmployeePage } from "@/features/employee/pages/CreateEmployeePage";
+import { EmployeeActivityOverviewPage } from "@/features/employee/pages/EmployeeActivityOverviewPage";
+import { EmployeeDetailsPage } from "@/features/employee/pages/EmployeeDetailsPage";
+import { EmployeeDocumentsOverviewPage } from "@/features/employee/pages/EmployeeDocumentsOverviewPage";
+import { EditEmployeePage } from "@/features/employee/pages/EditEmployeePage";
 import { EmployeeListPage } from "@/features/employee/pages/EmployeeListPage";
 import { EmployeeLoginHistoryPage } from "@/features/employee/pages/EmployeeLoginHistoryPage";
-import { EmployeeModulePlaceholderPage } from "@/features/employee/pages/EmployeeModulePlaceholderPage";
 import { EmployeeProfilePage } from "@/features/employee/pages/EmployeeProfilePage";
+import { EmployeeSessionsPage } from "@/features/employee/pages/EmployeeSessionsPage";
 import { EmployeesLayout } from "@/features/employee/pages/EmployeesLayout";
+import { AssignRolePage } from "@/features/access_control/pages/AssignRolePage";
+import { PermissionMatrixPage } from "@/features/access_control/pages/PermissionMatrixPage";
+import { RoleDetailsPage } from "@/features/access_control/pages/RoleDetailsPage";
+import { LeadCapturePage } from "@/features/lead_capture/pages/LeadCapturePage";
 import { InsuranceCaseDetailsPage } from "@/features/insurance_management/pages/InsuranceCaseDetailsPage";
 import { InsuranceCaseListPage } from "@/features/insurance_management/pages/InsuranceCaseListPage";
 import { InsuranceManagementLayout } from "@/features/insurance_management/pages/InsuranceManagementLayout";
@@ -56,6 +64,16 @@ import { ReferralPartnerPortalLayout } from "@/features/referral_partner_managem
 import { ReferralPartnerCommissionHistoryPage } from "@/features/referral_partner_management/pages/ReferralPartnerCommissionHistoryPage";
 import { ReferralPartnerDashboardPage } from "@/features/referral_partner_management/pages/ReferralPartnerDashboardPage";
 import { ReferralPartnerLeadsPage } from "@/features/referral_partner_management/pages/ReferralPartnerLeadsPage";
+import { ReferralPartnersLayout } from "@/features/referral_partner_management/pages/ReferralPartnersLayout";
+import { ReferralPartnerListPage } from "@/features/referral_partner_management/pages/ReferralPartnerListPage";
+import { CommissionRulesPage } from "@/features/referral_partner_management/pages/CommissionRulesPage";
+import { CommissionLedgerPage } from "@/features/referral_partner_management/pages/CommissionLedgerPage";
+import { ReportsLayout } from "@/features/reporting/pages/ReportsLayout";
+import { ReportCatalogPage } from "@/features/reporting/pages/ReportCatalogPage";
+import { ReportViewerPage } from "@/features/reporting/pages/ReportViewerPage";
+import { ScheduledReportsPage } from "@/features/reporting/pages/ScheduledReportsPage";
+import { CommunicationPage } from "@/features/communication/pages/CommunicationPage";
+import { TaskListPage } from "@/features/reminders/pages/TaskListPage";
 import { CreateAccountPage } from "@/features/owner/pages/CreateAccountPage";
 import { RequirePrimaryOwner } from "@/features/owner/components/RequirePrimaryOwner";
 import { CreateSecondaryOwnerPage } from "@/features/owner/pages/CreateSecondaryOwnerPage";
@@ -197,70 +215,49 @@ export const router = createBrowserRouter([
           // Module 6D — Tasks permission-gated server-side (require_permission
           // "reminders"/"tasks"), Notifications self-service (require_staff only, no
           // permission needed — each user reads only their own inbox).
-          // Phase 1 deployment scope: Tasks isn't shipping yet — see ComingSoonPage.
-          { path: "/tasks", element: <ComingSoonPage title="Tasks" /> },
+          { path: "/tasks", element: <TaskListPage /> },
           { path: "/notifications", element: <NotificationListPage /> },
           // Reminder Rules automates Tasks — out of Phase 1 scope alongside it.
           { path: "/reminder-rules", element: <ComingSoonPage title="Reminder Rules" /> },
-          // Module 8 — Phase 1 deployment scope: Reports & Analytics isn't shipping yet.
+          // Module 8 — permission-gated server-side (require_permission("reporting",
+          // "reports", ...)), not require_owner, so no RequireOwner wrapper here either.
           {
-            element: <ComingSoonPage title="Reports & Analytics" />,
+            element: <ReportsLayout />,
             children: [
-              { path: "/reports", element: <ComingSoonPage title="Reports & Analytics" /> },
-              { path: "/scheduled-reports", element: <ComingSoonPage title="Reports & Analytics" /> },
+              { path: "/reports", element: <ReportCatalogPage /> },
+              { path: "/scheduled-reports", element: <ScheduledReportsPage /> },
             ],
           },
-          { path: "/reports/:reportKey", element: <ComingSoonPage title="Reports & Analytics" /> },
+          { path: "/reports/:reportKey", element: <ReportViewerPage /> },
           // Module 9A — permission-gated server-side (require_permission("integrations",
           // "configs", ...)), not require_owner, so no RequireOwner wrapper here either.
           { path: "/integrations", element: <IntegrationListPage /> },
           { path: "/integrations/:configId", element: <IntegrationDetailsPage /> },
-          // Module 9C — Phase 1 deployment scope: Message Center isn't shipping yet.
-          { path: "/communication", element: <ComingSoonPage title="Message Center" /> },
-          // Administration — Phase 1 deployment scope: not shipping yet. Every child path
-          // (lead-capture, employees incl. sub-routes, roles, departments/designations,
-          // temporary access, geo exceptions) resolves here since this layout renders no
-          // <Outlet/> for them — a typed-in deep link lands on the same Coming Soon page.
+          // Module 9C — permission-gated server-side (require_permission("communication",
+          // ...)), not require_owner, so no RequireOwner wrapper here either.
+          { path: "/communication", element: <CommunicationPage /> },
+          // Administration — /lead-capture is permission-gated (not owner-only): a
+          // non-Owner employee granted just `lead_capture:sources` reaches it directly
+          // (navConfig's employeeTo points here), so it stays outside RequireOwner.
+          { path: "/lead-capture", element: <LeadCapturePage /> },
           {
-            element: <ComingSoonPage title="Administration" />,
+            element: <RequireOwner />,
             children: [
-              { path: "/lead-capture", element: <ComingSoonPage title="Administration" /> },
               {
-                element: <RequireOwner />,
+                path: "/employees",
+                element: <EmployeesLayout />,
                 children: [
-                  {
-                    path: "/employees",
-                    element: <EmployeesLayout />,
-                    children: [
-                      { index: true, element: <EmployeeListPage /> },
-                      { path: "new", element: <CreateEmployeePage /> },
-                      {
-                        path: "documents",
-                        element: (
-                          <EmployeeModulePlaceholderPage
-                            title="Documents"
-                            description="A company-wide employee document overview will appear here once this module is enabled."
-                          />
-                        ),
-                      },
-                      {
-                        path: "activity",
-                        element: (
-                          <EmployeeModulePlaceholderPage
-                            title="Employee Activity"
-                            description="A company-wide employee activity overview will appear here once this module is enabled."
-                          />
-                        ),
-                      },
-                    ],
-                  },
-                  { path: "/roles", element: <RoleListPage /> },
-                  { path: "/settings/departments", element: <DepartmentsPage /> },
-                  { path: "/settings/designations", element: <DesignationsPage /> },
-                  { path: "/temporary-access", element: <TemporaryAccessPage /> },
-                  { path: "/geo-exceptions", element: <GeoExceptionPage /> },
+                  { index: true, element: <EmployeeListPage /> },
+                  { path: "new", element: <CreateEmployeePage /> },
+                  { path: "documents", element: <EmployeeDocumentsOverviewPage /> },
+                  { path: "activity", element: <EmployeeActivityOverviewPage /> },
                 ],
               },
+              { path: "/roles", element: <RoleListPage /> },
+              { path: "/settings/departments", element: <DepartmentsPage /> },
+              { path: "/settings/designations", element: <DesignationsPage /> },
+              { path: "/temporary-access", element: <TemporaryAccessPage /> },
+              { path: "/geo-exceptions", element: <GeoExceptionPage /> },
             ],
           },
           {
@@ -280,14 +277,14 @@ export const router = createBrowserRouter([
           {
             element: <RequireOwner />,
             children: [
-              // Per-record detail/edit pages — Administration isn't part of Phase 1.
-              { path: "/employees/:employeeId", element: <ComingSoonPage title="Administration" /> },
-              { path: "/employees/:employeeId/edit", element: <ComingSoonPage title="Administration" /> },
-              { path: "/employees/:employeeId/sessions", element: <ComingSoonPage title="Administration" /> },
-              { path: "/employees/:employeeId/login-history", element: <ComingSoonPage title="Administration" /> },
-              { path: "/roles/:roleId", element: <ComingSoonPage title="Administration" /> },
-              { path: "/roles/:roleId/permissions", element: <ComingSoonPage title="Administration" /> },
-              { path: "/roles/:roleId/assign", element: <ComingSoonPage title="Administration" /> },
+              // Per-record detail/edit pages.
+              { path: "/employees/:employeeId", element: <EmployeeDetailsPage /> },
+              { path: "/employees/:employeeId/edit", element: <EditEmployeePage /> },
+              { path: "/employees/:employeeId/sessions", element: <EmployeeSessionsPage scope="owner" /> },
+              { path: "/employees/:employeeId/login-history", element: <EmployeeLoginHistoryPage scope="owner" /> },
+              { path: "/roles/:roleId", element: <RoleDetailsPage /> },
+              { path: "/roles/:roleId/permissions", element: <PermissionMatrixPage /> },
+              { path: "/roles/:roleId/assign", element: <AssignRolePage /> },
               {
                 // Phase 1 deployment scope trims Settings to just the master data the
                 // in-scope Loan/Insurance Management modules read from (Loan Products,
@@ -314,17 +311,16 @@ export const router = createBrowserRouter([
               { path: "/settings/notification-templates", element: <ComingSoonPage title="Notification Templates" /> },
               { path: "/settings/api-settings", element: <ComingSoonPage title="API Settings" /> },
               { path: "/settings/company", element: <ComingSoonPage title="Company Settings" /> },
-              // Module 7 — Phase 1 deployment scope: the Owner-side Referral Partners
-              // management module (partner list, commission rules/ledger) isn't shipping
-              // yet. The Referral Partner's own login portal (/referral-portal/*) is a
-              // separate role's destination and is unaffected — see router's own portal
-              // block below.
+              // Module 7 — Owner-side Referral Partners management (partner list,
+              // commission rules/ledger). The Referral Partner's own login portal
+              // (/referral-portal/*) is a separate role's destination and is unaffected —
+              // see router's own portal block below.
               {
-                element: <ComingSoonPage title="Referral Partners" />,
+                element: <ReferralPartnersLayout />,
                 children: [
-                  { path: "/referral-partners", element: <ComingSoonPage title="Referral Partners" /> },
-                  { path: "/commission-rules", element: <ComingSoonPage title="Referral Partners" /> },
-                  { path: "/commission-ledger", element: <ComingSoonPage title="Referral Partners" /> },
+                  { path: "/referral-partners", element: <ReferralPartnerListPage /> },
+                  { path: "/commission-rules", element: <CommissionRulesPage /> },
+                  { path: "/commission-ledger", element: <CommissionLedgerPage /> },
                 ],
               },
             ],

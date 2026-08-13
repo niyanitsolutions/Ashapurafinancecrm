@@ -109,6 +109,89 @@ async def test_employee_denied_task_creation_without_permission(client, mock_db,
     assert r.status_code == 200, r.text
 
 
+async def test_task_created_with_default_priority_when_omitted(client, owner_headers, master_data):
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9700000106", email="default.priority@example.com")
+    r = await client.post(
+        "/api/v1/tasks", json={"title": "No priority specified", "assigned_to": employee["id"], "due_at": utc_now().isoformat()}, headers=owner_headers
+    )
+    assert r.status_code == 200, r.text
+    task = r.json()["data"]
+    assert task["priority"] == "medium"
+    assert task["related_entity_type"] is None
+    assert task["related_entity_id"] is None
+
+
+async def test_task_created_with_explicit_priority_and_linkage(client, owner_headers, master_data):
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9700000107", email="explicit.priority@example.com")
+    r = await client.post(
+        "/api/v1/tasks",
+        json={
+            "title": "Follow up on lead", "assigned_to": employee["id"], "due_at": utc_now().isoformat(),
+            "priority": "high", "related_entity_type": "lead", "related_entity_id": "6a7df9db63fd1e0eb7749f99",
+        },
+        headers=owner_headers,
+    )
+    assert r.status_code == 200, r.text
+    task = r.json()["data"]
+    assert task["priority"] == "high"
+    assert task["related_entity_type"] == "lead"
+    assert task["related_entity_id"] == "6a7df9db63fd1e0eb7749f99"
+
+    r = await client.get(f"/api/v1/tasks/{task['id']}", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    refetched = r.json()["data"]
+    assert refetched["priority"] == "high"
+    assert refetched["related_entity_type"] == "lead"
+    assert refetched["related_entity_id"] == "6a7df9db63fd1e0eb7749f99"
+
+
+async def test_task_creation_rejects_partial_linkage(client, owner_headers, master_data):
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9700000108", email="partial.linkage@example.com")
+    r = await client.post(
+        "/api/v1/tasks",
+        json={"title": "Bad linkage", "assigned_to": employee["id"], "due_at": utc_now().isoformat(), "related_entity_type": "lead"},
+        headers=owner_headers,
+    )
+    assert r.status_code == 422, r.text
+
+
+async def test_list_tasks_filters_by_priority_and_related_entity(client, owner_headers, master_data):
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9700000109", email="filter.tasks@example.com")
+    await _grant_permission(client, owner_headers, employee["id"], module="reminders", resource="tasks", actions=["view", "create"])
+    employee_headers = await _login(client, "9700000109", "InitialPass1!")
+
+    due_at = utc_now().isoformat()
+    r = await client.post(
+        "/api/v1/tasks",
+        json={"title": "High priority lead task", "assigned_to": employee["id"], "due_at": due_at, "priority": "high", "related_entity_type": "lead", "related_entity_id": "6a7df9db63fd1e0eb7749f01"},
+        headers=owner_headers,
+    )
+    assert r.status_code == 200, r.text
+    high_lead_task = r.json()["data"]
+    r = await client.post(
+        "/api/v1/tasks",
+        json={"title": "Low priority customer task", "assigned_to": employee["id"], "due_at": due_at, "priority": "low", "related_entity_type": "customer", "related_entity_id": "6a7df9db63fd1e0eb7749f02"},
+        headers=owner_headers,
+    )
+    assert r.status_code == 200, r.text
+
+    r = await client.get("/api/v1/tasks?priority=high", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert {t["id"] for t in r.json()["data"]} == {high_lead_task["id"]}
+
+    r = await client.get("/api/v1/tasks?related_entity_type=lead&related_entity_id=6a7df9db63fd1e0eb7749f01", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert {t["id"] for t in r.json()["data"]} == {high_lead_task["id"]}
+
+    # Ownership scoping still composes with the new filters — the assignee's own
+    # filtered view never leaks another employee's tasks, and here it's the same
+    # employee, so both tasks are visible, but still only priority-filtered correctly.
+    r = await client.get("/api/v1/tasks?priority=low", headers=employee_headers)
+    assert r.status_code == 200, r.text
+    assert all(t["priority"] == "low" for t in r.json()["data"])
+    assert all(t["assigned_to"] == employee["id"] for t in r.json()["data"])
+
+
 # ---------------------------------------------------------------------- Reminder Rules
 
 

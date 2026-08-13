@@ -249,6 +249,56 @@ export function confirmEmployeeDocument(employeeId: string, payload: { document_
   return apiRequest<EmployeeDocument>(`/employees/${employeeId}/documents`, { method: "POST", body: JSON.stringify(payload) });
 }
 
+export interface EmployeeDocumentOverviewItem extends EmployeeDocument {
+  employee_id: string;
+  employee_name: string;
+}
+
+export interface EmployeeActivityEntry {
+  event_type: string;
+  employee_id: string | null;
+  employee_name: string | null;
+  ip_address: string | null;
+  user_agent: string | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface EmployeeDocumentsOverviewParams {
+  page?: number;
+  page_size?: number;
+  employee_id?: string;
+  document_type?: string;
+}
+
+export interface EmployeeActivityOverviewParams {
+  page?: number;
+  page_size?: number;
+  employee_id?: string;
+  event_type?: string;
+  date_from?: string;
+  date_to?: string;
+}
+
+function toGenericQuery<T extends object>(params: T): string {
+  const usp = new URLSearchParams();
+  for (const [key, value] of Object.entries(params as Record<string, string | number | undefined>)) {
+    if (value !== undefined && value !== "") usp.set(key, String(value));
+  }
+  const qs = usp.toString();
+  return qs ? `?${qs}` : "";
+}
+
+export async function listAllEmployeeDocuments(params: EmployeeDocumentsOverviewParams): Promise<PaginatedResponse<EmployeeDocumentOverviewItem>> {
+  const envelope = await apiRequestRaw<EmployeeDocumentOverviewItem[]>(`/employees/documents${toGenericQuery(params)}`);
+  return { data: envelope.data ?? [], pagination: envelope.meta?.pagination ?? null };
+}
+
+export async function listEmployeeActivity(params: EmployeeActivityOverviewParams): Promise<PaginatedResponse<EmployeeActivityEntry>> {
+  const envelope = await apiRequestRaw<EmployeeActivityEntry[]>(`/employees/activity${toGenericQuery(params)}`);
+  return { data: envelope.data ?? [], pagination: envelope.meta?.pagination ?? null };
+}
+
 export function exportEmployeesCsvUrl(): string {
   const base = import.meta.env.VITE_API_BASE_URL ?? "/api/v1";
   return `${base}/employees/export`;

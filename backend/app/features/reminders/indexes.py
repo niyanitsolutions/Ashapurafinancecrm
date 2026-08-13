@@ -7,6 +7,7 @@ async def ensure_reminders_indexes(db: AsyncIOMotorDatabase[Any]) -> None:
     await db["tasks"].create_index("assigned_to")
     await db["tasks"].create_index("status")
     await db["tasks"].create_index("due_at")
+    await db["tasks"].create_index([("related_entity_type", 1), ("related_entity_id", 1)])
 
     await db["reminder_rules"].create_index("rule_type")
 

@@ -194,7 +194,8 @@ class ReferralPartnerManagementService:
         if not editable:
             raise ForbiddenError("This lead can no longer be edited — processing has already started.")
         return await self._lead_service.update_lead(
-            lead_id, UpdateLeadRequest(full_name=payload.full_name, mobile=payload.mobile, email=payload.email, remarks=payload.remarks), actor
+            lead_id, UpdateLeadRequest(full_name=payload.full_name, mobile=payload.mobile, email=payload.email, remarks=payload.remarks), actor,
+            skip_ownership_check=True,  # already authorized above via the partner-lead mapping + editable-window check
         )
 
     async def list_own_leads(self, actor: User, *, skip: int, limit: int) -> tuple[list[tuple[Lead, str, bool]], int]:

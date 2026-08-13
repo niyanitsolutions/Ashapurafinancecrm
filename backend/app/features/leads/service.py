@@ -190,8 +190,14 @@ class LeadService:
             assigned_to=scoped_assigned_to, status=status, skip=skip, limit=limit, sort=sort,
         )
 
-    async def update_lead(self, lead_id: str, payload: UpdateLeadRequest, actor: User) -> Lead:
-        lead = await self.get_lead_scoped(lead_id, actor)
+    async def update_lead(self, lead_id: str, payload: UpdateLeadRequest, actor: User, *, skip_ownership_check: bool = False) -> Lead:
+        """`skip_ownership_check` is for callers (e.g. Referral Partner Management's own
+        lead-edit endpoint) that have already authorized the edit through their own,
+        non-Employee ownership model before delegating here — `get_lead_scoped` only
+        knows how to scope Owner vs. Employee actors, so it wrongly rejects any other
+        role (e.g. a Referral Partner) even when that caller already confirmed the
+        actor may edit this lead. Defaults to the existing scoped behavior."""
+        lead = await self.get_lead(lead_id) if skip_ownership_check else await self.get_lead_scoped(lead_id, actor)
         updates: dict[str, Any] = {}
 
         if payload.source_id is not None:

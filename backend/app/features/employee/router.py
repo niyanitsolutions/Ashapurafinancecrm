@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Response
@@ -16,7 +17,9 @@ from app.features.employee.schemas import (
     CreateEmployeeRequest,
     DocumentUploadUrlRequest,
     DocumentUploadUrlResponse,
+    EmployeeActivityEntry,
     EmployeeDetailResponse,
+    EmployeeDocumentOverviewItem,
     EmployeeDocumentResponse,
     EmployeeListItem,
     LoginHistoryEntry,
@@ -123,6 +126,44 @@ async def export_employees(service: EmployeeServiceDep) -> Response:
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=employees.csv"},
     )
+
+
+@router.get("/documents", dependencies=[Depends(require_owner)])
+async def list_all_employee_documents(
+    service: EmployeeServiceDep, page: PageParamsDep, employee_id: str | None = None, document_type: str | None = None,
+) -> ApiResponse[list[EmployeeDocumentOverviewItem]]:
+    documents, name_map, total = await service.list_all_documents(
+        employee_id=employee_id, document_type=document_type, skip=page.skip, limit=page.page_size, sort=page.sort or [("created_at", -1)],
+    )
+    items = [
+        EmployeeDocumentOverviewItem(
+            id=d.require_id(), employee_id=d.employee_id, employee_name=name_map.get(d.employee_id, ""),
+            document_type=d.document_type, file_name=d.file_name, s3_key=d.s3_key, content_type=d.content_type, created_at=d.created_at,
+        )
+        for d in documents
+    ]
+    return ApiResponse[list[EmployeeDocumentOverviewItem]].ok(items, meta=ResponseMeta(pagination=page.build_meta(total)))
+
+
+@router.get("/activity", dependencies=[Depends(require_owner)])
+async def list_all_employee_activity(
+    service: EmployeeServiceDep, page: PageParamsDep, employee_id: str | None = None, event_type: str | None = None,
+    date_from: datetime | None = None, date_to: datetime | None = None,
+) -> ApiResponse[list[EmployeeActivityEntry]]:
+    entries, name_map, total = await service.list_activity(
+        employee_id=employee_id, event_type=event_type, date_from=date_from, date_to=date_to, skip=page.skip, limit=page.page_size,
+    )
+    items = []
+    for e in entries:
+        entry_employee_id: str | None = e.get("_employee_id")
+        items.append(
+            EmployeeActivityEntry(
+                event_type=e["event_type"], employee_id=entry_employee_id,
+                employee_name=name_map.get(entry_employee_id) if entry_employee_id else None,
+                ip_address=e.get("ip_address"), user_agent=e.get("user_agent"), metadata=e.get("metadata"), created_at=e["created_at"],
+            )
+        )
+    return ApiResponse[list[EmployeeActivityEntry]].ok(items, meta=ResponseMeta(pagination=page.build_meta(total)))
 
 
 @router.post("", dependencies=[Depends(require_owner)])

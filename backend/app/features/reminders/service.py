@@ -79,9 +79,12 @@ class RemindersService:
         employee = await self._employees.find_by_id(payload.assigned_to)
         if employee is None:
             raise ValidationError("Unknown assigned_to employee_id.")
+        if bool(payload.related_entity_type) != bool(payload.related_entity_id):
+            raise ValidationError("related_entity_type and related_entity_id must be provided together.")
         task = Task(
             title=payload.title, description=payload.description, assigned_to=payload.assigned_to,
             assigned_by=actor.require_id(), due_at=payload.due_at, created_by=actor.require_id(),
+            priority=payload.priority, related_entity_type=payload.related_entity_type, related_entity_id=payload.related_entity_id,
         )
         task_id = await self._tasks.insert(task)
         await write_audit_log(self._db, event_type=AuditEvent.TASK_CREATED, user_id=actor.require_id(), metadata={"task_id": task_id, "assigned_to": payload.assigned_to})
@@ -107,12 +110,18 @@ class RemindersService:
         return task
 
     async def list_tasks(
-        self, actor: User, *, status: str | None, skip: int, limit: int, sort: list[tuple[str, int]] | None
+        self, actor: User, *, status: str | None, priority: str | None = None,
+        related_entity_type: str | None = None, related_entity_id: str | None = None,
+        skip: int, limit: int, sort: list[tuple[str, int]] | None
     ) -> tuple[list[Task], int]:
         assigned_to = None
         if actor.role == EMPLOYEE:
             assigned_to = await self._acting_employee_id(actor)
-        return await self._tasks.search_and_filter(assigned_to=assigned_to, status=status, skip=skip, limit=limit, sort=sort)
+        return await self._tasks.search_and_filter(
+            assigned_to=assigned_to, status=status, priority=priority,
+            related_entity_type=related_entity_type, related_entity_id=related_entity_id,
+            skip=skip, limit=limit, sort=sort,
+        )
 
     async def update_task(self, task_id: str, payload: UpdateTaskRequest, actor: User) -> Task:
         # `get_task` (not a bare `find_by_id`) so this matches `complete_task`'s own

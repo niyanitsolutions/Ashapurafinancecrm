@@ -14,6 +14,14 @@ class TaskStatus:
     ALL = (PENDING, COMPLETED)
 
 
+class TaskPriority:
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+    ALL = (LOW, MEDIUM, HIGH)
+
+
 class ReminderRuleType:
     RE_ELIGIBILITY = "re_eligibility"
     TASK_DUE = "task_due"

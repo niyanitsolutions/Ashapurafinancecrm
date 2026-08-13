@@ -49,9 +49,13 @@ async def create_task(payload: CreateTaskRequest, service: ServiceDep, actor: An
 
 @router.get("/tasks")
 async def list_tasks(
-    service: ServiceDep, actor: Annotated[User, _perm("tasks", "view")], page: PageParamsDep, status: str | None = None
+    service: ServiceDep, actor: Annotated[User, _perm("tasks", "view")], page: PageParamsDep, status: str | None = None,
+    priority: str | None = None, related_entity_type: str | None = None, related_entity_id: str | None = None,
 ) -> ApiResponse[list[TaskResponse]]:
-    tasks, total = await service.list_tasks(actor, status=status, skip=page.skip, limit=page.page_size, sort=page.sort)
+    tasks, total = await service.list_tasks(
+        actor, status=status, priority=priority, related_entity_type=related_entity_type, related_entity_id=related_entity_id,
+        skip=page.skip, limit=page.page_size, sort=page.sort,
+    )
     names = await service.resolve_task_names(tasks)
     items = [mappers.task_to_response(t, names.get(t.assigned_to)) for t in tasks]
     return ApiResponse[list[TaskResponse]].ok(items, meta=ResponseMeta(pagination=page.build_meta(total)))

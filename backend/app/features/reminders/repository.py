@@ -17,13 +17,21 @@ class TaskRepository(BaseRepository[Task]):
     model = Task
 
     async def search_and_filter(
-        self, *, assigned_to: str | None, status: str | None, skip: int, limit: int, sort: list[tuple[str, int]] | None
+        self, *, assigned_to: str | None, status: str | None, priority: str | None = None,
+        related_entity_type: str | None = None, related_entity_id: str | None = None,
+        skip: int, limit: int, sort: list[tuple[str, int]] | None
     ) -> tuple[list[Task], int]:
         query: dict[str, Any] = {"is_deleted": False}
         if assigned_to:
             query["assigned_to"] = assigned_to
         if status:
             query["status"] = status
+        if priority:
+            query["priority"] = priority
+        if related_entity_type:
+            query["related_entity_type"] = related_entity_type
+        if related_entity_id:
+            query["related_entity_id"] = related_entity_id
         total = await self.collection.count_documents(query)
         cursor = self.collection.find(query).skip(skip).limit(limit)
         if sort:

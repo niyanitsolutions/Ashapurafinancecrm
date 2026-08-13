@@ -16,6 +16,7 @@ from app.features.reminders.constants import (
     ReminderStatus,
     ReminderTargetType,
     ReminderType,
+    TaskPriority,
     TaskStatus,
 )
 from app.shared.base_document import BaseDocument
@@ -32,6 +33,12 @@ class Task(BaseDocument):
     # Set once the "still not completed" final escalation has notified the Owner, so
     # that step never repeats for the same task — see ReminderRule.escalation_max_repeats.
     owner_escalated: bool = False
+    priority: str = Field(default=TaskPriority.MEDIUM, pattern=f"^({'|'.join(TaskPriority.ALL)})$")
+    # Optional link to the record this task is about — same shape and same reasoning as
+    # Notification.entity_type/entity_id below (unconstrained string, not an enum), so a
+    # future linkable entity type never needs a schema change here.
+    related_entity_type: str | None = None  # e.g. "lead" | "customer" | "application"
+    related_entity_id: str | None = None
 
 
 class ReminderRule(BaseDocument):

@@ -457,6 +457,70 @@ class EmployeeService:
         self._ensure_can_view(employee, actor)
         return await self._documents.find_many({"employee_id": employee_id}, limit=100)
 
+    # ---------------------------------------------------------------- cross-employee overviews (owner-only)
+
+    async def list_all_documents(
+        self, *, employee_id: str | None, document_type: str | None, skip: int, limit: int, sort: list[tuple[str, int]] | None
+    ) -> tuple[list[EmployeeDocument], dict[str, str], int]:
+        documents, total = await self._documents.search_and_filter(
+            employee_id=employee_id, document_type=document_type, skip=skip, limit=limit, sort=sort
+        )
+        name_map = await self._resolve_employee_names({d.employee_id for d in documents})
+        return documents, name_map, total
+
+    async def list_activity(
+        self, *, employee_id: str | None, event_type: str | None, date_from: datetime | None, date_to: datetime | None,
+        skip: int, limit: int,
+    ) -> tuple[list[dict[str, Any]], dict[str, str], int]:
+        """Owner-only, company-wide counterpart of `list_employee_login_history` above —
+        same `audit_logs` collection, same `user_id`-scoped query shape, just without a
+        single employee pre-selected. When no `employee_id` filter is given, scopes to
+        the bounded set of every employee's `user_id` (same batch-resolution precedent as
+        `get_master_data_maps`) so this never accidentally surfaces Owner/Customer/
+        Referral Partner audit events, which `list_employee_login_history` never risked
+        since it always start from one known employee."""
+        query: dict[str, Any] = {}
+        if event_type:
+            query["event_type"] = event_type
+        if date_from or date_to:
+            query["created_at"] = {}
+            if date_from:
+                query["created_at"]["$gte"] = date_from
+            if date_to:
+                query["created_at"]["$lte"] = date_to
+
+        if employee_id:
+            employee = await self._get_or_404(employee_id)
+            query["user_id"] = employee.user_id
+            name_map = {employee_id: employee.display_name}
+        else:
+            employees = await self._employees.find_many({}, limit=1000)
+            user_id_to_employee = {e.user_id: e for e in employees}
+            query["user_id"] = {"$in": list(user_id_to_employee.keys())}
+            name_map = {e.require_id(): e.display_name for e in employees}
+
+        total = await self._db["audit_logs"].count_documents(query)
+        cursor = self._db["audit_logs"].find(query).sort("created_at", -1).skip(skip).limit(limit)
+        entries = [doc async for doc in cursor]
+
+        if not employee_id:
+            # Re-key the per-entry employee_id (not yet on `entries`) from user_id, so the
+            # router can attach both employee_id/employee_name per row without a second query.
+            user_id_to_employee_id = {uid: e.require_id() for uid, e in user_id_to_employee.items()}
+            for entry in entries:
+                entry["_employee_id"] = user_id_to_employee_id.get(entry.get("user_id"))
+        else:
+            for entry in entries:
+                entry["_employee_id"] = employee_id
+
+        return entries, name_map, total
+
+    async def _resolve_employee_names(self, employee_ids: set[str]) -> dict[str, str]:
+        if not employee_ids:
+            return {}
+        employees = await self._employees.find_many({}, limit=1000)
+        return {e.require_id(): e.display_name for e in employees if e.require_id() in employee_ids}
+
     # ---------------------------------------------------------------- internals
 
     async def _get_or_404(self, employee_id: str) -> Employee:

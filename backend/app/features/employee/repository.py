@@ -87,3 +87,18 @@ class BranchRepository(BaseRepository[Branch]):
 class EmployeeDocumentRepository(BaseRepository[EmployeeDocument]):
     collection_name = "employee_documents"
     model = EmployeeDocument
+
+    async def search_and_filter(
+        self, *, employee_id: str | None, document_type: str | None, skip: int, limit: int, sort: list[tuple[str, int]] | None
+    ) -> tuple[list[EmployeeDocument], int]:
+        query: dict[str, Any] = {"is_deleted": False}
+        if employee_id:
+            query["employee_id"] = employee_id
+        if document_type:
+            query["document_type"] = document_type
+        total = await self.collection.count_documents(query)
+        cursor = self.collection.find(query).skip(skip).limit(limit)
+        if sort:
+            cursor = cursor.sort(sort)
+        items = [self.model.model_validate(doc) async for doc in cursor]
+        return items, total
