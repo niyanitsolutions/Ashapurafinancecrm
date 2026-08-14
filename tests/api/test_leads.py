@@ -197,6 +197,165 @@ async def test_assign_and_unassign_lead(client, mock_db, owner_headers, master_d
     assert r.json()["data"]["assigned_to"] is None
 
 
+async def test_assign_lead_rejects_inactive_employee(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    lead = await _create_lead(client, owner_headers, lmd)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9766666601", email="inactive.assignee@example.com")
+
+    r = await client.patch(f"/api/v1/employees/{employee['id']}/deactivate", headers=owner_headers)
+    assert r.status_code == 200, r.text
+
+    r = await client.post(f"/api/v1/leads/{lead['id']}/assign", json={"employee_id": employee["id"]}, headers=owner_headers)
+    assert r.status_code == 422, r.text
+
+
+async def test_assign_lead_works_across_ownership_boundary_for_permitted_actor(client, mock_db, owner_headers, master_data):
+    """Assignment is gated by the coarser `leads:leads:assign` permission, never by
+    per-record ownership — an employee holding `assign` must be able to reassign a lead
+    they neither created nor are currently assigned to. This must keep working exactly
+    as before after the created_by/assigned_to visibility rework (see get_lead_scoped)."""
+    lmd = await _lead_master_data(mock_db)
+    lead = await _create_lead(client, owner_headers, lmd)  # created_by = Owner
+
+    assigner = await _create_employee(client, owner_headers, master_data, mobile="9766666602", email="assigner@example.com")
+    await _grant_leads_assign(client, owner_headers, assigner["id"], role_name="Assigner Role")
+    r = await client.post("/api/v1/auth/login", json={"mobile": "9766666602", "password": "InitialPass1!"})
+    assigner_headers = {"Authorization": f"Bearer {r.json()['data']['access_token']}"}
+
+    target = await _create_employee(client, owner_headers, master_data, mobile="9766666603", email="target@example.com")
+
+    r = await client.post(f"/api/v1/leads/{lead['id']}/assign", json={"employee_id": target["id"]}, headers=assigner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["assigned_to"] == target["id"]
+
+
+# ---------------------------------------------------------------------- lead visibility scoping (created_by OR assigned_to)
+
+
+async def _full_leads_permission_id(client, owner_headers) -> str:
+    # Distinct from `_leads_permission_id` (below, in the eligible-assignees section)
+    # which deliberately only registers ["view", "assign"] for its own narrower tests —
+    # this one needs "create"/"edit" too, matching the real seeded catalog's full action
+    # set for leads:leads.
+    r = await client.post(
+        "/api/v1/permissions", json={"module": "leads", "resource": "leads", "actions": ["view", "create", "edit", "assign", "export"]},
+        headers=owner_headers,
+    )
+    if r.status_code == 200:
+        return r.json()["data"]["id"]
+    existing = await client.get("/api/v1/permissions", headers=owner_headers)
+    return next(p["id"] for p in existing.json()["data"] if p["module"] == "leads" and p["resource"] == "leads")
+
+
+async def _grant_leads_view_create(client, owner_headers, employee_id, role_name="Lead Handler"):
+    leads_permission_id = await _full_leads_permission_id(client, owner_headers)
+    role = await client.post("/api/v1/roles", json={"name": role_name}, headers=owner_headers)
+    role_id = role.json()["data"]["id"]
+    await client.put(
+        f"/api/v1/roles/{role_id}/permissions",
+        json={"grants": [{"permission_id": leads_permission_id, "granted_actions": ["view", "create", "edit"]}]},
+        headers=owner_headers,
+    )
+    await client.post(f"/api/v1/roles/{role_id}/assign", json={"employee_id": employee_id}, headers=owner_headers)
+
+
+async def _login(client, mobile, password="InitialPass1!"):
+    r = await client.post("/api/v1/auth/login", json={"mobile": mobile, "password": password})
+    assert r.status_code == 200, r.text
+    return {"Authorization": f"Bearer {r.json()['data']['access_token']}"}
+
+
+async def test_owner_sees_full_unassigned_pool(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee_a = await _create_employee(client, owner_headers, master_data, mobile="9766666701", email="a@example.com")
+    employee_b = await _create_employee(client, owner_headers, master_data, mobile="9766666702", email="b@example.com")
+    await _grant_leads_view_create(client, owner_headers, employee_a["id"], role_name="A Role")
+    await _grant_leads_view_create(client, owner_headers, employee_b["id"], role_name="B Role")
+    headers_a = await _login(client, "9766666701")
+    headers_b = await _login(client, "9766666702")
+
+    lead_a = await _create_lead(client, headers_a, lmd, mobile="9611111101")
+    lead_b = await _create_lead(client, headers_b, lmd, mobile="9611111102")
+
+    r = await client.get("/api/v1/leads?assigned_to=__unassigned__", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    ids = {x["id"] for x in r.json()["data"]}
+    assert {lead_a["id"], lead_b["id"]} <= ids
+
+
+async def test_employee_unassigned_view_scoped_to_own_created_leads_only(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee_a = await _create_employee(client, owner_headers, master_data, mobile="9766666703", email="a2@example.com")
+    employee_b = await _create_employee(client, owner_headers, master_data, mobile="9766666704", email="b2@example.com")
+    await _grant_leads_view_create(client, owner_headers, employee_a["id"], role_name="A2 Role")
+    await _grant_leads_view_create(client, owner_headers, employee_b["id"], role_name="B2 Role")
+    headers_a = await _login(client, "9766666703")
+    headers_b = await _login(client, "9766666704")
+
+    lead_a = await _create_lead(client, headers_a, lmd, mobile="9611111103")
+    lead_b = await _create_lead(client, headers_b, lmd, mobile="9611111104")
+
+    r = await client.get("/api/v1/leads?assigned_to=__unassigned__", headers=headers_a)
+    assert r.status_code == 200, r.text
+    assert [x["id"] for x in r.json()["data"]] == [lead_a["id"]]
+
+    r = await client.get("/api/v1/leads?assigned_to=__unassigned__", headers=headers_b)
+    assert [x["id"] for x in r.json()["data"]] == [lead_b["id"]]
+
+
+async def test_employee_cannot_see_meta_captured_unassigned_lead(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9766666705", email="c2@example.com")
+    await _grant_leads_view_create(client, owner_headers, employee["id"], role_name="C2 Role")
+    headers = await _login(client, "9766666705")
+
+    meta_lead = await _create_lead(client, owner_headers, lmd, mobile="9611111105")
+    # Simulates lead_capture/service.py::_process_raw_payload's deliberate
+    # created_by=None stamp for a Meta-captured lead, without spinning up the full
+    # webhook/HMAC flow — see plan section A6.
+    from app.utils.helpers import to_object_id
+
+    await mock_db["leads"].update_one({"_id": to_object_id(meta_lead["id"])}, {"$set": {"created_by": None}})
+
+    r = await client.get("/api/v1/leads?assigned_to=__unassigned__", headers=headers)
+    assert r.status_code == 200, r.text
+    assert meta_lead["id"] not in {x["id"] for x in r.json()["data"]}
+
+    r = await client.get("/api/v1/leads?assigned_to=__unassigned__", headers=owner_headers)
+    assert meta_lead["id"] in {x["id"] for x in r.json()["data"]}
+
+
+async def test_get_lead_scoped_allows_own_unassigned_draft_denies_others(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee_a = await _create_employee(client, owner_headers, master_data, mobile="9766666706", email="a3@example.com")
+    employee_b = await _create_employee(client, owner_headers, master_data, mobile="9766666707", email="b3@example.com")
+    await _grant_leads_view_create(client, owner_headers, employee_a["id"], role_name="A3 Role")
+    await _grant_leads_view_create(client, owner_headers, employee_b["id"], role_name="B3 Role")
+    headers_a = await _login(client, "9766666706")
+    headers_b = await _login(client, "9766666707")
+
+    lead_a = await _create_lead(client, headers_a, lmd, mobile="9611111106")
+
+    r = await client.get(f"/api/v1/leads/{lead_a['id']}", headers=headers_a)
+    assert r.status_code == 200, r.text
+
+    r = await client.get(f"/api/v1/leads/{lead_a['id']}", headers=headers_b)
+    assert r.status_code == 403, r.text
+
+
+async def test_check_duplicate_includes_own_unassigned_leads(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9766666708", email="d3@example.com")
+    await _grant_leads_view_create(client, owner_headers, employee["id"], role_name="D3 Role")
+    headers = await _login(client, "9766666708")
+
+    lead = await _create_lead(client, headers, lmd, mobile="9611111107")
+
+    r = await client.get("/api/v1/leads/check-duplicate?mobile=9611111107", headers=headers)
+    assert r.status_code == 200, r.text
+    assert [m["id"] for m in r.json()["data"]["matches"]] == [lead["id"]]
+
+
 # ---------------------------------------------------------------------- notes / timeline
 
 

@@ -92,7 +92,9 @@ async def test_partner_approval_lifecycle_and_pre_approval_restrictions(client, 
     )
     assert r.status_code == 403, r.text
 
-    # Only the Owner can create/approve/deactivate Referral Partners.
+    # Approve/deactivate stay Owner-only always. Create now also accepts a permitted
+    # Employee (see test_employee_granted_partner_create_via_role below) — this
+    # `employee_headers` actor holds zero grants, so it's still denied here.
     r = await client.post("/api/v1/referral-partners", json={"full_name": "X", "mobile": "9700000099"}, headers=employee_headers)
     assert r.status_code == 403, r.text
     r = await client.post(f"/api/v1/referral-partners/{partner['id']}/approve", json={}, headers=employee_headers)
@@ -303,3 +305,94 @@ async def test_commission_rule_crud_entry_creation_and_snapshot_is_immutable(cli
     assert dashboard["commission_paid"] == 2000.0
     assert dashboard["commission_pending"] == 0.0
     assert dashboard["commission_balance"] == 0.0
+
+
+# ---------------------------------------------------------------------- Employee Permission Matrix: partner access
+
+
+async def _grant_partner_permission(client, owner_headers, employee_id, actions, role_name="Partner Access"):
+    r = await client.post(
+        "/api/v1/permissions", json={"module": "referral_partner_management", "resource": "partners", "actions": ["view", "create", "edit"]},
+        headers=owner_headers,
+    )
+    if r.status_code == 200:
+        permission_id = r.json()["data"]["id"]
+    else:
+        existing = await client.get("/api/v1/permissions", headers=owner_headers)
+        permission_id = next(
+            p["id"] for p in existing.json()["data"] if p["module"] == "referral_partner_management" and p["resource"] == "partners"
+        )
+    role = await client.post("/api/v1/roles", json={"name": role_name}, headers=owner_headers)
+    role_id = role.json()["data"]["id"]
+    await client.put(
+        f"/api/v1/roles/{role_id}/permissions",
+        json={"grants": [{"permission_id": permission_id, "granted_actions": actions}]},
+        headers=owner_headers,
+    )
+    await client.post(f"/api/v1/roles/{role_id}/assign", json={"employee_id": employee_id}, headers=owner_headers)
+
+
+async def test_employee_denied_partner_list_without_permission(client, mock_db, owner_headers, master_data):
+    await _create_and_approve_partner(client, mock_db, owner_headers, mobile="9700000101")
+    employee = await _create_employee(client, owner_headers, master_data, "9500000101", "noperm.partner@example.com")
+    headers = await _login(client, "9500000101", "InitialPass1!")
+
+    r = await client.get("/api/v1/referral-partners", headers=headers)
+    assert r.status_code == 403, r.text
+
+
+async def test_employee_granted_partner_view_via_role(client, mock_db, owner_headers, master_data):
+    partner, _ = await _create_and_approve_partner(client, mock_db, owner_headers, mobile="9700000102")
+    employee = await _create_employee(client, owner_headers, master_data, "9500000102", "view.partner@example.com")
+    headers = await _login(client, "9500000102", "InitialPass1!")
+    await _grant_partner_permission(client, owner_headers, employee["id"], ["view"])
+
+    r = await client.get("/api/v1/referral-partners", headers=headers)
+    assert r.status_code == 200, r.text
+    assert any(p["id"] == partner["id"] for p in r.json()["data"])
+
+    r = await client.get(f"/api/v1/referral-partners/{partner['id']}", headers=headers)
+    assert r.status_code == 200, r.text
+
+
+async def test_employee_granted_partner_create_permission_still_blocked_by_auth_invite_rule(client, mock_db, owner_headers, master_data):
+    """The router-level `referral_partner_management:partners:create` grant is real and
+    reachable (proven by test_employee_denied_partner_list_without_permission passing
+    without it), but `POST /referral-partners` also goes through Auth's own, separate,
+    frozen invite-role check (`INVITER_ROLES_BY_INVITEE_ROLE[REFERRAL_PARTNER] ==
+    {OWNER}`, auth/constants.py) — deliberately untouched, per the "no Auth changes"
+    scope boundary. So today a Create grant on this row is real router-level scaffolding
+    that reaches the endpoint but still can't complete the invite; same class of no-op
+    as Customer's `create` action (see customer/router.py notes) until/unless a product
+    decision widens the Auth invite-role set for Referral Partner."""
+    employee = await _create_employee(client, owner_headers, master_data, "9500000103", "create.partner@example.com")
+    headers = await _login(client, "9500000103", "InitialPass1!")
+    await _grant_partner_permission(client, owner_headers, employee["id"], ["create"])
+
+    r = await client.post(
+        "/api/v1/referral-partners", json={"full_name": "Employee-Created Partner", "mobile": "9700000103"}, headers=headers
+    )
+    assert r.status_code == 403, r.text
+    assert "cannot invite" in r.json()["error"]["message"]
+
+
+async def test_employee_cannot_approve_or_deactivate_partner_via_basic_grant(client, mock_db, owner_headers, master_data):
+    partner, _ = await _create_and_approve_partner(client, mock_db, owner_headers, mobile="9700000104")
+    employee = await _create_employee(client, owner_headers, master_data, "9500000104", "fullgrant.partner@example.com")
+    headers = await _login(client, "9500000104", "InitialPass1!")
+    await _grant_partner_permission(client, owner_headers, employee["id"], ["view", "create", "edit"])
+
+    r = await client.post(f"/api/v1/referral-partners/{partner['id']}/approve", json={}, headers=headers)
+    assert r.status_code == 403, r.text
+    r = await client.post(f"/api/v1/referral-partners/{partner['id']}/deactivate", json={}, headers=headers)
+    assert r.status_code == 403, r.text
+
+
+async def test_owner_partner_management_unaffected_by_new_permission_dependency(client, mock_db, owner_headers):
+    # Owner holds zero explicit grants — PermissionEngine's unconditional Owner bypass
+    # means the OwnerDep -> require_permission swap on list/get/create changes nothing
+    # for Owner.
+    r = await client.get("/api/v1/referral-partners", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    r = await client.post("/api/v1/referral-partners", json={"full_name": "Owner Direct", "mobile": "9700000105"}, headers=owner_headers)
+    assert r.status_code == 200, r.text

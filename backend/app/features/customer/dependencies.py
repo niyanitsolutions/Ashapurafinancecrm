@@ -28,12 +28,15 @@ __all__ = [
 
 CurrentUserDep = Annotated[User, Depends(get_current_active_user)]
 
-# 6B deliberately does NOT use Access Control's `require_permission` for staff
-# visibility: the brief frames Employee access as inherent, assignment-scoped
-# visibility ("View Assigned Customers/Applications"), not a delegable grant — an
-# Employee's view is hard-scoped to their own assignments in the service layer
-# regardless of any permission grant, so a require_permission gate here would add
-# ceremony without adding real flexibility. See docs/decisions/DECISIONS.md #050.
+# `require_staff` stays as a plain role check for routes that don't need a fine-grained
+# permission gate. As of the Employee Permission Matrix redesign, the Customer list/
+# detail/document-verify/document-reject routes in router.py use a new
+# `require_permission("customer", "customers", action)` gate instead (see
+# CustomerViewDep/CustomerEditDep there) — additive in front of, not a replacement for,
+# the assignment-scoped visibility in customer/service.py, which is unchanged: an
+# Employee still only ever sees their own assigned records regardless of grant. This
+# revises decision #050's original "no require_permission here" call for those specific
+# routes only; `require_staff` itself is untouched and still used elsewhere.
 
 
 def get_customer_service(

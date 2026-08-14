@@ -1,11 +1,12 @@
 """Module 7 — Referral Partner Portal routes."""
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 
 from app.core.pagination import PageParams, page_params
 from app.core.response import ApiResponse, ResponseMeta
+from app.features.access_control.permission_engine import require_permission
 from app.features.auth.models import User
 from app.features.referral_partner_management import mappers
 from app.features.referral_partner_management.dependencies import (
@@ -35,6 +36,15 @@ ServiceDep = Annotated[ReferralPartnerManagementService, Depends(get_referral_pa
 PageParamsDep = Annotated[PageParams, Depends(page_params)]
 OwnerDep = Annotated[User, Depends(require_owner)]
 PartnerDep = Annotated[User, Depends(require_referral_partner)]
+
+
+def _perm(action: str) -> Any:
+    return require_permission("referral_partner_management", "partners", action)
+
+
+# Additive to OwnerDep, not a replacement — see dependencies.py's module docstring.
+PartnerViewDep = Annotated[User, _perm("view")]
+PartnerCreateDep = Annotated[User, _perm("create")]
 
 
 # ---------------------------------------------------------------------- Referral Partner self-service
@@ -96,14 +106,14 @@ async def list_own_commission_entries(
 
 
 @router.post("/referral-partners")
-async def create_partner(payload: CreateReferralPartnerRequest, service: ServiceDep, actor: OwnerDep) -> ApiResponse[ReferralPartnerResponse]:
+async def create_partner(payload: CreateReferralPartnerRequest, service: ServiceDep, actor: PartnerCreateDep) -> ApiResponse[ReferralPartnerResponse]:
     partner = await service.create_partner(payload, actor)
     return ApiResponse[ReferralPartnerResponse].ok(mappers.partner_to_response(partner))
 
 
 @router.get("/referral-partners")
 async def list_partners(
-    service: ServiceDep, _actor: OwnerDep, page: PageParamsDep, search: str | None = None, approval_status: str | None = None
+    service: ServiceDep, _actor: PartnerViewDep, page: PageParamsDep, search: str | None = None, approval_status: str | None = None
 ) -> ApiResponse[list[ReferralPartnerResponse]]:
     partners, total = await service.list_partners(search=search, approval_status=approval_status, skip=page.skip, limit=page.page_size, sort=page.sort)
     items = [mappers.partner_to_response(p) for p in partners]
@@ -111,7 +121,7 @@ async def list_partners(
 
 
 @router.get("/referral-partners/{partner_id}")
-async def get_partner(partner_id: str, service: ServiceDep, _actor: OwnerDep) -> ApiResponse[ReferralPartnerResponse]:
+async def get_partner(partner_id: str, service: ServiceDep, _actor: PartnerViewDep) -> ApiResponse[ReferralPartnerResponse]:
     partner = await service.get_partner(partner_id)
     return ApiResponse[ReferralPartnerResponse].ok(mappers.partner_to_response(partner))
 

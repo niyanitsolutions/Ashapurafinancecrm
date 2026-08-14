@@ -143,51 +143,69 @@ class LeadService:
 
     async def get_lead_scoped(self, lead_id: str, actor: User) -> Lead:
         """The single-record counterpart of `list_leads`' own scoping: an Owner reads any
-        lead, a non-Owner only one currently assigned to them. `get_lead` itself stays
-        unscoped and is still used internally by `assign_lead`/`unassign_lead`, where the
-        distinct, coarser `assign` permission (not per-record ownership) is the intended
-        boundary — a lead must be readable-by-id in order to be picked up/reassigned in
-        the first place. This variant is for the read/edit/timeline/notes routes, which
-        `list_leads` already implies should be assignment-scoped for a non-Owner."""
+        lead. A non-Owner may read a lead currently assigned to them, OR one they
+        personally created that hasn't been assigned to anyone yet (their own draft) —
+        creating a lead must not cost the creator visibility of it the moment it's still
+        unassigned. `get_lead` itself stays unscoped and is still used internally by
+        `assign_lead`/`unassign_lead`, where the distinct, coarser `assign` permission
+        (not per-record ownership) is the intended boundary — a lead must be
+        readable-by-id in order to be picked up/reassigned in the first place. This
+        variant is for the read/edit/timeline/notes routes, which `list_leads` already
+        implies should be ownership-scoped for a non-Owner."""
         lead = await self.get_lead(lead_id)
         if actor.role != OWNER:
             employee = await self._employees.find_by_user_id(actor.require_id())
             employee_id = employee.require_id() if employee is not None else NO_MATCH_SENTINEL
-            if lead.assigned_to != employee_id:
+            is_assigned_to_me = lead.assigned_to == employee_id
+            # `Lead.created_by` is stamped from `actor.require_id()` at creation time
+            # (BaseDocument's generic convention) — the actor's own User id, NOT their
+            # Employee document id (which is what `assigned_to` stores, from
+            # AssignLeadRequest.employee_id). Comparing against the wrong id space here
+            # would silently never match a real self-authored draft.
+            is_my_unassigned_draft = lead.assigned_to is None and lead.created_by == actor.require_id()
+            if not (is_assigned_to_me or is_my_unassigned_draft):
                 raise ForbiddenError("This lead isn't assigned to you.")
         return lead
 
-    async def _scope_assigned_to(self, actor: User, requested_assigned_to: str | None) -> str | None:
-        """An Owner sees whatever `assigned_to` was requested — a specific employee, the
-        "unassigned"/"assigned to anyone" sentinels, or unfiltered. A non-Owner
-        (Employee) can NEVER see another employee's leads: this always overrides
-        whatever was requested — a specific employee's id, the "assigned to anyone"
-        sentinel, or unfiltered — otherwise an Employee holding only `leads:leads:view`
-        could see the whole company's book instead of just their own.
+    async def _scope_query(self, actor: User, requested_assigned_to: str | None) -> tuple[str | None, str | None]:
+        """Returns `(assigned_to, created_by)` to hand to `LeadRepository.search_and_filter`.
 
-        `UNASSIGNED_SENTINEL` is the one deliberate exception: "show me leads nobody owns
-        yet" can never expose another employee's book (there is no owner to expose), so a
-        non-Owner is allowed to pass it through unchanged. Without this, the frontend's
-        "New Leads" tab (which requests exactly this sentinel) and "Assigned Leads" tab
-        (which requests `ASSIGNED_SENTINEL`) collapsed to the identical query for every
-        Employee — both got silently overridden to "my own leads" — leaving every
-        genuinely unassigned lead (including every Meta/website-captured one) invisible
-        to staff until an Owner manually assigned it. The one place to extend later for a
-        broader-visibility permission (e.g. a future "Branch Manager sees branch leads"
-        role) without touching list_leads/export_leads_csv themselves."""
-        if actor.role == OWNER or requested_assigned_to == UNASSIGNED_SENTINEL:
-            return requested_assigned_to
+        An Owner sees whatever `assigned_to` was requested — a specific employee, the
+        "unassigned"/"assigned to anyone" sentinels, or unfiltered — completely
+        unrestricted, `created_by` stays unused.
+
+        A non-Owner (Employee) can NEVER see another employee's leads or the shared
+        "New Leads" pool: any request other than the unassigned sentinel is always
+        overridden to their own employee_id, same as before.
+
+        `UNASSIGNED_SENTINEL` from a non-Owner is the one case that changed: it no
+        longer passes through unchanged (that used to expose every genuinely unassigned
+        lead — including every Meta/website-captured one — to any employee holding
+        `leads:leads:view`, before an Owner ever looked at it). It now resolves to "my
+        own not-yet-assigned drafts only" — the repository ANDs `created_by` onto the
+        `assigned_to=None` filter for this case. An unassigned lead a non-Owner did not
+        personally create (including every Owner-authored or Meta-captured one) is
+        Owner-only until explicitly assigned.
+
+        The `created_by` value returned here is the actor's own User id (`Lead.created_by`
+        is always stamped from `actor.require_id()`, BaseDocument's generic convention —
+        NOT the Employee document id `assigned_to` uses), not `employee_id`."""
+        if actor.role == OWNER:
+            return requested_assigned_to, None
         employee = await self._employees.find_by_user_id(actor.require_id())
-        return employee.require_id() if employee is not None else NO_MATCH_SENTINEL
+        employee_id = employee.require_id() if employee is not None else NO_MATCH_SENTINEL
+        if requested_assigned_to == UNASSIGNED_SENTINEL:
+            return UNASSIGNED_SENTINEL, actor.require_id()
+        return employee_id, None
 
     async def list_leads(
         self, *, search: str | None, source_id: str | None, product_category: str | None, product_id: str | None,
         assigned_to: str | None, status: str | None, skip: int, limit: int, sort: list[tuple[str, int]] | None, actor: User,
     ) -> tuple[list[Lead], int]:
-        scoped_assigned_to = await self._scope_assigned_to(actor, assigned_to)
+        scoped_assigned_to, scoped_created_by = await self._scope_query(actor, assigned_to)
         return await self._leads.search_and_filter(
             search=search, source_id=source_id, product_category=product_category, product_id=product_id,
-            assigned_to=scoped_assigned_to, status=status, skip=skip, limit=limit, sort=sort,
+            assigned_to=scoped_assigned_to, created_by=scoped_created_by, status=status, skip=skip, limit=limit, sort=sort,
         )
 
     async def update_lead(self, lead_id: str, payload: UpdateLeadRequest, actor: User, *, skip_ownership_check: bool = False) -> Lead:
@@ -236,7 +254,13 @@ class LeadService:
             return matches
         employee = await self._employees.find_by_user_id(actor.require_id())
         employee_id = employee.require_id() if employee is not None else NO_MATCH_SENTINEL
-        return [lead for lead in matches if lead.assigned_to == employee_id]
+        # `lead.created_by` is a User id (BaseDocument's generic stamp), not the Employee
+        # id `assigned_to`/`employee_id` use — see get_lead_scoped's docstring.
+        return [
+            lead
+            for lead in matches
+            if lead.assigned_to == employee_id or (lead.assigned_to is None and lead.created_by == actor.require_id())
+        ]
 
     # ---------------------------------------------------------------- assignment
 
@@ -245,6 +269,8 @@ class LeadService:
         employee = await self._employees.find_by_id(employee_id)
         if employee is None:
             raise ValidationError("Unknown employee_id.")
+        if employee.status != EmploymentStatus.ACTIVE:
+            raise ValidationError("Cannot assign a lead to an inactive employee.")
         updated = await self._leads.update(lead_id, {"assigned_to": employee_id}, updated_by=actor.require_id())
         if updated is None:
             raise NotFoundError("Lead not found.")
@@ -459,9 +485,10 @@ class LeadService:
         return source_map, product_map, employee_map
 
     async def export_leads_csv(self, actor: User) -> str:
-        scoped_assigned_to = await self._scope_assigned_to(actor, None)
+        scoped_assigned_to, scoped_created_by = await self._scope_query(actor, None)
         leads, _ = await self._leads.search_and_filter(
-            search=None, source_id=None, product_category=None, product_id=None, assigned_to=scoped_assigned_to, status=None,
+            search=None, source_id=None, product_category=None, product_id=None,
+            assigned_to=scoped_assigned_to, created_by=scoped_created_by, status=None,
             skip=0, limit=10_000, sort=[("created_at", -1)],
         )
         source_map, product_map, employee_map = await self.resolve_names(leads)

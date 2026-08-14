@@ -10,7 +10,7 @@ import { FormField } from "@/components/forms/FormField";
 import { SelectField } from "@/components/forms/SelectField";
 import { SubmitButton } from "@/components/forms/SubmitButton";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
-import { BusinessModulesSection } from "@/features/employee/components/BusinessModulesSection";
+import { PermissionMatrixSection } from "@/features/employee/components/PermissionMatrixSection";
 import {
   createEmployee,
   listBranches,
@@ -21,7 +21,7 @@ import {
   type EmployeeListItem,
   type MasterDataItem,
 } from "@/features/employee/api";
-import { buildModuleGrants } from "@/features/employee/businessModules";
+import { buildMatrixGrants } from "@/features/employee/permissionMatrix";
 import { getErrorMessage } from "@/features/employee/errors";
 import { simpleCreateEmployeeSchema, type SimpleCreateEmployeeFormValues } from "@/features/employee/validation";
 import { insuranceProductsApi, loanProductsApi, type NamedMasterData } from "@/features/system_settings/api";
@@ -39,8 +39,7 @@ export function CreateEmployeePage() {
   const [branches, setBranches] = useState<BranchItem[]>([]);
   const [managers, setManagers] = useState<EmployeeListItem[]>([]);
   const [permissions, setPermissions] = useState<Permission[]>([]);
-  const [selectedModules, setSelectedModules] = useState<Set<string>>(new Set());
-  const [capabilities, setCapabilities] = useState<Record<string, Set<string>>>({});
+  const [checkedPermissions, setCheckedPermissions] = useState<Record<string, Set<string>>>({});
   const [loanProducts, setLoanProducts] = useState<NamedMasterData[]>([]);
   const [insuranceProducts, setInsuranceProducts] = useState<NamedMasterData[]>([]);
   const [productIds, setProductIds] = useState<string[]>([]);
@@ -65,24 +64,6 @@ export function CreateEmployeePage() {
     formState: { errors, isSubmitting },
   } = useForm<SimpleCreateEmployeeFormValues>({ resolver: zodResolver(simpleCreateEmployeeSchema) });
 
-  const toggleModule = (key: string) => {
-    setSelectedModules((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  };
-
-  const toggleCapability = (permissionId: string, action: string) => {
-    setCapabilities((prev) => {
-      const current = new Set(prev[permissionId] ?? []);
-      if (current.has(action)) current.delete(action);
-      else current.add(action);
-      return { ...prev, [permissionId]: current };
-    });
-  };
-
   const onSubmit = async (values: SimpleCreateEmployeeFormValues) => {
     setApiError(null);
     try {
@@ -94,12 +75,12 @@ export function CreateEmployeePage() {
         product_ids: productIds,
       });
 
-      // Business Modules is a convenience layer on top of Access Control (Module 3) —
-      // orchestrates its existing endpoints (create a role scoped to this employee,
-      // grant it whatever the selected modules/capabilities imply, assign it), rather
-      // than a new backend capability. Skipped entirely if nothing was selected — an
-      // Owner can always configure access later from Roles & Permissions.
-      const activeGrants = buildModuleGrants(permissions, selectedModules, capabilities);
+      // The Permissions matrix is a convenience layer on top of Access Control (Module
+      // 3) — orchestrates its existing endpoints (create a role scoped to this
+      // employee, grant it whatever's checked, assign it), rather than a new backend
+      // capability. Skipped entirely if nothing was checked — an Owner can always
+      // configure access later from Roles & Permissions.
+      const activeGrants = buildMatrixGrants(permissions, checkedPermissions);
       if (activeGrants.length > 0) {
         const role = await createRole(`${values.first_name} ${values.last_name}`, "Created automatically from Add Employee");
         await setRolePermissions(role.id, activeGrants);
@@ -114,7 +95,7 @@ export function CreateEmployeePage() {
 
   return (
     <SimplePageLayout title="Add Employee" subtitle="Just the essentials — detailed HR information can be added later from their profile." backTo="/employees">
-      <form onSubmit={handleSubmit(onSubmit)} noValidate className="max-w-2xl space-y-6">
+      <form onSubmit={handleSubmit(onSubmit)} noValidate className="max-w-4xl mx-auto space-y-6">
         <ErrorBanner message={apiError} />
 
         <div className="bg-card border border-border rounded-card shadow-card p-6">
@@ -165,10 +146,10 @@ export function CreateEmployeePage() {
         </div>
 
         <div className="bg-card border border-border rounded-card shadow-card p-6">
-          <h2 className="text-sm font-semibold text-text mb-1">Products Handled</h2>
+          <h2 className="text-sm font-semibold text-text mb-1">Product Specialization</h2>
           <p className="text-xs text-text/50 mb-4">
-            Operational metadata only — enriches the Lead Assignment picker with a specialization badge and
-            recommendation. Grants no permission by itself.
+            Select products this employee is experienced with. Used only to improve Lead assignment
+            recommendations — it does not grant or remove access to Leads or any other module.
           </p>
           <div className="flex flex-wrap gap-x-4 gap-y-1.5">
             {[...loanProducts, ...insuranceProducts].map((p) => (
@@ -181,13 +162,7 @@ export function CreateEmployeePage() {
           </div>
         </div>
 
-        <BusinessModulesSection
-          permissions={permissions}
-          selectedModules={selectedModules}
-          onToggleModule={toggleModule}
-          capabilities={capabilities}
-          onToggleCapability={toggleCapability}
-        />
+        <PermissionMatrixSection permissions={permissions} checked={checkedPermissions} onChange={setCheckedPermissions} />
 
         <div className="flex justify-end gap-3">
           <Button type="button" variant="secondary" onClick={() => navigate("/employees")}>

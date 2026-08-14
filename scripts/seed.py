@@ -239,6 +239,32 @@ async def seed_permission_catalog() -> None:
             label="Geo Fencing",
         )
     )
+    # Employee Permission Matrix redesign — Customers gains its first module-level
+    # permission gate (previously any Owner/Employee could reach the Customer routes
+    # with no fine-grained check at all; the existing assigned-application-derived
+    # per-record scoping in customer/service.py is unchanged, this is an additional
+    # outer gate). No staff-initiated "create a Customer" route exists yet — `create`
+    # is scaffolded here for matrix completeness, currently a no-op grant.
+    entries.append(
+        Permission(
+            module="customer", resource="customers",
+            actions=[PermissionAction.VIEW, PermissionAction.CREATE, PermissionAction.EDIT],
+            label="Customers",
+        )
+    )
+    # Referral Partner Management's first-ever Employee access path — today Owner-only
+    # (require_owner). `module`/`resource` here already matches the dashboard widget
+    # catalog's referral_summary row, same forward-compatibility naming precedent as
+    # loan_management/insurance_management above. No `PATCH /referral-partners/{id}`
+    # route exists yet — `edit` is scaffolded for matrix completeness, currently a
+    # no-op grant. Commission Rules/Ledger stay Owner-only, no permission entry here.
+    entries.append(
+        Permission(
+            module="referral_partner_management", resource="partners",
+            actions=[PermissionAction.VIEW, PermissionAction.CREATE, PermissionAction.EDIT],
+            label="Referral Partners",
+        )
+    )
 
     for entry in entries:
         payload = entry.model_dump(by_alias=True, exclude={"id"})

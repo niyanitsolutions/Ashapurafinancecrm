@@ -80,6 +80,31 @@ async def _login(client, mobile, password):
     return {"Authorization": f"Bearer {r.json()['data']['access_token']}"}
 
 
+async def _grant_customer_permission(client, owner_headers, employee_id, actions, role_name="Customer Access"):
+    # Employee Permission Matrix redesign — GET /customers, /applications (list),
+    # document verify/reject now require an explicit `customer:customers` grant (see
+    # CustomerViewDep/CustomerEditDep in customer/router.py), additive in front of the
+    # existing assigned-application-derived scoping this file's other tests exercise.
+    r = await client.post(
+        "/api/v1/permissions", json={"module": "customer", "resource": "customers", "actions": ["view", "create", "edit"]},
+        headers=owner_headers,
+    )
+    if r.status_code == 200:
+        permission_id = r.json()["data"]["id"]
+    else:
+        existing = await client.get("/api/v1/permissions", headers=owner_headers)
+        permission_id = next(p["id"] for p in existing.json()["data"] if p["module"] == "customer" and p["resource"] == "customers")
+
+    role = await client.post("/api/v1/roles", json={"name": role_name}, headers=owner_headers)
+    role_id = role.json()["data"]["id"]
+    await client.put(
+        f"/api/v1/roles/{role_id}/permissions",
+        json={"grants": [{"permission_id": permission_id, "granted_actions": actions}]},
+        headers=owner_headers,
+    )
+    await client.post(f"/api/v1/roles/{role_id}/assign", json={"employee_id": employee_id}, headers=owner_headers)
+
+
 async def _signup_via_otp(client, mobile: str, dev_otp: str, password: str = "CustomerPass1!") -> dict:
     r = await client.post("/api/v1/auth/verify-otp", json={"mobile": mobile, "otp": dev_otp, "purpose": "signup"})
     assert r.status_code == 200, r.text
@@ -423,6 +448,12 @@ async def test_owner_lists_and_assigns_application_employee_scoped_to_assignment
     r = await client.get(f"/api/v1/applications/{application_id}", headers=other_headers)
     assert r.status_code == 403, r.text
 
+    # GET /applications (list) now also requires the customer:customers:view grant —
+    # without it, an Employee is blocked before the existing assignment-scoping even runs.
+    r = await client.get("/api/v1/applications", headers=other_headers)
+    assert r.status_code == 403, r.text
+
+    await _grant_customer_permission(client, owner_headers, other_employee["id"], ["view"])
     r = await client.get("/api/v1/applications", headers=other_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"] == []
@@ -452,6 +483,7 @@ async def test_unassigned_applications_queue_is_owner_only(client, mock_db, owne
 
     bystander = await _create_employee(client, owner_headers, master_data, mobile="9500000003", email="bystander@example.com")
     bystander_headers = await _login(client, "9500000003", "InitialPass1!")
+    await _grant_customer_permission(client, owner_headers, bystander["id"], ["view"], role_name="Bystander Access")
     r = await client.get("/api/v1/applications?unassigned_only=true", headers=bystander_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"] == []  # unassigned_only is ignored for Employees, not proxied through
@@ -463,6 +495,49 @@ async def test_unassigned_applications_queue_is_owner_only(client, mock_db, owne
     r = await client.get("/api/v1/applications?unassigned_only=true", headers=owner_headers)
     assert r.status_code == 200, r.text
     assert all(a["id"] != application_id for a in r.json()["data"])
+
+
+# ---------------------------------------------------------------------- customer:customers permission gate
+
+
+async def test_list_customers_requires_customer_view_permission(client, mock_db, owner_headers, master_data):
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9500000010", email="noperm.customer@example.com")
+    headers = await _login(client, "9500000010", "InitialPass1!")
+
+    r = await client.get("/api/v1/customers", headers=headers)
+    assert r.status_code == 403, r.text
+
+    await _grant_customer_permission(client, owner_headers, employee["id"], ["view"])
+    r = await client.get("/api/v1/customers", headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"] == []  # granted, but no assigned customers yet — record scope unchanged
+
+
+async def test_document_verify_reject_require_customer_edit_permission(client, mock_db, owner_headers, master_data):
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9500000011", email="noedit.customer@example.com")
+    headers = await _login(client, "9500000011", "InitialPass1!")
+    dummy_id = "000000000000000000000000"
+
+    # The permission dependency runs before route logic, so a missing grant 403s even
+    # against a nonexistent application/document — no real document needs to exist for
+    # this to prove the gate is active.
+    r = await client.patch(f"/api/v1/applications/{dummy_id}/documents/{dummy_id}/verify", headers=headers)
+    assert r.status_code == 403, r.text
+    r = await client.patch(f"/api/v1/applications/{dummy_id}/documents/{dummy_id}/reject", json={"reason": "blurry"}, headers=headers)
+    assert r.status_code == 403, r.text
+
+    await _grant_customer_permission(client, owner_headers, employee["id"], ["view", "edit"])
+    r = await client.patch(f"/api/v1/applications/{dummy_id}/documents/{dummy_id}/verify", headers=headers)
+    assert r.status_code == 404, r.text  # past the permission gate now, fails on "not found" instead
+
+
+async def test_owner_customer_access_unaffected_by_new_permission_gate(client, mock_db, owner_headers):
+    # Owner holds zero explicit grants anywhere — PermissionEngine's unconditional Owner
+    # bypass means the new customer:customers gate never blocks them.
+    r = await client.get("/api/v1/customers", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    r = await client.get("/api/v1/applications", headers=owner_headers)
+    assert r.status_code == 200, r.text
 
 
 async def test_customer_cannot_view_another_customers_application(client, mock_db, owner_headers):

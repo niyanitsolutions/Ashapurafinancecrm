@@ -19,7 +19,7 @@ import { FormField } from "@/components/forms/FormField";
 import { SelectField } from "@/components/forms/SelectField";
 import { SubmitButton } from "@/components/forms/SubmitButton";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
-import { BusinessModulesSection } from "@/features/employee/components/BusinessModulesSection";
+import { PermissionMatrixSection } from "@/features/employee/components/PermissionMatrixSection";
 import {
   getEmployee,
   listBranches,
@@ -29,7 +29,7 @@ import {
   type BranchItem,
   type MasterDataItem,
 } from "@/features/employee/api";
-import { BUSINESS_MODULES, buildModuleGrants } from "@/features/employee/businessModules";
+import { PERMISSION_MATRIX_ROWS, buildMatrixGrants } from "@/features/employee/permissionMatrix";
 import { getErrorMessage } from "@/features/employee/errors";
 import { updateEmployeeSchema, type UpdateEmployeeFormValues } from "@/features/employee/validation";
 import { insuranceProductsApi, loanProductsApi, type NamedMasterData } from "@/features/system_settings/api";
@@ -55,29 +55,10 @@ export function EditEmployeePage() {
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [personalRoleId, setPersonalRoleId] = useState<string | null>(null);
   const [hasExtraAccess, setHasExtraAccess] = useState(false);
-  const [selectedModules, setSelectedModules] = useState<Set<string>>(new Set());
-  const [capabilities, setCapabilities] = useState<Record<string, Set<string>>>({});
+  const [checkedPermissions, setCheckedPermissions] = useState<Record<string, Set<string>>>({});
 
   const toggleProduct = (productId: string) => {
     setProductIds((prev) => (prev.includes(productId) ? prev.filter((id) => id !== productId) : [...prev, productId]));
-  };
-
-  const toggleModule = (key: string) => {
-    setSelectedModules((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  };
-
-  const toggleCapability = (permissionId: string, action: string) => {
-    setCapabilities((prev) => {
-      const current = new Set(prev[permissionId] ?? []);
-      if (current.has(action)) current.delete(action);
-      else current.add(action);
-      return { ...prev, [permissionId]: current };
-    });
   };
 
   const {
@@ -121,7 +102,7 @@ export function EditEmployeePage() {
   }, [employeeId, reset]);
 
   // Finds this employee's personal auto-created role (if any) and pre-populates the
-  // Business Modules section from its current grants — see AUTO_ROLE_DESCRIPTION above.
+  // Permissions matrix from its current grants — see AUTO_ROLE_DESCRIPTION above.
   useEffect(() => {
     if (!employeeId) return;
     listEmployeeRoles(employeeId).then(async (assignments) => {
@@ -138,16 +119,13 @@ export function EditEmployeePage() {
       if (!personal) return;
 
       const grants = await getRolePermissions(personal);
-      const nextModules = new Set<string>();
-      const nextCapabilities: Record<string, Set<string>> = {};
+      const nextChecked: Record<string, Set<string>> = {};
       for (const grant of grants) {
-        const module = BUSINESS_MODULES.find((m) => m.key === grant.module && m.resource === grant.resource);
-        if (!module) continue; // a SHARED_RESOURCES (leads/tasks) grant, or something outside this simplified UI — no checkbox to set
-        nextModules.add(module.key);
-        nextCapabilities[grant.permission_id] = new Set(grant.granted_actions.filter((a) => a !== "view" && a !== "assign"));
+        const row = PERMISSION_MATRIX_ROWS.find((r) => r.module === grant.module && r.resource === grant.resource);
+        if (!row) continue; // a grant outside this simplified 8-row matrix — no checkbox to set
+        nextChecked[grant.permission_id] = new Set(grant.granted_actions.filter((a) => a === "view" || a === "create" || a === "edit"));
       }
-      setSelectedModules(nextModules);
-      setCapabilities(nextCapabilities);
+      setCheckedPermissions(nextChecked);
     });
   }, [employeeId]);
 
@@ -158,10 +136,10 @@ export function EditEmployeePage() {
     try {
       await updateEmployee(employeeId, { ...values, product_ids: productIds });
 
-      // Business Modules — same convenience layer on top of Access Control (Module 3)
+      // Permissions matrix — same convenience layer on top of Access Control (Module 3)
       // CreateEmployeePage.tsx uses, just reading from / writing to this employee's
       // existing personal role instead of always creating a new one.
-      const activeGrants = buildModuleGrants(permissions, selectedModules, capabilities);
+      const activeGrants = buildMatrixGrants(permissions, checkedPermissions);
       if (personalRoleId) {
         await setRolePermissions(personalRoleId, activeGrants);
       } else if (activeGrants.length > 0) {
@@ -181,7 +159,7 @@ export function EditEmployeePage() {
       {!isLoaded ? (
         <p className="text-sm text-text/50">Loading…</p>
       ) : (
-        <form onSubmit={handleSubmit(onSubmit)} noValidate className="max-w-2xl space-y-6">
+        <form onSubmit={handleSubmit(onSubmit)} noValidate className="max-w-4xl mx-auto space-y-6">
           <ErrorBanner message={apiError} />
 
           <div className="bg-card border border-border rounded-card shadow-card p-6">
@@ -262,9 +240,10 @@ export function EditEmployeePage() {
           </div>
 
           <div className="bg-card border border-border rounded-card shadow-card p-6">
-            <h2 className="text-sm font-semibold text-text mb-1">Products Handled</h2>
+            <h2 className="text-sm font-semibold text-text mb-1">Product Specialization</h2>
             <p className="text-xs text-text/50 mb-4">
-              Operational metadata only — enriches the Lead Assignment picker. Grants no permission by itself.
+              Select products this employee is experienced with. Used only to improve Lead assignment
+              recommendations — it does not grant or remove access to Leads or any other module.
             </p>
             <div className="flex flex-wrap gap-x-4 gap-y-1.5">
               {[...loanProducts, ...insuranceProducts].map((p) => (
@@ -276,13 +255,7 @@ export function EditEmployeePage() {
             </div>
           </div>
 
-          <BusinessModulesSection
-            permissions={permissions}
-            selectedModules={selectedModules}
-            onToggleModule={toggleModule}
-            capabilities={capabilities}
-            onToggleCapability={toggleCapability}
-          />
+          <PermissionMatrixSection permissions={permissions} checked={checkedPermissions} onChange={setCheckedPermissions} />
           {hasExtraAccess && (
             <p className="text-xs text-text/50 -mt-4">
               This employee may have extra access configured separately — see Roles &amp; Permissions for details.

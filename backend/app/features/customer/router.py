@@ -64,6 +64,22 @@ def _schema_perm(action: str) -> Any:
     return require_permission("system_settings", "product_schema", action)
 
 
+def _customer_perm(action: str) -> Any:
+    return require_permission("customer", "customers", action)
+
+
+# Employee Permission Matrix redesign — Customers gains a real module-level permission
+# gate (view/edit) in front of the staff routes below, additive to the existing
+# assigned-application-derived per-record scoping inside customer/service.py (which is
+# unchanged — both apply: an Employee must hold the grant AND the service layer still
+# only returns their own assigned records). Supersedes the plain `require_staff`
+# blanket gate these routes used before (see docs/decisions/DECISIONS.md #050 for the
+# original "no require_permission here" rationale, now revised by explicit product
+# decision as part of the 8-row Employee permission matrix).
+CustomerViewDep = Annotated[User, _customer_perm("view")]
+CustomerEditDep = Annotated[User, _customer_perm("edit")]
+
+
 async def _resolve_form_definition_response(service: CustomerService, form_def: Any) -> FormDefinitionResponse:
     name_map = await service.resolve_document_type_name_map({d.document_type_id for d in form_def.required_documents})
     product_name = await service.resolve_product_name(form_def.product_category, form_def.product_id)
@@ -433,7 +449,7 @@ async def list_documents(application_id: str, service: ServiceDep, current_user:
 
 @router.patch("/applications/{application_id}/documents/{document_id}/verify")
 async def verify_document(
-    application_id: str, document_id: str, service: ServiceDep, actor: StaffDep
+    application_id: str, document_id: str, service: ServiceDep, actor: CustomerEditDep
 ) -> ApiResponse[ApplicationDocumentResponse]:
     document = await service.verify_document(application_id, document_id, actor)
     type_names = await service.resolve_document_type_names([document])
@@ -447,7 +463,7 @@ async def verify_document(
 
 @router.patch("/applications/{application_id}/documents/{document_id}/reject")
 async def reject_document(
-    application_id: str, document_id: str, payload: RejectDocumentRequest, service: ServiceDep, actor: StaffDep
+    application_id: str, document_id: str, payload: RejectDocumentRequest, service: ServiceDep, actor: CustomerEditDep
 ) -> ApiResponse[ApplicationDocumentResponse]:
     document = await service.reject_document(application_id, document_id, payload.reason, actor)
     type_names = await service.resolve_document_type_names([document])
@@ -464,7 +480,7 @@ async def reject_document(
 
 @router.get("/applications")
 async def list_applications(
-    service: ServiceDep, current_user: CurrentUserDep, _staff: StaffDep, page: PageParamsDep,
+    service: ServiceDep, current_user: CurrentUserDep, _staff: CustomerViewDep, page: PageParamsDep,
     customer_id: str | None = None, assigned_to: str | None = None, unassigned_only: bool = False,
     status: str | None = None, product_category: str | None = None,
 ) -> ApiResponse[list[ApplicationListItem]]:
@@ -490,13 +506,13 @@ async def assign_application(
 
 
 @router.get("/customers")
-async def list_customers(service: ServiceDep, current_user: CurrentUserDep, _staff: StaffDep, page: PageParamsDep) -> ApiResponse[list[CustomerListItem]]:
+async def list_customers(service: ServiceDep, current_user: CurrentUserDep, _staff: CustomerViewDep, page: PageParamsDep) -> ApiResponse[list[CustomerListItem]]:
     customers, total = await service.list_customers_for_staff(current_user, search=page.search, skip=page.skip, limit=page.page_size, sort=page.sort)
     items = [mappers.customer_to_list_item(c) for c in customers]
     return ApiResponse[list[CustomerListItem]].ok(items, meta=ResponseMeta(pagination=page.build_meta(total)))
 
 
 @router.get("/customers/{customer_id}")
-async def get_customer(customer_id: str, service: ServiceDep, current_user: CurrentUserDep, _staff: StaffDep) -> ApiResponse[CustomerResponse]:
+async def get_customer(customer_id: str, service: ServiceDep, current_user: CurrentUserDep, _staff: CustomerViewDep) -> ApiResponse[CustomerResponse]:
     customer = await service.get_customer_for_staff(customer_id, current_user)
     return ApiResponse[CustomerResponse].ok(mappers.customer_to_response(customer))

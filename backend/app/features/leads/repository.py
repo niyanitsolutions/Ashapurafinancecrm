@@ -39,6 +39,7 @@ class LeadRepository(BaseRepository[Lead]):
         product_category: str | None,
         product_id: str | None,
         assigned_to: str | None,
+        created_by: str | None = None,
         status: str | None,
         skip: int,
         limit: int,
@@ -53,6 +54,12 @@ class LeadRepository(BaseRepository[Lead]):
             query["product_id"] = product_id
         if assigned_to == UNASSIGNED_SENTINEL:
             query["assigned_to"] = None
+            # `created_by` is only ever passed alongside UNASSIGNED_SENTINEL, by a
+            # non-Owner actor — see LeadService._scope_query. It narrows the query with
+            # AND (not OR): "unassigned AND created by me," i.e. my own not-yet-assigned
+            # drafts only, never every employee's unassigned pool.
+            if created_by:
+                query["created_by"] = created_by
         elif assigned_to == ASSIGNED_SENTINEL:
             query["assigned_to"] = {"$ne": None}
         elif assigned_to:

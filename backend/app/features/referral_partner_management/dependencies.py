@@ -1,9 +1,16 @@
-"""Module 7 dependencies. Owner-side capabilities (create/approve/deactivate partners,
-Commission Rules, Commission Ledger/Settlement) are `require_owner`-gated, not
-`require_permission` — the brief frames every one of them as an Owner-only capability,
-with no Employee role mentioned anywhere in this module, unlike 6C/6D which explicitly
+"""Module 7 dependencies. Commission Rules and Commission Ledger/Settlement stay
+`require_owner`-gated only — no Employee role for those, unlike 6C/6D which explicitly
 named Employee as a delegable actor. Referral Partner self-service reuses the same
-`require_customer`-style plain role check."""
+`require_customer`-style plain role check.
+
+As of the Employee Permission Matrix redesign, partner list/detail/create gained a real
+`require_permission("referral_partner_management", "partners", action)` gate
+(`_perm()` in router.py) alongside the existing `require_owner` routes — additive only:
+`PermissionEngine.has_permission` unconditionally passes Owner before any grant lookup,
+so Owner's behavior is unchanged; an Employee whose role has been granted
+view/create on `referral_partner_management:partners` gets a first-ever access path
+into this module. `approve`/`deactivate` (lifecycle actions) and all Commission routes
+remain `require_owner`-only, unchanged."""
 
 from typing import Annotated, Any
 
