@@ -9,7 +9,7 @@ another customer's communication history).
 
 from datetime import UTC, datetime
 
-from test_customer import _create_employee, _seed_product_and_form, _signup_via_otp
+from test_customer import _create_employee, _seed_product_and_form, _seed_workflow_definitions, _signup_via_otp
 
 
 async def _register_customer(client, mock_db, *, mobile: str) -> dict:
@@ -80,6 +80,7 @@ async def test_dashboard_shows_relationship_manager_once_assigned(client, mock_d
 
 
 async def test_application_timeline_reflects_draft_then_submitted(client, mock_db, owner_headers):
+    await _seed_workflow_definitions(mock_db)
     product = await _seed_product_and_form(mock_db)
     customer_headers = await _register_customer(client, mock_db, mobile="9611111114")
     r = await client.post(
@@ -107,8 +108,14 @@ async def test_application_timeline_reflects_draft_then_submitted(client, mock_d
     r = await client.get(f"/api/v1/applications/{application_id}/timeline", headers=customer_headers)
     entries = r.json()["data"]
     labels = [e["label"] for e in entries]
-    assert labels == ["Application Started", "Application Submitted"]
-    assert all(e["state"] == "completed" for e in entries)
+    # Submission also creates the Application's Loan Case (lazy get-or-create, Module 6C)
+    # — get_application_timeline appends one entry per seeded WorkflowDefinition for that
+    # case_type after "Application Submitted" (see customer/service.py's own docstring on
+    # get_application_timeline). This test file only seeds the case's first stage
+    # (loan:new_customer, via _seed_workflow_definitions), so exactly one such entry
+    # appears here, and it's the case's current stage — "current", not "completed".
+    assert labels == ["Application Started", "Application Submitted", "New Customer"]
+    assert [e["state"] for e in entries] == ["completed", "completed", "current"]
 
 
 async def test_support_request_creates_task_for_assigned_relationship_manager(client, mock_db, owner_headers, master_data):

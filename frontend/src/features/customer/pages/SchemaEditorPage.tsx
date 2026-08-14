@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { Button } from "@/components/buttons/Button";
+import { CheckboxField } from "@/components/forms/CheckboxField";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { ProductSchemaForm } from "@/components/forms/ProductSchemaForm";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { Modal } from "@/components/overlays/Modal";
 import {
   createProductSchemaVersion,
   freezeProductSchema,
@@ -739,33 +742,28 @@ function FreezeChecklistModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-card border border-border rounded-card shadow-card max-w-md w-full p-6 max-h-[85vh] overflow-y-auto">
-        <h2 className="text-base font-semibold text-text mb-1">Freeze Checklist</h2>
-        <p className="text-xs text-text/50 mb-4">Confirm every item before freezing this schema version as read-only.</p>
-        <div className="space-y-2 mb-5">
-          {CHECKLIST_ITEMS.map((item) => (
-            <label key={item} className="flex items-center gap-2 text-sm text-text/80">
-              <input type="checkbox" checked={checkedItems.has(item)} onChange={() => toggle(item)} />
-              {item}
-            </label>
-          ))}
-        </div>
-        <div className="flex justify-end gap-2">
-          <button type="button" onClick={onCancel} className="rounded-xl border border-border px-3.5 py-2 text-sm font-medium text-text/70 hover:bg-background">
+    <Modal
+      open
+      onClose={onCancel}
+      title="Freeze Checklist"
+      description="Confirm every item before freezing this schema version as read-only."
+      footer={
+        <>
+          <Button variant="secondary" size="sm" onClick={onCancel}>
             Cancel
-          </button>
-          <button
-            type="button"
-            disabled={!allChecked || isBusy}
-            onClick={onConfirm}
-            className="rounded-xl bg-gradient-to-r from-primary to-primary-dark text-white text-sm font-semibold py-2 px-4 shadow-card disabled:opacity-50"
-          >
+          </Button>
+          <Button size="sm" disabled={!allChecked} loading={isBusy} onClick={onConfirm}>
             Confirm Freeze
-          </button>
-        </div>
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-2">
+        {CHECKLIST_ITEMS.map((item) => (
+          <CheckboxField key={item} label={item} checked={checkedItems.has(item)} onChange={() => toggle(item)} />
+        ))}
       </div>
-    </div>
+    </Modal>
   );
 }
 

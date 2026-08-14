@@ -209,10 +209,6 @@ export function updateOwnProfile(payload: SelfUpdateEmployeeInput) {
   return apiRequest<EmployeeDetail>("/employees/me", { method: "PATCH", body: JSON.stringify(payload) });
 }
 
-export function getOwnSessions() {
-  return apiRequest<SessionSummary[]>("/employees/me/sessions");
-}
-
 export function getOwnLoginHistory() {
   return apiRequest<LoginHistoryEntry[]>("/employees/me/login-history");
 }

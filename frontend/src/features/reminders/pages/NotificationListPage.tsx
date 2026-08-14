@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import { EmptyState } from "@/components/layout/EmptyState";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { Pagination } from "@/components/tables/Pagination";
 import { getErrorMessage } from "@/features/customer/errors";
 import {
   archiveNotification,
@@ -73,15 +75,15 @@ export function NotificationListPage() {
   return (
     <SimplePageLayout title="Notifications">
       {error && <p className="mb-4 text-sm text-danger">{error}</p>}
-      <div className="mb-4 flex items-center gap-4">
-        <select value={status} onChange={(e) => { setPage(1); setStatus(e.target.value); }} className="rounded border border-border px-3 py-2 text-sm">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <select value={status} onChange={(e) => { setPage(1); setStatus(e.target.value); }} className="rounded-xl border border-border px-3.5 py-2.5 text-sm bg-card">
           <option value="">All</option>
           <option value="unread">Unread</option>
           <option value="read">Read</option>
           <option value="archived">Archived</option>
           <option value="dismissed">Dismissed</option>
         </select>
-        <select value={category} onChange={(e) => { setPage(1); setCategory(e.target.value); }} className="rounded border border-border px-3 py-2 text-sm">
+        <select value={category} onChange={(e) => { setPage(1); setCategory(e.target.value); }} className="rounded-xl border border-border px-3.5 py-2.5 text-sm bg-card">
           <option value="">All Categories</option>
           {CATEGORIES.map((c) => (
             <option key={c.value} value={c.value}>{c.label}</option>
@@ -89,8 +91,10 @@ export function NotificationListPage() {
         </select>
       </div>
       <div className="space-y-2">
-        {isLoading && <p className="text-sm text-text/50">Loading…</p>}
-        {!isLoading && items.length === 0 && <p className="text-sm text-text/50">No notifications.</p>}
+        {isLoading && <p className="text-sm text-text/50 py-6 text-center">Loading…</p>}
+        {!isLoading && items.length === 0 && (
+          <EmptyState icon="bell" title="No notifications" description="You're all caught up — new notifications will appear here." />
+        )}
         {items.map((n) => (
           <div key={n.id} className={`bg-card border border-border rounded-card shadow-card p-4 ${n.status === "unread" ? "border-l-4 border-l-primary" : ""}`}>
             <div className="flex items-start justify-between gap-4">
@@ -117,13 +121,7 @@ export function NotificationListPage() {
           </div>
         ))}
       </div>
-      <div className="flex items-center justify-between mt-4 text-sm text-text/60">
-        <span>Page {page} of {totalPages} ({total} notifications)</span>
-        <div className="flex gap-2">
-          <button type="button" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="rounded border border-border px-3 py-1 disabled:opacity-40">Previous</button>
-          <button type="button" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} className="rounded border border-border px-3 py-1 disabled:opacity-40">Next</button>
-        </div>
-      </div>
+      <Pagination page={page} totalPages={totalPages} totalItems={total} pageSize={PAGE_SIZE} itemLabel="notifications" onPageChange={setPage} />
     </SimplePageLayout>
   );
 }

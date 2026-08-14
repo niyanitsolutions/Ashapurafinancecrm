@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
+import { Button } from "@/components/buttons/Button";
+import { CheckboxField } from "@/components/forms/CheckboxField";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
 import { SubmitButton } from "@/components/forms/SubmitButton";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import {
+  type Address,
   type BusinessHour,
   type CompanySettings,
   confirmLogo,
@@ -18,6 +21,8 @@ function defaultHours(): BusinessHour[] {
   return WEEKDAYS.map((day) => ({ day, is_closed: day === "sun", open_time: "10:00", close_time: "18:00" }));
 }
 
+const EMPTY_ADDRESS: Address = { line1: "", line2: "", city: "", state: "", pincode: "" };
+
 // Primary/secondary color + logo are stored but not yet applied by the frontend at
 // runtime — the app still uses its fixed Tailwind theme tokens (see
 // docs/KNOWN_LIMITATIONS.md). This page only manages the settings record itself.
@@ -26,6 +31,9 @@ export function CompanySettingsPage() {
   const [companyName, setCompanyName] = useState("");
   const [primaryColor, setPrimaryColor] = useState("");
   const [secondaryColor, setSecondaryColor] = useState("");
+  const [contactEmail, setContactEmail] = useState("");
+  const [contactPhone, setContactPhone] = useState("");
+  const [address, setAddress] = useState<Address>(EMPTY_ADDRESS);
   const [hours, setHours] = useState<BusinessHour[]>(defaultHours());
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -39,12 +47,17 @@ export function CompanySettingsPage() {
         setCompanyName(s.company_name);
         setPrimaryColor(s.primary_color ?? "");
         setSecondaryColor(s.secondary_color ?? "");
+        setContactEmail(s.contact_email ?? "");
+        setContactPhone(s.contact_phone ?? "");
+        setAddress(s.address ?? EMPTY_ADDRESS);
         setHours(s.business_hours.length > 0 ? s.business_hours : defaultHours());
       })
       .catch((err) => setError(getErrorMessage(err)));
   };
 
   useEffect(load, []);
+
+  const hasAddress = Object.values(address).some((v) => v && v.trim());
 
   const onSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,6 +68,17 @@ export function CompanySettingsPage() {
         company_name: companyName.trim(),
         primary_color: primaryColor.trim() || undefined,
         secondary_color: secondaryColor.trim() || undefined,
+        contact_email: contactEmail.trim() || undefined,
+        contact_phone: contactPhone.trim() || undefined,
+        address: hasAddress
+          ? {
+              line1: address.line1.trim(),
+              line2: address.line2?.trim() || undefined,
+              city: address.city.trim(),
+              state: address.state.trim(),
+              pincode: address.pincode.trim(),
+            }
+          : undefined,
         business_hours: hours,
       });
       setSettings(updated);
@@ -95,13 +119,17 @@ export function CompanySettingsPage() {
   }
 
   return (
-    <SimplePageLayout title="Company Settings">
+    <SimplePageLayout title="Company Settings" subtitle="Manage company profile and business hours.">
       <ErrorBanner message={error} />
 
       <form onSubmit={onSave} className="max-w-2xl space-y-6">
         <div className="bg-card border border-border rounded-card shadow-card p-6">
           <FormField label="Company Name" value={companyName} onChange={(e) => setCompanyName(e.target.value)} />
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-x-3 sm:grid-cols-2">
+            <FormField label="Contact Email" type="email" value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} />
+            <FormField label="Contact Phone" value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} />
+          </div>
+          <div className="grid grid-cols-1 gap-x-3 sm:grid-cols-2">
             <FormField label="Primary Color" value={primaryColor} onChange={(e) => setPrimaryColor(e.target.value)} placeholder="#FF7A00" />
             <FormField label="Secondary Color" value={secondaryColor} onChange={(e) => setSecondaryColor(e.target.value)} placeholder="#FF9A3D" />
           </div>
@@ -111,15 +139,21 @@ export function CompanySettingsPage() {
             {settings.logo_s3_key && <p className="text-sm text-text/60 mb-2">Current: {settings.logo_s3_key}</p>}
             <div className="flex items-center gap-3">
               <input type="file" accept="image/*" onChange={(e) => setLogoFile(e.target.files?.[0] ?? null)} />
-              <button
-                type="button"
-                className="text-sm text-primary hover:underline disabled:opacity-50"
-                disabled={!logoFile || isUploadingLogo}
-                onClick={onUploadLogo}
-              >
+              <Button variant="secondary" size="sm" disabled={!logoFile || isUploadingLogo} onClick={onUploadLogo}>
                 {isUploadingLogo ? "Uploading…" : "Upload"}
-              </button>
+              </Button>
             </div>
+          </div>
+        </div>
+
+        <div className="bg-card border border-border rounded-card shadow-card p-6">
+          <h2 className="text-sm font-semibold text-text mb-3">Registered Address</h2>
+          <FormField label="Address Line 1" value={address.line1} onChange={(e) => setAddress((a) => ({ ...a, line1: e.target.value }))} />
+          <FormField label="Address Line 2" value={address.line2 ?? ""} onChange={(e) => setAddress((a) => ({ ...a, line2: e.target.value }))} />
+          <div className="grid grid-cols-1 gap-x-3 sm:grid-cols-3">
+            <FormField label="City" value={address.city} onChange={(e) => setAddress((a) => ({ ...a, city: e.target.value }))} />
+            <FormField label="State" value={address.state} onChange={(e) => setAddress((a) => ({ ...a, state: e.target.value }))} />
+            <FormField label="Pincode" value={address.pincode} onChange={(e) => setAddress((a) => ({ ...a, pincode: e.target.value }))} />
           </div>
         </div>
 
@@ -129,10 +163,7 @@ export function CompanySettingsPage() {
             {hours.map((h) => (
               <div key={h.day} className="flex items-center gap-3 text-sm">
                 <span className="w-10 uppercase text-text/60">{h.day}</span>
-                <label className="flex items-center gap-1">
-                  <input type="checkbox" checked={h.is_closed} onChange={(e) => updateHour(h.day, { is_closed: e.target.checked })} />
-                  Closed
-                </label>
+                <CheckboxField label="Closed" checked={h.is_closed} onChange={(e) => updateHour(h.day, { is_closed: e.target.checked })} />
                 {!h.is_closed && (
                   <>
                     <input

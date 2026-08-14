@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
+import { Button } from "@/components/buttons/Button";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { MessagesPanel } from "@/features/communication/components/MessagesPanel";
 import { SendMessageModal } from "@/features/communication/components/SendMessageModal";
@@ -8,18 +9,11 @@ import { getErrorMessage } from "@/features/customer/errors";
 import { AddTaskModal } from "@/features/reminders/components/AddTaskModal";
 import { Icon, type IconName } from "@/theme/icons";
 
-// Local, same styling as LeadDetailsPage's own HeaderButton — not shared/extracted since
-// this is the only other call site so far.
 function HeaderButton({ icon, label, onClick }: { icon: IconName; label: string; onClick: () => void }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex items-center gap-2 rounded-xl border border-border bg-card text-sm font-medium py-2 px-4 text-text hover:bg-background transition-colors"
-    >
-      <Icon name={icon} className="h-4 w-4" />
+    <Button variant="secondary" size="sm" onClick={onClick} icon={<Icon name={icon} className="h-4 w-4" />}>
       {label}
-    </button>
+    </Button>
   );
 }
 
@@ -76,7 +70,7 @@ export function CustomerDetailsPage() {
       }
     >
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
-      <div className="max-w-2xl bg-card border border-border rounded-card shadow-card p-6 grid grid-cols-2 gap-x-4 gap-y-3">
+      <div className="max-w-2xl bg-card border border-border rounded-card shadow-card p-6 grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
         <Field label="Mobile" value={customer.mobile} />
         <Field label="Email" value={customer.email} />
         <Field label="Date of Birth" value={customer.date_of_birth} />

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
 import { SubmitButton } from "@/components/forms/SubmitButton";
+import { EmptyState } from "@/components/layout/EmptyState";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { createRole, listRoles, type Role } from "@/features/access_control/api";
 import { getErrorMessage } from "@/features/access_control/errors";
@@ -48,37 +49,34 @@ export function RoleListPage() {
         </div>
       </form>
 
-      <div className="bg-card border border-border rounded-card shadow-card overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border text-left text-text/60">
-              <th className="px-4 py-3">Name</th>
-              <th className="px-4 py-3">Description</th>
-              <th className="px-4 py-3">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {roles.length === 0 && (
-              <tr>
-                <td colSpan={3} className="px-4 py-6 text-center text-text/50">
-                  No roles yet.
-                </td>
+      {roles.length === 0 ? (
+        <EmptyState icon="roles" title="No roles yet" description="Create your first role above to start granting permissions to employees." />
+      ) : (
+        <div className="bg-card border border-border rounded-card shadow-card overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border text-left text-text/60">
+                <th className="px-4 py-3">Name</th>
+                <th className="px-4 py-3">Description</th>
+                <th className="px-4 py-3">Status</th>
               </tr>
-            )}
-            {roles.map((role) => (
-              <tr key={role.id} className="border-b border-border last:border-0 hover:bg-background">
-                <td className="px-4 py-3">
-                  <Link to={`/roles/${role.id}`} className="text-primary hover:underline">
-                    {role.name}
-                  </Link>
-                </td>
-                <td className="px-4 py-3">{role.description || "—"}</td>
-                <td className="px-4 py-3 capitalize">{role.status}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {roles.map((role) => (
+                <tr key={role.id} className="border-b border-border last:border-0 hover:bg-background">
+                  <td className="px-4 py-3">
+                    <Link to={`/roles/${role.id}`} className="text-primary hover:underline">
+                      {role.name}
+                    </Link>
+                  </td>
+                  <td className="px-4 py-3">{role.description || "—"}</td>
+                  <td className="px-4 py-3 capitalize">{role.status}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </SimplePageLayout>
   );
 }

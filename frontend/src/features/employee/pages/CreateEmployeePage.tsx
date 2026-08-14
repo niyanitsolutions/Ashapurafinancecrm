@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useNavigate } from "react-router-dom";
 import { assignRole, createRole, listPermissions, setRolePermissions, type Permission } from "@/features/access_control/api";
+import { Button } from "@/components/buttons/Button";
+import { CheckboxField } from "@/components/forms/CheckboxField";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
 import { SelectField } from "@/components/forms/SelectField";
@@ -118,7 +120,7 @@ export function CreateEmployeePage() {
         <div className="bg-card border border-border rounded-card shadow-card p-6">
           <h2 className="text-sm font-semibold text-text mb-1">Basic Information</h2>
           <p className="text-xs text-text/50 mb-4">Who they are and how they'll log in.</p>
-          <div className="grid grid-cols-2 gap-x-4">
+          <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
             <FormField label="First name" error={errors.first_name?.message} {...register("first_name")} />
             <FormField label="Last name" error={errors.last_name?.message} {...register("last_name")} />
             <FormField label="Email" type="email" error={errors.email?.message} {...register("email")} />
@@ -130,7 +132,7 @@ export function CreateEmployeePage() {
         <div className="bg-card border border-border rounded-card shadow-card p-6">
           <h2 className="text-sm font-semibold text-text mb-1">Organization</h2>
           <p className="text-xs text-text/50 mb-4">Where they sit in your company.</p>
-          <div className="grid grid-cols-2 gap-x-4">
+          <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
             <SelectField
               label="Department"
               placeholder="Select department"
@@ -170,10 +172,10 @@ export function CreateEmployeePage() {
           </p>
           <div className="flex flex-wrap gap-x-4 gap-y-1.5">
             {[...loanProducts, ...insuranceProducts].map((p) => (
-              <label key={p.id} className="flex items-center gap-1.5 text-sm text-text/80">
-                <input type="checkbox" checked={productIds.includes(p.id)} onChange={() => toggleProduct(p.id)} />
-                {p.name}
-              </label>
+              <CheckboxField
+                key={p.id} label={p.name}
+                checked={productIds.includes(p.id)} onChange={() => toggleProduct(p.id)}
+              />
             ))}
             {loanProducts.length === 0 && insuranceProducts.length === 0 && <p className="text-sm text-text/40">Loading…</p>}
           </div>
@@ -188,9 +190,9 @@ export function CreateEmployeePage() {
         />
 
         <div className="flex justify-end gap-3">
-          <button type="button" onClick={() => navigate("/employees")} className="rounded-lg border border-border text-sm font-medium py-2.5 px-5 text-text/70 hover:bg-background">
+          <Button type="button" variant="secondary" onClick={() => navigate("/employees")}>
             Cancel
-          </button>
+          </Button>
           <SubmitButton isSubmitting={isSubmitting}>Save Employee</SubmitButton>
         </div>
       </form>

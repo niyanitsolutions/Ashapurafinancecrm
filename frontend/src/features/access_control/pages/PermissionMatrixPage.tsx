@@ -136,11 +136,11 @@ export function PermissionMatrixPage() {
 
       <div className="max-w-xl bg-card border border-border rounded-card shadow-card p-6">
         <h2 className="text-sm font-semibold text-text/70 mb-3">Add a new permission (module + resource)</h2>
-        <form onSubmit={onCreatePermission} className="grid grid-cols-3 gap-x-3 items-end">
+        <form onSubmit={onCreatePermission} className="grid grid-cols-1 gap-x-3 sm:grid-cols-3 sm:items-end">
           <FormField label="Module" value={newModule} onChange={(e) => setNewModule(e.target.value)} placeholder="loan_management" />
           <FormField label="Resource" value={newResource} onChange={(e) => setNewResource(e.target.value)} placeholder="leads" />
           <FormField label="Actions (comma-separated)" value={newActions} onChange={(e) => setNewActions(e.target.value)} />
-          <div className="col-span-3">
+          <div className="sm:col-span-3">
             <SubmitButton>Add to Catalog</SubmitButton>
           </div>
         </form>

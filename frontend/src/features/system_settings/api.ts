@@ -78,6 +78,9 @@ export interface CompanySettings {
   primary_color: string | null;
   secondary_color: string | null;
   business_hours: BusinessHour[];
+  contact_email: string | null;
+  contact_phone: string | null;
+  address: Address | null;
   updated_at: string;
 }
 
@@ -141,10 +144,10 @@ export function deactivateDesignation(id: string) {
 export function listBranches() {
   return apiRequest<Branch[]>("/branches");
 }
-export function createBranch(payload: { name: string; code: string; phone?: string }) {
+export function createBranch(payload: { name: string; code: string; phone?: string; address?: Address }) {
   return apiRequest<Branch>("/branches", { method: "POST", body: JSON.stringify(payload) });
 }
-export function updateBranch(id: string, payload: { name?: string; code?: string; phone?: string }) {
+export function updateBranch(id: string, payload: { name?: string; code?: string; phone?: string; address?: Address }) {
   return apiRequest<Branch>(`/branches/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
 }
 export function activateBranch(id: string) {
@@ -220,6 +223,9 @@ export function updateCompanySettings(payload: {
   primary_color?: string;
   secondary_color?: string;
   business_hours?: BusinessHour[];
+  contact_email?: string;
+  contact_phone?: string;
+  address?: Address;
 }) {
   return apiRequest<CompanySettings>("/company-settings", { method: "PATCH", body: JSON.stringify(payload) });
 }

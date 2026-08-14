@@ -40,6 +40,8 @@ from app.features.auth.models import (
 )
 from app.features.auth.repository import SessionRepository, UserRepository
 from app.features.auth.schemas import LoginResponse, ProfileResponse, TokenPairResponse
+from app.features.employee.repository import EmployeeRepository
+from app.features.owner.repository import OwnerProfileRepository
 from app.security.hashing import hash_value
 from app.security.jwt import (
     TokenError,
@@ -74,6 +76,8 @@ class AuthService:
         self._redis = redis
         self._users = UserRepository(db)
         self._sessions = SessionRepository(db)
+        self._owner_profiles = OwnerProfileRepository(db)
+        self._employees = EmployeeRepository(db)
 
     # ---------------------------------------------------------------- signup / OTP
 
@@ -428,6 +432,15 @@ class AuthService:
         user = await self._users.find_by_id(user_id)
         if user is None:
             raise InvalidCredentialsError("Account no longer exists.")
+
+        name: str | None = None
+        if user.role == "owner":
+            owner_profile = await self._owner_profiles.find_by_user_id(user_id)
+            name = owner_profile.full_name if owner_profile else None
+        elif user.role == "employee":
+            employee = await self._employees.find_by_user_id(user_id)
+            name = employee.display_name if employee else None
+
         return ProfileResponse(
             user_id=user.require_id(),
             mobile=user.mobile,
@@ -436,6 +449,7 @@ class AuthService:
             is_mobile_verified=user.is_mobile_verified,
             must_change_password=user.must_change_password,
             created_at=user.created_at,
+            name=name,
         )
 
     # ---------------------------------------------------------------- internals

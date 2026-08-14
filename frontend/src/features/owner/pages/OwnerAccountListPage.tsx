@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { BUTTON_BASE_CLASSES, BUTTON_SIZE_CLASSES, BUTTON_VARIANT_CLASSES } from "@/components/buttons/Button";
 import { EmptyState } from "@/components/layout/EmptyState";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
 import {
   activateSecondaryOwner,
   deactivateSecondaryOwner,
@@ -24,6 +26,7 @@ export function OwnerAccountListPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [toggleTarget, setToggleTarget] = useState<OwnerAccountListItem | null>(null);
 
   const load = () => {
     setIsLoading(true);
@@ -52,6 +55,7 @@ export function OwnerAccountListPage() {
       setLoadError(getErrorMessage(err));
     } finally {
       setBusyId(null);
+      setToggleTarget(null);
     }
   };
 
@@ -60,7 +64,7 @@ export function OwnerAccountListPage() {
       title="Owner Management"
       subtitle="Primary and Secondary Owner accounts for your company."
       actions={
-        <Link to="/owner-accounts/new" className="rounded-lg bg-primary text-white text-sm font-medium py-2 px-4 hover:bg-primary-light transition-colors">
+        <Link to="/owner-accounts/new" className={`${BUTTON_BASE_CLASSES} ${BUTTON_VARIANT_CLASSES.primary} ${BUTTON_SIZE_CLASSES.sm}`}>
           + Add Secondary Owner
         </Link>
       }
@@ -122,7 +126,7 @@ export function OwnerAccountListPage() {
                   {owner.owner_type === "secondary" && (
                     <div className="flex items-center justify-end gap-3 text-xs">
                       <Link to={`/owner-accounts/${owner.id}/edit`} className="text-primary hover:underline">Edit</Link>
-                      <button type="button" disabled={busyId === owner.id} onClick={() => toggleActive(owner)} className="text-primary hover:underline disabled:opacity-40">
+                      <button type="button" disabled={busyId === owner.id} onClick={() => setToggleTarget(owner)} className="text-primary hover:underline disabled:opacity-40">
                         {owner.status === "active" ? "Deactivate" : "Reactivate"}
                       </button>
                     </div>
@@ -133,6 +137,24 @@ export function OwnerAccountListPage() {
           </tbody>
         </table>
       </div>
+
+      <ConfirmDialog
+        open={toggleTarget !== null}
+        title={toggleTarget?.status === "active" ? "Deactivate Owner Account" : "Reactivate Owner Account"}
+        message={
+          toggleTarget
+            ? toggleTarget.status === "active"
+              ? `Deactivate ${toggleTarget.full_name}'s Owner account? They will immediately lose access.`
+              : `Reactivate ${toggleTarget.full_name}'s Owner account?`
+            : ""
+        }
+        confirmLabel={toggleTarget?.status === "active" ? "Deactivate" : "Reactivate"}
+        confirmVariant={toggleTarget?.status === "active" ? "danger" : "primary"}
+        onConfirm={() => {
+          if (toggleTarget) return toggleActive(toggleTarget);
+        }}
+        onClose={() => setToggleTarget(null)}
+      />
     </SimplePageLayout>
   );
 }

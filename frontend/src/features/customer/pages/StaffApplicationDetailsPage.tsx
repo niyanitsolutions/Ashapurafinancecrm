@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
+import { Button } from "@/components/buttons/Button";
+import { EmployeeSelect } from "@/components/forms/EmployeeSelect";
+import { ErrorBanner } from "@/components/forms/ErrorBanner";
+import { FormField } from "@/components/forms/FormField";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { Modal } from "@/components/overlays/Modal";
 import { Icon } from "@/theme/icons";
 import { useAuth } from "@/features/auth/useAuth";
 import {
@@ -20,6 +25,51 @@ const STATUS_BADGE: Record<ApplicationDocument["verification_status"], { label: 
   pending: { label: "Pending Review", className: "text-text/50", icon: "clock" },
 };
 
+function RejectDocumentModal({
+  fileName,
+  onClose,
+  onConfirm,
+}: {
+  fileName: string;
+  onClose: () => void;
+  onConfirm: (reason: string) => Promise<void>;
+}) {
+  const [reason, setReason] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reason.trim()) return;
+    setIsSubmitting(true);
+    await onConfirm(reason.trim());
+    setIsSubmitting(false);
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Reject Document"
+      description={fileName}
+      size="sm"
+      footer={
+        <>
+          <Button variant="secondary" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="danger" type="submit" form="reject-document-form" size="sm" loading={isSubmitting} disabled={!reason.trim()}>
+            Confirm Reject
+          </Button>
+        </>
+      }
+    >
+      <form id="reject-document-form" onSubmit={onSubmit}>
+        <FormField label="Rejection reason" value={reason} onChange={(e) => setReason(e.target.value)} required autoFocus />
+      </form>
+    </Modal>
+  );
+}
+
 export function StaffApplicationDetailsPage() {
   const { applicationId } = useParams<{ applicationId: string }>();
   const { role } = useAuth();
@@ -28,8 +78,7 @@ export function StaffApplicationDetailsPage() {
   const [employeeId, setEmployeeId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [rejectingId, setRejectingId] = useState<string | null>(null);
-  const [rejectReason, setRejectReason] = useState("");
+  const [rejectingDoc, setRejectingDoc] = useState<ApplicationDocument | null>(null);
 
   const load = () => {
     if (!applicationId) return;
@@ -41,7 +90,7 @@ export function StaffApplicationDetailsPage() {
       .catch(() => setDocuments([]));
   };
 
-  useEffect(load, [applicationId]);  
+  useEffect(load, [applicationId]);
 
   if (!applicationId) return null;
   if (error && !application) {
@@ -83,15 +132,13 @@ export function StaffApplicationDetailsPage() {
     }
   };
 
-  const onReject = async (documentId: string) => {
-    if (!rejectReason.trim()) return;
+  const onReject = async (documentId: string, reason: string) => {
     setError(null);
     setMessage(null);
     try {
-      await rejectDocument(applicationId, documentId, rejectReason.trim());
+      await rejectDocument(applicationId, documentId, reason);
       setMessage("Document rejected.");
-      setRejectingId(null);
-      setRejectReason("");
+      setRejectingDoc(null);
       load();
     } catch (err) {
       setError(getErrorMessage(err));
@@ -101,16 +148,16 @@ export function StaffApplicationDetailsPage() {
   return (
     <SimplePageLayout title={application.application_code} backTo="/applications">
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
-      {error && <p className="mb-4 text-sm text-danger">{error}</p>}
+      <ErrorBanner message={error} />
 
-      <div className="grid grid-cols-3 gap-6">
-        <div className="col-span-2 space-y-6">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="lg:col-span-2 space-y-6">
           <div className="bg-card border border-border rounded-card shadow-card p-6">
             <h2 className="text-sm font-semibold text-text/70 mb-3">Details</h2>
             <p className="text-sm text-text/60 mb-2 capitalize">
               {application.product_name} · {application.status}
             </p>
-            <dl className="grid grid-cols-2 gap-2 text-sm">
+            <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
               {Object.entries(application.form_data).map(([key, value]) => (
                 <div key={key}>
                   <dt className="text-xs text-text/50 capitalize">{key.replace(/_/g, " ")}</dt>
@@ -122,7 +169,9 @@ export function StaffApplicationDetailsPage() {
 
           <div className="bg-card border border-border rounded-card shadow-card p-6">
             <h2 className="text-sm font-semibold text-text/70 mb-3">Documents</h2>
-            {documents.length === 0 && <p className="text-sm text-text/50">No documents uploaded yet.</p>}
+            {documents.length === 0 && (
+              <p className="text-sm text-text/50">No documents uploaded yet.</p>
+            )}
             <ul className="space-y-3">
               {documents.map((d) => {
                 const badge = STATUS_BADGE[d.verification_status];
@@ -149,40 +198,12 @@ export function StaffApplicationDetailsPage() {
                     )}
                     {d.verification_status === "pending" && (
                       <div className="mt-2 flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => onVerify(d.id)}
-                          className="rounded border border-success text-success text-xs font-medium py-1 px-2.5 hover:bg-success/10"
-                        >
+                        <Button variant="secondary" size="sm" onClick={() => onVerify(d.id)}>
                           Verify
-                        </button>
-                        {rejectingId === d.id ? (
-                          <>
-                            <input
-                              type="text"
-                              placeholder="Rejection reason"
-                              value={rejectReason}
-                              onChange={(e) => setRejectReason(e.target.value)}
-                              className="rounded border border-border px-2 py-1 text-xs"
-                            />
-                            <button
-                              type="button"
-                              disabled={!rejectReason.trim()}
-                              onClick={() => onReject(d.id)}
-                              className="rounded border border-danger text-danger text-xs font-medium py-1 px-2.5 disabled:opacity-50"
-                            >
-                              Confirm Reject
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => { setRejectingId(d.id); setRejectReason(""); }}
-                            className="rounded border border-border text-text/60 text-xs font-medium py-1 px-2.5 hover:bg-background"
-                          >
-                            Reject
-                          </button>
-                        )}
+                        </Button>
+                        <Button variant="danger" size="sm" onClick={() => setRejectingDoc(d)}>
+                          Reject
+                        </Button>
                       </div>
                     )}
                   </li>
@@ -197,26 +218,22 @@ export function StaffApplicationDetailsPage() {
           <p className="text-sm text-text">{application.assigned_to_name || "Unassigned"}</p>
           {role === "owner" && (
             <>
-              <input
-                type="text"
-                placeholder="Employee ID"
-                value={employeeId}
-                onChange={(e) => setEmployeeId(e.target.value)}
-                className="w-full rounded border border-border px-3 py-2 text-sm"
-              />
-              <button
-                type="button"
-                disabled={!employeeId}
-                onClick={onAssign}
-                className="w-full rounded bg-primary text-white text-sm font-medium py-2 disabled:opacity-50"
-              >
+              <EmployeeSelect label="Assign to" value={employeeId} onChange={setEmployeeId} />
+              <Button size="sm" className="w-full" disabled={!employeeId} onClick={onAssign}>
                 Assign
-              </button>
-              <p className="text-xs text-text/40">Find the Employee ID from the Employees list.</p>
+              </Button>
             </>
           )}
         </div>
       </div>
+
+      {rejectingDoc && (
+        <RejectDocumentModal
+          fileName={rejectingDoc.file_name}
+          onClose={() => setRejectingDoc(null)}
+          onConfirm={(reason) => onReject(rejectingDoc.id, reason)}
+        />
+      )}
     </SimplePageLayout>
   );
 }

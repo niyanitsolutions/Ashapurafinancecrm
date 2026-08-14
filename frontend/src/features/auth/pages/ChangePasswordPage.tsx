@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
+import { FormField } from "@/components/forms/FormField";
 import { SubmitButton } from "@/components/forms/SubmitButton";
 import { changePassword } from "@/features/auth/api";
 import { isPasswordStrong, PasswordStrengthChecklist } from "@/features/auth/components/PasswordStrengthChecklist";
@@ -48,28 +49,13 @@ export function ChangePasswordPage() {
         <form onSubmit={onSubmit} className="space-y-4">
           <ErrorBanner message={error} />
           {message && <p className="text-sm text-success">{message}</p>}
-          <label className="block text-sm">
-            <span className="text-text/70">Current Password</span>
-            <input
-              type="password" required value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)}
-              className="mt-1 block w-full rounded border border-border px-3 py-2 text-sm"
-            />
-          </label>
-          <label className="block text-sm">
-            <span className="text-text/70">New Password</span>
-            <input
-              type="password" required minLength={8} value={newPassword} onChange={(e) => setNewPassword(e.target.value)}
-              className="mt-1 block w-full rounded border border-border px-3 py-2 text-sm"
-            />
-          </label>
+          <FormField label="Current Password" type="password" required value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} />
+          <FormField label="New Password" type="password" required minLength={8} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
           <PasswordStrengthChecklist password={newPassword} />
-          <label className="block text-sm">
-            <span className="text-text/70">Confirm New Password</span>
-            <input
-              type="password" required value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)}
-              className="mt-1 block w-full rounded border border-border px-3 py-2 text-sm"
-            />
-          </label>
+          <FormField
+            label="Confirm New Password" type="password" required value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+          />
           <SubmitButton isSubmitting={isSubmitting}>Update Password</SubmitButton>
         </form>
       </div>

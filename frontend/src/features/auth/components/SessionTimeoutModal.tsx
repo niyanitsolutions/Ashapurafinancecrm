@@ -1,6 +1,11 @@
+import { Button } from "@/components/buttons/Button";
+import { Modal } from "@/components/overlays/Modal";
+
 // "Session Expiring" warning shown at 9 minutes idle, 60 seconds before auto-logout
-// (see useIdleTimeout.ts). A plain overlay, not a routed page — it must be able to
-// interrupt whatever screen the user is on, anywhere in the authenticated app.
+// (see useIdleTimeout.ts). Must be able to interrupt whatever screen the user is on,
+// anywhere in the authenticated app. Backdrop click / Escape map to onContinue (not a
+// no-op, not onLogout) — the safe default is to keep the session alive, matching what the
+// primary button already does.
 export function SessionTimeoutModal({
   secondsRemaining,
   onContinue,
@@ -11,30 +16,24 @@ export function SessionTimeoutModal({
   onLogout: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-      <div className="w-full max-w-sm rounded-card bg-card border border-border shadow-card p-6 text-center">
-        <h2 className="text-lg font-semibold text-text mb-2">Session Expiring</h2>
-        <p className="text-sm text-text/60 mb-6">
-          Your session will expire in <span className="font-semibold text-text">{secondsRemaining}</span> second
-          {secondsRemaining === 1 ? "" : "s"}.
-        </p>
-        <div className="flex flex-col gap-2">
-          <button
-            type="button"
-            onClick={onContinue}
-            className="w-full rounded-lg bg-primary text-white text-sm font-medium py-2.5"
-          >
-            Continue Session
-          </button>
-          <button
-            type="button"
-            onClick={onLogout}
-            className="w-full rounded-lg border border-border text-sm font-medium py-2.5 text-text/70 hover:bg-background"
-          >
+    <Modal
+      open
+      onClose={onContinue}
+      title="Session Expiring"
+      size="sm"
+      footer={
+        <div className="flex w-full flex-col gap-2">
+          <Button onClick={onContinue}>Continue Session</Button>
+          <Button variant="secondary" onClick={onLogout}>
             Logout
-          </button>
+          </Button>
         </div>
-      </div>
-    </div>
+      }
+    >
+      <p className="text-sm text-text/60">
+        Your session will expire in <span className="font-semibold text-text">{secondsRemaining}</span> second
+        {secondsRemaining === 1 ? "" : "s"}.
+      </p>
+    </Modal>
   );
 }

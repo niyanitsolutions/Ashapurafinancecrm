@@ -5,6 +5,7 @@ import { computeProgress, validateFormData } from "@/components/forms/fieldValid
 import { FormField } from "@/components/forms/FormField";
 import { ProductSchemaForm, RepeatableGroupsForm, groupBySection } from "@/components/forms/ProductSchemaForm";
 import { SubmitButton } from "@/components/forms/SubmitButton";
+import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
 import { useAuth } from "@/features/auth/useAuth";
 import { DocumentChecklist } from "@/features/customer/components/DocumentChecklist";
 import {
@@ -67,6 +68,7 @@ export function ApplicationPage() {
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
+  const [confirmLeave, setConfirmLeave] = useState(false);
   const { status: tabLockStatus, takeOver: takeOverTabLock } = useApplicationTabLock(id);
   // Restores "Same Step" after an idle auto-logout or a plain browser refresh — the
   // draft itself is already safe via autosave (below); this just keeps the wizard from
@@ -246,7 +248,10 @@ export function ApplicationPage() {
   };
 
   const onBack = () => {
-    if (hasUnsavedChanges && !window.confirm("You have unsaved changes. Leave without saving?")) return;
+    if (hasUnsavedChanges) {
+      setConfirmLeave(true);
+      return;
+    }
     navigate("/portal/applications");
   };
 
@@ -304,26 +309,23 @@ export function ApplicationPage() {
 
   return (
     <div className="max-w-app mx-auto">
-      {tabLockStatus === "conflict" && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="w-full max-w-sm rounded-card bg-card border border-border shadow-card p-6 text-center">
-            <h2 className="text-lg font-semibold text-text mb-2">Already Open</h2>
-            <p className="text-sm text-text/60 mb-6">Application already opened in another tab. Continue here?</p>
-            <div className="flex flex-col gap-2">
-              <button type="button" onClick={takeOverTabLock} className="w-full rounded-lg bg-primary text-white text-sm font-medium py-2.5">
-                Continue
-              </button>
-              <button
-                type="button"
-                onClick={() => navigate("/portal/applications")}
-                className="w-full rounded-lg border border-border text-sm font-medium py-2.5 text-text/70 hover:bg-background"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        open={tabLockStatus === "conflict"}
+        title="Already Open"
+        message="Application already opened in another tab. Continue here?"
+        confirmLabel="Continue"
+        onConfirm={takeOverTabLock}
+        onClose={() => navigate("/portal/applications")}
+      />
+      <ConfirmDialog
+        open={confirmLeave}
+        title="Unsaved Changes"
+        message="You have unsaved changes. Leave without saving?"
+        confirmLabel="Leave"
+        confirmVariant="danger"
+        onConfirm={() => navigate("/portal/applications")}
+        onClose={() => setConfirmLeave(false)}
+      />
       <button type="button" onClick={onBack} className="mb-3 text-sm text-primary hover:underline">
         ← Back to My Applications
       </button>

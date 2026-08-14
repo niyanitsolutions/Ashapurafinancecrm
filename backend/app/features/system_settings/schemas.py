@@ -132,6 +132,9 @@ class UpdateCompanySettingsRequest(BaseModel):
     primary_color: str | None = None
     secondary_color: str | None = None
     business_hours: list[BusinessHourSchema] | None = None
+    contact_email: str | None = None
+    contact_phone: str | None = None
+    address: AddressSchema | None = None
 
 
 class CompanySettingsResponse(BaseModel):
@@ -141,6 +144,9 @@ class CompanySettingsResponse(BaseModel):
     primary_color: str | None = None
     secondary_color: str | None = None
     business_hours: list[BusinessHourSchema]
+    contact_email: str | None = None
+    contact_phone: str | None = None
+    address: AddressSchema | None = None
     updated_at: datetime
 
 

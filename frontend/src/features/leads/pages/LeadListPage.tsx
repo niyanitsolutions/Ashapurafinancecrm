@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ActionButton } from "@/components/tables/ActionButton";
 import { Badge, StatusBadge } from "@/components/badges/Badge";
+import { Button, BUTTON_BASE_CLASSES, BUTTON_SIZE_CLASSES, BUTTON_VARIANT_CLASSES } from "@/components/buttons/Button";
 import { ColumnsMenu, type ColumnOption } from "@/components/tables/ColumnsMenu";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { EmptyState } from "@/components/layout/EmptyState";
@@ -156,7 +157,7 @@ export function LeadListPage({ assignedOnly }: { assignedOnly: boolean }) {
       <div className="p-6">
         <ErrorBanner message={error} />
 
-        <div className="bg-card rounded-2xl shadow-card overflow-hidden">
+        <div className="bg-card border border-border rounded-card shadow-card overflow-hidden">
           <div className="p-6 flex flex-wrap items-start justify-between gap-4">
             <div className="flex items-start gap-3.5">
               <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
@@ -172,17 +173,17 @@ export function LeadListPage({ assignedOnly }: { assignedOnly: boolean }) {
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<Icon name="download" className="h-4 w-4 text-textSecondary" />}
                 onClick={() => downloadLeadsCsv(setError)}
-                className="flex items-center gap-2 rounded-xl border border-border bg-card text-sm font-medium py-2.5 px-4 text-text hover:bg-background transition-colors"
               >
-                <Icon name="download" className="h-4 w-4 text-textSecondary" />
                 Export
-              </button>
+              </Button>
               <Link
                 to="/leads/new"
-                className="hover-lift flex items-center gap-2 rounded-xl bg-gradient-to-r from-primary to-primary-dark text-white text-sm font-semibold py-2.5 px-4 shadow-card"
+                className={`${BUTTON_BASE_CLASSES} ${BUTTON_VARIANT_CLASSES.primary} ${BUTTON_SIZE_CLASSES.sm}`}
               >
                 <Icon name="plus" className="h-4 w-4" />
                 Create Lead

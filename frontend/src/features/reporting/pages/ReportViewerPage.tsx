@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { Button } from "@/components/buttons/Button";
+import { EmptyState } from "@/components/layout/EmptyState";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { getErrorMessage } from "@/features/customer/errors";
 import {
@@ -104,29 +106,31 @@ export function ReportViewerPage() {
       <div className="mb-6 bg-card border border-border rounded-card shadow-card p-4 flex flex-wrap items-end gap-3">
         <label className="text-xs text-text/60">
           From
-          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="mt-1 block rounded border border-border px-3 py-2 text-sm" />
+          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="mt-1 block rounded-xl border border-border px-3.5 py-2.5 text-sm" />
         </label>
         <label className="text-xs text-text/60">
           To
-          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="mt-1 block rounded border border-border px-3 py-2 text-sm" />
+          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="mt-1 block rounded-xl border border-border px-3.5 py-2.5 text-sm" />
         </label>
-        <button type="button" onClick={load} className="rounded bg-primary text-white text-sm font-medium py-2 px-4">Run</button>
-        <button
-          type="button"
+        <Button size="sm" onClick={load}>
+          Run
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
           onClick={() => downloadCsv(exportReportUrl(reportKey, { date_from: dateFrom || undefined, date_to: dateTo || undefined }), `${reportKey}.csv`, setError)}
-          className="rounded border border-border text-sm font-medium py-2 px-4"
         >
           Export CSV
-        </button>
+        </Button>
 
-        <div className="flex items-end gap-2 ml-auto">
+        <div className="flex flex-wrap items-end gap-2 sm:ml-auto">
           {savedFilters.length > 0 && (
             <select
               onChange={(e) => {
                 const filter = savedFilters.find((f) => f.id === e.target.value);
                 if (filter) applySavedFilter(filter);
               }}
-              className="rounded border border-border px-3 py-2 text-sm"
+              className="rounded-xl border border-border px-3.5 py-2.5 text-sm"
               defaultValue=""
             >
               <option value="" disabled>Load saved filter…</option>
@@ -137,9 +141,11 @@ export function ReportViewerPage() {
           )}
           <input
             placeholder="Save as…" value={newFilterLabel} onChange={(e) => setNewFilterLabel(e.target.value)}
-            className="rounded border border-border px-3 py-2 text-sm w-32"
+            className="rounded-xl border border-border px-3.5 py-2.5 text-sm w-32"
           />
-          <button type="button" onClick={saveCurrentFilter} className="text-primary hover:underline text-xs">Save Filter</button>
+          <Button variant="ghost" size="sm" onClick={saveCurrentFilter}>
+            Save Filter
+          </Button>
         </div>
       </div>
 
@@ -178,7 +184,11 @@ export function ReportViewerPage() {
               </thead>
               <tbody>
                 {result.rows.length === 0 && (
-                  <tr><td colSpan={result.columns.length} className="px-4 py-6 text-center text-text/50">No data for this date range.</td></tr>
+                  <tr>
+                    <td colSpan={result.columns.length}>
+                      <EmptyState icon="reports" title="No data for this date range" description="Try widening the date range or changing the filters above." />
+                    </td>
+                  </tr>
                 )}
                 {result.rows.map((row, i) => (
                   <tr key={i} className="border-b border-border last:border-0 hover:bg-background">

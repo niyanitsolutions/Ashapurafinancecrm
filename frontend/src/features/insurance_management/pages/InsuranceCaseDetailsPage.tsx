@@ -1,9 +1,15 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
+import { Button } from "@/components/buttons/Button";
+import { CheckboxField } from "@/components/forms/CheckboxField";
 import { EmployeeSelect } from "@/components/forms/EmployeeSelect";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
+import { FormField } from "@/components/forms/FormField";
+import { SelectField } from "@/components/forms/SelectField";
 import { SubmitButton } from "@/components/forms/SubmitButton";
+import { TextareaField } from "@/components/forms/TextareaField";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
 import { getErrorMessage } from "@/features/customer/errors";
 import {
   addInsuranceCaseNote,
@@ -63,6 +69,8 @@ export function InsuranceCaseDetailsPage() {
   const [documentTypes, setDocumentTypes] = useState<NamedMasterData[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmVerify, setConfirmVerify] = useState(false);
+  const [confirmIssue, setConfirmIssue] = useState(false);
 
   const load = () => {
     if (!caseId) return;
@@ -118,10 +126,10 @@ export function InsuranceCaseDetailsPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-3 gap-6">
-        <div className="col-span-2 space-y-6">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="lg:col-span-2 space-y-6">
           <Section title="Case Overview">
-            <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+            <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
               <Field label="Customer" value={insuranceCase.customer_name} />
               <Field label="Product" value={insuranceCase.product_name} />
               <Field label="Assigned To" value={insuranceCase.assigned_to_name} />
@@ -134,9 +142,9 @@ export function InsuranceCaseDetailsPage() {
               <p className="text-xs text-text/50">Pending: {insuranceCase.pending_document_type_ids.length === 0 ? "none requested" : insuranceCase.pending_document_type_ids.length}</p>
               <RequestDocumentsForm documentTypes={documentTypes} onSubmit={(ids) => run(() => requestInsuranceCaseDocuments(caseId, ids), "Documents requested.")} />
               {status !== "application_submitted" && (
-                <button type="button" onClick={() => run(() => verifyInsuranceCaseDocuments(caseId), "Documents verified.")} className="rounded bg-primary text-white text-sm font-medium py-2 px-4">
+                <Button size="sm" onClick={() => setConfirmVerify(true)}>
                   Verify Documents
-                </button>
+                </Button>
               )}
             </Section>
           )}
@@ -158,7 +166,7 @@ export function InsuranceCaseDetailsPage() {
               {details.premium_amount == null ? (
                 <PremiumForm onSubmit={(payload) => run(() => recordPremium(caseId, payload), "Premium quote issued.")} />
               ) : (
-                <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
                   <Field label="Premium Amount" value={details.premium_amount} />
                   <Field label="Customer Decision" value={details.premium_decision} />
                 </div>
@@ -173,13 +181,13 @@ export function InsuranceCaseDetailsPage() {
                 <GeneratePolicyForm onSubmit={(payload) => run(() => generatePolicy(caseId, payload), "Policy number generated.")} />
               ) : (
                 <>
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                  <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
                     <Field label="Policy Number" value={details.policy_number} />
                     <Field label="Generated At" value={details.policy_generated_at ? new Date(details.policy_generated_at).toLocaleString() : null} />
                   </div>
-                  <button type="button" onClick={() => run(() => issuePolicy(caseId), "Policy issued.")} className="rounded bg-primary text-white text-sm font-medium py-2 px-4">
+                  <Button size="sm" onClick={() => setConfirmIssue(true)}>
                     Issue Policy
-                  </button>
+                  </Button>
                 </>
               )}
             </Section>
@@ -187,7 +195,7 @@ export function InsuranceCaseDetailsPage() {
 
           {status === "policy_issued" && (
             <Section title="Policy">
-              <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+              <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
                 <Field label="Policy Number" value={details.policy_number} />
                 <Field label="Issued At" value={details.policy_issued_at ? new Date(details.policy_issued_at).toLocaleString() : null} />
               </div>
@@ -203,9 +211,9 @@ export function InsuranceCaseDetailsPage() {
           {status !== "policy_issued" && status !== "rejected" && (
             <Section title="Case Status Control">
               {status === "on_hold" ? (
-                <button type="button" onClick={() => run(() => resumeInsuranceCase(caseId), "Case resumed.")} className="w-full rounded bg-primary text-white text-sm font-medium py-2">
+                <Button size="sm" className="w-full" onClick={() => run(() => resumeInsuranceCase(caseId), "Case resumed.")}>
                   Resume
-                </button>
+                </Button>
               ) : (
                 <HoldForm onSubmit={(reason, remarks) => run(() => holdInsuranceCase(caseId, reason, remarks), "Case placed on hold.")} />
               )}
@@ -234,6 +242,29 @@ export function InsuranceCaseDetailsPage() {
           </Section>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmVerify}
+        title="Verify Documents"
+        message="Mark all requested documents as verified for this case? This moves the case to the next stage."
+        confirmLabel="Verify Documents"
+        onConfirm={async () => {
+          await run(() => verifyInsuranceCaseDocuments(caseId), "Documents verified.");
+          setConfirmVerify(false);
+        }}
+        onClose={() => setConfirmVerify(false)}
+      />
+      <ConfirmDialog
+        open={confirmIssue}
+        title="Issue Policy"
+        message="Issue this policy? Once issued, the case moves to Policy Issued and this cannot be undone here."
+        confirmLabel="Issue Policy"
+        onConfirm={async () => {
+          await run(() => issuePolicy(caseId), "Policy issued.");
+          setConfirmIssue(false);
+        }}
+        onClose={() => setConfirmIssue(false)}
+      />
     </SimplePageLayout>
   );
 }
@@ -244,9 +275,9 @@ function AssignForm({ currentName, onSubmit }: { currentName: string | null; onS
     <div className="space-y-2">
       {currentName && <p className="text-sm text-text/70">Currently: {currentName}</p>}
       <EmployeeSelect label="Employee" value={employeeId} onChange={setEmployeeId} />
-      <button type="button" disabled={!employeeId} onClick={() => onSubmit(employeeId)} className="w-full rounded bg-primary text-white text-sm font-medium py-2 disabled:opacity-50">
+      <Button size="sm" className="w-full" disabled={!employeeId} onClick={() => onSubmit(employeeId)}>
         {currentName ? "Reassign" : "Assign"}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -262,15 +293,16 @@ function HoldForm({ onSubmit }: { onSubmit: (reason: string, remarks?: string) =
       }}
       className="space-y-2"
     >
-      <select value={reason} onChange={(e) => setReason(e.target.value)} className="w-full rounded border border-border px-3 py-2 text-sm">
-        {HOLD_REASONS.map((r) => (
-          <option key={r.value} value={r.value}>{r.label}</option>
-        ))}
-      </select>
-      <textarea placeholder="Remarks (optional)" value={remarks} onChange={(e) => setRemarks(e.target.value)} className="w-full rounded border border-border px-3 py-2 text-sm" rows={2} />
-      <button type="submit" className="w-full rounded border border-warning text-warning text-sm font-medium py-2">
+      <SelectField
+        label="Hold Reason"
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        options={HOLD_REASONS.map((r) => ({ value: r.value, label: r.label }))}
+      />
+      <TextareaField label="Remarks (optional)" value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={2} />
+      <Button type="submit" variant="secondary" size="sm" className="w-full">
         Place On Hold
-      </button>
+      </Button>
     </form>
   );
 }
@@ -285,10 +317,14 @@ function NoteForm({ onSubmit }: { onSubmit: (text: string) => void }) {
         onSubmit(text.trim());
         setText("");
       }}
-      className="flex gap-2"
+      className="flex items-end gap-2"
     >
-      <input type="text" placeholder="Add a note" value={text} onChange={(e) => setText(e.target.value)} className="flex-1 rounded border border-border px-3 py-2 text-sm" />
-      <SubmitButton>Add</SubmitButton>
+      <div className="flex-1">
+        <FormField label="Add a note" value={text} onChange={(e) => setText(e.target.value)} />
+      </div>
+      <div className="mb-4">
+        <SubmitButton>Add</SubmitButton>
+      </div>
     </form>
   );
 }
@@ -297,21 +333,19 @@ function RequestDocumentsForm({ documentTypes, onSubmit }: { documentTypes: Name
   const [selected, setSelected] = useState<string[]>([]);
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-3">
         {documentTypes.map((dt) => (
-          <label key={dt.id} className="flex items-center gap-1 text-xs border border-border rounded px-2 py-1">
-            <input
-              type="checkbox"
-              checked={selected.includes(dt.id)}
-              onChange={(e) => setSelected((prev) => (e.target.checked ? [...prev, dt.id] : prev.filter((id) => id !== dt.id)))}
-            />
-            {dt.name}
-          </label>
+          <CheckboxField
+            key={dt.id}
+            label={dt.name}
+            checked={selected.includes(dt.id)}
+            onChange={(e) => setSelected((prev) => (e.target.checked ? [...prev, dt.id] : prev.filter((id) => id !== dt.id)))}
+          />
         ))}
       </div>
-      <button type="button" disabled={selected.length === 0} onClick={() => onSubmit(selected)} className="rounded border border-primary text-primary text-sm font-medium py-2 px-4 disabled:opacity-50">
+      <Button variant="secondary" size="sm" disabled={selected.length === 0} onClick={() => onSubmit(selected)}>
         Request Selected Documents
-      </button>
+      </Button>
     </div>
   );
 }
@@ -330,33 +364,53 @@ function UnderwritingForm({
   const [requiresAdditionalDocuments, setRequiresAdditionalDocuments] = useState(false);
   const [decision, setDecision] = useState<"approved" | "rejected">("approved");
   const [rejectionReason, setRejectionReason] = useState("");
+  const [confirmReject, setConfirmReject] = useState(false);
+
+  const submit = () => {
+    onSubmit({
+      sum_insured: sumInsured ? Number(sumInsured) : undefined, underwriting_remarks: remarks || undefined,
+      requires_medical: requiresMedical, requires_additional_documents: requiresAdditionalDocuments,
+      decision, rejection_reason: decision === "rejected" ? rejectionReason : undefined,
+    });
+  };
 
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        onSubmit({
-          sum_insured: sumInsured ? Number(sumInsured) : undefined, underwriting_remarks: remarks || undefined,
-          requires_medical: requiresMedical, requires_additional_documents: requiresAdditionalDocuments,
-          decision, rejection_reason: decision === "rejected" ? rejectionReason : undefined,
-        });
+        if (decision === "rejected") {
+          setConfirmReject(true);
+          return;
+        }
+        submit();
       }}
       className="space-y-3"
     >
-      <input type="number" placeholder="Sum Insured" value={sumInsured} onChange={(e) => setSumInsured(e.target.value)} className="w-full rounded border border-border px-3 py-2 text-sm" />
-      <textarea placeholder="Remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} className="w-full rounded border border-border px-3 py-2 text-sm" rows={2} />
-      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={requiresMedical} onChange={(e) => setRequiresMedical(e.target.checked)} /> Requires medical verification</label>
-      <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" checked={requiresAdditionalDocuments} onChange={(e) => setRequiresAdditionalDocuments(e.target.checked)} /> Requires additional documents
-      </label>
+      <FormField label="Sum Insured" type="number" value={sumInsured} onChange={(e) => setSumInsured(e.target.value)} />
+      <TextareaField label="Remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={2} />
+      <CheckboxField label="Requires medical verification" checked={requiresMedical} onChange={(e) => setRequiresMedical(e.target.checked)} />
+      <CheckboxField label="Requires additional documents" checked={requiresAdditionalDocuments} onChange={(e) => setRequiresAdditionalDocuments(e.target.checked)} />
       <div className="flex items-center gap-4 text-sm">
         <label className="flex items-center gap-2"><input type="radio" checked={decision === "approved"} onChange={() => setDecision("approved")} /> Approve</label>
         <label className="flex items-center gap-2"><input type="radio" checked={decision === "rejected"} onChange={() => setDecision("rejected")} /> Reject</label>
       </div>
       {decision === "rejected" && (
-        <textarea placeholder="Rejection reason (mandatory)" value={rejectionReason} onChange={(e) => setRejectionReason(e.target.value)} className="w-full rounded border border-border px-3 py-2 text-sm" rows={2} />
+        <TextareaField label="Rejection reason (mandatory)" value={rejectionReason} onChange={(e) => setRejectionReason(e.target.value)} rows={2} required />
       )}
       <SubmitButton>Submit Decision</SubmitButton>
+
+      <ConfirmDialog
+        open={confirmReject}
+        title="Reject Case"
+        message="Reject this case at underwriting? This decision is recorded on the case history and cannot be undone here."
+        confirmLabel="Reject Case"
+        confirmVariant="danger"
+        onConfirm={() => {
+          submit();
+          setConfirmReject(false);
+        }}
+        onClose={() => setConfirmReject(false)}
+      />
     </form>
   );
 }
@@ -365,23 +419,46 @@ function MedicalVerificationForm({ onSubmit }: { onSubmit: (payload: { outcome: 
   const [outcome, setOutcome] = useState<"cleared" | "failed">("cleared");
   const [remarks, setRemarks] = useState("");
   const [rejectionReason, setRejectionReason] = useState("");
+  const [confirmFail, setConfirmFail] = useState(false);
+
+  const submit = () => {
+    onSubmit({ outcome, medical_remarks: remarks || undefined, rejection_reason: outcome === "failed" ? rejectionReason : undefined });
+  };
+
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        onSubmit({ outcome, medical_remarks: remarks || undefined, rejection_reason: outcome === "failed" ? rejectionReason : undefined });
+        if (outcome === "failed") {
+          setConfirmFail(true);
+          return;
+        }
+        submit();
       }}
       className="space-y-3"
     >
-      <textarea placeholder="Remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} className="w-full rounded border border-border px-3 py-2 text-sm" rows={2} />
+      <TextareaField label="Remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={2} />
       <div className="flex items-center gap-4 text-sm">
         <label className="flex items-center gap-2"><input type="radio" checked={outcome === "cleared"} onChange={() => setOutcome("cleared")} /> Cleared</label>
         <label className="flex items-center gap-2"><input type="radio" checked={outcome === "failed"} onChange={() => setOutcome("failed")} /> Failed</label>
       </div>
       {outcome === "failed" && (
-        <textarea placeholder="Rejection reason (mandatory)" value={rejectionReason} onChange={(e) => setRejectionReason(e.target.value)} className="w-full rounded border border-border px-3 py-2 text-sm" rows={2} />
+        <TextareaField label="Rejection reason (mandatory)" value={rejectionReason} onChange={(e) => setRejectionReason(e.target.value)} rows={2} required />
       )}
       <SubmitButton>Submit Decision</SubmitButton>
+
+      <ConfirmDialog
+        open={confirmFail}
+        title="Mark Medical Verification Failed"
+        message="Mark this case as failed medical verification and reject it? This is recorded on the case history and cannot be undone here."
+        confirmLabel="Confirm Failed"
+        confirmVariant="danger"
+        onConfirm={() => {
+          submit();
+          setConfirmFail(false);
+        }}
+        onClose={() => setConfirmFail(false)}
+      />
     </form>
   );
 }
@@ -394,10 +471,14 @@ function PremiumForm({ onSubmit }: { onSubmit: (payload: { premium_amount: numbe
         e.preventDefault();
         onSubmit({ premium_amount: Number(amount) });
       }}
-      className="flex gap-3"
+      className="flex items-end gap-3"
     >
-      <input type="number" placeholder="Premium Amount" value={amount} onChange={(e) => setAmount(e.target.value)} className="flex-1 rounded border border-border px-3 py-2 text-sm" required />
-      <SubmitButton>Issue Premium Quote</SubmitButton>
+      <div className="flex-1">
+        <FormField label="Premium Amount" type="number" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+      </div>
+      <div className="mb-4">
+        <SubmitButton>Issue Premium Quote</SubmitButton>
+      </div>
     </form>
   );
 }
@@ -410,10 +491,14 @@ function GeneratePolicyForm({ onSubmit }: { onSubmit: (payload: { policy_number:
         e.preventDefault();
         onSubmit({ policy_number: policyNumber });
       }}
-      className="flex gap-3"
+      className="flex items-end gap-3"
     >
-      <input placeholder="Policy Number" value={policyNumber} onChange={(e) => setPolicyNumber(e.target.value)} className="flex-1 rounded border border-border px-3 py-2 text-sm" required />
-      <SubmitButton>Generate Policy</SubmitButton>
+      <div className="flex-1">
+        <FormField label="Policy Number" value={policyNumber} onChange={(e) => setPolicyNumber(e.target.value)} required />
+      </div>
+      <div className="mb-4">
+        <SubmitButton>Generate Policy</SubmitButton>
+      </div>
     </form>
   );
 }

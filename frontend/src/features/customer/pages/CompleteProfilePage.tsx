@@ -60,7 +60,7 @@ export function CompleteProfilePage() {
         <FormField label="PAN Number" value={panNumber} onChange={(e) => setPanNumber(e.target.value)} />
         <FormField label="Aadhaar Number" value={aadhaarNumber} onChange={(e) => setAadhaarNumber(e.target.value)} />
         <FormField label="Address Line 1" value={line1} onChange={(e) => setLine1(e.target.value)} />
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <FormField label="City" value={city} onChange={(e) => setCity(e.target.value)} />
           <FormField label="State" value={state} onChange={(e) => setState(e.target.value)} />
           <FormField label="Pincode" value={pincode} onChange={(e) => setPincode(e.target.value)} />

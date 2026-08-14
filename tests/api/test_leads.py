@@ -314,13 +314,36 @@ async def _leads_permission_id(client, owner_headers) -> str:
     return next(p["id"] for p in existing.json()["data"] if p["module"] == "leads" and p["resource"] == "leads")
 
 
+async def _loan_management_permission_id(client, owner_headers) -> str:
+    r = await client.post(
+        "/api/v1/permissions", json={"module": "loan_management", "resource": "applications", "actions": ["view"]}, headers=owner_headers
+    )
+    if r.status_code == 200:
+        return r.json()["data"]["id"]
+    existing = await client.get("/api/v1/permissions", headers=owner_headers)
+    return next(p["id"] for p in existing.json()["data"] if p["module"] == "loan_management" and p["resource"] == "applications")
+
+
 async def _grant_leads_assign(client, owner_headers, employee_id, role_name="Assigner"):
-    permission_id = await _leads_permission_id(client, owner_headers)
+    # `LeadService.list_eligible_assignees` deliberately gates eligibility on module
+    # access (any granted permission under the lead's product-category module, e.g.
+    # "loan_management" — see PRODUCT_CATEGORY_MODULE), not a separate `leads:assign`
+    # permission (its own docstring: "an Owner already grants module access... should
+    # never need to configure a second, separate assignment permission"). Both are
+    # granted on the same role here so this helper still also covers the
+    # `POST /leads/{id}/assign` action itself, which IS gated on `leads:leads:assign`.
+    leads_permission_id = await _leads_permission_id(client, owner_headers)
+    loan_permission_id = await _loan_management_permission_id(client, owner_headers)
     role = await client.post("/api/v1/roles", json={"name": role_name}, headers=owner_headers)
     role_id = role.json()["data"]["id"]
     await client.put(
         f"/api/v1/roles/{role_id}/permissions",
-        json={"grants": [{"permission_id": permission_id, "granted_actions": ["view", "assign"]}]},
+        json={
+            "grants": [
+                {"permission_id": leads_permission_id, "granted_actions": ["view", "assign"]},
+                {"permission_id": loan_permission_id, "granted_actions": ["view"]},
+            ]
+        },
         headers=owner_headers,
     )
     await client.post(f"/api/v1/roles/{role_id}/assign", json={"employee_id": employee_id}, headers=owner_headers)
@@ -329,7 +352,7 @@ async def _grant_leads_assign(client, owner_headers, employee_id, role_name="Ass
 async def test_eligible_assignees_empty_when_no_employees(client, mock_db, owner_headers):
     lmd = await _lead_master_data(mock_db)
     lead = await _create_lead(client, owner_headers, lmd)
-    r = await client.get(f"/api/v1/leads/eligible-assignees?product_id={lmd['loan_product_id']}", headers=owner_headers)
+    r = await client.get(f"/api/v1/leads/eligible-assignees?product_category=loan&product_id={lmd['loan_product_id']}", headers=owner_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"] == []
     assert lead is not None  # sanity: lead exists but is irrelevant to this endpoint
@@ -337,7 +360,7 @@ async def test_eligible_assignees_empty_when_no_employees(client, mock_db, owner
 
 async def test_eligible_assignees_excludes_employees_without_assign_permission(client, mock_db, owner_headers, master_data):
     await _create_employee(client, owner_headers, master_data, mobile="9711111111", email="noperm@example.com")
-    r = await client.get("/api/v1/leads/eligible-assignees", headers=owner_headers)
+    r = await client.get("/api/v1/leads/eligible-assignees?product_category=loan", headers=owner_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"] == []
 
@@ -348,7 +371,7 @@ async def test_eligible_assignees_excludes_inactive_employees(client, mock_db, o
     r = await client.patch(f"/api/v1/employees/{employee['id']}/deactivate", headers=owner_headers)
     assert r.status_code == 200, r.text
 
-    r = await client.get("/api/v1/leads/eligible-assignees", headers=owner_headers)
+    r = await client.get("/api/v1/leads/eligible-assignees?product_category=loan", headers=owner_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"] == []
 
@@ -357,7 +380,7 @@ async def test_eligible_assignees_includes_active_permitted_employee_with_contex
     employee = await _create_employee(client, owner_headers, master_data, mobile="9733333333", email="eligible@example.com")
     await _grant_leads_assign(client, owner_headers, employee["id"])
 
-    r = await client.get("/api/v1/leads/eligible-assignees", headers=owner_headers)
+    r = await client.get("/api/v1/leads/eligible-assignees?product_category=loan", headers=owner_headers)
     assert r.status_code == 200, r.text
     data = r.json()["data"]
     assert len(data) == 1
@@ -386,7 +409,7 @@ async def test_eligible_assignees_recommends_product_match_and_lowest_workload(c
     lead = await _create_lead(client, owner_headers, lmd)
     await client.post(f"/api/v1/leads/{lead['id']}/assign", json={"employee_id": specialist["id"]}, headers=owner_headers)
 
-    r = await client.get(f"/api/v1/leads/eligible-assignees?product_id={lmd['loan_product_id']}", headers=owner_headers)
+    r = await client.get(f"/api/v1/leads/eligible-assignees?product_category=loan&product_id={lmd['loan_product_id']}", headers=owner_headers)
     assert r.status_code == 200, r.text
     data = r.json()["data"]
     by_id = {d["id"]: d for d in data}
@@ -397,6 +420,69 @@ async def test_eligible_assignees_recommends_product_match_and_lowest_workload(c
     assert data[1]["recommended"] is False
 
 
+async def test_eligible_assignees_falls_back_to_workload_when_nobody_specializes(client, mock_db, owner_headers, master_data):
+    """Neither candidate has a product match — product_match must not distort the
+    ranking in this case; lowest workload alone should decide, same as before product
+    match was made the primary sort key."""
+    lmd = await _lead_master_data(mock_db)
+
+    busier = await _create_employee(client, owner_headers, master_data, mobile="9744444450", email="busier@example.com")
+    freer = await _create_employee(client, owner_headers, master_data, mobile="9744444451", email="freer@example.com")
+    await _grant_leads_assign(client, owner_headers, busier["id"], role_name="Busier Role")
+    await _grant_leads_assign(client, owner_headers, freer["id"], role_name="Freer Role")
+
+    lead = await _create_lead(client, owner_headers, lmd)
+    await client.post(f"/api/v1/leads/{lead['id']}/assign", json={"employee_id": busier["id"]}, headers=owner_headers)
+
+    r = await client.get(f"/api/v1/leads/eligible-assignees?product_category=loan&product_id={lmd['loan_product_id']}", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    by_id = {d["id"]: d for d in data}
+    assert by_id[busier["id"]]["product_match"] is False
+    assert by_id[freer["id"]]["product_match"] is False
+    assert data[0]["id"] == freer["id"]  # lower workload wins when specialization is tied
+
+
+async def test_eligible_assignees_workload_breaks_tie_among_equally_specialized(client, mock_db, owner_headers, master_data):
+    """Both candidates specialize in the product — product_match is a tie, so workload
+    must still decide between them, not an arbitrary/unstable order."""
+    lmd = await _lead_master_data(mock_db)
+
+    busier_specialist = await _create_employee(client, owner_headers, master_data, mobile="9744444452", email="busier.specialist@example.com")
+    freer_specialist = await _create_employee(client, owner_headers, master_data, mobile="9744444453", email="freer.specialist@example.com")
+    await _grant_leads_assign(client, owner_headers, busier_specialist["id"], role_name="Busier Specialist Role")
+    await _grant_leads_assign(client, owner_headers, freer_specialist["id"], role_name="Freer Specialist Role")
+    await client.patch(f"/api/v1/employees/{busier_specialist['id']}", json={"product_ids": [lmd["loan_product_id"]]}, headers=owner_headers)
+    await client.patch(f"/api/v1/employees/{freer_specialist['id']}", json={"product_ids": [lmd["loan_product_id"]]}, headers=owner_headers)
+
+    lead = await _create_lead(client, owner_headers, lmd)
+    await client.post(f"/api/v1/leads/{lead['id']}/assign", json={"employee_id": busier_specialist["id"]}, headers=owner_headers)
+
+    r = await client.get(f"/api/v1/leads/eligible-assignees?product_category=loan&product_id={lmd['loan_product_id']}", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    by_id = {d["id"]: d for d in data}
+    assert by_id[busier_specialist["id"]]["product_match"] is True
+    assert by_id[freer_specialist["id"]]["product_match"] is True
+    assert data[0]["id"] == freer_specialist["id"]  # tied on specialization, lower workload wins
+
+
+async def test_eligible_assignees_ineligible_employee_excluded_even_with_product_match(client, mock_db, owner_headers, master_data):
+    """A product-specialization match must never bypass the module-access eligibility
+    gate — an employee with no grant under the lead's product-category module stays
+    excluded from the results entirely, even if their `product_ids` would otherwise match."""
+    lmd = await _lead_master_data(mock_db)
+
+    ineligible = await _create_employee(client, owner_headers, master_data, mobile="9744444454", email="ineligible@example.com")
+    await client.patch(f"/api/v1/employees/{ineligible['id']}", json={"product_ids": [lmd["loan_product_id"]]}, headers=owner_headers)
+    # No _grant_leads_assign call — this employee has no loan_management module access.
+
+    r = await client.get(f"/api/v1/leads/eligible-assignees?product_category=loan&product_id={lmd['loan_product_id']}", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert all(d["id"] != ineligible["id"] for d in data)
+
+
 async def test_eligible_assignees_alphabetical_tiebreak_when_all_else_equal(client, mock_db, owner_headers, master_data):
     zara = await _create_employee(client, owner_headers, master_data, mobile="9766666661", email="zara@example.com")
     amit = await _create_employee(client, owner_headers, master_data, mobile="9766666662", email="amit@example.com")
@@ -405,7 +491,7 @@ async def test_eligible_assignees_alphabetical_tiebreak_when_all_else_equal(clie
     await _grant_leads_assign(client, owner_headers, zara["id"], role_name="Zara Role")
     await _grant_leads_assign(client, owner_headers, amit["id"], role_name="Amit Role")
 
-    r = await client.get("/api/v1/leads/eligible-assignees", headers=owner_headers)
+    r = await client.get("/api/v1/leads/eligible-assignees?product_category=loan", headers=owner_headers)
     assert r.status_code == 200, r.text
     data = r.json()["data"]
     assert [d["display_name"] for d in data] == ["Amit Employee", "Zara Employee"]
@@ -425,7 +511,7 @@ async def test_eligible_assignees_prefers_never_assigned_over_recently_assigned(
     await client.post(f"/api/v1/leads/{lead['id']}/assign", json={"employee_id": recently_assigned["id"]}, headers=owner_headers)
     await client.post(f"/api/v1/leads/{lead['id']}/unassign", headers=owner_headers)
 
-    r = await client.get("/api/v1/leads/eligible-assignees", headers=owner_headers)
+    r = await client.get("/api/v1/leads/eligible-assignees?product_category=loan", headers=owner_headers)
     assert r.status_code == 200, r.text
     data = r.json()["data"]
     assert data[0]["id"] == never_assigned["id"]
@@ -449,7 +535,7 @@ async def test_eligible_assignees_prefers_same_branch_as_assigning_employee(clie
     await _grant_leads_assign(client, owner_headers, same_branch["id"], role_name="Same Branch Role")
     await _grant_leads_assign(client, owner_headers, other_branch["id"], role_name="Other Branch Role")
 
-    r = await client.get("/api/v1/leads/eligible-assignees", headers=assigner_headers)
+    r = await client.get("/api/v1/leads/eligible-assignees?product_category=loan", headers=assigner_headers)
     assert r.status_code == 200, r.text
     data = r.json()["data"]
     ids = [d["id"] for d in data if d["id"] in (same_branch["id"], other_branch["id"])]

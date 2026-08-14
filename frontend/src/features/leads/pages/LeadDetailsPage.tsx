@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { useLocation, useParams } from "react-router-dom";
+import { Button } from "@/components/buttons/Button";
 import { EligibleAssigneeSelect } from "@/components/forms/EligibleAssigneeSelect";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
 import { SubmitButton } from "@/components/forms/SubmitButton";
+import { TextareaField } from "@/components/forms/TextareaField";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { MessagesPanel } from "@/features/communication/components/MessagesPanel";
 import { SendMessageModal } from "@/features/communication/components/SendMessageModal";
@@ -38,20 +40,16 @@ function HeaderButton({
   primary?: boolean;
 }) {
   return (
-    <button
-      type="button"
+    <Button
+      variant={primary ? "primary" : "secondary"}
+      size="sm"
       onClick={onClick}
       disabled={disabled}
       title={title}
-      className={
-        primary
-          ? "hover-lift flex items-center gap-2 rounded-xl bg-gradient-to-r from-primary to-primary-dark text-white text-sm font-semibold py-2 px-4 shadow-card disabled:opacity-50"
-          : "flex items-center gap-2 rounded-xl border border-border bg-card text-sm font-medium py-2 px-4 text-text hover:bg-background transition-colors disabled:opacity-50 disabled:hover:bg-card disabled:cursor-not-allowed"
-      }
+      icon={<Icon name={icon} className="h-4 w-4" />}
     >
-      <Icon name={icon} className="h-4 w-4" />
       {label}
-    </button>
+    </Button>
   );
 }
 
@@ -167,7 +165,7 @@ export function LeadDetailsPage() {
       title={`${lead.full_name} (${lead.lead_code})`}
       backTo="/leads"
       actions={
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
           {isEditing ? (
             <HeaderButton
               icon="x-circle"
@@ -180,7 +178,6 @@ export function LeadDetailsPage() {
           ) : (
             <>
               <HeaderButton icon="print" label="Print" onClick={() => window.print()} />
-              <HeaderButton icon="download" label="Download PDF" onClick={() => undefined} disabled title="Coming soon" />
               <HeaderButton icon="link" label="Generate Link" onClick={() => setIsLinkModalOpen(true)} />
               <HeaderButton icon="chat" label="Send Message" onClick={() => setIsSendMessageOpen(true)} />
               <HeaderButton icon="tasks" label="Add Task" onClick={() => setIsTaskModalOpen(true)} />
@@ -193,8 +190,8 @@ export function LeadDetailsPage() {
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
       <ErrorBanner message={error} />
 
-      <div className="grid grid-cols-3 gap-6">
-        <div className="col-span-2 bg-card border border-border rounded-card shadow-card p-6 space-y-4">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="lg:col-span-2 bg-card border border-border rounded-card shadow-card p-6 space-y-4">
           {lead.is_potential_duplicate && (
             <div className="rounded border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
               Possible duplicate — {lead.duplicate_of_lead_ids.length} other lead(s) share this mobile number.
@@ -218,18 +215,15 @@ export function LeadDetailsPage() {
               }}
               className="space-y-3"
             >
-              <div className="grid grid-cols-2 gap-x-4">
+              <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
                 <FormField label="City" value={city} onChange={(e) => setCity(e.target.value)} />
                 <FormField label="Preferred Loan Amount" type="number" min={1} value={preferredAmount} onChange={(e) => setPreferredAmount(e.target.value)} />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-text mb-1">Remarks</label>
-                <textarea className="w-full rounded border border-border px-3 py-2 text-sm" rows={3} value={remarks} onChange={(e) => setRemarks(e.target.value)} />
-              </div>
+              <TextareaField label="Remarks" rows={3} value={remarks} onChange={(e) => setRemarks(e.target.value)} />
               <SubmitButton>Save Changes</SubmitButton>
             </form>
           ) : (
-            <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+            <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
               <Field label="Mobile" value={lead.mobile} />
               <Field label="Email" value={lead.email} />
               <Field label="Source" value={lead.source_name} />
@@ -248,13 +242,14 @@ export function LeadDetailsPage() {
         <div className="bg-card border border-border rounded-card shadow-card p-6 space-y-3">
           <h3 className="text-sm font-semibold text-text/70">Assignment</h3>
           {lead.assigned_to ? (
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="sm"
+              className="w-full"
               onClick={() => runAction(() => unassignLead(leadId), "Lead unassigned.")}
-              className="w-full text-left text-sm rounded border border-border px-3 py-2 hover:bg-background"
             >
               Unassign ({lead.assigned_to_name})
-            </button>
+            </Button>
           ) : (
             <div className="space-y-2">
               <EligibleAssigneeSelect
@@ -263,14 +258,14 @@ export function LeadDetailsPage() {
                 value={assigneeId}
                 onChange={setAssigneeId}
               />
-              <button
-                type="button"
+              <Button
+                size="sm"
+                className="w-full"
                 disabled={!assigneeId}
                 onClick={() => runAction(() => assignLead(leadId, assigneeId), "Lead assigned.")}
-                className="w-full rounded bg-primary text-white text-sm font-medium py-2 disabled:opacity-50"
               >
                 Assign
-              </button>
+              </Button>
             </div>
           )}
         </div>

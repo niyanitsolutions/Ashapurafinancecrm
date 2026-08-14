@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { Button } from "@/components/buttons/Button";
+import { FormField } from "@/components/forms/FormField";
 import { getErrorMessage } from "@/features/customer/errors";
 import {
   createIntegrationConfig,
@@ -178,7 +180,7 @@ export function Msg91ConfigForm({ channel, label, existingConfig, onSaved, onCan
     return (
       <div key={section} className="mb-5">
         <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-text/50">{SECTION_TITLES[section]}</h4>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {sectionFields.map((field) => {
             const showError = attemptedSubmit && isRequired(field) && !(fieldValues[field.key] || "").trim();
             return (
@@ -200,15 +202,7 @@ export function Msg91ConfigForm({ channel, label, existingConfig, onSaved, onCan
 
   return (
     <form onSubmit={handleSubmit}>
-      <div className="mb-5">
-        <label className="text-xs text-text/60">
-          Configuration Name
-          <input
-            type="text" value={name} onChange={(e) => setName(e.target.value)} required
-            className="mt-1 block w-full rounded border border-border px-3 py-2 text-sm"
-          />
-        </label>
-      </div>
+      <FormField label="Configuration Name" value={name} onChange={(e) => setName(e.target.value)} required />
 
       {renderSection("credentials")}
       {renderSection("channel")}
@@ -218,24 +212,20 @@ export function Msg91ConfigForm({ channel, label, existingConfig, onSaved, onCan
         <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-text/50">D. Test &amp; Save</h4>
         <div className="flex flex-wrap items-center gap-3">
           {existingConfig ? (
-            <button
-              type="button" disabled={isTesting} onClick={handleSavedConfigTest}
-              className="rounded border border-primary text-primary text-sm font-medium py-2 px-4 disabled:opacity-50"
-            >
+            <Button variant="secondary" size="sm" disabled={isTesting} onClick={handleSavedConfigTest}>
               {isTesting ? "Testing…" : "Test Connection"}
-            </button>
+            </Button>
           ) : (
-            <button
-              type="button" disabled={!requiredFieldsFilled || isTesting} onClick={handleDraftTest}
-              className="rounded border border-primary text-primary text-sm font-medium py-2 px-4 disabled:opacity-50"
-            >
+            <Button variant="secondary" size="sm" disabled={!requiredFieldsFilled || isTesting} onClick={handleDraftTest}>
               {isTesting ? "Testing…" : "Test Connection"}
-            </button>
+            </Button>
           )}
-          <button type="submit" disabled={!canSave || isSaving} className="rounded bg-primary text-white text-sm font-medium py-2 px-4 disabled:opacity-50">
+          <Button type="submit" size="sm" disabled={!canSave || isSaving}>
             {isSaving ? "Saving…" : existingConfig ? "Save Changes" : "Save Configuration"}
-          </button>
-          <button type="button" onClick={onCancel} className="text-sm text-text/60 hover:underline">Cancel</button>
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onCancel}>
+            Cancel
+          </Button>
         </div>
 
         {!existingConfig && !isVerifiedForCreate && requiredFieldsFilled && (

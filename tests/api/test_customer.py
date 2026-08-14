@@ -12,6 +12,23 @@ from app.features.customer.constants import FieldType
 from app.features.customer.models import ApplicationFormDefinition, FormFieldDefinition, RequiredDocumentDefinition
 from app.features.leads.models import Lead
 from app.features.system_settings.models import DocumentType, InsuranceProduct, LoanProduct
+from app.features.workflow_engine.constants import CaseType, LoanAuditEvent, LoanStatus
+from app.features.workflow_engine.models import WorkflowDefinition
+
+
+async def _seed_workflow_definitions(mock_db):
+    # A submitted Application lazily creates its Loan/Insurance Case (Module 6C), which
+    # needs at least a starting WorkflowDefinition row to exist — seeded for real via
+    # scripts/seed.py in production, but this test file exercises submission without ever
+    # inserting one itself. Only the one row this file's own tests actually reach
+    # (loan:new_customer) is needed; see tests/api/test_workflow.py's own
+    # `_seed_workflow_definitions` for the full loan+insurance definition set if a future
+    # test here needs to progress a case further than its initial status.
+    definition = WorkflowDefinition(
+        case_type=CaseType.LOAN, status=LoanStatus.NEW_CUSTOMER, label="New Customer", sequence=1,
+        allowed_next_statuses=[LoanStatus.DOCUMENTS_PENDING], audit_event=LoanAuditEvent.CASE_CREATED,
+    )
+    await mock_db["workflow_definitions"].insert_one(definition.model_dump(by_alias=True, exclude={"id"}))
 
 
 async def _seed_product_and_form(mock_db, *, category="loan", product_name="Personal Loan"):
@@ -77,6 +94,7 @@ async def _signup_via_otp(client, mobile: str, dev_otp: str, password: str = "Cu
 
 
 async def test_direct_registration_full_flow(client, mock_db, owner_headers):
+    await _seed_workflow_definitions(mock_db)
     product = await _seed_product_and_form(mock_db)
     mobile = "9722222222"
 
@@ -156,6 +174,7 @@ async def test_direct_registration_is_not_attributed_to_a_seeded_owner(client, m
 
 
 async def test_secure_link_flow_converts_lead_to_customer(client, mock_db, owner_headers):
+    await _seed_workflow_definitions(mock_db)
     product = await _seed_product_and_form(mock_db)
     lead_id = await _create_lead_doc(mock_db, product)
 
@@ -173,7 +192,11 @@ async def test_secure_link_flow_converts_lead_to_customer(client, mock_db, owner
     assert r.json()["data"]["has_active_account"] is False
     assert "lead_id" not in r.json()["data"]
 
-    r = await client.post(f"/api/v1/secure-links/{secure_code}/start-signup")
+    # Unified onboarding (decision #047's supersession note): signup for a secure-link
+    # customer goes through the same generic, mobile-only registration-start endpoint
+    # Flow 2 (direct portal) uses — there is no secure-link-scoped signup step. Linkage
+    # to this specific Lead/link only happens later, at the `/claim` call below.
+    r = await client.post("/api/v1/customer-registration/start", json={"mobile": "9711111111"})
     assert r.status_code == 200, r.text
     dev_otp = r.json()["data"]["dev_otp"]
 
@@ -217,13 +240,14 @@ async def test_complete_profile_converts_pending_secure_link_application_immedia
     a secure link converts the Lead to a Customer and links the application immediately,
     instead of waiting for submission (see docs/decisions/DECISIONS.md #047's
     supersession note)."""
+    await _seed_workflow_definitions(mock_db)
     product = await _seed_product_and_form(mock_db)
     lead_id = await _create_lead_doc(mock_db, product, mobile="9711111112", full_name="Ananya Rao")
 
     r = await client.post(f"/api/v1/leads/{lead_id}/secure-links", json={}, headers=owner_headers)
     secure_code = r.json()["data"]["secure_code"]
 
-    r = await client.post(f"/api/v1/secure-links/{secure_code}/start-signup")
+    r = await client.post("/api/v1/customer-registration/start", json={"mobile": "9711111112"})
     dev_otp = r.json()["data"]["dev_otp"]
     customer_headers = await _signup_via_otp(client, "9711111112", dev_otp)
 
@@ -330,7 +354,15 @@ async def test_disabled_secure_link_blocks_customer_access(client, mock_db, owne
     assert r.status_code == 200, r.text
     assert r.json()["data"]["link_status"] == "disabled"
 
-    r = await client.post(f"/api/v1/secure-links/{secure_code}/start-signup")
+    # The real enforcement point for a disabled link is `/claim` (see
+    # CustomerService._resolve_valid_link -> ForbiddenError), not signup itself — signup
+    # is the generic, link-independent registration-start endpoint (see the comment on
+    # test_secure_link_flow_converts_lead_to_customer above).
+    r = await client.post("/api/v1/customer-registration/start", json={"mobile": "9744444446"})
+    dev_otp = r.json()["data"]["dev_otp"]
+    customer_headers = await _signup_via_otp(client, "9744444446", dev_otp)
+
+    r = await client.post(f"/api/v1/secure-links/{secure_code}/claim", headers=customer_headers)
     assert r.status_code == 403, r.text
 
 

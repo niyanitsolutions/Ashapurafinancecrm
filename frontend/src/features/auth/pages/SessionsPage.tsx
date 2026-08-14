@@ -1,4 +1,7 @@
 import { useEffect, useState } from "react";
+import { Button } from "@/components/buttons/Button";
+import { ErrorBanner } from "@/components/forms/ErrorBanner";
+import { EmptyState } from "@/components/layout/EmptyState";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { getOwnSessions, logoutAllOtherSessions, revokeSession, type SessionSummary } from "@/features/auth/api";
 import { REFRESH_TOKEN_STORAGE_KEY } from "@/features/auth/context";
@@ -57,18 +60,13 @@ export function SessionsPage({ backTo }: { backTo: string }) {
       backTo={backTo}
       actions={
         activeCount > 1 ? (
-          <button
-            type="button"
-            onClick={onLogoutAllOther}
-            disabled={isLoggingOutAll}
-            className="text-sm font-medium text-danger hover:underline disabled:opacity-50"
-          >
-            Logout All Other Devices
-          </button>
+          <Button variant="ghost" size="sm" disabled={isLoggingOutAll} onClick={onLogoutAllOther}>
+            {isLoggingOutAll ? "Logging out…" : "Logout All Other Devices"}
+          </Button>
         ) : undefined
       }
     >
-      {error && <p className="text-sm text-danger mb-4">{error}</p>}
+      <ErrorBanner message={error} />
       <div className="bg-card border border-border rounded-card shadow-card overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -85,8 +83,8 @@ export function SessionsPage({ backTo }: { backTo: string }) {
           <tbody>
             {sessions.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-6 text-center text-text/50">
-                  No sessions found.
+                <td colSpan={7}>
+                  <EmptyState icon="user" title="No sessions found" description="Your active and past login sessions will appear here." />
                 </td>
               </tr>
             )}
@@ -105,14 +103,9 @@ export function SessionsPage({ backTo }: { backTo: string }) {
                 <td className="px-4 py-3 capitalize">{s.status}</td>
                 <td className="px-4 py-3 text-right">
                   {s.status === "active" && (
-                    <button
-                      type="button"
-                      onClick={() => onRevoke(s.id)}
-                      disabled={busyId === s.id}
-                      className="text-danger hover:underline disabled:opacity-50"
-                    >
+                    <Button variant="ghost" size="sm" disabled={busyId === s.id} onClick={() => onRevoke(s.id)}>
                       Logout
-                    </button>
+                    </Button>
                   )}
                 </td>
               </tr>

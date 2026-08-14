@@ -253,6 +253,58 @@ async def test_change_password_success(client, owner_headers):
     await _login(client, CUSTOMER_MOBILE, "SuperSecret2!")
 
 
+async def test_profile_name_is_none_for_owner_with_no_profile_document(client, owner_headers):
+    # owner_headers seeds a bare `users` row with no owner_profiles document — the
+    # legacy/grandfathered-Owner shape (see docs' Owner Account Management notes). The
+    # name lookup must degrade to None, never 500.
+    r = await client.get("/api/v1/auth/profile", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["name"] is None
+
+
+async def test_profile_name_comes_from_owner_profile(client, mock_db, owner_headers):
+    from app.features.owner.models import OwnerProfile
+
+    r = await client.get("/api/v1/auth/profile", headers=owner_headers)
+    user_id = r.json()["data"]["user_id"]
+
+    profile = OwnerProfile(user_id=user_id, full_name="Dharmendra Parmar", mobile="9000000001", email="owner@afs.test")
+    await mock_db["owner_profiles"].insert_one(profile.model_dump(by_alias=True, exclude={"id"}))
+
+    r = await client.get("/api/v1/auth/profile", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["name"] == "Dharmendra Parmar"
+
+
+async def test_profile_name_comes_from_employee_display_name(client, mock_db, employee_headers, master_data):
+    from datetime import datetime
+
+    from app.features.employee.models import Employee
+
+    r = await client.get("/api/v1/auth/profile", headers=employee_headers)
+    user_id = r.json()["data"]["user_id"]
+
+    employee = Employee(
+        user_id=user_id,
+        employee_code="EMP001",
+        first_name="Satya",
+        last_name="Kumar",
+        display_name="Satya Kumar",
+        mobile="9000000002",
+        email="satya@afs.test",
+        department_id=master_data["department_id"],
+        designation_id=master_data["designation_id"],
+        branch_id=master_data["branch_id"],
+        joining_date=datetime(2026, 1, 1),
+        employment_type="full_time",
+    )
+    await mock_db["employees"].insert_one(employee.model_dump(by_alias=True, exclude={"id"}))
+
+    r = await client.get("/api/v1/auth/profile", headers=employee_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["name"] == "Satya Kumar"
+
+
 async def test_profile_requires_auth(client):
     r = await client.get("/api/v1/auth/profile")
     assert r.status_code == 401

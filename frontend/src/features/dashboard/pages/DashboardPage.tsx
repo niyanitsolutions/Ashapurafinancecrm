@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { Button } from "@/components/buttons/Button";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
+import { Drawer } from "@/components/overlays/Drawer";
 import { getLayout, updateLayout, type Widget } from "@/features/dashboard/api";
 import { DisbursedTrendCard } from "@/features/dashboard/components/DisbursedTrendCard";
 import { KpiRow } from "@/features/dashboard/components/KpiRow";
@@ -78,12 +80,27 @@ function CustomizePanel({ onClose, onSaved }: { onClose: () => void; onSaved: ()
   };
 
   return (
-    <div className="bg-card border border-border rounded-xl shadow-card p-5 mb-6">
+    <Drawer
+      open
+      onClose={onClose}
+      title="Customize Dashboard"
+      description="Show or hide a card, and set how often it refreshes. This only changes your own view."
+      footer={
+        <>
+          <Button variant="secondary" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button size="sm" loading={isSaving} disabled={rows === null} onClick={onSave}>
+            Save
+          </Button>
+        </>
+      }
+    >
       <ErrorBanner message={error} />
-      <p className="text-2xs text-textSecondary mb-4">Show or hide a card, and set how often it refreshes. This only changes your own view.</p>
       {rows === null ? (
-        <p className="text-sm text-textSecondary">Loading…</p>
+        <p className="text-sm text-textSecondary py-6 text-center">Loading…</p>
       ) : (
+        <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-textSecondary border-b border-border">
@@ -97,7 +114,7 @@ function CustomizePanel({ onClose, onSaved }: { onClose: () => void; onSaved: ()
               <tr key={row.key} className="border-b border-border last:border-0">
                 <td className="py-2.5 text-text">{row.label}</td>
                 <td className="py-2.5">
-                  <input type="checkbox" checked={row.is_visible} onChange={() => toggleVisible(row.key)} />
+                  <input type="checkbox" checked={row.is_visible} onChange={() => toggleVisible(row.key)} className="h-4 w-4 accent-primary" />
                 </td>
                 <td className="py-2.5">
                   <input
@@ -113,21 +130,9 @@ function CustomizePanel({ onClose, onSaved }: { onClose: () => void; onSaved: ()
             ))}
           </tbody>
         </table>
+        </div>
       )}
-      <div className="mt-4 flex gap-3">
-        <button
-          type="button"
-          className="rounded-lg bg-primary text-white text-sm font-medium py-2 px-4 disabled:opacity-50"
-          disabled={isSaving || rows === null}
-          onClick={onSave}
-        >
-          {isSaving ? "Saving…" : "Save"}
-        </button>
-        <button type="button" className="text-sm text-textSecondary hover:underline" onClick={onClose}>
-          Cancel
-        </button>
-      </div>
-    </div>
+    </Drawer>
   );
 }
 
@@ -139,13 +144,9 @@ export function DashboardPage() {
   return (
     <div className="p-6 lg:p-8 space-y-8">
       <div className="flex items-center justify-end">
-        <button
-          type="button"
-          className="flex items-center gap-1.5 text-2xs font-medium text-primary border border-primary/30 rounded-lg px-3 py-1.5 hover:bg-primary/5"
-          onClick={() => setIsCustomizing((v) => !v)}
-        >
+        <Button variant="secondary" size="sm" onClick={() => setIsCustomizing((v) => !v)}>
           {isCustomizing ? "Close" : "Customize"}
-        </button>
+        </Button>
       </div>
 
       {error && <ErrorBanner message={getErrorMessage(error)} />}

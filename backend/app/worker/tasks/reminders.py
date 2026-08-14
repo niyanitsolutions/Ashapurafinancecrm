@@ -66,9 +66,9 @@ async def poll_audit_events(_ctx: dict[Any, Any], *_args: Any, **_kwargs: Any) -
                 employee = await employees.find_by_id(employee_id)
                 if employee is None:
                     continue
-                await service.create_notification(
+                await service.notify(
                     recipient_user_id=employee.user_id, notification_type=NotificationType.LEAD_ASSIGNED,
-                    title="New Lead Assigned", message="A new lead has been assigned to you.",
+                    default_title="New Lead Assigned", default_message="A new lead has been assigned to you.",
                     entity_type="lead", entity_id=lead_id,
                 )
             elif event_type == "document_uploaded":
@@ -81,9 +81,9 @@ async def poll_audit_events(_ctx: dict[Any, Any], *_args: Any, **_kwargs: Any) -
                 employee = await employees.find_by_id(application.assigned_to)
                 if employee is None:
                     continue
-                await service.create_notification(
+                await service.notify(
                     recipient_user_id=employee.user_id, notification_type=NotificationType.DOCUMENT_UPLOADED,
-                    title="Documents Uploaded", message="The customer has uploaded documents for their application.",
+                    default_title="Documents Uploaded", default_message="The customer has uploaded documents for their application.",
                     entity_type="application", entity_id=application_id,
                 )
 
@@ -142,10 +142,11 @@ async def check_re_eligible_cases(_ctx: dict[Any, Any], *_args: Any, **_kwargs: 
                 if case.assigned_to:
                     employee = await employees.find_by_id(case.assigned_to)
                     if employee is not None:
-                        await service.create_notification(
+                        await service.notify(
                             recipient_user_id=employee.user_id, notification_type=NotificationType.REMINDER_TRIGGERED,
-                            title="Case Re-Eligible Soon",
-                            message=f"{case.case_code} becomes eligible for re-application on {eligible_at.date().isoformat()}.",
+                            default_title="Case Re-Eligible Soon",
+                            default_message=f"{case.case_code} becomes eligible for re-application on {eligible_at.date().isoformat()}.",
+                            variables={"case_code": case.case_code, "eligible_date": eligible_at.date().isoformat()},
                             entity_type=target_type, entity_id=case_id,
                         )
 
@@ -192,9 +193,10 @@ async def check_task_reminders(_ctx: dict[Any, Any], *_args: Any, **_kwargs: Any
                 )
                 reminder_id = await reminders.insert(reminder)
                 await reminders.mark_fired(reminder_id, fired_at=now)
-                await service.create_notification(
+                await service.notify(
                     recipient_user_id=employee.user_id, notification_type=NotificationType.TASK_DUE,
-                    title="Task Due Soon", message=f'Task "{task.title}" is due soon.', entity_type="task", entity_id=task_id,
+                    default_title="Task Due Soon", default_message=f'Task "{task.title}" is due soon.',
+                    variables={"task_title": task.title}, entity_type="task", entity_id=task_id,
                 )
             continue
 
@@ -215,17 +217,20 @@ async def check_task_reminders(_ctx: dict[Any, Any], *_args: Any, **_kwargs: Any
         )
         reminder_id = await reminders.insert(reminder)
         await reminders.mark_fired(reminder_id, fired_at=now)
-        await service.create_notification(
+        await service.notify(
             recipient_user_id=employee.user_id, notification_type=NotificationType.TASK_ESCALATION,
-            title="Task Overdue", message=f'Task "{task.title}" is overdue and still not completed.', entity_type="task", entity_id=task_id,
+            default_title="Task Overdue", default_message=f'Task "{task.title}" is overdue and still not completed.',
+            variables={"task_title": task.title}, entity_type="task", entity_id=task_id,
         )
 
         if fired_count + 1 >= rule.escalation_max_repeats:
             owners = await db["users"].find({"role": "owner", "is_deleted": False}).to_list(length=50)
             for owner_doc in owners:
-                await service.create_notification(
+                await service.notify(
                     recipient_user_id=str(owner_doc["_id"]), notification_type=NotificationType.TASK_OWNER_ESCALATION,
-                    title="Task Still Not Completed", message=f'Task "{task.title}" (assigned to {employee.display_name}) is still not completed after repeated reminders.',
+                    default_title="Task Still Not Completed",
+                    default_message=f'Task "{task.title}" (assigned to {employee.display_name}) is still not completed after repeated reminders.',
+                    variables={"task_title": task.title, "employee_name": employee.display_name},
                     entity_type="task", entity_id=task_id,
                 )
             await tasks_repo.update(task_id, {"owner_escalated": True})

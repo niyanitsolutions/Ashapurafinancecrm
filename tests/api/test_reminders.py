@@ -92,6 +92,47 @@ async def test_task_lifecycle_and_assignment_notification(client, mock_db, owner
     assert r.json()["data"]["completed_at"] is not None
 
 
+async def test_task_assigned_notification_uses_active_notification_template(client, mock_db, owner_headers, master_data):
+    from app.features.system_settings.models import NotificationTemplate
+
+    template = NotificationTemplate(
+        channel="internal", key="task_assigned", subject="You've got a task: {{task_title}}",
+        body="Please action: {{task_title}}", available_variables=["task_title"],
+    )
+    await mock_db["notification_templates"].insert_one(template.model_dump(by_alias=True, exclude={"id"}))
+
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9700000199", email="templated.task@example.com")
+    employee_headers = await _login(client, "9700000199", "InitialPass1!")
+
+    due_at = (utc_now() + timedelta(hours=2)).isoformat()
+    r = await client.post(
+        "/api/v1/tasks", json={"title": "Call the customer", "assigned_to": employee["id"], "due_at": due_at}, headers=owner_headers
+    )
+    assert r.status_code == 200, r.text
+
+    r = await client.get("/api/v1/notifications", headers=employee_headers)
+    assert r.status_code == 200, r.text
+    notification = next(n for n in r.json()["data"] if n["notification_type"] == "task_assigned")
+    assert notification["title"] == "You've got a task: Call the customer"
+    assert notification["message"] == "Please action: Call the customer"
+
+
+async def test_task_assigned_notification_falls_back_when_no_template_configured(client, mock_db, owner_headers, master_data):
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9700000198", email="untemplated.task@example.com")
+    employee_headers = await _login(client, "9700000198", "InitialPass1!")
+
+    due_at = (utc_now() + timedelta(hours=2)).isoformat()
+    r = await client.post(
+        "/api/v1/tasks", json={"title": "Call the customer", "assigned_to": employee["id"], "due_at": due_at}, headers=owner_headers
+    )
+    assert r.status_code == 200, r.text
+
+    r = await client.get("/api/v1/notifications", headers=employee_headers)
+    notification = next(n for n in r.json()["data"] if n["notification_type"] == "task_assigned")
+    assert notification["title"] == "New Task Assigned"
+    assert notification["message"] == 'You have been assigned a new task: "Call the customer".'
+
+
 async def test_employee_denied_task_creation_without_permission(client, mock_db, owner_headers, master_data):
     employee = await _create_employee(client, owner_headers, master_data, mobile="9700000103", email="unpermitted.task@example.com")
     employee_headers = await _login(client, "9700000103", "InitialPass1!")

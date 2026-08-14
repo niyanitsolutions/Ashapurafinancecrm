@@ -6,13 +6,22 @@ import { NAV_SECTIONS, type NavLeaf } from "@/components/layout/navConfig";
 import { hasNavAccess } from "@/components/layout/navAccess";
 import { useAuth } from "@/features/auth/useAuth";
 import { useProfile } from "@/features/auth/useProfile";
+import { useOwnOwnerAccount } from "@/features/owner/useOwnOwnerAccount";
 
 const ROLE_LABELS: Record<string, string> = {
   owner: "Owner",
-  employee: "Employee",
+  employee: "Team Member",
   referral_partner: "Referral Partner",
   customer: "Customer",
 };
+
+function initialsFor(name: string | null, mobile: string): string {
+  if (name) {
+    const parts = name.trim().split(/\s+/);
+    return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || name[0]!.toUpperCase();
+  }
+  return mobile ? mobile.slice(-2) : "?";
+}
 
 // Bottom-of-sidebar identity card (Power BI/Salesforce-style) — reuses the same cached
 // `useProfile()` query Topbar's ProfileMenu already reads, so mounting both here and there
@@ -20,9 +29,25 @@ const ROLE_LABELS: Record<string, string> = {
 function SidebarProfileCard({ isCollapsed, onToggleCollapsed }: { isCollapsed: boolean; onToggleCollapsed: () => void }) {
   const { role } = useAuth();
   const { data: profile } = useProfile();
+  const { data: ownerAccount } = useOwnOwnerAccount();
+
+  const name = profile?.name ?? null;
   const mobile = profile?.mobile ?? "";
-  const initials = mobile ? mobile.slice(-2) : "?";
-  const roleLabel = (role && ROLE_LABELS[role]) || "Account";
+  const initials = initialsFor(name, mobile);
+
+  const roleLabel =
+    role === "owner"
+      ? ownerAccount
+        ? ownerAccount.owner_type === "primary"
+          ? "Primary Owner"
+          : "Owner"
+        : "Owner"
+      : (role && ROLE_LABELS[role]) || "Account";
+
+  // Falls back to the mobile number only while the profile is still loading, or for the
+  // rare legacy/grandfathered Owner row with no owner_profiles document at all (name is
+  // genuinely null forever in that case, not just loading) — never the default path.
+  const displayName = !profile ? "Loading…" : (name ?? mobile);
 
   return (
     <div className="border-t border-white/10 p-3 shrink-0">
@@ -32,7 +57,7 @@ function SidebarProfileCard({ isCollapsed, onToggleCollapsed }: { isCollapsed: b
         </div>
         {!isCollapsed && (
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-white truncate">{mobile || "Loading…"}</p>
+            <p className="text-sm font-medium text-white truncate">{displayName}</p>
             <p className="text-2xs text-white/45 truncate">{roleLabel}</p>
           </div>
         )}

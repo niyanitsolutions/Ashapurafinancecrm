@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { Button } from "@/components/buttons/Button";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
 import {
   activateEmployee,
   confirmEmployeeDocument,
@@ -49,6 +51,7 @@ export function EmployeeDetailsPage() {
   const [tab, setTab] = useState<Tab>("basic");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmAction, setConfirmAction] = useState<"reset-password" | "force-logout" | null>(null);
 
   const load = () => {
     if (!employeeId) return;
@@ -92,20 +95,16 @@ export function EmployeeDetailsPage() {
       subtitle={`${employee.employee_code} · ${employee.designation_name}, ${employee.department_name}`}
       backTo="/employees"
       actions={
-        <button
-          type="button"
-          onClick={() => navigate(`/employees/${employeeId}/edit`)}
-          className="rounded-lg bg-primary text-white text-sm font-medium py-2 px-4 hover:bg-primary-light"
-        >
+        <Button size="sm" onClick={() => navigate(`/employees/${employeeId}/edit`)}>
           Edit
-        </button>
+        </Button>
       }
     >
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
       {error && <p className="mb-4 text-sm text-danger">{error}</p>}
 
-      <div className="grid grid-cols-3 gap-6">
-        <div className="col-span-2">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="lg:col-span-2">
           <div className="flex gap-1 border-b border-border mb-4 overflow-x-auto">
             {TABS.map((t) => (
               <button
@@ -138,10 +137,34 @@ export function EmployeeDetailsPage() {
           ) : (
             <ActionButton onClick={() => runAction(() => activateEmployee(employeeId), "Employee activated.")}>Activate</ActionButton>
           )}
-          <ActionButton onClick={() => runAction(() => resetEmployeePassword(employeeId), "Password reset OTP sent.")}>Reset Password</ActionButton>
-          <ActionButton onClick={() => runAction(() => forceLogoutEmployee(employeeId), "All sessions revoked.")}>Force Logout</ActionButton>
+          <ActionButton onClick={() => setConfirmAction("reset-password")}>Reset Password</ActionButton>
+          <ActionButton onClick={() => setConfirmAction("force-logout")}>Force Logout</ActionButton>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmAction === "reset-password"}
+        title="Reset Password"
+        message={`Reset ${employee.display_name}'s password? They'll receive an OTP to set a new one.`}
+        confirmLabel="Reset Password"
+        onConfirm={async () => {
+          await runAction(() => resetEmployeePassword(employeeId), "Password reset OTP sent.");
+          setConfirmAction(null);
+        }}
+        onClose={() => setConfirmAction(null)}
+      />
+      <ConfirmDialog
+        open={confirmAction === "force-logout"}
+        title="Force Logout"
+        message={`Revoke every active session for ${employee.display_name}? They'll be signed out everywhere immediately.`}
+        confirmLabel="Force Logout"
+        confirmVariant="danger"
+        onConfirm={async () => {
+          await runAction(() => forceLogoutEmployee(employeeId), "All sessions revoked.");
+          setConfirmAction(null);
+        }}
+        onClose={() => setConfirmAction(null)}
+      />
     </SimplePageLayout>
   );
 }
@@ -397,7 +420,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   return (
     <div>
       <h3 className="text-sm font-semibold text-text/70 mb-2">{title}</h3>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1">{children}</div>
+      <div className="grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-2">{children}</div>
     </div>
   );
 }

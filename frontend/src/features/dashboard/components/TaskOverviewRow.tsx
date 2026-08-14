@@ -32,7 +32,7 @@ export function TaskOverviewRow({ widgets }: { widgets: Widget[] | undefined }) 
   const total = completed === null ? null : completed + pending;
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
       <MiniStat icon="clock" label="Pending Tasks" value={pending} />
       <MiniStat icon="check-circle" label="Completed Tasks" value={completed ?? "—"} />
       <MiniStat icon="alert-triangle" label="Overdue Tasks" value={overdue} />

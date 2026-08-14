@@ -1,8 +1,37 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { Button } from "@/components/buttons/Button";
+import { ErrorBanner } from "@/components/forms/ErrorBanner";
+import { FormField } from "@/components/forms/FormField";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
+import { Modal } from "@/components/overlays/Modal";
 import { activateRole, deactivateRole, duplicateRole, getRole, type Role } from "@/features/access_control/api";
 import { getErrorMessage } from "@/features/access_control/errors";
+
+function DuplicateRoleModal({ onClose, onSaved }: { onClose: () => void; onSaved: (name: string) => void }) {
+  const [name, setName] = useState("");
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Duplicate Role"
+      size="sm"
+      footer={
+        <>
+          <Button variant="secondary" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button size="sm" disabled={!name.trim()} onClick={() => onSaved(name.trim())}>
+            Duplicate
+          </Button>
+        </>
+      }
+    >
+      <FormField label="New Role Name" value={name} onChange={(e) => setName(e.target.value)} required autoFocus />
+    </Modal>
+  );
+}
 
 export function RoleDetailsPage() {
   const { roleId } = useParams<{ roleId: string }>();
@@ -10,6 +39,8 @@ export function RoleDetailsPage() {
   const [role, setRole] = useState<Role | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [confirmToggle, setConfirmToggle] = useState(false);
+  const [isDuplicateOpen, setIsDuplicateOpen] = useState(false);
 
   const load = () => {
     if (!roleId) return;
@@ -26,15 +57,14 @@ export function RoleDetailsPage() {
     try {
       await (role.status === "active" ? deactivateRole(roleId) : activateRole(roleId));
       setMessage(role.status === "active" ? "Role deactivated." : "Role activated.");
+      setConfirmToggle(false);
       load();
     } catch (err) {
       setError(getErrorMessage(err));
     }
   };
 
-  const onDuplicate = async () => {
-    const name = window.prompt("New role name?");
-    if (!name) return;
+  const onDuplicate = async (name: string) => {
     setError(null);
     try {
       const copy = await duplicateRole(roleId, name);
@@ -55,10 +85,10 @@ export function RoleDetailsPage() {
   return (
     <SimplePageLayout title={role.name} backTo="/roles">
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
-      {error && <p className="mb-4 text-sm text-danger">{error}</p>}
+      <ErrorBanner message={error} />
 
-      <div className="grid grid-cols-3 gap-6">
-        <div className="col-span-2 bg-card border border-border rounded-card shadow-card p-6">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="lg:col-span-2 bg-card border border-border rounded-card shadow-card p-6">
           <div className="text-xs text-text/50">Status</div>
           <div className="text-sm capitalize mb-4">{role.status}</div>
           <div className="text-xs text-text/50">Description</div>
@@ -73,14 +103,38 @@ export function RoleDetailsPage() {
           <Link to={`/roles/${roleId}/assign`} className="block text-sm text-primary hover:underline">
             Assign / Remove Employees
           </Link>
-          <button type="button" onClick={onToggleStatus} className="w-full text-left text-sm rounded border border-border px-3 py-2 hover:bg-background">
+          <Button variant="secondary" size="sm" className="w-full" onClick={() => setConfirmToggle(true)}>
             {role.status === "active" ? "Deactivate" : "Activate"}
-          </button>
-          <button type="button" onClick={onDuplicate} className="w-full text-left text-sm rounded border border-border px-3 py-2 hover:bg-background">
+          </Button>
+          <Button variant="secondary" size="sm" className="w-full" onClick={() => setIsDuplicateOpen(true)}>
             Duplicate Role
-          </button>
+          </Button>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmToggle}
+        title={role.status === "active" ? "Deactivate Role" : "Activate Role"}
+        message={
+          role.status === "active"
+            ? `Deactivate "${role.name}"? Every employee currently assigned this role will lose the permissions it grants.`
+            : `Activate "${role.name}"?`
+        }
+        confirmLabel={role.status === "active" ? "Deactivate" : "Activate"}
+        confirmVariant={role.status === "active" ? "danger" : "primary"}
+        onConfirm={onToggleStatus}
+        onClose={() => setConfirmToggle(false)}
+      />
+
+      {isDuplicateOpen && (
+        <DuplicateRoleModal
+          onClose={() => setIsDuplicateOpen(false)}
+          onSaved={(name) => {
+            setIsDuplicateOpen(false);
+            onDuplicate(name);
+          }}
+        />
+      )}
     </SimplePageLayout>
   );
 }

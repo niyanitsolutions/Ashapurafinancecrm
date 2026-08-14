@@ -39,6 +39,9 @@ export interface ProfileResponse {
   is_mobile_verified: boolean;
   must_change_password: boolean;
   created_at: string;
+  // Owner -> owner_profiles.full_name, Employee -> employees.display_name. null if no
+  // matching profile document exists yet (e.g. a legacy/grandfathered Owner row).
+  name: string | null;
 }
 
 export type OtpPurpose = "signup" | "forgot_password";

@@ -190,7 +190,7 @@ function AddLeadForm({
       }}
     >
       {validationError && <p className="mb-3 text-sm text-danger">{validationError}</p>}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <input placeholder="Full Name" value={fullName} onChange={(e) => setFullName(e.target.value)} className="rounded border border-border px-3 py-2 text-sm" required />
         <input placeholder="Mobile" value={mobile} onChange={(e) => setMobile(e.target.value)} className="rounded border border-border px-3 py-2 text-sm" required />
         <input placeholder="Email (optional)" value={email} onChange={(e) => setEmail(e.target.value)} className="rounded border border-border px-3 py-2 text-sm" />

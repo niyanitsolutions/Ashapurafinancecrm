@@ -12,6 +12,8 @@ import {
   setRolePermissions,
   type Permission,
 } from "@/features/access_control/api";
+import { Button } from "@/components/buttons/Button";
+import { CheckboxField } from "@/components/forms/CheckboxField";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
 import { SelectField } from "@/components/forms/SelectField";
@@ -183,8 +185,9 @@ export function EditEmployeePage() {
           <ErrorBanner message={apiError} />
 
           <div className="bg-card border border-border rounded-card shadow-card p-6">
-            <h2 className="text-sm font-semibold text-text/70 mb-2">Personal</h2>
-            <div className="grid grid-cols-2 gap-x-4">
+            <h2 className="text-sm font-semibold text-text mb-1">Personal</h2>
+            <p className="text-xs text-text/50 mb-4">Who they are.</p>
+            <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
               <FormField label="First name" error={errors.first_name?.message} {...register("first_name")} />
               <FormField label="Last name" error={errors.last_name?.message} {...register("last_name")} />
               <FormField label="Display name" error={errors.display_name?.message} {...register("display_name")} />
@@ -198,15 +201,21 @@ export function EditEmployeePage() {
               <FormField label="Date of birth" type="date" error={errors.date_of_birth?.message} {...register("date_of_birth")} />
               <FormField label="Blood group" error={errors.blood_group?.message} {...register("blood_group")} />
             </div>
+          </div>
 
-            <h2 className="text-sm font-semibold text-text/70 mb-2 mt-4">Contact</h2>
-            <div className="grid grid-cols-2 gap-x-4">
+          <div className="bg-card border border-border rounded-card shadow-card p-6">
+            <h2 className="text-sm font-semibold text-text mb-1">Contact</h2>
+            <p className="text-xs text-text/50 mb-4">How to reach them.</p>
+            <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
               <FormField label="Email" type="email" error={errors.email?.message} {...register("email")} />
               <FormField label="Alternative mobile" maxLength={10} error={errors.alternative_mobile?.message} {...register("alternative_mobile")} />
             </div>
+          </div>
 
-            <h2 className="text-sm font-semibold text-text/70 mb-2 mt-4">Employment</h2>
-            <div className="grid grid-cols-2 gap-x-4">
+          <div className="bg-card border border-border rounded-card shadow-card p-6">
+            <h2 className="text-sm font-semibold text-text mb-1">Employment</h2>
+            <p className="text-xs text-text/50 mb-4">Where they sit in your company.</p>
+            <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
               <SelectField
                 label="Department"
                 options={departments.map((d) => ({ value: d.id, label: d.name }))}
@@ -250,17 +259,19 @@ export function EditEmployeePage() {
                 {...register("status")}
               />
             </div>
+          </div>
 
-            <h2 className="text-sm font-semibold text-text/70 mb-2 mt-4">Products Handled</h2>
-            <p className="text-xs text-text/50 mb-2">
+          <div className="bg-card border border-border rounded-card shadow-card p-6">
+            <h2 className="text-sm font-semibold text-text mb-1">Products Handled</h2>
+            <p className="text-xs text-text/50 mb-4">
               Operational metadata only — enriches the Lead Assignment picker. Grants no permission by itself.
             </p>
             <div className="flex flex-wrap gap-x-4 gap-y-1.5">
               {[...loanProducts, ...insuranceProducts].map((p) => (
-                <label key={p.id} className="flex items-center gap-1.5 text-sm text-text/80">
-                  <input type="checkbox" checked={productIds.includes(p.id)} onChange={() => toggleProduct(p.id)} />
-                  {p.name}
-                </label>
+                <CheckboxField
+                  key={p.id} label={p.name}
+                  checked={productIds.includes(p.id)} onChange={() => toggleProduct(p.id)}
+                />
               ))}
             </div>
           </div>
@@ -278,7 +289,10 @@ export function EditEmployeePage() {
             </p>
           )}
 
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-3">
+            <Button type="button" variant="secondary" onClick={() => navigate(`/employees/${employeeId}`)}>
+              Cancel
+            </Button>
             <SubmitButton isSubmitting={isSubmitting}>Save Changes</SubmitButton>
           </div>
         </form>

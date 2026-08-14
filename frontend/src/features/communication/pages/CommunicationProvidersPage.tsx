@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
+import { Button } from "@/components/buttons/Button";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
+import { Modal } from "@/components/overlays/Modal";
 import { Msg91ConfigForm } from "@/features/communication/components/Msg91ConfigForm";
 import { getErrorMessage } from "@/features/customer/errors";
 import { ConnectionCheckList } from "@/features/integrations/components/ConnectionCheckList";
@@ -31,6 +34,7 @@ export function CommunicationProvidersPage() {
   const [openFormChannel, setOpenFormChannel] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, TestConnectionResult>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [disableTarget, setDisableTarget] = useState<{ config: IntegrationConfig; label: string } | null>(null);
 
   const load = () => {
     listIntegrationConfigs()
@@ -74,11 +78,10 @@ export function CommunicationProvidersPage() {
   const webhookUrl = `${import.meta.env.VITE_API_BASE_URL ?? "/api/v1"}${WEBHOOK_PATH}?secret=<your webhook_secret>`;
 
   return (
-    <SimplePageLayout title="Communication Providers">
-      <p className="mb-4 text-sm text-text/60">
-        MSG91 configuration for SMS, WhatsApp, and Email. Credentials are stored encrypted, backend-only — never returned in full, never logged.
-        Reuses the same configuration storage as Connections (API Connections).
-      </p>
+    <SimplePageLayout
+      title="Communication Providers"
+      subtitle="MSG91 configuration for SMS, WhatsApp, and Email. Credentials are stored encrypted, backend-only — never returned in full, never logged."
+    >
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
       {error && <p className="mb-4 text-sm text-danger">{error}</p>}
 
@@ -92,7 +95,7 @@ export function CommunicationProvidersPage() {
             const testResult = config ? testResults[config.id] : undefined;
             return (
               <div key={type} className="py-4">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <span className="text-sm font-medium text-text">{label}</span>
                     <span className="ml-3 text-xs">
@@ -107,51 +110,42 @@ export function CommunicationProvidersPage() {
                       )}
                     </span>
                   </div>
-                  <div className="space-x-3 text-xs">
+                  <div className="flex flex-wrap items-center gap-2">
                     {!config && (
-                      <button
-                        type="button" onClick={() => setOpenFormChannel(openFormChannel === type ? null : type)}
-                        className="text-primary hover:underline"
-                      >
-                        {openFormChannel === type ? "Cancel" : "+ Add"}
-                      </button>
+                      <Button variant="secondary" size="sm" onClick={() => setOpenFormChannel(type)}>
+                        + Add
+                      </Button>
                     )}
                     {config && (
                       <>
-                        <button
-                          type="button" onClick={() => setOpenFormChannel(openFormChannel === type ? null : type)}
-                          className="text-primary hover:underline"
-                        >
-                          {openFormChannel === type ? "Cancel" : "Edit"}
-                        </button>
-                        <button type="button" disabled={busyId === config.id} onClick={() => handleTest(config)} className="text-primary hover:underline disabled:opacity-50">
+                        <Button variant="secondary" size="sm" onClick={() => setOpenFormChannel(type)}>
+                          Edit
+                        </Button>
+                        <Button variant="secondary" size="sm" disabled={busyId === config.id} onClick={() => handleTest(config)}>
                           Test
-                        </button>
+                        </Button>
                         {config.is_enabled ? (
-                          <button
-                            type="button" disabled={busyId === config.id}
-                            onClick={() => runAction(config.id, () => disableIntegrationConfig(config.id), `${label} disabled.`)}
-                            className="text-text/60 hover:underline disabled:opacity-50"
+                          <Button
+                            variant="ghost" size="sm" disabled={busyId === config.id}
+                            onClick={() => setDisableTarget({ config, label })}
                           >
                             Disable
-                          </button>
+                          </Button>
                         ) : (
-                          <button
-                            type="button" disabled={busyId === config.id}
+                          <Button
+                            variant="ghost" size="sm" disabled={busyId === config.id}
                             onClick={() => runAction(config.id, () => enableIntegrationConfig(config.id), `${label} enabled.`)}
-                            className="text-text/60 hover:underline disabled:opacity-50"
                           >
                             Enable
-                          </button>
+                          </Button>
                         )}
                         {!config.is_active && (
-                          <button
-                            type="button" disabled={busyId === config.id}
+                          <Button
+                            variant="ghost" size="sm" disabled={busyId === config.id}
                             onClick={() => runAction(config.id, () => activateIntegrationConfig(config.id), `${label} activated.`)}
-                            className="text-text/60 hover:underline disabled:opacity-50"
                           >
                             Activate
-                          </button>
+                          </Button>
                         )}
                       </>
                     )}
@@ -177,7 +171,7 @@ export function CommunicationProvidersPage() {
                 )}
 
                 {openFormChannel === type && (
-                  <div className="mt-3 rounded border border-border p-4">
+                  <Modal open onClose={() => setOpenFormChannel(null)} title={config ? `Edit ${label} Configuration` : `Add ${label} Configuration`} size="lg">
                     <Msg91ConfigForm
                       channel={type} label={label} existingConfig={config ?? null}
                       onSaved={() => {
@@ -187,7 +181,7 @@ export function CommunicationProvidersPage() {
                       }}
                       onCancel={() => setOpenFormChannel(null)}
                     />
-                  </div>
+                  </Modal>
                 )}
               </div>
             );
@@ -207,6 +201,20 @@ export function CommunicationProvidersPage() {
           delivery report field names.
         </p>
       </div>
+
+      <ConfirmDialog
+        open={disableTarget !== null}
+        title="Disable Provider"
+        message={disableTarget ? `Disable ${disableTarget.label}? No further messages will be sent through this channel until it's re-enabled.` : ""}
+        confirmLabel="Disable"
+        confirmVariant="danger"
+        onConfirm={async () => {
+          if (!disableTarget) return;
+          await runAction(disableTarget.config.id, () => disableIntegrationConfig(disableTarget.config.id), `${disableTarget.label} disabled.`);
+          setDisableTarget(null);
+        }}
+        onClose={() => setDisableTarget(null)}
+      />
     </SimplePageLayout>
   );
 }

@@ -90,7 +90,7 @@ export function EmployeeProfilePage() {
           <ErrorBanner message={apiError} />
           {successMessage && <p className="mb-4 text-sm text-success">{successMessage}</p>}
 
-          <div className="grid grid-cols-2 gap-x-4">
+          <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
             <FormField label="First name" error={errors.first_name?.message} {...register("first_name")} />
             <FormField label="Last name" error={errors.last_name?.message} {...register("last_name")} />
             <FormField label="Display name" error={errors.display_name?.message} {...register("display_name")} />

@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { Button } from "@/components/buttons/Button";
 import { SubmitButton } from "@/components/forms/SubmitButton";
+import { EmptyState } from "@/components/layout/EmptyState";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { Modal } from "@/components/overlays/Modal";
 import { getErrorMessage } from "@/features/customer/errors";
 import { ConnectionCheckList } from "@/features/integrations/components/ConnectionCheckList";
 import {
@@ -80,14 +83,13 @@ export function IntegrationListPage() {
       )}
 
       <div className="mb-6">
-        <button type="button" onClick={() => setShowForm((v) => !v)} className="rounded bg-primary text-white text-sm font-medium py-2 px-4">
-          {showForm ? "Cancel" : "Add Configuration"}
-        </button>
+        <Button size="sm" onClick={() => setShowForm(true)}>
+          + Add Configuration
+        </Button>
       </div>
 
       {showForm && (
-        <div className="mb-6 bg-card border border-border rounded-card shadow-card p-6">
-          <h3 className="text-sm font-semibold text-text/70 mb-3">New Configuration</h3>
+        <Modal open onClose={() => setShowForm(false)} title="New Configuration" size="lg">
           <CreateConfigForm
             providers={providers}
             onSubmit={async (payload) => {
@@ -118,10 +120,13 @@ export function IntegrationListPage() {
               }
             }}
           />
-        </div>
+        </Modal>
       )}
 
       {isLoading && <p className="text-sm text-text/50">Loading…</p>}
+      {!isLoading && configs.length === 0 && (
+        <EmptyState icon="integrations" title="No integrations configured yet" description="Add your first configuration to start connecting a provider." primaryAction={{ label: "+ Add Configuration", onClick: () => setShowForm(true) }} />
+      )}
       <div className="space-y-6">
         {Object.entries(byType).map(([type, items]) => (
           <div key={type}>
@@ -160,7 +165,6 @@ export function IntegrationListPage() {
             </div>
           </div>
         ))}
-        {!isLoading && configs.length === 0 && <p className="text-sm text-text/50">No integrations configured yet.</p>}
       </div>
     </SimplePageLayout>
   );
@@ -236,7 +240,7 @@ export function CreateConfigForm({
       <ol className="space-y-5">
         <li>
           <StepHeading step={1} title="Choose Provider" />
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <select
               value={integrationType}
               onChange={(e) => { setIntegrationType(e.target.value); setProvider(""); setFieldValues({}); resetTestState(); }}
@@ -267,7 +271,7 @@ export function CreateConfigForm({
         {fields.length > 0 && (
           <li>
             <StepHeading step={2} title="Enter Credentials" />
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {fields.map((field) => (
                 <label key={field.key} className="text-xs text-text/60">
                   {field.label}
@@ -304,12 +308,9 @@ export function CreateConfigForm({
         ) : (
           <li>
             <StepHeading step={3} title="Test Connection" />
-            <button
-              type="button" disabled={!requiredFieldsFilled || isTesting} onClick={handleTest}
-              className="mb-3 rounded border border-primary text-primary text-sm font-medium py-2 px-4 disabled:opacity-50"
-            >
+            <Button variant="secondary" size="sm" className="mb-3" disabled={!requiredFieldsFilled || isTesting} onClick={handleTest}>
               {isTesting ? "Testing…" : "Test Connection"}
-            </button>
+            </Button>
             {testError && <p className="mb-2 text-sm text-danger">{testError}</p>}
             {testResult && (
               <div className={`rounded border px-3 py-3 ${testResult.success ? "border-success/30 bg-success/5" : "border-danger/30 bg-danger/5"}`}>

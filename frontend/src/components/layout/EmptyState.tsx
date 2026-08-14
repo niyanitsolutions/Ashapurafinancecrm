@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { Button, BUTTON_BASE_CLASSES, BUTTON_SIZE_CLASSES, BUTTON_VARIANT_CLASSES } from "@/components/buttons/Button";
 import { Icon, type IconName } from "@/theme/icons";
 
 interface EmptyStateAction {
@@ -24,11 +25,8 @@ export function EmptyState({
   secondaryAction?: EmptyStateAction;
 }) {
   const renderAction = (action: EmptyStateAction, variant: "primary" | "secondary") => {
-    const className =
-      variant === "primary"
-        ? "hover-lift rounded-xl bg-gradient-to-r from-primary to-primary-dark text-white text-sm font-semibold py-2.5 px-5 shadow-card"
-        : "rounded-xl border border-border text-sm font-medium py-2.5 px-5 text-text/70 hover:bg-background transition-colors";
     if (action.to) {
+      const className = `${BUTTON_BASE_CLASSES} ${BUTTON_VARIANT_CLASSES[variant]} ${BUTTON_SIZE_CLASSES.md}`;
       return (
         <Link key={action.label} to={action.to} className={className}>
           {action.label}
@@ -36,9 +34,9 @@ export function EmptyState({
       );
     }
     return (
-      <button key={action.label} type="button" onClick={action.onClick} className={className}>
+      <Button key={action.label} variant={variant} onClick={action.onClick}>
         {action.label}
-      </button>
+      </Button>
     );
   };
 

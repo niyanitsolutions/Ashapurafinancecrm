@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
+import { Button } from "@/components/buttons/Button";
 import { EmployeeSelect } from "@/components/forms/EmployeeSelect";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { SubmitButton } from "@/components/forms/SubmitButton";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
 import { assignRole, listEmployeeRoles, removeRole, type EmployeeRoleAssignment } from "@/features/access_control/api";
 import { getErrorMessage } from "@/features/access_control/errors";
 
@@ -14,6 +16,7 @@ export function AssignRolePage() {
   const [lookedUpEmployeeId, setLookedUpEmployeeId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState(false);
 
   if (!roleId) return null;
 
@@ -52,6 +55,7 @@ export function AssignRolePage() {
       setMessage("Role removed.");
       const roles = await listEmployeeRoles(lookedUpEmployeeId);
       setAssignments(roles);
+      setConfirmRemove(false);
     } catch (err) {
       setError(getErrorMessage(err));
     }
@@ -81,16 +85,26 @@ export function AssignRolePage() {
           )}
 
           {hasThisRole ? (
-            <button type="button" onClick={onRemove} className="rounded border border-border px-4 py-2 text-sm hover:bg-background">
+            <Button variant="secondary" size="sm" onClick={() => setConfirmRemove(true)}>
               Remove This Role
-            </button>
+            </Button>
           ) : (
-            <button type="button" onClick={onAssign} className="rounded bg-primary text-white px-4 py-2 text-sm hover:bg-primary-light">
+            <Button size="sm" onClick={onAssign}>
               Assign This Role
-            </button>
+            </Button>
           )}
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmRemove}
+        title="Remove Role"
+        message="Remove this role from the employee? They will immediately lose the permissions it grants."
+        confirmLabel="Remove Role"
+        confirmVariant="danger"
+        onConfirm={onRemove}
+        onClose={() => setConfirmRemove(false)}
+      />
     </SimplePageLayout>
   );
 }

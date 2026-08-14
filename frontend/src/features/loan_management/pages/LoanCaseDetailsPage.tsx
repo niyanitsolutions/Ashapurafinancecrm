@@ -1,9 +1,15 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
+import { Button } from "@/components/buttons/Button";
+import { CheckboxField } from "@/components/forms/CheckboxField";
 import { EmployeeSelect } from "@/components/forms/EmployeeSelect";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
+import { FormField } from "@/components/forms/FormField";
+import { SelectField } from "@/components/forms/SelectField";
 import { SubmitButton } from "@/components/forms/SubmitButton";
+import { TextareaField } from "@/components/forms/TextareaField";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
 import { getErrorMessage } from "@/features/customer/errors";
 import {
   addLoanCaseNote,
@@ -65,6 +71,7 @@ export function LoanCaseDetailsPage() {
   const [documentTypes, setDocumentTypes] = useState<NamedMasterData[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmVerify, setConfirmVerify] = useState(false);
 
   const load = () => {
     if (!caseId) return;
@@ -120,10 +127,10 @@ export function LoanCaseDetailsPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-3 gap-6">
-        <div className="col-span-2 space-y-6">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="lg:col-span-2 space-y-6">
           <Section title="Case Overview">
-            <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+            <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
               <Field label="Customer" value={loanCase.customer_name} />
               <Field label="Product" value={loanCase.product_name} />
               <Field label="Assigned To" value={loanCase.assigned_to_name} />
@@ -146,9 +153,9 @@ export function LoanCaseDetailsPage() {
                 onSubmit={(ids) => run(() => requestLoanCaseDocuments(caseId, ids), "Documents requested.")}
               />
               {status !== "new_customer" && (
-                <button type="button" onClick={() => run(() => verifyLoanCaseDocuments(caseId), "Documents verified.")} className="rounded bg-primary text-white text-sm font-medium py-2 px-4">
+                <Button size="sm" onClick={() => setConfirmVerify(true)}>
                   Verify Documents
-                </button>
+                </Button>
               )}
             </Section>
           )}
@@ -169,7 +176,7 @@ export function LoanCaseDetailsPage() {
               {details.offered_amount == null ? (
                 <OfferForm onSubmit={(payload) => run(() => recordOffer(caseId, payload), "Offer issued.")} />
               ) : (
-                <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
                   <Field label="Offered Amount" value={details.offered_amount} />
                   <Field label="Tenure (months)" value={details.offered_tenure_months} />
                   <Field label="Interest Rate" value={details.offered_interest_rate} />
@@ -206,7 +213,7 @@ export function LoanCaseDetailsPage() {
 
           {status === "disbursed" && (
             <Section title="Disbursement Record">
-              <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+              <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
                 <Field label="Disbursed Amount" value={details.disbursed_amount} />
                 <Field label="Reference" value={details.disbursed_reference} />
                 <Field label="Disbursed At" value={details.disbursed_at ? new Date(details.disbursed_at).toLocaleString() : null} />
@@ -226,9 +233,9 @@ export function LoanCaseDetailsPage() {
           {status !== "disbursed" && status !== "rejected" && (
             <Section title="Case Status Control">
               {status === "on_hold" ? (
-                <button type="button" onClick={() => run(() => resumeLoanCase(caseId), "Case resumed.")} className="w-full rounded bg-primary text-white text-sm font-medium py-2">
+                <Button size="sm" className="w-full" onClick={() => run(() => resumeLoanCase(caseId), "Case resumed.")}>
                   Resume
-                </button>
+                </Button>
               ) : (
                 <HoldForm onSubmit={(reason, remarks) => run(() => holdLoanCase(caseId, reason, remarks), "Case placed on hold.")} />
               )}
@@ -257,6 +264,18 @@ export function LoanCaseDetailsPage() {
           </Section>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmVerify}
+        title="Verify Documents"
+        message="Mark all requested documents as verified for this case? This moves the case to the next stage."
+        confirmLabel="Verify Documents"
+        onConfirm={async () => {
+          await run(() => verifyLoanCaseDocuments(caseId), "Documents verified.");
+          setConfirmVerify(false);
+        }}
+        onClose={() => setConfirmVerify(false)}
+      />
     </SimplePageLayout>
   );
 }
@@ -267,9 +286,9 @@ function AssignForm({ currentName, onSubmit }: { currentName: string | null; onS
     <div className="space-y-2">
       {currentName && <p className="text-sm text-text/70">Currently: {currentName}</p>}
       <EmployeeSelect label="Employee" value={employeeId} onChange={setEmployeeId} />
-      <button type="button" disabled={!employeeId} onClick={() => onSubmit(employeeId)} className="w-full rounded bg-primary text-white text-sm font-medium py-2 disabled:opacity-50">
+      <Button size="sm" className="w-full" disabled={!employeeId} onClick={() => onSubmit(employeeId)}>
         {currentName ? "Reassign" : "Assign"}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -285,15 +304,16 @@ function HoldForm({ onSubmit }: { onSubmit: (reason: string, remarks?: string) =
       }}
       className="space-y-2"
     >
-      <select value={reason} onChange={(e) => setReason(e.target.value)} className="w-full rounded border border-border px-3 py-2 text-sm">
-        {HOLD_REASONS.map((r) => (
-          <option key={r.value} value={r.value}>{r.label}</option>
-        ))}
-      </select>
-      <textarea placeholder="Remarks (optional)" value={remarks} onChange={(e) => setRemarks(e.target.value)} className="w-full rounded border border-border px-3 py-2 text-sm" rows={2} />
-      <button type="submit" className="w-full rounded border border-warning text-warning text-sm font-medium py-2">
+      <SelectField
+        label="Hold Reason"
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        options={HOLD_REASONS.map((r) => ({ value: r.value, label: r.label }))}
+      />
+      <TextareaField label="Remarks (optional)" value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={2} />
+      <Button type="submit" variant="secondary" size="sm" className="w-full">
         Place On Hold
-      </button>
+      </Button>
     </form>
   );
 }
@@ -308,10 +328,14 @@ function NoteForm({ onSubmit }: { onSubmit: (text: string) => void }) {
         onSubmit(text.trim());
         setText("");
       }}
-      className="flex gap-2"
+      className="flex items-end gap-2"
     >
-      <input type="text" placeholder="Add a note" value={text} onChange={(e) => setText(e.target.value)} className="flex-1 rounded border border-border px-3 py-2 text-sm" />
-      <SubmitButton>Add</SubmitButton>
+      <div className="flex-1">
+        <FormField label="Add a note" value={text} onChange={(e) => setText(e.target.value)} />
+      </div>
+      <div className="mb-4">
+        <SubmitButton>Add</SubmitButton>
+      </div>
     </form>
   );
 }
@@ -320,21 +344,19 @@ function RequestDocumentsForm({ documentTypes, onSubmit }: { documentTypes: Name
   const [selected, setSelected] = useState<string[]>([]);
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-3">
         {documentTypes.map((dt) => (
-          <label key={dt.id} className="flex items-center gap-1 text-xs border border-border rounded px-2 py-1">
-            <input
-              type="checkbox"
-              checked={selected.includes(dt.id)}
-              onChange={(e) => setSelected((prev) => (e.target.checked ? [...prev, dt.id] : prev.filter((id) => id !== dt.id)))}
-            />
-            {dt.name}
-          </label>
+          <CheckboxField
+            key={dt.id}
+            label={dt.name}
+            checked={selected.includes(dt.id)}
+            onChange={(e) => setSelected((prev) => (e.target.checked ? [...prev, dt.id] : prev.filter((id) => id !== dt.id)))}
+          />
         ))}
       </div>
-      <button type="button" disabled={selected.length === 0} onClick={() => onSubmit(selected)} className="rounded border border-primary text-primary text-sm font-medium py-2 px-4 disabled:opacity-50">
+      <Button variant="secondary" size="sm" disabled={selected.length === 0} onClick={() => onSubmit(selected)}>
         Request Selected Documents
-      </button>
+      </Button>
     </div>
   );
 }
@@ -351,16 +373,15 @@ function BankDetailsForm({ details, onSubmit }: { details: LoanCaseDetail["loan_
         e.preventDefault();
         onSubmit({ bank_nbfc_name: name, bank_application_id: appId, bank_reference_number: refNo, assigned_officer: officer, bank_remarks: remarks });
       }}
-      className="grid grid-cols-2 gap-3"
     >
-      <input placeholder="Bank / NBFC Name" value={name} onChange={(e) => setName(e.target.value)} className="rounded border border-border px-3 py-2 text-sm" />
-      <input placeholder="Bank Application ID" value={appId} onChange={(e) => setAppId(e.target.value)} className="rounded border border-border px-3 py-2 text-sm" />
-      <input placeholder="Reference Number" value={refNo} onChange={(e) => setRefNo(e.target.value)} className="rounded border border-border px-3 py-2 text-sm" />
-      <input placeholder="Assigned Officer" value={officer} onChange={(e) => setOfficer(e.target.value)} className="rounded border border-border px-3 py-2 text-sm" />
-      <textarea placeholder="Remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} className="col-span-2 rounded border border-border px-3 py-2 text-sm" rows={2} />
-      <div className="col-span-2">
-        <SubmitButton>Save Bank / NBFC Details</SubmitButton>
+      <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
+        <FormField label="Bank / NBFC Name" value={name} onChange={(e) => setName(e.target.value)} />
+        <FormField label="Bank Application ID" value={appId} onChange={(e) => setAppId(e.target.value)} />
+        <FormField label="Reference Number" value={refNo} onChange={(e) => setRefNo(e.target.value)} />
+        <FormField label="Assigned Officer" value={officer} onChange={(e) => setOfficer(e.target.value)} />
       </div>
+      <TextareaField label="Remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={2} />
+      <SubmitButton>Save Bank / NBFC Details</SubmitButton>
     </form>
   );
 }
@@ -376,22 +397,31 @@ function DecisionForm({
   const [creditScore, setCreditScore] = useState("");
   const [remarks, setRemarks] = useState("");
   const [rejectionReason, setRejectionReason] = useState("");
+  const [confirmReject, setConfirmReject] = useState(false);
+
+  const submit = () => {
+    onSubmit(decision, decision === "rejected" ? rejectionReason : undefined, {
+      creditScore: creditScore ? Number(creditScore) : undefined,
+      remarks: remarks || undefined,
+    });
+  };
 
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        onSubmit(decision, decision === "rejected" ? rejectionReason : undefined, {
-          creditScore: creditScore ? Number(creditScore) : undefined,
-          remarks: remarks || undefined,
-        });
+        if (decision === "rejected") {
+          setConfirmReject(true);
+          return;
+        }
+        submit();
       }}
       className="space-y-3"
     >
       {extraFields === "credit" && (
-        <input type="number" placeholder="Credit Score" value={creditScore} onChange={(e) => setCreditScore(e.target.value)} className="w-full rounded border border-border px-3 py-2 text-sm" />
+        <FormField label="Credit Score" type="number" value={creditScore} onChange={(e) => setCreditScore(e.target.value)} />
       )}
-      <textarea placeholder="Remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} className="w-full rounded border border-border px-3 py-2 text-sm" rows={2} />
+      <TextareaField label="Remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={2} />
       <div className="flex items-center gap-4 text-sm">
         <label className="flex items-center gap-2">
           <input type="radio" checked={decision === "approved"} onChange={() => setDecision("approved")} /> Approve
@@ -401,15 +431,22 @@ function DecisionForm({
         </label>
       </div>
       {decision === "rejected" && (
-        <textarea
-          placeholder="Rejection reason (mandatory)"
-          value={rejectionReason}
-          onChange={(e) => setRejectionReason(e.target.value)}
-          className="w-full rounded border border-border px-3 py-2 text-sm"
-          rows={2}
-        />
+        <TextareaField label="Rejection reason (mandatory)" value={rejectionReason} onChange={(e) => setRejectionReason(e.target.value)} rows={2} required />
       )}
       <SubmitButton>Submit Decision</SubmitButton>
+
+      <ConfirmDialog
+        open={confirmReject}
+        title="Reject Case"
+        message="Reject this case? This decision is recorded on the case history and cannot be undone here."
+        confirmLabel="Reject Case"
+        confirmVariant="danger"
+        onConfirm={() => {
+          submit();
+          setConfirmReject(false);
+        }}
+        onClose={() => setConfirmReject(false)}
+      />
     </form>
   );
 }
@@ -424,14 +461,13 @@ function OfferForm({ onSubmit }: { onSubmit: (payload: { offered_amount: number;
         e.preventDefault();
         onSubmit({ offered_amount: Number(amount), offered_tenure_months: Number(tenure), offered_interest_rate: Number(rate) });
       }}
-      className="grid grid-cols-3 gap-3"
     >
-      <input type="number" placeholder="Amount" value={amount} onChange={(e) => setAmount(e.target.value)} className="rounded border border-border px-3 py-2 text-sm" required />
-      <input type="number" placeholder="Tenure (months)" value={tenure} onChange={(e) => setTenure(e.target.value)} className="rounded border border-border px-3 py-2 text-sm" required />
-      <input type="number" step="0.01" placeholder="Interest Rate %" value={rate} onChange={(e) => setRate(e.target.value)} className="rounded border border-border px-3 py-2 text-sm" required />
-      <div className="col-span-3">
-        <SubmitButton>Issue Offer</SubmitButton>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <FormField label="Amount" type="number" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+        <FormField label="Tenure (months)" type="number" value={tenure} onChange={(e) => setTenure(e.target.value)} required />
+        <FormField label="Interest Rate %" type="number" step="0.01" value={rate} onChange={(e) => setRate(e.target.value)} required />
       </div>
+      <SubmitButton>Issue Offer</SubmitButton>
     </form>
   );
 }
@@ -448,9 +484,9 @@ function EsignNachKycForm({ details, onSubmit }: { details: LoanCaseDetail["loan
       }}
       className="space-y-2"
     >
-      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={esign} onChange={(e) => setEsign(e.target.checked)} /> eSign completed</label>
-      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={nach} onChange={(e) => setNach(e.target.checked)} /> NACH completed</label>
-      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={kyc} onChange={(e) => setKyc(e.target.checked)} /> KYC completed</label>
+      <CheckboxField label="eSign completed" checked={esign} onChange={(e) => setEsign(e.target.checked)} />
+      <CheckboxField label="NACH completed" checked={nach} onChange={(e) => setNach(e.target.checked)} />
+      <CheckboxField label="KYC completed" checked={kyc} onChange={(e) => setKyc(e.target.checked)} />
       <SubmitButton>Save</SubmitButton>
     </form>
   );
@@ -459,19 +495,32 @@ function EsignNachKycForm({ details, onSubmit }: { details: LoanCaseDetail["loan
 function DisburseForm({ onSubmit }: { onSubmit: (payload: { disbursed_amount: number; disbursed_reference: string }) => void }) {
   const [amount, setAmount] = useState("");
   const [reference, setReference] = useState("");
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        onSubmit({ disbursed_amount: Number(amount), disbursed_reference: reference });
+        setConfirmOpen(true);
       }}
-      className="grid grid-cols-2 gap-3"
     >
-      <input type="number" placeholder="Disbursed Amount" value={amount} onChange={(e) => setAmount(e.target.value)} className="rounded border border-border px-3 py-2 text-sm" required />
-      <input placeholder="Reference / UTR" value={reference} onChange={(e) => setReference(e.target.value)} className="rounded border border-border px-3 py-2 text-sm" required />
-      <div className="col-span-2">
-        <SubmitButton>Mark Disbursed</SubmitButton>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <FormField label="Disbursed Amount" type="number" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+        <FormField label="Reference / UTR" value={reference} onChange={(e) => setReference(e.target.value)} required />
       </div>
+      <SubmitButton>Mark Disbursed</SubmitButton>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        title="Confirm Disbursement"
+        message={`Mark this case as disbursed for ${amount ? `₹${amount}` : "the entered amount"} (ref: ${reference || "—"})? This cannot be undone here.`}
+        confirmLabel="Confirm Disbursement"
+        onConfirm={() => {
+          onSubmit({ disbursed_amount: Number(amount), disbursed_reference: reference });
+          setConfirmOpen(false);
+        }}
+        onClose={() => setConfirmOpen(false)}
+      />
     </form>
   );
 }

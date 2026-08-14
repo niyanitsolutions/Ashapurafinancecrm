@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
+import { SelectField } from "@/components/forms/SelectField";
 import { SubmitButton } from "@/components/forms/SubmitButton";
+import { TextareaField } from "@/components/forms/TextareaField";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { checkDuplicate, createLead } from "@/features/leads/api";
 import { getErrorMessage } from "@/features/leads/errors";
@@ -113,8 +115,8 @@ export function CreateLeadPage() {
         <div className="mb-4 rounded border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">{duplicateWarning}</div>
       )}
 
-      <form onSubmit={onSubmit} noValidate className="max-w-2xl bg-card border border-border rounded-card shadow-card p-6">
-        <div className="grid grid-cols-2 gap-x-4">
+      <form onSubmit={onSubmit} noValidate className="max-w-2xl mx-auto bg-card border border-border rounded-card shadow-card p-6">
+        <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
           <FormField
             label="Full Name"
             required
@@ -139,41 +141,33 @@ export function CreateLeadPage() {
             error={fieldErrors.email}
           />
 
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-text mb-1">Lead Source</label>
-            <select value={sourceId} onChange={(e) => setSourceId(e.target.value)} required className="w-full rounded border border-border px-3 py-2 text-sm">
-              <option value="">Select a source</option>
-              {sources.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          <SelectField
+            label="Lead Source"
+            required
+            value={sourceId}
+            onChange={(e) => setSourceId(e.target.value)}
+            placeholder="Select a source"
+            options={sources.map((s) => ({ value: s.id, label: s.name }))}
+          />
 
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-text mb-1">Product Category</label>
-            <select
-              value={productCategory}
-              onChange={(e) => setProductCategory(e.target.value as "loan" | "insurance")}
-              className="w-full rounded border border-border px-3 py-2 text-sm"
-            >
-              <option value="loan">Loan</option>
-              <option value="insurance">Insurance</option>
-            </select>
-          </div>
+          <SelectField
+            label="Product Category"
+            value={productCategory}
+            onChange={(e) => setProductCategory(e.target.value as "loan" | "insurance")}
+            options={[
+              { value: "loan", label: "Loan" },
+              { value: "insurance", label: "Insurance" },
+            ]}
+          />
 
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-text mb-1">Product</label>
-            <select value={productId} onChange={(e) => setProductId(e.target.value)} required className="w-full rounded border border-border px-3 py-2 text-sm">
-              <option value="">Select a product</option>
-              {products.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          <SelectField
+            label="Product"
+            required
+            value={productId}
+            onChange={(e) => setProductId(e.target.value)}
+            placeholder="Select a product"
+            options={products.map((p) => ({ value: p.id, label: p.name }))}
+          />
 
           <FormField
             label="City (optional)"
@@ -191,15 +185,7 @@ export function CreateLeadPage() {
           />
         </div>
 
-        <div className="mb-4">
-          <label className="block text-sm font-medium text-text mb-1">Remarks (optional)</label>
-          <textarea
-            className="w-full rounded border border-border px-3 py-2 text-sm"
-            rows={3}
-            value={remarks}
-            onChange={(e) => setRemarks(e.target.value)}
-          />
-        </div>
+        <TextareaField label="Remarks (optional)" rows={3} value={remarks} onChange={(e) => setRemarks(e.target.value)} />
 
         <SubmitButton isSubmitting={isSubmitting}>Create Lead</SubmitButton>
       </form>

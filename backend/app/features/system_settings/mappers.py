@@ -67,5 +67,7 @@ def company_settings_to_response(doc: CompanySettings) -> CompanySettingsRespons
         id=doc.require_id(), company_name=doc.company_name, logo_s3_key=doc.logo_s3_key,
         primary_color=doc.primary_color, secondary_color=doc.secondary_color,
         business_hours=[BusinessHourSchema(**h.model_dump()) for h in doc.business_hours],
+        contact_email=doc.contact_email, contact_phone=doc.contact_phone,
+        address=AddressSchema(**doc.address.model_dump()) if doc.address else None,
         updated_at=doc.updated_at,
     )

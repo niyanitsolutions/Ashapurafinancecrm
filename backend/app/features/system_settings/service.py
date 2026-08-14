@@ -520,6 +520,12 @@ class SystemSettingsService:
             updates["secondary_color"] = payload.secondary_color
         if payload.business_hours is not None:
             updates["business_hours"] = [h.model_dump() for h in payload.business_hours]
+        if payload.contact_email is not None:
+            updates["contact_email"] = payload.contact_email
+        if payload.contact_phone is not None:
+            updates["contact_phone"] = payload.contact_phone
+        if payload.address is not None:
+            updates["address"] = payload.address.model_dump()
         if not updates:
             return current
         updated = await self._company_settings.update(current.require_id(), updates, updated_by=actor.require_id())

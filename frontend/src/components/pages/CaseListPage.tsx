@@ -152,7 +152,7 @@ export function CaseListPage<T extends CaseListItem>({
       <div className="p-6">
         <ErrorBanner message={error} />
 
-        <div className="bg-card rounded-2xl shadow-card overflow-hidden">
+        <div className="bg-card border border-border rounded-card shadow-card overflow-hidden">
           <div className="p-6 flex flex-wrap items-start justify-between gap-4">
             <div className="flex items-start gap-3.5">
               <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">

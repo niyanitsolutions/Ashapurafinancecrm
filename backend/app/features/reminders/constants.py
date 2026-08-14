@@ -129,3 +129,10 @@ class AuditEvent:
 # to generate notifications — see docs/decisions/DECISIONS.md for why polling rather
 # than a live event hook.
 POLLED_AUDIT_EVENT_TYPES = ("lead_assigned", "document_uploaded")
+
+# `system_settings.NotificationTemplate.channel` used for this module's own internal
+# (in-app) notifications — a template row with this channel + a `key` matching one of
+# NotificationType's values (e.g. "task_assigned") overrides that event's default
+# title/message. No matching active row -> falls back to the hardcoded default, so this
+# is purely additive: an Owner opts in by creating a template, nothing changes otherwise.
+INTERNAL_NOTIFICATION_CHANNEL = "internal"

@@ -141,7 +141,7 @@ async def test_timeline_includes_lead_assignment_entry(client, mock_db, owner_he
 
     r = await client.post(f"/api/v1/leads/{lead_id}/secure-links", json={}, headers=owner_headers)
     secure_code = r.json()["data"]["secure_code"]
-    r = await client.post(f"/api/v1/secure-links/{secure_code}/start-signup")
+    r = await client.post("/api/v1/customer-registration/start", json={"mobile": "9711111111"})
     dev_otp = r.json()["data"]["dev_otp"]
     customer_headers = await _signup_via_otp(client, "9711111111", dev_otp)
     r = await client.post(f"/api/v1/secure-links/{secure_code}/claim", headers=customer_headers)
@@ -162,7 +162,7 @@ async def test_timeline_omits_assignment_entry_when_lead_never_assigned(client, 
 
     r = await client.post(f"/api/v1/leads/{lead_id}/secure-links", json={}, headers=owner_headers)
     secure_code = r.json()["data"]["secure_code"]
-    r = await client.post(f"/api/v1/secure-links/{secure_code}/start-signup")
+    r = await client.post("/api/v1/customer-registration/start", json={"mobile": "9711111199"})
     dev_otp = r.json()["data"]["dev_otp"]
     customer_headers = await _signup_via_otp(client, "9711111199", dev_otp)
     r = await client.post(f"/api/v1/secure-links/{secure_code}/claim", headers=customer_headers)

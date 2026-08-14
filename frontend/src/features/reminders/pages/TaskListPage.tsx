@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react";
-import { SubmitButton } from "@/components/forms/SubmitButton";
+import { Button } from "@/components/buttons/Button";
+import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { EmptyState } from "@/components/layout/EmptyState";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { Pagination } from "@/components/tables/Pagination";
+import { Table, TableBody, TableHead, TableHeadRow, TableRow, Td, Th } from "@/components/tables/DataTable";
 import { useAuth } from "@/features/auth/useAuth";
 import { getErrorMessage } from "@/features/customer/errors";
-import { completeTask, createTask, listTasks, type Task } from "@/features/reminders/api";
+import { AddTaskModal } from "@/features/reminders/components/AddTaskModal";
+import { completeTask, listTasks, type Task } from "@/features/reminders/api";
 
 const PAGE_SIZE = 20;
 
@@ -32,6 +36,7 @@ export function TaskListPage() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
 
   const load = () => {
     setIsLoading(true);
@@ -47,6 +52,7 @@ export function TaskListPage() {
   useEffect(load, [page, status, priority]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const hasFilters = Boolean(status || priority);
 
   const handleComplete = async (taskId: string) => {
     setError(null);
@@ -61,36 +67,21 @@ export function TaskListPage() {
   };
 
   return (
-    <SimplePageLayout title="Tasks" subtitle="Follow-up work assigned to your team, with reminders and escalation if something's overdue.">
+    <SimplePageLayout
+      title="Tasks"
+      subtitle="Follow-up work assigned to your team, with reminders and escalation if something's overdue."
+      actions={role === "owner" ? <Button size="sm" onClick={() => setIsCreateOpen(true)}>+ Assign Task</Button> : undefined}
+    >
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
-      {error && <p className="mb-4 text-sm text-danger">{error}</p>}
+      <ErrorBanner message={error} />
 
-      {role === "owner" && (
-        <div className="mb-6 bg-card border border-border rounded-card shadow-card p-6">
-          <h3 className="text-sm font-semibold text-text/70 mb-3">Assign Task</h3>
-          <CreateTaskForm
-            onSubmit={async (payload) => {
-              setError(null);
-              setMessage(null);
-              try {
-                await createTask(payload);
-                setMessage("Task assigned.");
-                load();
-              } catch (err) {
-                setError(getErrorMessage(err));
-              }
-            }}
-          />
-        </div>
-      )}
-
-      <div className="mb-4 flex items-center gap-4">
-        <select value={status} onChange={(e) => { setPage(1); setStatus(e.target.value); }} className="rounded border border-border px-3 py-2 text-sm">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <select value={status} onChange={(e) => { setPage(1); setStatus(e.target.value); }} className="rounded-xl border border-border px-3.5 py-2.5 text-sm bg-card">
           <option value="">All Statuses</option>
           <option value="pending">Pending</option>
           <option value="completed">Completed</option>
         </select>
-        <select value={priority} onChange={(e) => { setPage(1); setPriority(e.target.value); }} className="rounded border border-border px-3 py-2 text-sm">
+        <select value={priority} onChange={(e) => { setPage(1); setPriority(e.target.value); }} className="rounded-xl border border-border px-3.5 py-2.5 text-sm bg-card">
           <option value="">All Priorities</option>
           <option value="high">High</option>
           <option value="medium">Medium</option>
@@ -98,98 +89,85 @@ export function TaskListPage() {
         </select>
       </div>
 
-      <div className="bg-card border border-border rounded-card shadow-card overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border text-left text-text/60">
-              <th className="px-4 py-3">Title</th>
-              <th className="px-4 py-3">Priority</th>
-              <th className="px-4 py-3">Assigned To</th>
-              <th className="px-4 py-3">Due</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading && (
-              <tr><td colSpan={6} className="px-4 py-6 text-center text-text/50">Loading…</td></tr>
-            )}
-            {!isLoading && items.length === 0 && (
-              <tr>
-                <td colSpan={6}>
-                  <EmptyState icon="tasks" title="No tasks yet" description={role === "owner" ? "Assign your first task to a team member using the form above." : "You'll see tasks here once your manager assigns you one."} />
-                </td>
-              </tr>
-            )}
-            {items.map((task) => (
-              <tr key={task.id} className="border-b border-border last:border-0 hover:bg-background">
-                <td className="px-4 py-3">
-                  {task.title}
-                  {task.owner_escalated && <span className="ml-2 text-xs text-danger">(escalated)</span>}
-                </td>
-                <td className="px-4 py-3"><PriorityBadge priority={task.priority} /></td>
-                <td className="px-4 py-3">{task.assigned_to_name || "—"}</td>
-                <td className="px-4 py-3">{new Date(task.due_at).toLocaleString()}</td>
-                <td className="px-4 py-3 capitalize">{task.status}</td>
-                <td className="px-4 py-3">
-                  {task.status === "pending" && (
-                    <button type="button" onClick={() => handleComplete(task.id)} className="text-primary hover:underline text-xs">
-                      Mark Complete
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="flex items-center justify-between mt-4 text-sm text-text/60">
-        <span>Page {page} of {totalPages} ({total} tasks)</span>
-        <div className="flex gap-2">
-          <button type="button" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="rounded border border-border px-3 py-1 disabled:opacity-40">Previous</button>
-          <button type="button" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} className="rounded border border-border px-3 py-1 disabled:opacity-40">Next</button>
+      {!isLoading && items.length === 0 ? (
+        <EmptyState
+          icon="tasks"
+          title={hasFilters ? "No tasks match your filters" : "No tasks yet"}
+          description={
+            hasFilters
+              ? "Try a different status or priority filter."
+              : role === "owner"
+                ? "Assign your first task to a team member."
+                : "You'll see tasks here once your manager assigns you one."
+          }
+          primaryAction={role === "owner" && !hasFilters ? { label: "+ Assign Task", onClick: () => setIsCreateOpen(true) } : undefined}
+        />
+      ) : (
+        <div className="overflow-x-auto rounded-card border border-border bg-card shadow-card">
+          <Table>
+            <TableHead>
+              <TableHeadRow>
+                <Th>Title</Th>
+                <Th>Priority</Th>
+                <Th>Assigned To</Th>
+                <Th>Due</Th>
+                <Th>Status</Th>
+                <Th />
+              </TableHeadRow>
+            </TableHead>
+            <TableBody>
+              {isLoading && (
+                <tr>
+                  <Td colSpan={6} className="text-center text-text/50 py-6">
+                    Loading…
+                  </Td>
+                </tr>
+              )}
+              {!isLoading &&
+                items.map((task) => (
+                  <TableRow key={task.id}>
+                    <Td>
+                      {task.title}
+                      {task.owner_escalated && <span className="ml-2 text-xs text-danger">(escalated)</span>}
+                    </Td>
+                    <Td>
+                      <PriorityBadge priority={task.priority} />
+                    </Td>
+                    <Td>{task.assigned_to_name || "—"}</Td>
+                    <Td>{new Date(task.due_at).toLocaleString()}</Td>
+                    <Td className="capitalize">{task.status}</Td>
+                    <Td>
+                      {task.status === "pending" && (
+                        <button type="button" onClick={() => handleComplete(task.id)} className="text-primary hover:underline text-xs">
+                          Mark Complete
+                        </button>
+                      )}
+                    </Td>
+                  </TableRow>
+                ))}
+            </TableBody>
+          </Table>
         </div>
-      </div>
+      )}
+
+      <Pagination
+        page={page}
+        totalPages={totalPages}
+        totalItems={total}
+        pageSize={PAGE_SIZE}
+        itemLabel="tasks"
+        onPageChange={setPage}
+      />
+
+      {isCreateOpen && (
+        <AddTaskModal
+          onClose={() => setIsCreateOpen(false)}
+          onCreated={() => {
+            setMessage("Task assigned.");
+            load();
+          }}
+        />
+      )}
     </SimplePageLayout>
-  );
-}
-
-function CreateTaskForm({
-  onSubmit,
-}: {
-  onSubmit: (payload: { title: string; description?: string; assigned_to: string; due_at: string; priority: string }) => void;
-}) {
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [assignedTo, setAssignedTo] = useState("");
-  const [dueAt, setDueAt] = useState("");
-  const [priority, setPriority] = useState("medium");
-
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSubmit({ title, description: description || undefined, assigned_to: assignedTo, due_at: new Date(dueAt).toISOString(), priority });
-        setTitle("");
-        setDescription("");
-        setAssignedTo("");
-        setDueAt("");
-        setPriority("medium");
-      }}
-      className="grid grid-cols-2 gap-3"
-    >
-      <input placeholder="Title" value={title} onChange={(e) => setTitle(e.target.value)} className="rounded border border-border px-3 py-2 text-sm" required />
-      <input placeholder="Employee ID" value={assignedTo} onChange={(e) => setAssignedTo(e.target.value)} className="rounded border border-border px-3 py-2 text-sm" required />
-      <input type="datetime-local" value={dueAt} onChange={(e) => setDueAt(e.target.value)} className="rounded border border-border px-3 py-2 text-sm" required />
-      <select value={priority} onChange={(e) => setPriority(e.target.value)} className="rounded border border-border px-3 py-2 text-sm">
-        <option value="low">Low Priority</option>
-        <option value="medium">Medium Priority</option>
-        <option value="high">High Priority</option>
-      </select>
-      <input placeholder="Description (optional)" value={description} onChange={(e) => setDescription(e.target.value)} className="rounded border border-border px-3 py-2 text-sm col-span-2" />
-      <div className="col-span-2">
-        <SubmitButton>Assign Task</SubmitButton>
-      </div>
-    </form>
   );
 }

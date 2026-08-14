@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
+import { Button } from "@/components/buttons/Button";
+import { ErrorBanner } from "@/components/forms/ErrorBanner";
+import { FormField } from "@/components/forms/FormField";
+import { EmptyState } from "@/components/layout/EmptyState";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { Modal } from "@/components/overlays/Modal";
+import { Pagination } from "@/components/tables/Pagination";
 import { getErrorMessage } from "@/features/customer/errors";
 import {
   approveCommissionEntry,
@@ -10,6 +16,52 @@ import {
 
 const PAGE_SIZE = 20;
 
+function SettleModal({ entry, onClose, onSaved }: { entry: CommissionEntry; onClose: () => void; onSaved: () => void }) {
+  const [paymentReference, setPaymentReference] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!paymentReference.trim()) return;
+    setError(null);
+    setIsSubmitting(true);
+    try {
+      await settleCommissionEntry(entry.id, paymentReference.trim());
+      onSaved();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Settle Commission"
+      description={`${entry.partner_name || entry.partner_id} · ₹${entry.commission_amount.toLocaleString()}`}
+      size="sm"
+      footer={
+        <>
+          <Button variant="secondary" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" form="settle-commission-form" size="sm" loading={isSubmitting} disabled={!paymentReference.trim()}>
+            Settle
+          </Button>
+        </>
+      }
+    >
+      <form id="settle-commission-form" onSubmit={onSubmit}>
+        <ErrorBanner message={error} />
+        <FormField label="Payment Reference" value={paymentReference} onChange={(e) => setPaymentReference(e.target.value)} required autoFocus />
+      </form>
+    </Modal>
+  );
+}
+
 export function CommissionLedgerPage() {
   const [items, setItems] = useState<CommissionEntry[]>([]);
   const [total, setTotal] = useState(0);
@@ -18,7 +70,7 @@ export function CommissionLedgerPage() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [paymentRefByEntry, setPaymentRefByEntry] = useState<Record<string, string>>({});
+  const [settleTarget, setSettleTarget] = useState<CommissionEntry | null>(null);
 
   const load = () => {
     setIsLoading(true);
@@ -48,16 +100,15 @@ export function CommissionLedgerPage() {
   };
 
   return (
-    <SimplePageLayout title="Commission Ledger">
-      <p className="mb-4 text-sm text-text/60">
-        Pending → Approved → Paid. Settlement is manual — there is no payment gateway integration yet; recording a reference here is the record of
-        payment.
-      </p>
+    <SimplePageLayout
+      title="Commission Ledger"
+      subtitle="Pending → Approved → Paid. Settlement is manual — there is no payment gateway integration yet; recording a reference here is the record of payment."
+    >
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
-      {error && <p className="mb-4 text-sm text-danger">{error}</p>}
+      <ErrorBanner message={error} />
 
-      <div className="mb-4 flex items-center gap-4">
-        <select value={status} onChange={(e) => { setPage(1); setStatus(e.target.value); }} className="rounded border border-border px-3 py-2 text-sm">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <select value={status} onChange={(e) => { setPage(1); setStatus(e.target.value); }} className="rounded-xl border border-border px-3.5 py-2.5 text-sm bg-card">
           <option value="">All Statuses</option>
           <option value="pending">Pending</option>
           <option value="approved">Approved</option>
@@ -65,64 +116,64 @@ export function CommissionLedgerPage() {
         </select>
       </div>
 
-      <div className="bg-card border border-border rounded-card shadow-card overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border text-left text-text/60">
-              <th className="px-4 py-3">Partner</th>
-              <th className="px-4 py-3">Case</th>
-              <th className="px-4 py-3">Base Amount</th>
-              <th className="px-4 py-3">Commission</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading && <tr><td colSpan={6} className="px-4 py-6 text-center text-text/50">Loading…</td></tr>}
-            {!isLoading && items.length === 0 && <tr><td colSpan={6} className="px-4 py-6 text-center text-text/50">No commission entries yet.</td></tr>}
-            {items.map((entry) => (
-              <tr key={entry.id} className="border-b border-border last:border-0 hover:bg-background">
-                <td className="px-4 py-3">{entry.partner_name || entry.partner_id}</td>
-                <td className="px-4 py-3 capitalize">{entry.case_type}</td>
-                <td className="px-4 py-3">₹{entry.base_amount.toLocaleString()}</td>
-                <td className="px-4 py-3">₹{entry.commission_amount.toLocaleString()}</td>
-                <td className="px-4 py-3 capitalize">{entry.status}</td>
-                <td className="px-4 py-3">
-                  {entry.status === "pending" && (
-                    <button type="button" onClick={() => run(() => approveCommissionEntry(entry.id), "Commission entry approved.")} className="text-primary hover:underline text-xs">
-                      Approve
-                    </button>
-                  )}
-                  {entry.status === "approved" && (
-                    <div className="flex items-center gap-2">
-                      <input
-                        placeholder="Payment ref." value={paymentRefByEntry[entry.id] || ""}
-                        onChange={(e) => setPaymentRefByEntry((prev) => ({ ...prev, [entry.id]: e.target.value }))}
-                        className="rounded border border-border px-2 py-1 text-xs w-28"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => run(() => settleCommissionEntry(entry.id, paymentRefByEntry[entry.id] || ""), "Commission entry settled.")}
-                        className="text-primary hover:underline text-xs"
-                      >
-                        Settle
-                      </button>
-                    </div>
-                  )}
-                  {entry.status === "paid" && entry.payment_reference && <span className="text-xs text-text/50">Ref: {entry.payment_reference}</span>}
-                </td>
+      {!isLoading && items.length === 0 ? (
+        <EmptyState icon="commission" title="No commission entries yet" description="Entries appear here once a referred lead results in a disbursed loan or issued policy." />
+      ) : (
+        <div className="bg-card border border-border rounded-card shadow-card overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border text-left text-text/60">
+                <th className="px-4 py-3">Partner</th>
+                <th className="px-4 py-3">Case</th>
+                <th className="px-4 py-3">Base Amount</th>
+                <th className="px-4 py-3">Commission</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3"></th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="flex items-center justify-between mt-4 text-sm text-text/60">
-        <span>Page {page} of {totalPages} ({total} entries)</span>
-        <div className="flex gap-2">
-          <button type="button" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="rounded border border-border px-3 py-1 disabled:opacity-40">Previous</button>
-          <button type="button" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} className="rounded border border-border px-3 py-1 disabled:opacity-40">Next</button>
+            </thead>
+            <tbody>
+              {isLoading && <tr><td colSpan={6} className="px-4 py-6 text-center text-text/50">Loading…</td></tr>}
+              {!isLoading &&
+                items.map((entry) => (
+                  <tr key={entry.id} className="border-b border-border last:border-0 hover:bg-background">
+                    <td className="px-4 py-3">{entry.partner_name || entry.partner_id}</td>
+                    <td className="px-4 py-3 capitalize">{entry.case_type}</td>
+                    <td className="px-4 py-3">₹{entry.base_amount.toLocaleString()}</td>
+                    <td className="px-4 py-3">₹{entry.commission_amount.toLocaleString()}</td>
+                    <td className="px-4 py-3 capitalize">{entry.status}</td>
+                    <td className="px-4 py-3">
+                      {entry.status === "pending" && (
+                        <button type="button" onClick={() => run(() => approveCommissionEntry(entry.id), "Commission entry approved.")} className="text-primary hover:underline text-xs">
+                          Approve
+                        </button>
+                      )}
+                      {entry.status === "approved" && (
+                        <button type="button" onClick={() => setSettleTarget(entry)} className="text-primary hover:underline text-xs">
+                          Settle
+                        </button>
+                      )}
+                      {entry.status === "paid" && entry.payment_reference && <span className="text-xs text-text/50">Ref: {entry.payment_reference}</span>}
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
         </div>
-      </div>
+      )}
+
+      <Pagination page={page} totalPages={totalPages} totalItems={total} pageSize={PAGE_SIZE} itemLabel="entries" onPageChange={setPage} />
+
+      {settleTarget && (
+        <SettleModal
+          entry={settleTarget}
+          onClose={() => setSettleTarget(null)}
+          onSaved={() => {
+            setSettleTarget(null);
+            setMessage("Commission entry settled.");
+            load();
+          }}
+        />
+      )}
     </SimplePageLayout>
   );
 }

@@ -307,13 +307,16 @@ class LeadService:
         specialization purely as business context for the Owner/Employee choosing —
         never itself an authorization check (see EligibleAssigneeResponse docstring).
 
-        Recommendation priority (all tie-breaks, never a filter): lowest current active
-        lead count > lowest open case count on this category's pipeline > fewest
-        assignments today > fewest assignments this week > product specialization match
-        (see Employee.product_ids — optional, has no effect until an Owner starts
-        curating it) > same branch as the assigning Employee (skipped for an Owner
-        actor, who has no branch of their own) > alphabetical. Distributes new leads
-        across the eligible team instead of always picking the same employee."""
+        Recommendation priority (all tie-breaks, never a filter — eligibility itself is
+        decided entirely above by module access): product specialization match (see
+        Employee.product_ids — optional, has no effect until an Owner starts curating
+        it) > lowest current active lead count > lowest open case count on this
+        category's pipeline > fewest assignments today > fewest assignments this week >
+        same branch as the assigning Employee (skipped for an Owner actor, who has no
+        branch of their own) > alphabetical. A specialist is preferred over a generalist
+        even at a higher workload; among equally-specialized (or equally
+        unspecialized) candidates, workload still distributes new leads across the
+        eligible team instead of always picking the same employee."""
         module = PRODUCT_CATEGORY_MODULE.get(product_category)
         eligible_employee_ids = await self._employees_with_module_access(module) if module else set()
         if not eligible_employee_ids:
@@ -387,11 +390,11 @@ class LeadService:
                 )
             )
             sort_keys[employee_id] = (
+                not product_match,
                 current_lead_count,
                 open_case_count,
                 today_count_map.get(employee_id, 0),
                 week_count_map.get(employee_id, 0),
-                not product_match,
                 not same_branch,
                 employee.display_name,
             )

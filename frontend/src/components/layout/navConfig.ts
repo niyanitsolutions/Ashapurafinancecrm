@@ -35,10 +35,10 @@ export interface NavLeaf {
    * Without this, an employee granted just that one permission would see the
    * sidebar entry but land on an Owner-only route and get redirected away. */
   employeeTo?: string;
-  /** Phase 1 deployment ships Dashboard/Leads/Customers/Loan/Insurance/Connections only.
-   * A leaf marked true still renders (so the module isn't a mystery) but as a disabled,
-   * non-navigating row with a "Soon" badge — its routes render ComingSoonPage too, so a
-   * typed-in URL can't bypass this. Drop the flag when a module ships. */
+  /** No leaf currently sets this — every shipped module has a real route. Kept as
+   * available infrastructure for a genuinely new, not-yet-built module: a leaf marked
+   * true renders as a disabled, non-navigating row with a "Soon" badge instead of being
+   * omitted outright. Drop the flag from any leaf the moment it ships a real route. */
   comingSoon?: boolean;
 }
 

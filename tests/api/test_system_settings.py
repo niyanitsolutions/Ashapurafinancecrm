@@ -181,6 +181,27 @@ async def test_company_settings_singleton_get_and_update(client, owner_headers):
     assert r.json()["data"]["id"] == first["id"]
 
 
+async def test_company_settings_address_and_contact_fields(client, owner_headers):
+    r = await client.patch(
+        "/api/v1/company-settings",
+        json={
+            "contact_email": "info@ashapura.example",
+            "contact_phone": "9876500000",
+            "address": {"line1": "1st Floor, ABC Tower", "city": "Ahmedabad", "state": "Gujarat", "pincode": "380001"},
+        },
+        headers=owner_headers,
+    )
+    assert r.status_code == 200, r.text
+    updated = r.json()["data"]
+    assert updated["contact_email"] == "info@ashapura.example"
+    assert updated["contact_phone"] == "9876500000"
+    assert updated["address"]["city"] == "Ahmedabad"
+    assert updated["address"]["country"] == "India"
+
+    r = await client.get("/api/v1/company-settings", headers=owner_headers)
+    assert r.json()["data"]["address"]["pincode"] == "380001"
+
+
 async def test_company_logo_upload_url_and_confirm(client, owner_headers):
     r = await client.post("/api/v1/company-settings/logo/upload-url", headers=owner_headers)
     assert r.status_code == 200, r.text

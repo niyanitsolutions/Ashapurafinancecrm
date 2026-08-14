@@ -16,9 +16,11 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.constants.roles import EMPLOYEE
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
 from app.features.auth.models import User
+from app.features.communication.template_engine import render as render_template
 from app.features.employee.repository import EmployeeRepository
 from app.features.reminders.constants import (
     CATEGORY_BY_NOTIFICATION_TYPE,
+    INTERNAL_NOTIFICATION_CHANNEL,
     AuditEvent,
     NotificationType,
 )
@@ -34,6 +36,7 @@ from app.features.reminders.schemas import (
     UpdateReminderRuleRequest,
     UpdateTaskRequest,
 )
+from app.features.system_settings.repository import NotificationTemplateRepository
 from app.shared.audit_log import write_audit_log
 from app.utils.datetime import utc_now
 
@@ -47,6 +50,7 @@ class RemindersService:
         self._rules = ReminderRuleRepository(db)
         self._notifications = NotificationRepository(db)
         self._employees = EmployeeRepository(db)
+        self._notification_templates = NotificationTemplateRepository(db)
 
     async def _acting_employee_id(self, actor: User) -> str | None:
         if actor.role != EMPLOYEE:
@@ -73,6 +77,31 @@ class RemindersService:
         assert found is not None
         return found
 
+    async def notify(
+        self, *, recipient_user_id: str, notification_type: str, default_title: str, default_message: str,
+        variables: dict[str, str] | None = None, entity_type: str | None = None, entity_id: str | None = None,
+    ) -> Notification:
+        """Template-aware wrapper around `create_notification` — looks up a
+        `NotificationTemplate` (channel=INTERNAL_NOTIFICATION_CHANNEL, key=notification_type)
+        and renders it via `{{variable}}` substitution (same engine Communication's own
+        templates use) when an Owner has configured one; otherwise falls back to the exact
+        default text every call site used before this existed, so behavior is unchanged
+        until an Owner opts in. `create_notification` itself stays untouched — other
+        frozen modules (Leads' `assign_lead`, Customer's `raise_support_request`) call it
+        directly and are unaffected by this addition.
+        """
+        template = await self._notification_templates.find_by_channel_and_key(INTERNAL_NOTIFICATION_CHANNEL, notification_type)
+        title, message = default_title, default_message
+        if template is not None and template.status == "active":
+            if template.subject and template.subject.strip():
+                title = render_template(template.subject.strip(), variables or {})
+            if template.body and template.body.strip():
+                message = render_template(template.body, variables or {})
+        return await self.create_notification(
+            recipient_user_id=recipient_user_id, notification_type=notification_type, title=title, message=message,
+            entity_type=entity_type, entity_id=entity_id,
+        )
+
     # ================================================================== tasks
 
     async def create_task(self, payload: CreateTaskRequest, actor: User) -> Task:
@@ -89,9 +118,10 @@ class RemindersService:
         task_id = await self._tasks.insert(task)
         await write_audit_log(self._db, event_type=AuditEvent.TASK_CREATED, user_id=actor.require_id(), metadata={"task_id": task_id, "assigned_to": payload.assigned_to})
 
-        await self.create_notification(
+        await self.notify(
             recipient_user_id=employee.user_id, notification_type=NotificationType.TASK_ASSIGNED,
-            title="New Task Assigned", message=f'You have been assigned a new task: "{payload.title}".',
+            default_title="New Task Assigned", default_message=f'You have been assigned a new task: "{payload.title}".',
+            variables={"task_title": payload.title},
             entity_type="task", entity_id=task_id,
         )
 

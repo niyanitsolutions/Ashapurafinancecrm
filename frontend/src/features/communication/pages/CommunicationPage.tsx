@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { Button } from "@/components/buttons/Button";
 import { SubmitButton } from "@/components/forms/SubmitButton";
 import { EmptyState } from "@/components/layout/EmptyState";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { Modal } from "@/components/overlays/Modal";
+import { Pagination } from "@/components/tables/Pagination";
 import { BulkMessagesSection } from "@/features/communication/components/BulkMessagesSection";
 import {
   createTemplate,
@@ -97,27 +100,28 @@ function TemplatesSection({ run }: { run: (action: () => Promise<unknown>, succe
 
   return (
     <div>
-      <div className="mb-4 flex items-center gap-3">
-        <select value={channelFilter} onChange={(e) => setChannelFilter(e.target.value)} className="rounded border border-border px-3 py-2 text-sm">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <select value={channelFilter} onChange={(e) => setChannelFilter(e.target.value)} className="rounded-xl border border-border px-3.5 py-2.5 text-sm bg-card">
           <option value="">All Channels</option>
           {CHANNELS.map((c) => (
             <option key={c} value={c}>{c}</option>
           ))}
         </select>
-        <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="rounded border border-border px-3 py-2 text-sm">
+        <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="rounded-xl border border-border px-3.5 py-2.5 text-sm bg-card">
           <option value="">All Categories</option>
           {CATEGORIES.map((c) => (
             <option key={c} value={c}>{c.replace(/_/g, " ")}</option>
           ))}
         </select>
-        <button type="button" onClick={() => { setEditing(null); setShowForm((v) => !v); }} className="ml-auto rounded bg-primary text-white text-sm font-medium py-2 px-4">
-          {showForm && !editing ? "Cancel" : "New Template"}
-        </button>
+        <div className="sm:ml-auto">
+          <Button size="sm" onClick={() => { setEditing(null); setShowForm(true); }}>
+            + New Template
+          </Button>
+        </div>
       </div>
 
       {showForm && (
-        <div className="mb-6 bg-card border border-border rounded-card shadow-card p-6">
-          <h3 className="text-sm font-semibold text-text/70 mb-3">{editing ? `Edit "${editing.name}"` : "New Template"}</h3>
+        <Modal open onClose={() => { setShowForm(false); setEditing(null); }} title={editing ? `Edit "${editing.name}"` : "New Template"} size="lg">
           <TemplateForm
             initial={editing}
             onSubmit={(payload) => {
@@ -128,7 +132,7 @@ function TemplatesSection({ run }: { run: (action: () => Promise<unknown>, succe
               }
             }}
           />
-        </div>
+        </Modal>
       )}
 
       <div className="bg-card border border-border rounded-card shadow-card overflow-x-auto">
@@ -212,7 +216,7 @@ function TemplateForm({
       }}
       className="space-y-3"
     >
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <input placeholder="Template Name" value={name} onChange={(e) => setName(e.target.value)} disabled={!!initial} className="rounded border border-border px-3 py-2 text-sm disabled:opacity-60" required />
         <select value={channel} onChange={(e) => setChannel(e.target.value)} disabled={!!initial} className="rounded border border-border px-3 py-2 text-sm disabled:opacity-60">
           {CHANNELS.map((c) => (
@@ -240,7 +244,7 @@ function TemplateForm({
             WhatsApp sends only a pre-approved provider template (not the body text above) — fill these in if using MSG91. The
             {"{{variable_name}}"} order above becomes the template's placeholder order.
           </p>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <input
               placeholder="Provider Template Name" value={providerTemplateName}
               onChange={(e) => setProviderTemplateName(e.target.value)} className="rounded border border-border px-3 py-2 text-sm"
@@ -280,14 +284,14 @@ function QueueSection({ run }: { run: (action: () => Promise<unknown>, successMe
 
   return (
     <div>
-      <div className="mb-4 flex items-center gap-3">
-        <select value={statusFilter} onChange={(e) => { setPage(1); setStatusFilter(e.target.value); }} className="rounded border border-border px-3 py-2 text-sm">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <select value={statusFilter} onChange={(e) => { setPage(1); setStatusFilter(e.target.value); }} className="rounded-xl border border-border px-3.5 py-2.5 text-sm bg-card">
           <option value="">All Statuses</option>
           {QUEUE_STATUSES.map((s) => (
             <option key={s} value={s}>{s}</option>
           ))}
         </select>
-        <select value={channelFilter} onChange={(e) => { setPage(1); setChannelFilter(e.target.value); }} className="rounded border border-border px-3 py-2 text-sm">
+        <select value={channelFilter} onChange={(e) => { setPage(1); setChannelFilter(e.target.value); }} className="rounded-xl border border-border px-3.5 py-2.5 text-sm bg-card">
           <option value="">All Channels</option>
           {CHANNELS.map((c) => (
             <option key={c} value={c}>{c}</option>
@@ -339,13 +343,7 @@ function QueueSection({ run }: { run: (action: () => Promise<unknown>, successMe
           </tbody>
         </table>
       </div>
-      <div className="flex items-center justify-between mt-4 text-sm text-text/60">
-        <span>Page {page} of {totalPages} ({total} messages)</span>
-        <div className="flex gap-2">
-          <button type="button" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="rounded border border-border px-3 py-1 disabled:opacity-40">Previous</button>
-          <button type="button" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} className="rounded border border-border px-3 py-1 disabled:opacity-40">Next</button>
-        </div>
-      </div>
+      <Pagination page={page} totalPages={totalPages} totalItems={total} pageSize={PAGE_SIZE} itemLabel="messages" onPageChange={setPage} />
     </div>
   );
 }
@@ -369,14 +367,14 @@ function HistorySection() {
 
   return (
     <div>
-      <div className="mb-4 flex items-center gap-3">
-        <select value={statusFilter} onChange={(e) => { setPage(1); setStatusFilter(e.target.value); }} className="rounded border border-border px-3 py-2 text-sm">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <select value={statusFilter} onChange={(e) => { setPage(1); setStatusFilter(e.target.value); }} className="rounded-xl border border-border px-3.5 py-2.5 text-sm bg-card">
           <option value="">All Statuses</option>
           {QUEUE_STATUSES.map((s) => (
             <option key={s} value={s}>{s}</option>
           ))}
         </select>
-        <select value={channelFilter} onChange={(e) => { setPage(1); setChannelFilter(e.target.value); }} className="rounded border border-border px-3 py-2 text-sm">
+        <select value={channelFilter} onChange={(e) => { setPage(1); setChannelFilter(e.target.value); }} className="rounded-xl border border-border px-3.5 py-2.5 text-sm bg-card">
           <option value="">All Channels</option>
           {CHANNELS.map((c) => (
             <option key={c} value={c}>{c}</option>
@@ -418,13 +416,7 @@ function HistorySection() {
           </tbody>
         </table>
       </div>
-      <div className="flex items-center justify-between mt-4 text-sm text-text/60">
-        <span>Page {page} of {totalPages} ({total} records)</span>
-        <div className="flex gap-2">
-          <button type="button" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="rounded border border-border px-3 py-1 disabled:opacity-40">Previous</button>
-          <button type="button" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} className="rounded border border-border px-3 py-1 disabled:opacity-40">Next</button>
-        </div>
-      </div>
+      <Pagination page={page} totalPages={totalPages} totalItems={total} pageSize={PAGE_SIZE} itemLabel="records" onPageChange={setPage} />
     </div>
   );
 }

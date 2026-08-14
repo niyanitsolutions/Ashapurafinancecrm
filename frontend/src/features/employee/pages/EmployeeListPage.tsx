@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { BUTTON_BASE_CLASSES, BUTTON_SIZE_CLASSES, BUTTON_VARIANT_CLASSES } from "@/components/buttons/Button";
+import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { EmptyState } from "@/components/layout/EmptyState";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
+import { Pagination } from "@/components/tables/Pagination";
 import {
   activateEmployee,
   deactivateEmployee,
@@ -13,6 +17,7 @@ import {
   type EmployeeListItem,
   type MasterDataItem,
 } from "@/features/employee/api";
+import { getErrorMessage } from "@/features/employee/errors";
 import { StatusBadge } from "@/features/employee/components/StatusBadge";
 
 const PAGE_SIZE = 20;
@@ -30,15 +35,19 @@ export function EmployeeListPage() {
   const [designations, setDesignations] = useState<MasterDataItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [resetTarget, setResetTarget] = useState<EmployeeListItem | null>(null);
 
   const load = () => {
     setIsLoading(true);
+    setError(null);
     listEmployees({ page, page_size: PAGE_SIZE, search: search || undefined, department_id: departmentId || undefined, designation_id: designationId || undefined, status: status || undefined })
       .then((res) => {
         setItems(res.data);
         setTotal(res.pagination?.total ?? res.data.length);
       })
+      .catch((err) => setError(getErrorMessage(err)))
       .finally(() => setIsLoading(false));
   };
 
@@ -76,12 +85,14 @@ export function EmployeeListPage() {
     }
   };
 
-  const handleResetPassword = async (employee: EmployeeListItem) => {
-    setBusyId(employee.id);
+  const handleResetPassword = async () => {
+    if (!resetTarget) return;
+    setBusyId(resetTarget.id);
     setMessage(null);
     try {
-      await resetEmployeePassword(employee.id);
-      setMessage(`Password reset for ${employee.display_name}. They'll receive an OTP to set a new one.`);
+      await resetEmployeePassword(resetTarget.id);
+      setMessage(`Password reset for ${resetTarget.display_name}. They'll receive an OTP to set a new one.`);
+      setResetTarget(null);
     } finally {
       setBusyId(null);
     }
@@ -93,16 +104,17 @@ export function EmployeeListPage() {
       subtitle="Your team — who they are, what they do, and what they can access."
       actions={
         <>
-          <a href={exportEmployeesCsvUrl()} className="rounded-lg border border-border text-sm font-medium py-2 px-4 text-text/70 hover:bg-background transition-colors">
+          <a href={exportEmployeesCsvUrl()} className={`${BUTTON_BASE_CLASSES} ${BUTTON_VARIANT_CLASSES.secondary} ${BUTTON_SIZE_CLASSES.sm}`}>
             Export
           </a>
-          <Link to="/employees/new" className="rounded-lg bg-primary text-white text-sm font-medium py-2 px-4 hover:bg-primary-light transition-colors">
+          <Link to="/employees/new" className={`${BUTTON_BASE_CLASSES} ${BUTTON_VARIANT_CLASSES.primary} ${BUTTON_SIZE_CLASSES.sm}`}>
             + Add Employee
           </Link>
         </>
       }
     >
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
+      <ErrorBanner message={error} />
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <input
@@ -178,7 +190,7 @@ export function EmployeeListPage() {
                     <button type="button" disabled={busyId === e.id} onClick={() => toggleActive(e)} className="text-primary hover:underline disabled:opacity-40">
                       {e.status === "active" ? "Disable" : "Enable"}
                     </button>
-                    <button type="button" disabled={busyId === e.id} onClick={() => handleResetPassword(e)} className="text-primary hover:underline disabled:opacity-40">
+                    <button type="button" disabled={busyId === e.id} onClick={() => setResetTarget(e)} className="text-primary hover:underline disabled:opacity-40">
                       Reset Password
                     </button>
                   </div>
@@ -189,13 +201,16 @@ export function EmployeeListPage() {
         </table>
       </div>
 
-      <div className="flex items-center justify-between mt-4 text-sm text-text/60">
-        <span>Page {page} of {totalPages} ({total} employees)</span>
-        <div className="flex gap-2">
-          <button type="button" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="rounded border border-border px-3 py-1 disabled:opacity-40">Previous</button>
-          <button type="button" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} className="rounded border border-border px-3 py-1 disabled:opacity-40">Next</button>
-        </div>
-      </div>
+      <Pagination page={page} totalPages={totalPages} totalItems={total} pageSize={PAGE_SIZE} itemLabel="employees" onPageChange={setPage} />
+
+      <ConfirmDialog
+        open={resetTarget !== null}
+        title="Reset Password"
+        message={resetTarget ? `Reset ${resetTarget.display_name}'s password? They'll receive an OTP to set a new one.` : ""}
+        confirmLabel="Reset Password"
+        onConfirm={handleResetPassword}
+        onClose={() => setResetTarget(null)}
+      />
     </SimplePageLayout>
   );
 }

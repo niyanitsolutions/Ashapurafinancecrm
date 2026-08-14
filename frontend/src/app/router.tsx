@@ -1,6 +1,5 @@
 import { createBrowserRouter, Navigate } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
-import { ComingSoonPage } from "@/components/layout/ComingSoonPage";
 import { HomeRedirect } from "@/app/HomeRedirect";
 import { GeoExceptionPage } from "@/features/access_control/pages/GeoExceptionPage";
 import { RoleListPage } from "@/features/access_control/pages/RoleListPage";
@@ -90,6 +89,14 @@ import { LoanProductsPage } from "@/features/system_settings/pages/LoanProductsP
 import { SettingsHomePage } from "@/features/system_settings/pages/SettingsHomePage";
 import { SettingsLayout } from "@/features/system_settings/pages/SettingsLayout";
 import { StatusMastersPage } from "@/features/system_settings/pages/StatusMastersPage";
+import { LeadSourcesPage } from "@/features/system_settings/pages/LeadSourcesPage";
+import { BranchesPage } from "@/features/system_settings/pages/BranchesPage";
+import { NotificationTemplatesPage } from "@/features/system_settings/pages/NotificationTemplatesPage";
+import { CompanySettingsPage } from "@/features/system_settings/pages/CompanySettingsPage";
+import { ReminderRulesPage } from "@/features/reminders/pages/ReminderRulesPage";
+import { ProductSchemasPage } from "@/features/customer/pages/ProductSchemasPage";
+import { SchemaEditorPage } from "@/features/customer/pages/SchemaEditorPage";
+import { SchemaComparePage } from "@/features/customer/pages/SchemaComparePage";
 
 export const router = createBrowserRouter([
   {
@@ -219,8 +226,10 @@ export const router = createBrowserRouter([
           // permission needed — each user reads only their own inbox).
           { path: "/tasks", element: <TaskListPage /> },
           { path: "/notifications", element: <NotificationListPage /> },
-          // Reminder Rules automates Tasks — out of Phase 1 scope alongside it.
-          { path: "/reminder-rules", element: <ComingSoonPage title="Reminder Rules" /> },
+          // Reminder Rules automates Tasks — permission-gated (reminder_rules), reachable
+          // by any staff member with that grant even without full Settings access (see
+          // navConfig's employeeTo), so it stays outside RequireOwner like Tasks itself.
+          { path: "/reminder-rules", element: <ReminderRulesPage /> },
           // Module 8 — permission-gated server-side (require_permission("reporting",
           // "reports", ...)), not require_owner, so no RequireOwner wrapper here either.
           {
@@ -282,39 +291,38 @@ export const router = createBrowserRouter([
               // Per-record detail/edit pages.
               { path: "/employees/:employeeId", element: <EmployeeDetailsPage /> },
               { path: "/employees/:employeeId/edit", element: <EditEmployeePage /> },
-              { path: "/employees/:employeeId/sessions", element: <EmployeeSessionsPage scope="owner" /> },
+              { path: "/employees/:employeeId/sessions", element: <EmployeeSessionsPage /> },
               { path: "/employees/:employeeId/login-history", element: <EmployeeLoginHistoryPage scope="owner" /> },
               { path: "/roles/:roleId", element: <RoleDetailsPage /> },
               { path: "/roles/:roleId/permissions", element: <PermissionMatrixPage /> },
               { path: "/roles/:roleId/assign", element: <AssignRolePage /> },
               {
-                // Phase 1 deployment scope trims Settings to just the master data the
-                // in-scope Loan/Insurance Management modules read from (Loan Products,
-                // Insurance Products, Document Types, Status Masters — the latter lives
-                // outside this tab strip, see below). Everything else in Settings goes
-                // Coming Soon; SettingsHomePage's own tile list is trimmed to match.
+                // Full Settings Center (see the UI/UX redesign initiative) — every
+                // module-scoped configuration screen lives under one consistent tab
+                // strip + hub landing page now; nothing here is Coming Soon anymore.
                 element: <SettingsLayout />,
                 children: [
                   { path: "/settings", element: <SettingsHomePage /> },
-                  { path: "/settings/lead-sources", element: <ComingSoonPage title="Lead Sources" /> },
+                  { path: "/settings/lead-sources", element: <LeadSourcesPage /> },
                   { path: "/settings/loan-products", element: <LoanProductsPage /> },
                   { path: "/settings/insurance-products", element: <InsuranceProductsPage /> },
                   { path: "/settings/document-types", element: <DocumentTypesPage /> },
                   { path: "/settings/geo-fencing", element: <GeoFencingPage /> },
                   { path: "/settings/communication-providers", element: <CommunicationProvidersPage /> },
-                  { path: "/settings/reminder-rules", element: <ComingSoonPage title="Reminder Rules" /> },
+                  { path: "/settings/reminder-rules", element: <ReminderRulesPage /> },
+                  { path: "/settings/branches", element: <BranchesPage /> },
+                  { path: "/settings/status-masters", element: <StatusMastersPage /> },
+                  { path: "/settings/notification-templates", element: <NotificationTemplatesPage /> },
+                  { path: "/settings/company", element: <CompanySettingsPage /> },
+                  { path: "/settings/product-schemas", element: <ProductSchemasPage /> },
+                  { path: "/settings/product-schemas/compare", element: <SchemaComparePage /> },
+                  { path: "/settings/product-schemas/:schemaId", element: <SchemaEditorPage /> },
                 ],
               },
-              // Not part of the trimmed Settings tab list. Status Masters stays real —
-              // Loan/Insurance Management read from it. Everything else here is Coming Soon.
-              { path: "/settings/branches", element: <ComingSoonPage title="Branches" /> },
-              { path: "/settings/product-schemas", element: <ComingSoonPage title="Product Schemas" /> },
-              { path: "/settings/product-schemas/compare", element: <ComingSoonPage title="Product Schemas" /> },
-              { path: "/settings/product-schemas/:schemaId", element: <ComingSoonPage title="Product Schemas" /> },
-              { path: "/settings/status-masters", element: <StatusMastersPage /> },
-              { path: "/settings/notification-templates", element: <ComingSoonPage title="Notification Templates" /> },
-              { path: "/settings/api-settings", element: <ComingSoonPage title="API Settings" /> },
-              { path: "/settings/company", element: <ComingSoonPage title="Company Settings" /> },
+              // API Settings is retired in favor of Connections (Integrations module),
+              // which already covers the same providers with real Test Connection —
+              // redirect rather than a dead link for anyone with the old URL bookmarked.
+              { path: "/settings/api-settings", element: <Navigate to="/integrations" replace /> },
               // Module 7 — Owner-side Referral Partners management (partner list,
               // commission rules/ledger). The Referral Partner's own login portal
               // (/referral-portal/*) is a separate role's destination and is unaffected —

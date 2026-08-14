@@ -1,8 +1,13 @@
 import { useEffect, useState } from "react";
+import { Button } from "@/components/buttons/Button";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
 import { SubmitButton } from "@/components/forms/SubmitButton";
+import { EmptyState } from "@/components/layout/EmptyState";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+
+const INLINE_EDIT_INPUT_CLASSES =
+  "w-full rounded-xl border border-border px-3 py-2 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary";
 import { getErrorMessage } from "@/features/system_settings/errors";
 
 interface Item {
@@ -103,11 +108,11 @@ export function NamedMasterDataPage<T extends Item>({
     <SimplePageLayout title={title}>
       <ErrorBanner message={error} />
 
-      <form onSubmit={onCreate} className="mb-6 flex items-end gap-3 max-w-2xl">
-        <div className="flex-1">
+      <form onSubmit={onCreate} className="mb-6 flex flex-wrap items-end gap-3 max-w-2xl">
+        <div className="flex-1 min-w-[200px]">
           <FormField label="Name" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder={createPlaceholder} />
         </div>
-        <div className="flex-1">
+        <div className="flex-1 min-w-[200px]">
           <FormField label="Description (optional)" value={newDescription} onChange={(e) => setNewDescription(e.target.value)} />
         </div>
         <div className="mb-4">
@@ -128,8 +133,8 @@ export function NamedMasterDataPage<T extends Item>({
           <tbody>
             {items.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-text/50">
-                  Nothing here yet.
+                <td colSpan={4}>
+                  <EmptyState icon="departments" title="Nothing here yet" description="Add the first entry using the form above." />
                 </td>
               </tr>
             )}
@@ -138,26 +143,28 @@ export function NamedMasterDataPage<T extends Item>({
                 <tr key={item.id} className="border-b border-border last:border-0">
                   <td className="px-4 py-2">
                     <input
-                      className="w-full rounded border border-border px-2 py-1"
+                      className={INLINE_EDIT_INPUT_CLASSES}
                       value={editName}
                       onChange={(e) => setEditName(e.target.value)}
+                      aria-label="Name"
                     />
                   </td>
                   <td className="px-4 py-2">
                     <input
-                      className="w-full rounded border border-border px-2 py-1"
+                      className={INLINE_EDIT_INPUT_CLASSES}
                       value={editDescription}
                       onChange={(e) => setEditDescription(e.target.value)}
+                      aria-label="Description"
                     />
                   </td>
                   <td className="px-4 py-2 capitalize">{item.status}</td>
-                  <td className="px-4 py-2 text-right space-x-2">
-                    <button type="button" className="text-primary hover:underline" onClick={() => onSaveEdit(item.id)}>
+                  <td className="px-4 py-2 text-right space-x-2 whitespace-nowrap">
+                    <Button variant="ghost" size="sm" onClick={() => onSaveEdit(item.id)}>
                       Save
-                    </button>
-                    <button type="button" className="text-text/60 hover:underline" onClick={() => setEditingId(null)}>
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => setEditingId(null)}>
                       Cancel
-                    </button>
+                    </Button>
                   </td>
                 </tr>
               ) : (
@@ -165,13 +172,13 @@ export function NamedMasterDataPage<T extends Item>({
                   <td className="px-4 py-3">{item.name}</td>
                   <td className="px-4 py-3">{item.description || "—"}</td>
                   <td className="px-4 py-3 capitalize">{item.status}</td>
-                  <td className="px-4 py-3 text-right space-x-3">
-                    <button type="button" className="text-primary hover:underline" onClick={() => startEdit(item)}>
+                  <td className="px-4 py-3 text-right space-x-3 whitespace-nowrap">
+                    <Button variant="ghost" size="sm" onClick={() => startEdit(item)}>
                       Edit
-                    </button>
-                    <button type="button" className="text-text/60 hover:underline" onClick={() => onToggleStatus(item)}>
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => onToggleStatus(item)}>
                       {item.status === "active" ? "Deactivate" : "Activate"}
-                    </button>
+                    </Button>
                   </td>
                 </tr>
               ),

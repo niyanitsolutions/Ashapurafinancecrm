@@ -113,3 +113,7 @@ class ProfileResponse(BaseModel):
     is_mobile_verified: bool
     must_change_password: bool
     created_at: datetime
+    # Owner -> owner_profiles.full_name, Employee -> employees.display_name. None if no
+    # matching profile document exists yet (e.g. a legacy/grandfathered Owner row) —
+    # callers must not assume this is always populated.
+    name: str | None = None

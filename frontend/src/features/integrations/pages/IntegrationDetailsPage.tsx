@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Button } from "@/components/buttons/Button";
 import { SubmitButton } from "@/components/forms/SubmitButton";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
+import { Pagination } from "@/components/tables/Pagination";
 import { getErrorMessage } from "@/features/customer/errors";
 import { ConnectionCheckList } from "@/features/integrations/components/ConnectionCheckList";
 import {
@@ -61,6 +64,7 @@ function MetaConnectPanel({
   const [forms, setForms] = useState<OAuthOption[]>([]);
   const [selectedFormIds, setSelectedFormIds] = useState<string[]>([]);
   const [isBusy, setIsBusy] = useState(false);
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
 
   useEffect(() => {
     if (!sessionId) {
@@ -120,6 +124,7 @@ function MetaConnectPanel({
       onError(getErrorMessage(err));
     } finally {
       setIsBusy(false);
+      setConfirmDisconnect(false);
     }
   };
 
@@ -127,7 +132,7 @@ function MetaConnectPanel({
     return (
       <div className="mb-6 bg-card border border-border rounded-card shadow-card p-6">
         <h3 className="text-sm font-semibold text-text/70 mb-3">Finish Connecting Facebook</h3>
-        <div className="grid grid-cols-2 gap-3 mb-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
           <label className="text-xs text-text/60">
             Facebook Page
             <select value={selectedPageId} onChange={(e) => setSelectedPageId(e.target.value)} className="mt-1 block w-full rounded border border-border px-3 py-2 text-sm">
@@ -162,12 +167,9 @@ function MetaConnectPanel({
             </div>
           </div>
         )}
-        <button
-          type="button" disabled={!selectedPageId || isBusy} onClick={handleFinishConnect}
-          className="rounded bg-primary text-white text-sm font-medium py-2 px-4 disabled:opacity-50"
-        >
+        <Button disabled={!selectedPageId || isBusy} onClick={handleFinishConnect}>
           {isBusy ? "Connecting…" : "Connect"}
-        </button>
+        </Button>
       </div>
     );
   }
@@ -178,25 +180,31 @@ function MetaConnectPanel({
       {isConnected ? (
         <>
           <div className="mb-4 flex items-center gap-2 text-sm font-medium text-success">🟢 Connected</div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 text-sm">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mb-4 text-sm">
             <div><span className="text-text/50">Facebook Page</span><div>{config.config.page_name || "—"}</div></div>
             <div><span className="text-text/50">Ad Account</span><div>{config.config.ad_account_id || "—"}</div></div>
             <div><span className="text-text/50">Lead Forms</span><div>{config.config.selected_forms ? config.config.selected_forms.split(",").length : "All"}</div></div>
             <div><span className="text-text/50">Last Sync</span><div>{formatDate(config.last_success_at)}</div></div>
           </div>
-          <button type="button" disabled={isBusy} onClick={handleDisconnect} className="rounded border border-danger text-danger text-sm py-2 px-4 disabled:opacity-50">
-            {isBusy ? "Disconnecting…" : "Disconnect"}
-          </button>
+          <Button variant="danger" size="sm" disabled={isBusy} onClick={() => setConfirmDisconnect(true)}>
+            Disconnect
+          </Button>
+          <ConfirmDialog
+            open={confirmDisconnect}
+            title="Disconnect Facebook"
+            message="Disconnect this Page? Lead capture from Facebook will stop until you reconnect."
+            confirmLabel="Disconnect"
+            confirmVariant="danger"
+            onConfirm={handleDisconnect}
+            onClose={() => setConfirmDisconnect(false)}
+          />
         </>
       ) : (
         <>
           <div className="mb-4 flex items-center gap-2 text-sm font-medium text-text/40">⚪ Not Connected</div>
-          <button
-            type="button" disabled={!config.config.app_id || !config.config.app_secret || isBusy} onClick={handleConnectClick}
-            className="rounded bg-primary text-white text-sm font-medium py-2 px-4 disabled:opacity-50"
-          >
+          <Button disabled={!config.config.app_id || !config.config.app_secret || isBusy} onClick={handleConnectClick}>
             {isBusy ? "Redirecting…" : "Connect Facebook"}
-          </button>
+          </Button>
           {(!config.config.app_id || !config.config.app_secret) && <p className="mt-1.5 text-xs text-text/50">Set App ID and App Secret below first.</p>}
         </>
       )}
@@ -246,7 +254,7 @@ function MetaStatusPanel({ config, status, onError }: { config: IntegrationConfi
         <h3 className="text-sm font-semibold text-text/70">Meta Integration Status</h3>
         <span className={`text-sm font-medium ${connectionBadge.className}`}>{connectionBadge.icon} {connectionBadge.label}</span>
       </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 text-sm">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mb-4 text-sm">
         <div><span className="text-text/50">Facebook Page</span><div>{status?.connected_page_name || "—"}</div></div>
         <div><span className="text-text/50">Ad Account</span><div>{status?.connected_ad_account_id || "—"}</div></div>
         <div><span className="text-text/50">Lead Forms</span><div>{isConnected ? (status?.connected_form_count ?? "All") : "—"}</div></div>
@@ -263,15 +271,12 @@ function MetaStatusPanel({ config, status, onError }: { config: IntegrationConfi
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        <button type="button" onClick={() => setShowTestLeadHelp((v) => !v)} className="rounded border border-border text-sm py-2 px-4">
+        <Button variant="secondary" size="sm" onClick={() => setShowTestLeadHelp((v) => !v)}>
           Send Test Lead
-        </button>
-        <button
-          type="button" disabled={!isConnected || isSyncingForms} onClick={handleSyncForms}
-          className="rounded border border-border text-sm py-2 px-4 disabled:opacity-50"
-        >
+        </Button>
+        <Button variant="secondary" size="sm" disabled={!isConnected || isSyncingForms} onClick={handleSyncForms}>
           {isSyncingForms ? "Syncing…" : "Sync Forms"}
-        </button>
+        </Button>
       </div>
 
       {showTestLeadHelp && (
@@ -314,7 +319,7 @@ function ConnectionHealthPanel({ status }: { status: MetaStatus }) {
           <span className="text-text/40">Not yet tested</span>
         )}
       </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-sm">
         <div><span className="text-text/50">Ad Accounts</span><div>{status.ad_accounts_count ?? "—"}</div></div>
         <div><span className="text-text/50">Pages</span><div>{status.pages_count ?? "—"}</div></div>
         <div><span className="text-text/50">Lead Forms</span><div>{status.lead_forms_count ?? "—"}</div></div>
@@ -377,6 +382,9 @@ export function IntegrationDetailsPage() {
 
   const oauthSessionId = searchParams.get("oauth_session");
   const oauthError = searchParams.get("oauth_error");
+  const [confirmDisable, setConfirmDisable] = useState(false);
+  const [logsPage, setLogsPage] = useState(1);
+  const [logsPageSize, setLogsPageSize] = useState(10);
 
   const load = () => {
     if (!configId) return;
@@ -400,13 +408,14 @@ export function IntegrationDetailsPage() {
 
   const clearOAuthParams = () => setSearchParams((prev) => { const next = new URLSearchParams(prev); next.delete("oauth_session"); next.delete("oauth_error"); return next; });
 
-  const run = async (action: () => Promise<unknown>, successMessage: string) => {
+  const run = async (action: () => Promise<unknown>, successMessage: string, after?: () => void) => {
     setError(null);
     setMessage(null);
     try {
       await action();
       setMessage(successMessage);
       load();
+      after?.();
     } catch (err) {
       setError(getErrorMessage(err));
     }
@@ -461,7 +470,7 @@ export function IntegrationDetailsPage() {
       {metaStatus && <SetupProgressPanel status={metaStatus} />}
 
       <div className="mb-6 bg-card border border-border rounded-card shadow-card p-6">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 text-sm">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mb-4 text-sm">
           <div><span className="text-text/50">Code</span><div>{config.integration_code}</div></div>
           <div><span className="text-text/50">Provider</span><div>{config.provider}</div></div>
           <div><span className="text-text/50">Last Success</span><div>{formatDate(config.last_success_at)}</div></div>
@@ -476,29 +485,37 @@ export function IntegrationDetailsPage() {
 
         <div className="flex flex-wrap gap-3">
           {config.is_enabled ? (
-            <button type="button" onClick={() => run(() => disableIntegrationConfig(config.id), "Disabled.")} className="rounded border border-border text-sm py-2 px-4">
+            <Button variant="secondary" size="sm" onClick={() => setConfirmDisable(true)}>
               Disable
-            </button>
+            </Button>
           ) : (
-            <button type="button" onClick={() => run(() => enableIntegrationConfig(config.id), "Enabled.")} className="rounded border border-success text-success text-sm py-2 px-4">
+            <Button
+              variant="secondary" size="sm" className="border-success text-success"
+              onClick={() => run(() => enableIntegrationConfig(config.id), "Enabled.")}
+            >
               Enable
-            </button>
+            </Button>
           )}
+          <ConfirmDialog
+            open={confirmDisable}
+            title="Disable Integration"
+            message="Disable this integration? It will stop accepting or sending data until re-enabled."
+            confirmLabel="Disable"
+            confirmVariant="danger"
+            onConfirm={() => run(() => disableIntegrationConfig(config.id), "Disabled.", () => setConfirmDisable(false))}
+            onClose={() => setConfirmDisable(false)}
+          />
           {!config.is_active && (
             <div>
-              <button
-                type="button" disabled={needsRetest}
-                onClick={() => run(() => activateIntegrationConfig(config.id), "Set as the active configuration.")}
-                className="rounded bg-primary text-white text-sm py-2 px-4 disabled:opacity-50"
-              >
+              <Button size="sm" disabled={needsRetest} onClick={() => run(() => activateIntegrationConfig(config.id), "Set as the active configuration.")}>
                 Set Active
-              </button>
+              </Button>
               {needsRetest && <p className="mt-1 text-xs text-text/50">Test the connection successfully first.</p>}
             </div>
           )}
-          <button type="button" disabled={isTesting} onClick={handleTest} className="rounded border border-border text-sm py-2 px-4 disabled:opacity-50">
+          <Button variant="secondary" size="sm" disabled={isTesting} onClick={handleTest}>
             {isTesting ? "Testing…" : "Test Connection"}
-          </button>
+          </Button>
         </div>
 
         {testResult && (
@@ -507,7 +524,7 @@ export function IntegrationDetailsPage() {
               <>
                 <ConnectionCheckList checks={testResult.checks} />
                 {testResult.checks.some((c) => c.key === "token" && c.passed) && (
-                  <div className="mt-3 grid grid-cols-2 gap-2 border-t border-border pt-3 text-xs text-text/60">
+                  <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 border-t border-border pt-3 text-xs text-text/60">
                     <div>Response Time: {testResult.response_time_ms}ms</div>
                     <div>Tested At: {new Date(testResult.tested_at).toLocaleString()}</div>
                   </div>
@@ -534,7 +551,7 @@ export function IntegrationDetailsPage() {
             run(() => updateIntegrationConfig(config.id, { config: changed }), "Configuration updated.");
           }}
         >
-          <div className="grid grid-cols-2 gap-3 mb-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
             {fields.map((field) => (
               <label key={field.key} className="text-xs text-text/60">
                 {field.label} {field.secret && <span className="text-text/40">(current: {config.config[field.key] || "not set"})</span>}
@@ -550,31 +567,46 @@ export function IntegrationDetailsPage() {
         </form>
       </div>
 
-      <div className="bg-card border border-border rounded-card shadow-card overflow-x-auto">
+      <div className="bg-card border border-border rounded-card shadow-card">
         <div className="px-4 py-3 border-b border-border text-sm font-semibold text-text/70">Test History</div>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border text-left text-text/60">
-              <th className="px-4 py-3">Result</th>
-              <th className="px-4 py-3">Response Time</th>
-              <th className="px-4 py-3">Error</th>
-              <th className="px-4 py-3">API Version</th>
-              <th className="px-4 py-3">Tested At</th>
-            </tr>
-          </thead>
-          <tbody>
-            {logs.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-center text-text/50">No test attempts yet.</td></tr>}
-            {logs.map((log) => (
-              <tr key={log.id} className="border-b border-border last:border-0">
-                <td className="px-4 py-3">{log.success ? <span className="text-success">Success</span> : <span className="text-danger">Failure</span>}</td>
-                <td className="px-4 py-3">{log.response_time_ms}ms</td>
-                <td className="px-4 py-3">{log.error_message || "—"}</td>
-                <td className="px-4 py-3">{log.graph_api_version || "—"}</td>
-                <td className="px-4 py-3">{new Date(log.tested_at).toLocaleString()}</td>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border text-left text-text/60">
+                <th className="px-4 py-3">Result</th>
+                <th className="px-4 py-3">Response Time</th>
+                <th className="px-4 py-3">Error</th>
+                <th className="px-4 py-3">API Version</th>
+                <th className="px-4 py-3">Tested At</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {logs.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-center text-text/50">No test attempts yet.</td></tr>}
+              {logs.slice((logsPage - 1) * logsPageSize, (logsPage - 1) * logsPageSize + logsPageSize).map((log) => (
+                <tr key={log.id} className="border-b border-border last:border-0">
+                  <td className="px-4 py-3">{log.success ? <span className="text-success">Success</span> : <span className="text-danger">Failure</span>}</td>
+                  <td className="px-4 py-3">{log.response_time_ms}ms</td>
+                  <td className="px-4 py-3">{log.error_message || "—"}</td>
+                  <td className="px-4 py-3">{log.graph_api_version || "—"}</td>
+                  <td className="px-4 py-3">{new Date(log.tested_at).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {logs.length > 0 && (
+          <div className="px-4 pb-4">
+            <Pagination
+              page={logsPage}
+              totalPages={Math.max(1, Math.ceil(logs.length / logsPageSize))}
+              totalItems={logs.length}
+              pageSize={logsPageSize}
+              itemLabel="test attempts"
+              onPageChange={setLogsPage}
+              onPageSizeChange={(size) => { setLogsPageSize(size); setLogsPage(1); }}
+            />
+          </div>
+        )}
       </div>
     </SimplePageLayout>
   );

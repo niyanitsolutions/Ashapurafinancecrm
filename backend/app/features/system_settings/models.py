@@ -15,6 +15,7 @@ module's decisions).
 
 from pydantic import BaseModel, Field
 
+from app.features.employee.models import Address
 from app.features.system_settings.constants import Weekday
 from app.shared.base_document import BaseDocument
 
@@ -82,3 +83,10 @@ class CompanySettings(BaseDocument):
     primary_color: str | None = None
     secondary_color: str | None = None
     business_hours: list[BusinessHour] = Field(default_factory=list)
+    # Additive (UI/UX redesign initiative) — company profile fields the Company Settings
+    # page never had a backend home for. Same optional-field-under-freeze precedent as
+    # GeoException's geo_fence_id (decision 110): purely additive, no existing reader
+    # affected by their absence.
+    contact_email: str | None = None
+    contact_phone: str | None = None
+    address: Address | None = None

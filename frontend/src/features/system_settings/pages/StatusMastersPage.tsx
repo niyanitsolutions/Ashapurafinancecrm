@@ -1,8 +1,13 @@
 import { useEffect, useState } from "react";
+import { Button } from "@/components/buttons/Button";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
 import { SubmitButton } from "@/components/forms/SubmitButton";
+import { EmptyState } from "@/components/layout/EmptyState";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+
+const INLINE_EDIT_INPUT_CLASSES =
+  "w-full rounded-xl border border-border px-3 py-2 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary";
 import {
   activateStatusMaster,
   createStatusMaster,
@@ -95,11 +100,11 @@ export function StatusMastersPage() {
         />
       </div>
 
-      <form onSubmit={onCreate} className="mb-6 flex items-end gap-3 max-w-3xl">
-        <div className="flex-1">
+      <form onSubmit={onCreate} className="mb-6 flex flex-wrap items-end gap-3 max-w-3xl">
+        <div className="flex-1 min-w-[160px]">
           <FormField label="Category" value={newCategory} onChange={(e) => setNewCategory(e.target.value)} placeholder="e.g. loan_status" />
         </div>
-        <div className="flex-1">
+        <div className="flex-1 min-w-[160px]">
           <FormField label="Status name" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. Disbursed" />
         </div>
         <div className="w-32">
@@ -124,8 +129,8 @@ export function StatusMastersPage() {
           <tbody>
             {items.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-text/50">
-                  No status values yet.
+                <td colSpan={5}>
+                  <EmptyState icon="settings" title="No status values yet" description="Add the first status using the form above." />
                 </td>
               </tr>
             )}
@@ -134,24 +139,25 @@ export function StatusMastersPage() {
                 <tr key={item.id} className="border-b border-border last:border-0">
                   <td className="px-4 py-2 text-text/60">{item.category}</td>
                   <td className="px-4 py-2">
-                    <input className="w-full rounded border border-border px-2 py-1" value={editName} onChange={(e) => setEditName(e.target.value)} />
+                    <input className={INLINE_EDIT_INPUT_CLASSES} value={editName} onChange={(e) => setEditName(e.target.value)} aria-label="Status name" />
                   </td>
                   <td className="px-4 py-2">
                     <input
                       type="number"
-                      className="w-20 rounded border border-border px-2 py-1"
+                      className={`w-24 ${INLINE_EDIT_INPUT_CLASSES}`}
                       value={editSequence}
                       onChange={(e) => setEditSequence(e.target.value)}
+                      aria-label="Sequence"
                     />
                   </td>
                   <td className="px-4 py-2 capitalize">{item.status}</td>
-                  <td className="px-4 py-2 text-right space-x-2">
-                    <button type="button" className="text-primary hover:underline" onClick={() => onSaveEdit(item.id)}>
+                  <td className="px-4 py-2 text-right space-x-2 whitespace-nowrap">
+                    <Button variant="ghost" size="sm" onClick={() => onSaveEdit(item.id)}>
                       Save
-                    </button>
-                    <button type="button" className="text-text/60 hover:underline" onClick={() => setEditingId(null)}>
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => setEditingId(null)}>
                       Cancel
-                    </button>
+                    </Button>
                   </td>
                 </tr>
               ) : (
@@ -160,13 +166,13 @@ export function StatusMastersPage() {
                   <td className="px-4 py-3">{item.name}</td>
                   <td className="px-4 py-3">{item.sequence}</td>
                   <td className="px-4 py-3 capitalize">{item.status}</td>
-                  <td className="px-4 py-3 text-right space-x-3">
-                    <button type="button" className="text-primary hover:underline" onClick={() => startEdit(item)}>
+                  <td className="px-4 py-3 text-right space-x-3 whitespace-nowrap">
+                    <Button variant="ghost" size="sm" onClick={() => startEdit(item)}>
                       Edit
-                    </button>
-                    <button type="button" className="text-text/60 hover:underline" onClick={() => onToggleStatus(item)}>
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => onToggleStatus(item)}>
                       {item.status === "active" ? "Deactivate" : "Activate"}
-                    </button>
+                    </Button>
                   </td>
                 </tr>
               ),
