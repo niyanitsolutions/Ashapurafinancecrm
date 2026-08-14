@@ -1,9 +1,12 @@
 from app.features.communication.models import (
+    BulkMessageJob,
     CommunicationHistory,
     CommunicationQueueItem,
     CommunicationTemplate,
 )
 from app.features.communication.schemas import (
+    BulkMessageJobListResponse,
+    BulkMessageJobResponse,
     HistoryResponse,
     QueueItemResponse,
     TemplateResponse,
@@ -14,7 +17,9 @@ def template_to_response(template: CommunicationTemplate) -> TemplateResponse:
     return TemplateResponse(
         id=template.require_id(), name=template.name, channel=template.channel, category=template.category,
         subject=template.subject, body=template.body, variables=template.variables, language=template.language,
-        status=template.status, created_at=template.created_at,
+        status=template.status, provider_template_name=template.provider_template_name,
+        provider_template_namespace=template.provider_template_namespace, provider_template_language=template.provider_template_language,
+        created_at=template.created_at,
     )
 
 
@@ -35,4 +40,21 @@ def history_to_response(history: CommunicationHistory) -> HistoryResponse:
         recipient=history.recipient, template_id=history.template_id, template_name=history.template_name,
         variables=history.variables, status=history.status, error=history.error, sent_at=history.sent_at,
         delivered_at=history.delivered_at, retry_count=history.retry_count, created_at=history.created_at,
+    )
+
+
+def bulk_job_to_response(job: BulkMessageJob, progress: dict[str, int]) -> BulkMessageJobResponse:
+    return BulkMessageJobResponse(
+        id=job.require_id(), channel=job.channel, template_id=job.template_id, recipient_type=job.recipient_type,
+        recipient_count=len(job.recipient_ids), queued_count=job.queued_count, skipped_count=job.skipped_count,
+        status=job.status, created_at=job.created_at,
+        pending=progress.get("pending", 0), sent=progress.get("sent", 0), delivered=progress.get("delivered", 0), failed=progress.get("failed", 0),
+    )
+
+
+def bulk_job_to_list_response(job: BulkMessageJob) -> BulkMessageJobListResponse:
+    return BulkMessageJobListResponse(
+        id=job.require_id(), channel=job.channel, template_id=job.template_id, recipient_type=job.recipient_type,
+        recipient_count=len(job.recipient_ids), queued_count=job.queued_count, skipped_count=job.skipped_count,
+        status=job.status, created_at=job.created_at,
     )

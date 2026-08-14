@@ -225,7 +225,41 @@ async def test_meta(config: dict[str, str]) -> ConnectionCheckResult:
     return ConnectionCheckResult(success, elapsed_ms, error_message, checks=checks)
 
 
+MSG91_BALANCE_URL = "https://api.msg91.com/api/balance.php"
+
+
+async def _test_msg91_authkey(auth_key: str) -> ConnectionCheckResult:
+    """Validates an MSG91 authkey via the balance-check endpoint (`GET .../balance.php`,
+    documented at api.msg91.com/apidoc/basic/route-balance.php) — MSG91 has no dedicated
+    "whoami"/health endpoint, so this is the closest lightweight, read-only, never-a-
+    business-action call to confirm a key actually authenticates. Shared by the SMS and
+    WhatsApp testers, since one MSG91 account authkey is used across every channel. The
+    exact success/failure response shape for this specific endpoint could not be
+    independently confirmed against a live account in this environment (see
+    docs/KNOWN_LIMITATIONS.md) — classification here is by HTTP status only, the same
+    conservative approach `_timed_get` already uses for the generic WhatsApp/SMS testers."""
+    start = time.monotonic()
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(MSG91_BALANCE_URL, params={"authkey": auth_key, "type": "4"})
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        if response.status_code in (401, 403):
+            return ConnectionCheckResult(False, elapsed_ms, "Unable to authenticate with MSG91.")
+        if response.status_code >= 400:
+            return ConnectionCheckResult(False, elapsed_ms, f"HTTP {response.status_code}")
+        return ConnectionCheckResult(True, elapsed_ms, None)
+    except httpx.HTTPError as exc:
+        return ConnectionCheckResult(False, int((time.monotonic() - start) * 1000), str(exc))
+
+
 async def test_whatsapp(config: dict[str, str]) -> ConnectionCheckResult:
+    if config.get("provider") == "msg91":
+        auth_key = config.get("auth_key")
+        if not auth_key:
+            return _missing_field("auth_key")
+        if not config.get("integrated_number"):
+            return _missing_field("integrated_number")
+        return await _test_msg91_authkey(auth_key)
     api_url = config.get("api_url")
     if not api_url:
         return _missing_field("api_url")
@@ -235,6 +269,13 @@ async def test_whatsapp(config: dict[str, str]) -> ConnectionCheckResult:
 
 
 async def test_sms(config: dict[str, str]) -> ConnectionCheckResult:
+    if config.get("provider") == "msg91":
+        auth_key = config.get("auth_key")
+        if not auth_key:
+            return _missing_field("auth_key")
+        if not config.get("flow_id"):
+            return _missing_field("flow_id")
+        return await _test_msg91_authkey(auth_key)
     api_url = config.get("api_url")
     if not api_url:
         return _missing_field("api_url")

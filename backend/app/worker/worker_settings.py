@@ -16,6 +16,7 @@ from app.config.settings import get_settings
 from app.logging_config import configure_logging
 from app.worker.tasks.communication import (
     poll_business_events,
+    process_bulk_message_jobs,
     process_pending_queue,
     process_retry_queue,
 )
@@ -57,6 +58,7 @@ class WorkerSettings:
         cron(poll_business_events, minute=set(range(0, 60, 2)), run_at_startup=True),  # type: ignore[arg-type]  # every 2 minutes
         cron(process_pending_queue, minute=set(range(0, 60, 1)), run_at_startup=True),  # type: ignore[arg-type]  # every minute
         cron(process_retry_queue, minute=set(range(0, 60, 5)), run_at_startup=True),  # type: ignore[arg-type]  # every 5 minutes
+        cron(process_bulk_message_jobs, minute=set(range(0, 60, 1)), run_at_startup=True),  # type: ignore[arg-type]  # every minute
     ]
     on_startup = _startup
     on_shutdown = _shutdown

@@ -333,3 +333,52 @@ async def test_geo_exception_create_list_revoke(client, owner_headers, master_da
     r = await client.post(f"/api/v1/geo-exceptions/{geo_exception_id}/revoke", headers=owner_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["status"] == "revoked"
+
+
+async def test_geo_exception_requires_either_geo_fence_id_or_coordinates(client, owner_headers, master_data):
+    """Backward-compat extension for the geo_fencing module (Stage 1): geo_fence_id is a
+    new, optional alternative to specifying latitude/longitude/radius_meters directly —
+    but at least one path must fully resolve the exception's own area."""
+    employee = await _create_employee(client, owner_headers, master_data)
+    now = utc_now()
+    r = await client.post(
+        "/api/v1/geo-exceptions",
+        json={
+            "employee_id": employee["id"],
+            "start_date": now.date().isoformat(), "end_date": (now + timedelta(days=1)).date().isoformat(),
+            "start_time": "09:00", "end_time": "18:00", "reason": "Neither fence nor coordinates given",
+        },
+        headers=owner_headers,
+    )
+    assert r.status_code == 422, r.text
+
+
+async def test_geo_exception_via_geo_fence_id_prefills_location(client, owner_headers, master_data):
+    employee = await _create_employee(client, owner_headers, master_data)
+    r = await client.post(
+        "/api/v1/geo-fences",
+        json={
+            "area_name": "Prefill Fence", "address": "Somewhere", "latitude": 19.0760, "longitude": 72.8777,
+            "radius_meters": 1000, "allowed_activities": ["lead_creation"],
+        },
+        headers=owner_headers,
+    )
+    assert r.status_code == 200, r.text
+    fence_id = r.json()["data"]["id"]
+
+    now = utc_now()
+    r = await client.post(
+        "/api/v1/geo-exceptions",
+        json={
+            "employee_id": employee["id"], "geo_fence_id": fence_id,
+            "start_date": now.date().isoformat(), "end_date": (now + timedelta(days=1)).date().isoformat(),
+            "start_time": "09:00", "end_time": "18:00", "reason": "Field visit near HQ",
+        },
+        headers=owner_headers,
+    )
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert data["geo_fence_id"] == fence_id
+    assert data["latitude"] == 19.0760
+    assert data["longitude"] == 72.8777
+    assert data["radius_meters"] == 1000

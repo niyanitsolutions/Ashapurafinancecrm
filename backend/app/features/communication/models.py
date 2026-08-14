@@ -29,6 +29,19 @@ class CommunicationTemplate(BaseDocument):
     variables: list[str] = Field(default_factory=list)  # variable names the body references, e.g. ["customer_name", "lead_code"]
     language: str = "en"  # future-ready — no other language is implemented, this is just the field
 
+    # WhatsApp-only, optional — MSG91 (and WhatsApp Business generally) sends only a
+    # pre-approved *provider-side* template by name/namespace, never arbitrary rendered
+    # text; these identify that provider template. Unrelated to this CRM's own `body`/
+    # `variables` (which still drive `{{variable}}` substitution and the queue item's
+    # `rendered_body` for every other channel/provider) — `variables`' declared order is
+    # reused as the positional order for the provider template's own placeholders
+    # (VAR1/VAR2 for SMS, body_1/body_2 for WhatsApp). None for every non-MSG91-WhatsApp
+    # template; sending via MSG91 WhatsApp without these set fails cleanly with "Message
+    # template is invalid or not approved." (see communication/adapters.py).
+    provider_template_name: str | None = None
+    provider_template_namespace: str | None = None
+    provider_template_language: str | None = None
+
 
 class CommunicationQueueItem(BaseDocument):
     channel: str = Field(pattern=f"^({'|'.join(Channel.ALL)})$")
@@ -101,6 +114,26 @@ class CommunicationCheckpoint(BaseDocument):
 
     business_event: str
     last_processed_at: datetime
+
+
+class BulkMessageJob(BaseDocument):
+    """Stage 3 — Bulk Messaging. `recipient_ids` is resolved and deduplicated once, at
+    creation time, from the Owner's explicit selection (reuses the existing Lead/Customer
+    staff search endpoints — no new filter-query engine). The actual per-recipient
+    enqueue happens worker-side (`CommunicationService.process_bulk_message_jobs`,
+    an Arq cron), never synchronously in the create-job request — `next_index` is the
+    resumable cursor into `recipient_ids` that makes a worker restart mid-job safe
+    (combined with the same business_event-scoped idempotency check `_enqueue` already
+    uses for the business-event poller, see `_enqueue_bulk_recipient`)."""
+
+    channel: str
+    template_id: str
+    recipient_type: str  # "lead" | "customer" — becomes each enqueued item's own entity_type
+    recipient_ids: list[str]
+    next_index: int = 0
+    queued_count: int = 0
+    skipped_count: int = 0  # no contact method for this channel, or the template was deleted mid-job
+    status: str = "queued"  # BulkMessageJobStatus.*
 
 
 class CommunicationPreference(BaseDocument):

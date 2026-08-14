@@ -82,7 +82,9 @@ import { OwnerAccountListPage } from "@/features/owner/pages/OwnerAccountListPag
 import { NotificationListPage } from "@/features/reminders/pages/NotificationListPage";
 import { DepartmentsPage } from "@/features/system_settings/pages/DepartmentsPage";
 import { DesignationsPage } from "@/features/system_settings/pages/DesignationsPage";
+import { CommunicationProvidersPage } from "@/features/communication/pages/CommunicationProvidersPage";
 import { DocumentTypesPage } from "@/features/system_settings/pages/DocumentTypesPage";
+import { GeoFencingPage } from "@/features/geo_fencing/pages/GeoFencingPage";
 import { InsuranceProductsPage } from "@/features/system_settings/pages/InsuranceProductsPage";
 import { LoanProductsPage } from "@/features/system_settings/pages/LoanProductsPage";
 import { SettingsHomePage } from "@/features/system_settings/pages/SettingsHomePage";
@@ -298,6 +300,8 @@ export const router = createBrowserRouter([
                   { path: "/settings/loan-products", element: <LoanProductsPage /> },
                   { path: "/settings/insurance-products", element: <InsuranceProductsPage /> },
                   { path: "/settings/document-types", element: <DocumentTypesPage /> },
+                  { path: "/settings/geo-fencing", element: <GeoFencingPage /> },
+                  { path: "/settings/communication-providers", element: <CommunicationProvidersPage /> },
                   { path: "/settings/reminder-rules", element: <ComingSoonPage title="Reminder Rules" /> },
                 ],
               },

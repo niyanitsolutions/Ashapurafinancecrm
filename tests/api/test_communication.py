@@ -111,7 +111,7 @@ async def test_lead_assigned_business_event_enqueues_sends_and_is_idempotent(cli
 
     await write_audit_log(mock_db, event_type="lead_assigned", user_id=None, metadata={"employee_id": employee["id"], "lead_id": "LEAD100"})
 
-    async def _fake_send(*, recipient, subject, body, config):
+    async def _fake_send(*, recipient, subject, body, config, **_kwargs):
         assert recipient == "9876540001"
         assert "LEAD100" in body
         return communication_adapters.DeliveryOutcome(True, "MSGID1", None, is_transient=False)
@@ -153,7 +153,7 @@ async def test_transient_failure_schedules_backoff_retry(mock_db, monkeypatch):
     result = await mock_db["communication_queue"].insert_one(item.model_dump(by_alias=True, exclude={"id"}))
     queue_item_id = str(result.inserted_id)
 
-    async def _fake_fail_transient(*, recipient, subject, body, config):
+    async def _fake_fail_transient(*, recipient, subject, body, config, **_kwargs):
         return communication_adapters.DeliveryOutcome(False, None, "temporary provider error", is_transient=True)
 
     monkeypatch.setitem(communication_adapters.ADAPTERS, Channel.SMS, _fake_fail_transient)
@@ -177,7 +177,7 @@ async def test_transient_failure_exhausts_after_max_attempts(mock_db, monkeypatc
     result = await mock_db["communication_queue"].insert_one(item.model_dump(by_alias=True, exclude={"id"}))
     queue_item_id = str(result.inserted_id)
 
-    async def _fake_fail_transient(*, recipient, subject, body, config):
+    async def _fake_fail_transient(*, recipient, subject, body, config, **_kwargs):
         return communication_adapters.DeliveryOutcome(False, None, "still failing", is_transient=True)
 
     monkeypatch.setitem(communication_adapters.ADAPTERS, Channel.SMS, _fake_fail_transient)
@@ -203,7 +203,7 @@ async def test_permanent_failure_does_not_retry(mock_db, monkeypatch):
     result = await mock_db["communication_queue"].insert_one(item.model_dump(by_alias=True, exclude={"id"}))
     queue_item_id = str(result.inserted_id)
 
-    async def _fake_fail_permanent(*, recipient, subject, body, config):
+    async def _fake_fail_permanent(*, recipient, subject, body, config, **_kwargs):
         return communication_adapters.DeliveryOutcome(False, None, "invalid recipient address", is_transient=False)
 
     monkeypatch.setitem(communication_adapters.ADAPTERS, Channel.EMAIL, _fake_fail_permanent)
@@ -231,7 +231,7 @@ async def test_manual_retry_action_and_queue_history_views(client, mock_db, owne
     await _grant_permission(client, owner_headers, employee["id"], module="communication", resource="queue", actions=["view", "edit"])
     granted_headers = await _login(client, "9900000401", "InitialPass1!")
 
-    async def _fake_send_success(*, recipient, subject, body, config):
+    async def _fake_send_success(*, recipient, subject, body, config, **_kwargs):
         return communication_adapters.DeliveryOutcome(True, "MSGID2", None, is_transient=False)
 
     monkeypatch.setitem(communication_adapters.ADAPTERS, Channel.WHATSAPP, _fake_send_success)

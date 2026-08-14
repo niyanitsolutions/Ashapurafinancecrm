@@ -8,6 +8,8 @@ const LINKS: { to: string; label: string }[] = [
   { to: "/settings/insurance-products", label: "Insurance Products" },
   { to: "/settings/document-types", label: "Document Types" },
   { to: "/settings/status-masters", label: "Status Masters" },
+  { to: "/settings/geo-fencing", label: "Geo Fencing" },
+  { to: "/settings/communication-providers", label: "Communication Providers" },
 ];
 
 // Index page — no sidebar nav exists yet (Dashboard Framework, a later module, owns

@@ -19,6 +19,7 @@ from app.features.access_control.router import router as access_control_router
 from app.features.auth.indexes import ensure_auth_indexes
 from app.features.auth.router import router as auth_router
 from app.features.communication.indexes import ensure_communication_indexes
+from app.features.communication.router import public_router as communication_public_router
 from app.features.communication.router import router as communication_router
 from app.features.customer.indexes import ensure_customer_indexes
 from app.features.customer.public_router import router as customer_public_router
@@ -28,6 +29,8 @@ from app.features.dashboard.router import router as dashboard_router
 from app.features.employee.indexes import ensure_employee_indexes
 from app.features.employee.router import master_data_router
 from app.features.employee.router import router as employee_router
+from app.features.geo_fencing.indexes import ensure_geo_fencing_indexes
+from app.features.geo_fencing.router import router as geo_fencing_router
 from app.features.health.router import router as health_router
 from app.features.insurance_management.router import router as insurance_management_router
 from app.features.integrations.indexes import ensure_integrations_indexes
@@ -69,6 +72,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await ensure_auth_indexes(get_database())
     await ensure_employee_indexes(get_database())
     await ensure_access_control_indexes(get_database())
+    await ensure_geo_fencing_indexes(get_database())
     await ensure_system_settings_indexes(get_database())
     await ensure_dashboard_indexes(get_database())
     await ensure_lead_indexes(get_database())
@@ -113,6 +117,7 @@ def create_app() -> FastAPI:
     app.include_router(employee_router, prefix=settings.api_v1_prefix)
     app.include_router(master_data_router, prefix=settings.api_v1_prefix)
     app.include_router(access_control_router, prefix=settings.api_v1_prefix)
+    app.include_router(geo_fencing_router, prefix=settings.api_v1_prefix)
     app.include_router(system_settings_router, prefix=settings.api_v1_prefix)
     app.include_router(dashboard_router, prefix=settings.api_v1_prefix)
     app.include_router(leads_router, prefix=settings.api_v1_prefix)
@@ -127,6 +132,7 @@ def create_app() -> FastAPI:
     app.include_router(integrations_router, prefix=settings.api_v1_prefix)
     app.include_router(lead_capture_public_router, prefix=settings.api_v1_prefix)
     app.include_router(lead_capture_router, prefix=settings.api_v1_prefix)
+    app.include_router(communication_public_router, prefix=settings.api_v1_prefix)
     app.include_router(communication_router, prefix=settings.api_v1_prefix)
     app.include_router(support_router, prefix=settings.api_v1_prefix)
 

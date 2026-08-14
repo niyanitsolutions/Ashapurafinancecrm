@@ -1,4 +1,5 @@
 import { apiRequest, apiRequestRaw, type PaginationMeta } from "@/shared/api/client";
+import { getCurrentCoordinates } from "@/shared/geolocation";
 
 export interface InsuranceCaseDetails {
   sum_insured: number | null;
@@ -90,8 +91,14 @@ export function requestInsuranceCaseDocuments(caseId: string, documentTypeIds: s
   return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/documents/request`, { method: "POST", body: JSON.stringify({ document_type_ids: documentTypeIds }) });
 }
 
-export function verifyInsuranceCaseDocuments(caseId: string) {
-  return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/documents/verify`, { method: "POST" });
+export async function verifyInsuranceCaseDocuments(caseId: string) {
+  // Best-effort — only checked server-side if a Geo Fence is configured for
+  // document_collection; see @/shared/geolocation.
+  const coords = await getCurrentCoordinates();
+  return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/documents/verify`, {
+    method: "POST",
+    body: JSON.stringify({ latitude: coords?.latitude, longitude: coords?.longitude }),
+  });
 }
 
 export function recordUnderwriting(

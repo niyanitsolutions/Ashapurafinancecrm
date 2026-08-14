@@ -25,9 +25,10 @@ TemporaryAccess      — time-bound extra grants: {employee_id, grants[{permissi
                        actions[]}], start_date, end_date, start_time, end_time, reason,
                        status}. See Time Windows below.
 
-GeoException         — {employee_id, allowed_location{lat,lng}, radius_meters, start_date,
-                       end_date, start_time, end_time, reason, status}. Administrative
-                       record only — see Geo-fencing below.
+GeoException         — {employee_id, geo_fence_id?, allowed_location{lat,lng},
+                       radius_meters, start_date, end_date, start_time, end_time, reason,
+                       status}. Enforced (Module 10) for Lead Creation and Document
+                       Collection — see docs/GEO_FENCING.md.
 ```
 
 `app/constants/permissions.py:permission_key` (Foundation) is a `"<feature>:<action>"` 2-part helper and is **not used** by this module — Module 3 needs a 3-part (module, resource, action) shape instead, and Foundation's file is frozen. No file under `app/features/{auth,employee}/` or `app/constants/` was touched to build this.

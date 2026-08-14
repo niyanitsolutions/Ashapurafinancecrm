@@ -16,7 +16,10 @@ import {
 } from "@/features/integrations/api";
 import { fieldsFor } from "@/features/integrations/providerFields";
 
-const TYPE_LABELS: Record<string, string> = { meta: "Meta", whatsapp: "WhatsApp", sms: "SMS", email: "Email", maps: "Google Maps" };
+// Exported (additive — no behavior change to this page) so the Communication Providers
+// page (Settings, Stage 2 of the Geo Fencing/MSG91 request) can reuse the exact same
+// credential-entry + Test Connection flow for MSG91 instead of duplicating it.
+export const TYPE_LABELS: Record<string, string> = { meta: "Meta", whatsapp: "WhatsApp", sms: "SMS", email: "Email", maps: "Google Maps" };
 
 interface RevealedWebhook {
   configId: string;
@@ -163,7 +166,7 @@ export function IntegrationListPage() {
   );
 }
 
-function StepHeading({ step, title }: { step: number; title: string }) {
+export function StepHeading({ step, title }: { step: number; title: string }) {
   return (
     <div className="flex items-center gap-2 mb-2">
       <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">{step}</span>
@@ -172,7 +175,7 @@ function StepHeading({ step, title }: { step: number; title: string }) {
   );
 }
 
-function CreateConfigForm({
+export function CreateConfigForm({
   providers, onSubmit,
 }: {
   providers: IntegrationProvider[];

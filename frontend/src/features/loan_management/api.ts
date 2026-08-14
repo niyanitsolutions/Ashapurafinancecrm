@@ -1,4 +1,5 @@
 import { apiRequest, apiRequestRaw, type PaginationMeta } from "@/shared/api/client";
+import { getCurrentCoordinates } from "@/shared/geolocation";
 
 export interface LoanCaseDetails {
   credit_score: number | null;
@@ -98,8 +99,14 @@ export function requestLoanCaseDocuments(caseId: string, documentTypeIds: string
   return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/documents/request`, { method: "POST", body: JSON.stringify({ document_type_ids: documentTypeIds }) });
 }
 
-export function verifyLoanCaseDocuments(caseId: string) {
-  return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/documents/verify`, { method: "POST" });
+export async function verifyLoanCaseDocuments(caseId: string) {
+  // Best-effort — only checked server-side if a Geo Fence is configured for
+  // document_collection; see @/shared/geolocation.
+  const coords = await getCurrentCoordinates();
+  return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/documents/verify`, {
+    method: "POST",
+    body: JSON.stringify({ latitude: coords?.latitude, longitude: coords?.longitude }),
+  });
 }
 
 export function recordBankDetails(

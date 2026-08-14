@@ -279,7 +279,13 @@ class CustomerService:
             if not recipient:
                 status_map[channel] = "no_recipient"
                 continue
-            sent = await self._comm.send_now(channel=channel, recipient=recipient, category=TemplateCategory.SECURE_LINK, variables=variables, actor=actor)
+            # entity_type/entity_id link this send to the Lead itself (generalized in
+            # Stage 3 — previously a fixed "secure_link" placeholder with no real entity
+            # id), so it now appears in the Lead's own Messages panel/history.
+            sent, _queue_item_id, _error = await self._comm.send_now(
+                channel=channel, recipient=recipient, category=TemplateCategory.SECURE_LINK, variables=variables,
+                actor=actor, entity_type="lead", entity_id=lead.require_id(),
+            )
             status_map[channel] = "sent" if sent else "failed"
 
         updated = await self._secure_links.update(link_id, {"notification_status": status_map}, updated_by=actor.require_id())

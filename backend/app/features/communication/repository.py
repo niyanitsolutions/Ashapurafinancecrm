@@ -1,8 +1,9 @@
 from datetime import datetime
 from typing import Any
 
-from app.features.communication.constants import QueueStatus
+from app.features.communication.constants import BulkMessageJobStatus, QueueStatus
 from app.features.communication.models import (
+    BulkMessageJob,
     CommunicationCheckpoint,
     CommunicationHistory,
     CommunicationPreference,
@@ -69,6 +70,23 @@ class CommunicationQueueRepository(BaseRepository[CommunicationQueueItem]):
         )
         return self.model.model_validate(doc) if doc else None
 
+    async def find_by_provider_message_id(self, provider_message_id: str) -> CommunicationQueueItem | None:
+        doc = await self.collection.find_one({"provider_message_id": provider_message_id, "is_deleted": False})
+        return self.model.model_validate(doc) if doc else None
+
+    async def find_for_entity(self, *, entity_type: str, entity_id: str, limit: int = 200) -> list[CommunicationQueueItem]:
+        return await self.find_many({"entity_type": entity_type, "entity_id": entity_id}, limit=limit, sort=[("created_at", -1)])
+
+    async def status_counts_for_business_event(self, business_event: str) -> dict[str, int]:
+        pipeline: list[dict[str, Any]] = [
+            {"$match": {"business_event": business_event, "is_deleted": False}},
+            {"$group": {"_id": "$status", "count": {"$sum": 1}}},
+        ]
+        counts: dict[str, int] = {}
+        async for doc in self.collection.aggregate(pipeline):
+            counts[doc["_id"]] = doc["count"]
+        return counts
+
 
 class CommunicationHistoryRepository(BaseRepository[CommunicationHistory]):
     collection_name = "communication_history"
@@ -121,3 +139,11 @@ class CommunicationCheckpointRepository(BaseRepository[CommunicationCheckpoint])
 
     async def set_last_processed_at(self, business_event: str, when: datetime) -> None:
         await self.collection.update_one({"business_event": business_event}, {"$set": {"business_event": business_event, "last_processed_at": when}}, upsert=True)
+
+
+class BulkMessageJobRepository(BaseRepository[BulkMessageJob]):
+    collection_name = "bulk_message_jobs"
+    model = BulkMessageJob
+
+    async def find_active(self, *, limit: int = 20) -> list[BulkMessageJob]:
+        return await self.find_many({"status": {"$in": list(BulkMessageJobStatus.ACTIVE)}}, limit=limit, sort=[("created_at", 1)])

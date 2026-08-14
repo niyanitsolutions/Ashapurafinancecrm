@@ -53,3 +53,4 @@ async def ensure_access_control_indexes(db: AsyncIOMotorDatabase[Any]) -> None:
 
     await db["geo_exceptions"].create_index("employee_id")
     await db["geo_exceptions"].create_index("status")
+    await db["geo_exceptions"].create_index("geo_fence_id")

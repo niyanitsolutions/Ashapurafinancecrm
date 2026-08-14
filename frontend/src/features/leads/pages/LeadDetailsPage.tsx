@@ -5,6 +5,8 @@ import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
 import { SubmitButton } from "@/components/forms/SubmitButton";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { MessagesPanel } from "@/features/communication/components/MessagesPanel";
+import { SendMessageModal } from "@/features/communication/components/SendMessageModal";
 import { GenerateLinkModal } from "@/features/leads/components/GenerateLinkModal";
 import { AddTaskModal } from "@/features/reminders/components/AddTaskModal";
 import {
@@ -107,6 +109,8 @@ export function LeadDetailsPage() {
   const [error, setError] = useState<string | null>(null);
   const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+  const [isSendMessageOpen, setIsSendMessageOpen] = useState(false);
+  const [messagesRefreshKey, setMessagesRefreshKey] = useState(0);
 
   const resetFormFields = (l: LeadDetail) => {
     setRemarks(l.remarks ?? "");
@@ -178,6 +182,7 @@ export function LeadDetailsPage() {
               <HeaderButton icon="print" label="Print" onClick={() => window.print()} />
               <HeaderButton icon="download" label="Download PDF" onClick={() => undefined} disabled title="Coming soon" />
               <HeaderButton icon="link" label="Generate Link" onClick={() => setIsLinkModalOpen(true)} />
+              <HeaderButton icon="chat" label="Send Message" onClick={() => setIsSendMessageOpen(true)} />
               <HeaderButton icon="tasks" label="Add Task" onClick={() => setIsTaskModalOpen(true)} />
               <HeaderButton icon="edit" label="Edit" onClick={() => setIsEditing(true)} primary />
             </>
@@ -299,7 +304,18 @@ export function LeadDetailsPage() {
         </div>
       </div>
 
+      <MessagesPanel entityType="lead" entityId={leadId} refreshKey={messagesRefreshKey} />
+
       {isLinkModalOpen && <GenerateLinkModal leadId={leadId} leadCode={lead.lead_code} onClose={() => setIsLinkModalOpen(false)} />}
+      {isSendMessageOpen && (
+        <SendMessageModal
+          entityType="lead"
+          entityId={leadId}
+          entityLabel={`${lead.full_name} (${lead.lead_code})`}
+          onClose={() => setIsSendMessageOpen(false)}
+          onSent={() => setMessagesRefreshKey((k) => k + 1)}
+        />
+      )}
       {isTaskModalOpen && (
         <AddTaskModal
           relatedEntityType="lead"

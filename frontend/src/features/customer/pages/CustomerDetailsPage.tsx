@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { MessagesPanel } from "@/features/communication/components/MessagesPanel";
+import { SendMessageModal } from "@/features/communication/components/SendMessageModal";
 import { getCustomerStaff, type Customer } from "@/features/customer/api";
 import { getErrorMessage } from "@/features/customer/errors";
 import { AddTaskModal } from "@/features/reminders/components/AddTaskModal";
@@ -36,6 +38,8 @@ export function CustomerDetailsPage() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+  const [isSendMessageOpen, setIsSendMessageOpen] = useState(false);
+  const [messagesRefreshKey, setMessagesRefreshKey] = useState(0);
 
   useEffect(() => {
     if (!customerId) return;
@@ -64,7 +68,12 @@ export function CustomerDetailsPage() {
     <SimplePageLayout
       title={`${customer.full_name} (${customer.customer_code})`}
       backTo="/customers"
-      actions={<HeaderButton icon="tasks" label="Add Task" onClick={() => setIsTaskModalOpen(true)} />}
+      actions={
+        <div className="flex items-center gap-2.5">
+          <HeaderButton icon="chat" label="Send Message" onClick={() => setIsSendMessageOpen(true)} />
+          <HeaderButton icon="tasks" label="Add Task" onClick={() => setIsTaskModalOpen(true)} />
+        </div>
+      }
     >
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
       <div className="max-w-2xl bg-card border border-border rounded-card shadow-card p-6 grid grid-cols-2 gap-x-4 gap-y-3">
@@ -87,6 +96,8 @@ export function CustomerDetailsPage() {
           </div>
         )}
       </div>
+      <MessagesPanel entityType="customer" entityId={customerId} refreshKey={messagesRefreshKey} />
+
       {isTaskModalOpen && (
         <AddTaskModal
           relatedEntityType="customer"
@@ -94,6 +105,15 @@ export function CustomerDetailsPage() {
           entityLabel={`Customer ${customer.customer_code}`}
           onClose={() => setIsTaskModalOpen(false)}
           onCreated={() => setMessage("Task added.")}
+        />
+      )}
+      {isSendMessageOpen && (
+        <SendMessageModal
+          entityType="customer"
+          entityId={customerId}
+          entityLabel={`${customer.full_name} (${customer.customer_code})`}
+          onClose={() => setIsSendMessageOpen(false)}
+          onSent={() => setMessagesRefreshKey((k) => k + 1)}
         />
       )}
     </SimplePageLayout>

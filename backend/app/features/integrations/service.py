@@ -183,6 +183,7 @@ class IntegrationsService:
     async def test_connection(self, config_id: str, actor: User, *, ip_address: str | None = None) -> TestConnectionResponse:
         config = await self.get_config(config_id)
         decrypted = json.loads(decrypt(config.config_encrypted)) if config.config_encrypted else {}
+        decrypted["provider"] = config.provider
 
         tester = TESTERS[config.integration_type]
         outcome = await tester(decrypted)
@@ -223,7 +224,8 @@ class IntegrationsService:
         tester = TESTERS.get(payload.integration_type)
         if tester is None:
             raise ValidationError(f"Unknown integration_type '{payload.integration_type}'.")
-        outcome = await tester(payload.config)
+        config_with_provider = {**payload.config, "provider": payload.provider or ""}
+        outcome = await tester(config_with_provider)
         return mappers.test_result_to_response(outcome, utc_now())
 
     async def list_test_logs(self, config_id: str) -> list[IntegrationTestLog]:

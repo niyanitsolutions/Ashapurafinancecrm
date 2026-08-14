@@ -5,11 +5,16 @@ action)`, no new authorization mechanism)."""
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.config.database import get_database
 from app.core.pagination import PageParams, page_params
 from app.core.response import ApiResponse, ResponseMeta
 from app.features.access_control.permission_engine import require_permission
 from app.features.auth.models import User
+from app.features.geo_fencing.constants import GeoActivity
+from app.features.geo_fencing.enforcement import enforce_geo_fence
+from app.features.geo_fencing.schemas import GeoCoordinatesRequest
 from app.features.insurance_management import mappers
 from app.features.insurance_management.dependencies import (
     CurrentUserDep,
@@ -38,6 +43,7 @@ router = APIRouter(prefix="/insurance-cases", tags=["insurance-management"])
 
 ServiceDep = Annotated[InsuranceCaseService, Depends(get_insurance_case_service)]
 PageParamsDep = Annotated[PageParams, Depends(page_params)]
+DbDep = Annotated[AsyncIOMotorDatabase[Any], Depends(get_database)]
 _MODULE = "insurance_management"
 _RESOURCE = "applications"
 
@@ -151,7 +157,14 @@ async def request_documents(
 
 
 @router.post("/{case_id}/documents/verify")
-async def verify_documents(case_id: str, service: ServiceDep, actor: Annotated[User, _perm("edit")]) -> ApiResponse[InsuranceCaseDetailResponse]:
+async def verify_documents(
+    case_id: str, service: ServiceDep, actor: Annotated[User, _perm("edit")], db: DbDep, payload: GeoCoordinatesRequest | None = None
+) -> ApiResponse[InsuranceCaseDetailResponse]:
+    # Additive geo-fencing check (see app/features/geo_fencing/enforcement.py) — a no-op
+    # unless an active Geo Fence is configured for document_collection, so existing
+    # callers that send no body (or one with no coordinates) are unaffected.
+    coords = payload or GeoCoordinatesRequest()
+    await enforce_geo_fence(db, actor=actor, activity=GeoActivity.DOCUMENT_COLLECTION, latitude=coords.latitude, longitude=coords.longitude)
     await service.verify_documents(case_id, actor)
     return await _detail(service, case_id, actor)
 

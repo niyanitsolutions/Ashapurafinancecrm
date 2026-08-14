@@ -7,6 +7,7 @@ import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { checkDuplicate, createLead } from "@/features/leads/api";
 import { getErrorMessage } from "@/features/leads/errors";
 import { getFieldErrors } from "@/shared/api/errors";
+import { getCurrentCoordinates } from "@/shared/geolocation";
 import { insuranceProductsApi, leadSourcesApi, loanProductsApi, type NamedMasterData } from "@/features/system_settings/api";
 
 // Deliberately basic — an Employee taking a Create Lead call only ever knows Name/Mobile/
@@ -76,6 +77,10 @@ export function CreateLeadPage() {
     setFieldErrors({});
     setIsSubmitting(true);
     try {
+      // Best-effort — only checked server-side if a Geo Fence is configured for
+      // lead_creation; a denied/unavailable browser permission just omits these and lets
+      // the backend decide (see @/shared/geolocation).
+      const coords = await getCurrentCoordinates();
       const lead = await createLead({
         full_name: fullName,
         mobile,
@@ -86,6 +91,8 @@ export function CreateLeadPage() {
         city: city || undefined,
         preferred_amount: preferredAmount ? Number(preferredAmount) : undefined,
         remarks: remarks || undefined,
+        latitude: coords?.latitude,
+        longitude: coords?.longitude,
       });
       navigate(`/leads/${lead.id}`);
     } catch (err) {

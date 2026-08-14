@@ -20,6 +20,12 @@ class CreateLeadRequest(BaseModel):
     # caller (Employee/Referral Partner Create Lead) rendered its Basic Information
     # fields. Omitting it entirely behaves exactly as before this field existed.
     product_form_data: dict[str, Any] | None = None
+    # Optional — the caller's current coordinates (browser geolocation), only checked
+    # against an active Geo Fence when one is configured for lead_creation; omitting
+    # these behaves exactly as before this field existed, unless a Geo Fence for this
+    # activity requires them (see app/features/geo_fencing/enforcement.py).
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
 
 
 class UpdateLeadRequest(BaseModel):

@@ -103,3 +103,4 @@ See `docs/KNOWN_LIMITATIONS.md`'s Module 9A section.
 
 - **9B (Lead Capture)** reads the active `meta` config (`access_token`, `webhook_verify_token`, `webhook_secret`) to verify and process the Meta Lead Ads webhook. See `docs/LEAD_CAPTURE.md`.
 - **9C (Communication Engine)** reads the active `whatsapp`/`sms`/`email` config to actually send a queued message via its Provider Adapter (`app/features/communication/adapters.py`) — the first place these three config types are used for a real send, rather than only Test Connection. See `docs/COMMUNICATION.md`.
+- **Communication Providers (Settings, Stage 2 of the Geo Fencing/MSG91 request)** is a dedicated frontend page (`/settings/communication-providers`) over this exact same `IntegrationConfig` storage/API, filtered to `provider == "msg91"` — not a new backend feature. `msg91` is now a seeded `IntegrationProvider` row for all 3 channels (`scripts/seed.py`). See `docs/COMMUNICATION.md`'s own MSG91 section.

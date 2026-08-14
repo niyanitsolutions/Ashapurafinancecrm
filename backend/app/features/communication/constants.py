@@ -105,3 +105,31 @@ class AuditEvent:
     MESSAGE_SENT = "communication_message_sent"
     MESSAGE_FAILED = "communication_message_failed"
     MESSAGE_RETRIED = "communication_message_retried"
+    MESSAGE_DELIVERED = "communication_message_delivered"  # Stage 2 — set only by a real provider DLR webhook (MSG91), never inferred from a successful send
+    WEBHOOK_REJECTED = "communication_webhook_rejected"  # invalid/missing secret, or malformed payload
+    BULK_JOB_CREATED = "communication_bulk_job_created"  # Stage 3
+    BULK_JOB_CANCELLED = "communication_bulk_job_cancelled"  # Stage 3
+
+
+class BulkMessageJobStatus:
+    """Stage 3 — Bulk Messaging. `queued`/`processing` are both picked up by the worker
+    cron (`process_bulk_message_jobs`); the distinction is purely a display nicety
+    (has this job's very first batch started yet). No `failed` job-level status exists —
+    a job always reaches `completed` once every recipient has been enqueued-or-skipped;
+    per-recipient send failures live on the individual `CommunicationQueueItem`s, exactly
+    like every other queued message, not on the job itself."""
+
+    QUEUED = "queued"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+    ALL = (QUEUED, PROCESSING, COMPLETED, CANCELLED)
+    ACTIVE = (QUEUED, PROCESSING)
+
+
+# How many recipients the resumable bulk-enqueue worker task processes per job per tick
+# — bounds a single Arq job run's duration and keeps a worker restart's replay window
+# small, matching the same "batching" instinct MAX_RETRY_ATTEMPTS/RETRY_BACKOFF_MINUTES
+# already established for the retry queue.
+BULK_ENQUEUE_BATCH_SIZE = 100

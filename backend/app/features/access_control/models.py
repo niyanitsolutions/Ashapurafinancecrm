@@ -77,6 +77,13 @@ class AllowedLocation(BaseModel):
 
 class GeoException(BaseDocument):
     employee_id: str
+    # Optional reference to a named GeoFence (geo_fencing module) this exception was
+    # created against — purely provenance/UX (the dropdown that prefilled the fields
+    # below). allowed_location/radius_meters remain this exception's own source of truth
+    # either way, so a later edit/delete of the referenced fence never invalidates an
+    # already-granted exception. None for exceptions created the original freeform way
+    # (pre-dates the geo_fencing module) or deliberately overriding a fence's own area.
+    geo_fence_id: str | None = None
     allowed_location: AllowedLocation
     radius_meters: float
     start_date: datetime

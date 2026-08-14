@@ -77,6 +77,7 @@ class TestDraftConnectionRequest(BaseModel):
     IntegrationTestLog): lets the Owner prove credentials work before committing to Save."""
 
     integration_type: str
+    provider: str | None = None
     config: dict[str, str] = Field(default_factory=dict)
 
 

@@ -221,6 +221,24 @@ async def seed_permission_catalog() -> None:
     )
     entries.append(Permission(module="communication", resource="queue", actions=[PermissionAction.VIEW, PermissionAction.EDIT], label="Communication Queue"))
     entries.append(Permission(module="communication", resource="history", actions=[PermissionAction.VIEW], label="Delivery History"))
+    # Stage 3 (Geo Fencing/Temporary Permissions/MSG91 request) — "send" gates the
+    # individual Send Message action + a record's own Messages panel; "bulk" gates Bulk
+    # Messaging (create a job, view jobs/failed messages, edit = cancel/retry-failed).
+    # Kept separate from "queue" since Queue is about managing the retry pipeline, not
+    # composing new sends.
+    entries.append(Permission(module="communication", resource="send", actions=[PermissionAction.VIEW, PermissionAction.CREATE], label="Send Message"))
+    entries.append(
+        Permission(module="communication", resource="bulk", actions=[PermissionAction.VIEW, PermissionAction.CREATE, PermissionAction.EDIT], label="Bulk Messaging")
+    )
+    # Geo Fencing — named work-area CRUD, delete included since the service itself
+    # guards it (blocked while an active Geo Exception still references the fence).
+    entries.append(
+        Permission(
+            module="geo_fencing", resource="fences",
+            actions=[PermissionAction.VIEW, PermissionAction.CREATE, PermissionAction.EDIT, PermissionAction.DELETE],
+            label="Geo Fencing",
+        )
+    )
 
     for entry in entries:
         payload = entry.model_dump(by_alias=True, exclude={"id"})
@@ -791,6 +809,15 @@ async def seed_integration_providers() -> None:
         IntegrationProvider(integration_type=IntegrationType.EMAIL, provider="smtp", label="SMTP"),
         IntegrationProvider(integration_type=IntegrationType.EMAIL, provider="email_api", label="Email API Provider"),
         IntegrationProvider(integration_type=IntegrationType.MAPS, provider="google_maps", label="Google Maps"),
+        # Stage 2 (Geo Fencing / Temporary Permissions / MSG91 request) — MSG91 as a real,
+        # named provider for all 3 required channels. Email deliberately reuses the
+        # existing "smtp" provider mechanics (MSG91 issues standard SMTP relay
+        # credentials — no MSG91-specific email code was written, see
+        # docs/COMMUNICATION.md's MSG91 section) but gets its own catalog row so the
+        # Communication Providers UI can group it under one "MSG91" card.
+        IntegrationProvider(integration_type=IntegrationType.SMS, provider="msg91", label="MSG91 SMS"),
+        IntegrationProvider(integration_type=IntegrationType.WHATSAPP, provider="msg91", label="MSG91 WhatsApp"),
+        IntegrationProvider(integration_type=IntegrationType.EMAIL, provider="msg91", label="MSG91 Email (SMTP)"),
     ]
     for row in rows:
         payload = row.model_dump(by_alias=True, exclude={"id"})

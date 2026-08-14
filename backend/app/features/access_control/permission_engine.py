@@ -9,7 +9,6 @@ staff-only (Owner/Employee), consistent with the whole Module 3 brief being abou
 Employee ↔ Role assignment, departments, branches.
 """
 
-from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import Depends
@@ -28,14 +27,7 @@ from app.features.auth.models import ACCOUNT_STATUS_ACTIVE, User
 from app.features.auth.repository import UserRepository
 from app.features.employee.repository import EmployeeRepository
 from app.middleware.auth import get_current_subject
-from app.utils.datetime import utc_now
-
-
-def _within_daily_window(start_date: datetime, end_date: datetime, start_time: str, end_time: str, now: datetime) -> bool:
-    if not (start_date.date() <= now.date() <= end_date.date()):
-        return False
-    current = now.strftime("%H:%M")
-    return start_time <= current <= end_time  # business-hours style windows only; no overnight wraparound support
+from app.utils.datetime import utc_now, within_daily_window
 
 
 class PermissionEngine:
@@ -122,7 +114,7 @@ class PermissionEngine:
         now = utc_now()
         active = await self._temporary_access.find_active_for_employee(employee_id)
         for grant_set in active:
-            if not _within_daily_window(grant_set.start_date, grant_set.end_date, grant_set.start_time, grant_set.end_time, now):
+            if not within_daily_window(grant_set.start_date, grant_set.end_date, grant_set.start_time, grant_set.end_time, now):
                 continue
             for grant in grant_set.grants:
                 if grant.permission_id == permission_id and action in grant.actions:

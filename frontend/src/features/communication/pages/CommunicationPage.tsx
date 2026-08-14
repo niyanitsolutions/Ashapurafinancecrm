@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { SubmitButton } from "@/components/forms/SubmitButton";
 import { EmptyState } from "@/components/layout/EmptyState";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { BulkMessagesSection } from "@/features/communication/components/BulkMessagesSection";
 import {
   createTemplate,
   listHistory,
@@ -12,6 +13,7 @@ import {
   updateTemplate,
   type CommunicationTemplate,
   type HistoryItem,
+  type ProviderTemplateFields,
   type QueueItem,
 } from "@/features/communication/api";
 import { getErrorMessage } from "@/features/customer/errors";
@@ -21,9 +23,9 @@ const CATEGORIES = ["otp", "welcome", "lead_assigned", "reminder", "application_
 const QUEUE_STATUSES = ["pending", "processing", "sent", "delivered", "failed", "retrying", "exhausted"];
 const PAGE_SIZE = 20;
 
-type Tab = "templates" | "queue" | "history";
+type Tab = "templates" | "queue" | "history" | "bulk";
 
-const VALID_TABS: Tab[] = ["templates", "queue", "history"];
+const VALID_TABS: Tab[] = ["templates", "queue", "history", "bulk"];
 
 export function CommunicationPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -60,14 +62,14 @@ export function CommunicationPage() {
       {error && <p className="mb-4 text-sm text-danger">{error}</p>}
 
       <div className="mb-6 flex gap-2 border-b border-border">
-        {(["templates", "queue", "history"] as Tab[]).map((t) => (
+        {(["templates", "queue", "history", "bulk"] as Tab[]).map((t) => (
           <button
             key={t}
             type="button"
             onClick={() => setTab(t)}
             className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${tab === t ? "border-primary text-primary" : "border-transparent text-text/60"}`}
           >
-            {t === "templates" ? "Templates" : t === "queue" ? "Queue & Failed Messages" : "Delivery History"}
+            {t === "templates" ? "Templates" : t === "queue" ? "Queue & Failed Messages" : t === "history" ? "Delivery History" : "Bulk Messages"}
           </button>
         ))}
       </div>
@@ -75,6 +77,7 @@ export function CommunicationPage() {
       {tab === "templates" && <TemplatesSection run={run} />}
       {tab === "queue" && <QueueSection run={run} />}
       {tab === "history" && <HistorySection />}
+      {tab === "bulk" && <BulkMessagesSection run={run} />}
     </SimplePageLayout>
   );
 }
@@ -121,7 +124,7 @@ function TemplatesSection({ run }: { run: (action: () => Promise<unknown>, succe
               if (editing) {
                 run(() => updateTemplate(editing.id, payload), "Template updated.", () => { setShowForm(false); setEditing(null); load(); });
               } else {
-                run(() => createTemplate(payload as { name: string; channel: string; category: string; subject?: string; body: string }), "Template created.", () => { setShowForm(false); load(); });
+                run(() => createTemplate(payload as { name: string; channel: string; category: string; subject?: string; body: string } & ProviderTemplateFields), "Template created.", () => { setShowForm(false); load(); });
               }
             }}
           />
@@ -178,19 +181,34 @@ function TemplateForm({
   initial, onSubmit,
 }: {
   initial: CommunicationTemplate | null;
-  onSubmit: (payload: { name?: string; channel?: string; category?: string; subject?: string; body: string }) => void;
+  onSubmit: (payload: { name?: string; channel?: string; category?: string; subject?: string; body: string } & ProviderTemplateFields) => void;
 }) {
   const [name, setName] = useState(initial?.name ?? "");
   const [channel, setChannel] = useState(initial?.channel ?? CHANNELS[0]);
   const [category, setCategory] = useState(initial?.category ?? CATEGORIES[0]);
   const [subject, setSubject] = useState(initial?.subject ?? "");
   const [body, setBody] = useState(initial?.body ?? "");
+  const [providerTemplateName, setProviderTemplateName] = useState(initial?.provider_template_name ?? "");
+  const [providerTemplateNamespace, setProviderTemplateNamespace] = useState(initial?.provider_template_namespace ?? "");
+  const [providerTemplateLanguage, setProviderTemplateLanguage] = useState(initial?.provider_template_language ?? "en");
 
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        onSubmit(initial ? { body, subject: subject || undefined } : { name, channel, category, subject: subject || undefined, body });
+        const providerFields: ProviderTemplateFields =
+          channel === "whatsapp"
+            ? {
+                provider_template_name: providerTemplateName || undefined,
+                provider_template_namespace: providerTemplateNamespace || undefined,
+                provider_template_language: providerTemplateLanguage || undefined,
+              }
+            : {};
+        onSubmit(
+          initial
+            ? { body, subject: subject || undefined, ...providerFields }
+            : { name, channel, category, subject: subject || undefined, body, ...providerFields },
+        );
       }}
       className="space-y-3"
     >
@@ -216,6 +234,28 @@ function TemplateForm({
         className="w-full rounded border border-border px-3 py-2 text-sm font-mono"
         required
       />
+      {channel === "whatsapp" && (
+        <div className="rounded border border-border p-3 space-y-2">
+          <p className="text-xs text-text/60">
+            WhatsApp sends only a pre-approved provider template (not the body text above) — fill these in if using MSG91. The
+            {"{{variable_name}}"} order above becomes the template's placeholder order.
+          </p>
+          <div className="grid grid-cols-3 gap-3">
+            <input
+              placeholder="Provider Template Name" value={providerTemplateName}
+              onChange={(e) => setProviderTemplateName(e.target.value)} className="rounded border border-border px-3 py-2 text-sm"
+            />
+            <input
+              placeholder="Namespace" value={providerTemplateNamespace}
+              onChange={(e) => setProviderTemplateNamespace(e.target.value)} className="rounded border border-border px-3 py-2 text-sm"
+            />
+            <input
+              placeholder="Language code (e.g. en)" value={providerTemplateLanguage}
+              onChange={(e) => setProviderTemplateLanguage(e.target.value)} className="rounded border border-border px-3 py-2 text-sm"
+            />
+          </div>
+        </div>
+      )}
       <SubmitButton>{initial ? "Save Changes" : "Create Template"}</SubmitButton>
     </form>
   );

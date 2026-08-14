@@ -1,11 +1,15 @@
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Response
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.config.database import get_database
 from app.core.pagination import PageParams, page_params
 from app.core.response import ApiResponse, ResponseMeta
 from app.features.access_control.permission_engine import require_permission
 from app.features.auth.models import User
+from app.features.geo_fencing.constants import GeoActivity
+from app.features.geo_fencing.enforcement import enforce_geo_fence
 from app.features.leads import mappers
 from app.features.leads.dependencies import get_lead_service
 from app.features.leads.schemas import (
@@ -26,6 +30,7 @@ router = APIRouter(prefix="/leads", tags=["leads"])
 
 ServiceDep = Annotated[LeadService, Depends(get_lead_service)]
 PageParamsDep = Annotated[PageParams, Depends(page_params)]
+DbDep = Annotated[AsyncIOMotorDatabase[Any], Depends(get_database)]
 _MODULE = "leads"
 _RESOURCE = "leads"
 
@@ -87,7 +92,13 @@ async def get_eligible_assignees(
 
 
 @router.post("")
-async def create_lead(payload: CreateLeadRequest, service: ServiceDep, actor: Annotated[User, _perm("create")]) -> ApiResponse[LeadDetailResponse]:
+async def create_lead(
+    payload: CreateLeadRequest, service: ServiceDep, actor: Annotated[User, _perm("create")], db: DbDep
+) -> ApiResponse[LeadDetailResponse]:
+    # Additive geo-fencing check (see app/features/geo_fencing/enforcement.py) — a no-op
+    # unless an active Geo Fence is configured for lead_creation, so existing callers that
+    # never send latitude/longitude are unaffected.
+    await enforce_geo_fence(db, actor=actor, activity=GeoActivity.LEAD_CREATION, latitude=payload.latitude, longitude=payload.longitude)
     lead = await service.create_lead(payload, actor)
     source_map, product_map, employee_map = await service.resolve_names([lead])
     detail = mappers.to_detail(lead, source_map.get(lead.source_id, ""), product_map.get(lead.product_id, ""), employee_map.get(lead.assigned_to or "", None))

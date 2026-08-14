@@ -42,6 +42,11 @@ export interface CreateLeadInput {
   // its Basic Information fields (see useProductSchema / ProductSchemaForm) — omit
   // entirely for a product with no schema yet, same as before this field existed.
   product_form_data?: Record<string, unknown>;
+  // Best-effort browser geolocation (see @/shared/geolocation) — only checked server-side
+  // when a Geo Fence is configured for lead_creation; omitting these behaves exactly as
+  // before this field existed.
+  latitude?: number;
+  longitude?: number;
 }
 
 export type UpdateLeadInput = Partial<CreateLeadInput>;

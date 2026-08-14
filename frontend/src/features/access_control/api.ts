@@ -57,6 +57,7 @@ export interface TemporaryAccess {
 export interface GeoException {
   id: string;
   employee_id: string;
+  geo_fence_id: string | null;
   latitude: number;
   longitude: number;
   radius_meters: number;
@@ -168,9 +169,12 @@ export function revokeTemporaryAccess(id: string) {
 
 export interface CreateGeoExceptionInput {
   employee_id: string;
-  latitude: number;
-  longitude: number;
-  radius_meters: number;
+  // Either geo_fence_id (server prefills latitude/longitude/radius_meters from the named
+  // fence) or the 3 fields directly — at least one path must resolve them.
+  geo_fence_id?: string;
+  latitude?: number;
+  longitude?: number;
+  radius_meters?: number;
   start_date: string;
   end_date: string;
   start_time: string;

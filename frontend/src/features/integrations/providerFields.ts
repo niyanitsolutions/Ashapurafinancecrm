@@ -56,11 +56,31 @@ export const MAPS_FIELDS: ProviderField[] = [
   { key: "geofencing_enabled", label: "Geofencing Enabled", toggle: true },
 ];
 
+// MSG91 (Stage 2 of the Geo Fencing/Temporary Permissions/MSG91 request) — see
+// docs/COMMUNICATION.md. Email deliberately has no MSG91-specific field set: MSG91
+// issues standard SMTP relay credentials, so it reuses EMAIL_SMTP_FIELDS unchanged.
+export const MSG91_SMS_FIELDS: ProviderField[] = [
+  { key: "auth_key", label: "Auth Key", secret: true },
+  { key: "sender_id", label: "Sender ID" },
+  { key: "flow_id", label: "Flow / Template ID" },
+  { key: "dlt_entity_id", label: "DLT Entity ID (if required)" },
+  // Set this to any value you choose, then configure MSG91's own SMS DLR webhook URL as
+  // {API_BASE_URL}/communication/webhooks/msg91?secret=<same value> — see the Delivery
+  // Webhook panel on the Communication Providers page.
+  { key: "webhook_secret", label: "Webhook Secret (for delivery callbacks)", secret: true },
+];
+
+export const MSG91_WHATSAPP_FIELDS: ProviderField[] = [
+  { key: "auth_key", label: "Auth Key", secret: true },
+  { key: "integrated_number", label: "Integrated WhatsApp Number" },
+  { key: "webhook_secret", label: "Webhook Secret (for delivery callbacks)", secret: true },
+];
+
 export function fieldsFor(integrationType: string, provider: string): ProviderField[] {
   if (integrationType === "meta") return META_FIELDS;
-  if (integrationType === "whatsapp") return WHATSAPP_FIELDS;
-  if (integrationType === "sms") return SMS_FIELDS;
+  if (integrationType === "whatsapp") return provider === "msg91" ? MSG91_WHATSAPP_FIELDS : WHATSAPP_FIELDS;
+  if (integrationType === "sms") return provider === "msg91" ? MSG91_SMS_FIELDS : SMS_FIELDS;
   if (integrationType === "maps") return MAPS_FIELDS;
-  if (integrationType === "email") return provider === "smtp" ? EMAIL_SMTP_FIELDS : EMAIL_API_FIELDS;
+  if (integrationType === "email") return provider === "smtp" || provider === "msg91" ? EMAIL_SMTP_FIELDS : EMAIL_API_FIELDS;
   return [];
 }

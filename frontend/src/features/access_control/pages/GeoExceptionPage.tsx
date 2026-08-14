@@ -2,20 +2,25 @@ import { useEffect, useState } from "react";
 import { EmployeeSelect } from "@/components/forms/EmployeeSelect";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
+import { SelectField } from "@/components/forms/SelectField";
 import { SubmitButton } from "@/components/forms/SubmitButton";
 import { useEmployeeNameMap } from "@/components/forms/useEmployeeNameMap";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { createGeoException, listGeoExceptions, revokeGeoException, type GeoException } from "@/features/access_control/api";
 import { getErrorMessage } from "@/features/access_control/errors";
+import { listGeoFences, type GeoFence } from "@/features/geo_fencing/api";
 
-// Administrative record-keeping only — there's no geo-fencing *enforcement* engine yet to
-// except from (that base rule was never defined). See docs/KNOWN_LIMITATIONS.md.
+// Enforced server-side by app/features/geo_fencing/enforcement.py for lead_creation and
+// document_collection — see docs/GEO_FENCING.md. Selecting a Geo Fence below prefills
+// latitude/longitude/radius from it; the fields stay editable to override if needed.
 export function GeoExceptionPage() {
   const employeeNames = useEmployeeNameMap();
   const [items, setItems] = useState<GeoException[]>([]);
+  const [fences, setFences] = useState<GeoFence[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const [employeeId, setEmployeeId] = useState("");
+  const [geoFenceId, setGeoFenceId] = useState("");
   const [latitude, setLatitude] = useState("");
   const [longitude, setLongitude] = useState("");
   const [radius, setRadius] = useState("500");
@@ -30,6 +35,21 @@ export function GeoExceptionPage() {
   };
 
   useEffect(load, []);
+  useEffect(() => {
+    listGeoFences({ page_size: 100, status: "active" })
+      .then(({ items }) => setFences(items))
+      .catch(() => setFences([]));
+  }, []);
+
+  const onSelectFence = (fenceId: string) => {
+    setGeoFenceId(fenceId);
+    const fence = fences.find((f) => f.id === fenceId);
+    if (fence) {
+      setLatitude(String(fence.latitude));
+      setLongitude(String(fence.longitude));
+      setRadius(String(fence.radius_meters));
+    }
+  };
 
   const onCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,9 +57,10 @@ export function GeoExceptionPage() {
     try {
       await createGeoException({
         employee_id: employeeId,
-        latitude: Number(latitude),
-        longitude: Number(longitude),
-        radius_meters: Number(radius),
+        geo_fence_id: geoFenceId || undefined,
+        latitude: latitude ? Number(latitude) : undefined,
+        longitude: longitude ? Number(longitude) : undefined,
+        radius_meters: radius ? Number(radius) : undefined,
         start_date: startDate,
         end_date: endDate,
         start_time: startTime,
@@ -47,6 +68,7 @@ export function GeoExceptionPage() {
         reason,
       });
       setEmployeeId("");
+      setGeoFenceId("");
       setReason("");
       load();
     } catch (err) {
@@ -72,10 +94,17 @@ export function GeoExceptionPage() {
         <h2 className="text-sm font-semibold text-text/70 mb-3">Grant Geo Exception</h2>
         <div className="grid grid-cols-2 gap-x-4">
           <EmployeeSelect label="Employee" value={employeeId} onChange={setEmployeeId} required />
+          <SelectField
+            label="Geo Fence (optional)"
+            placeholder="None — enter coordinates manually"
+            value={geoFenceId}
+            onChange={(e) => onSelectFence(e.target.value)}
+            options={fences.map((f) => ({ value: f.id, label: f.area_name }))}
+          />
           <FormField label="Reason" value={reason} onChange={(e) => setReason(e.target.value)} required />
-          <FormField label="Latitude" value={latitude} onChange={(e) => setLatitude(e.target.value)} required />
-          <FormField label="Longitude" value={longitude} onChange={(e) => setLongitude(e.target.value)} required />
-          <FormField label="Radius (meters)" type="number" value={radius} onChange={(e) => setRadius(e.target.value)} required />
+          <FormField label="Latitude" value={latitude} onChange={(e) => setLatitude(e.target.value)} required={!geoFenceId} />
+          <FormField label="Longitude" value={longitude} onChange={(e) => setLongitude(e.target.value)} required={!geoFenceId} />
+          <FormField label="Radius (meters)" type="number" value={radius} onChange={(e) => setRadius(e.target.value)} required={!geoFenceId} />
           <div />
           <FormField label="Start date" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} required />
           <FormField label="End date" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} required />

@@ -28,3 +28,8 @@ async def process_pending_queue(_ctx: dict[Any, Any], *_args: Any, **_kwargs: An
 async def process_retry_queue(_ctx: dict[Any, Any], *_args: Any, **_kwargs: Any) -> Any:
     service = CommunicationService(get_database())
     await service.process_retry_queue()
+
+
+async def process_bulk_message_jobs(_ctx: dict[Any, Any], *_args: Any, **_kwargs: Any) -> Any:
+    service = CommunicationService(get_database())
+    await service.process_bulk_message_jobs()

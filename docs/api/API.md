@@ -372,14 +372,14 @@ Every capture funnels through one shared pipeline reusing Module 6A's frozen `Le
 
 ## Module 9C — Communication Engine
 
-`Business Module -> Communication Service -> Queue -> Provider Adapter -> Provider -> Delivery Status -> Communication History.` No endpoint here lets a business module call a provider directly, or send anything ad hoc — every queue item is created by the worker's business-event poller (decision 104) and sent by the worker's queue processor. There is no "send now" / campaign / bulk-messaging endpoint. Full detail: `docs/COMMUNICATION.md`.
+`Business Module -> Communication Service -> Queue -> Provider Adapter -> Provider -> Delivery Status -> Communication History.` No endpoint here lets a business module call a provider directly — every business-event-triggered queue item is still created by the worker's business-event poller (decision 104) and sent by the worker's queue processor. Stage 3 added a real, permissioned "send now"/CRM-linked-message endpoint and a Bulk Messaging surface (still worker-processed, never synchronous — decision 119); there remains no arbitrary campaign builder. Full detail: `docs/COMMUNICATION.md`.
 
 ### Templates (`require_permission("communication", "templates", action)`)
 
-- `POST /communication/templates` — body `{ name, channel, category, subject?, body, language? }`. `variables` (the `{{name}}` placeholders the body references) is derived automatically, never supplied by the caller. `create`.
+- `POST /communication/templates` — body `{ name, channel, category, subject?, body, language?, provider_template_name?, provider_template_namespace?, provider_template_language? }` (the `provider_template_*` fields are WhatsApp + MSG91 only, Stage 2). `variables` (the `{{name}}` placeholders the body references) is derived automatically, never supplied by the caller. `create`.
 - `GET /communication/templates` — query params: `page`, `page_size`, `channel`, `category`. `view`.
 - `GET /communication/templates/{id}` — `view`.
-- `PATCH /communication/templates/{id}` — body `{ name?, subject?, body?, status?, language? }`; `variables` is recomputed whenever `body` changes. `edit`.
+- `PATCH /communication/templates/{id}` — body `{ name?, subject?, body?, status?, language?, provider_template_name?, provider_template_namespace?, provider_template_language? }`; `variables` is recomputed whenever `body` changes. `edit`.
 
 ### Queue + Retry (`require_permission("communication", "queue", action)`)
 
@@ -389,5 +389,23 @@ Every capture funnels through one shared pipeline reusing Module 6A's frozen `Le
 ### Delivery History (`require_permission("communication", "history", action)`)
 
 - `GET /communication/history` — query params: `page`, `page_size`, `status`, `channel`. One row per queue item's terminal outcome — updated in place on a later transition (e.g. a manual retry that succeeds), never duplicated. `view`.
+
+### CRM Record Messaging (`require_permission("communication", "send", action)`, Stage 3)
+
+- `POST /communication/messages` — body `{ entity_type: "lead"|"customer", entity_id, channel, template_id, variables? }`. The recipient address is always resolved server-side from the authorized Lead/Customer record — never client-supplied. Authorization: the permission itself, plus the same per-record scoping Lead/Customer already use elsewhere (Owner bypasses; a non-Owner Employee must be the record's own assignee). `create`. Response: `{ success, queue_item_id, status, error }` — `error` surfaces the real reason (e.g. "MSG91 is not configured for this channel.") on failure, never a raw provider stack trace.
+- `GET /communication/messages?entity_type=&entity_id=` — every message ever sent about that specific record, in-flight and terminal alike. Same IDOR scoping as sending. `view`.
+
+### Bulk Messaging (`require_permission("communication", "bulk", action)`, Stage 3)
+
+- `POST /communication/bulk-messages` — body `{ channel, template_id, recipient_type: "lead"|"customer", recipient_ids: string[] (1–10000, deduplicated) }`. Creates a `BulkMessageJob`; nothing is sent synchronously — a worker cron (`process_bulk_message_jobs`, every minute) does the actual per-recipient enqueue in resumable batches, idempotent per `(job, recipient, channel)`. `create`. Authorization is feature-level, not per-recipient IDOR-scoped (decision 120).
+- `GET /communication/bulk-messages` — paginated list of past jobs. `view`.
+- `GET /communication/bulk-messages/{id}` — job detail with live `pending`/`sent`/`delivered`/`failed` counts computed from the queue/history at read time. `view`.
+- `GET /communication/bulk-messages/{id}/failed` — the job's own failed/exhausted queue items. `view`.
+- `POST /communication/bulk-messages/{id}/retry-failed` — retries every failed/exhausted item for this job through the existing Retry Action code path. `edit`.
+- `POST /communication/bulk-messages/{id}/cancel` — only valid while `queued`/`processing`; stops future enqueueing, does not affect already-enqueued items. `edit`.
+
+### Public: MSG91 Delivery Webhook (Stage 2, no authentication — see `docs/COMMUNICATION.md`)
+
+- `POST /communication/webhooks/msg91?secret=...` — SMS delivery-report callback. 200 for anything processed (including unknown/duplicate message ids), 403 for a missing/wrong secret, 400 only for a malformed body.
 
 Endpoints for other modules are documented here as each is built.
