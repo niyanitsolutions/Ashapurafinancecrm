@@ -1,20 +1,17 @@
 import { useEffect, useState } from "react";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { Msg91ConfigForm } from "@/features/communication/components/Msg91ConfigForm";
 import { getErrorMessage } from "@/features/customer/errors";
 import { ConnectionCheckList } from "@/features/integrations/components/ConnectionCheckList";
 import {
   activateIntegrationConfig,
-  createIntegrationConfig,
   disableIntegrationConfig,
   enableIntegrationConfig,
   listIntegrationConfigs,
-  listIntegrationProviders,
   testIntegrationConnection,
   type IntegrationConfig,
-  type IntegrationProvider,
   type TestConnectionResult,
 } from "@/features/integrations/api";
-import { CreateConfigForm } from "@/features/integrations/pages/IntegrationListPage";
 
 const CHANNELS = [
   { type: "sms", label: "SMS" },
@@ -29,10 +26,9 @@ const WEBHOOK_PATH = "/communication/webhooks/msg91";
 // Temporary Permissions/MSG91 request).
 export function CommunicationProvidersPage() {
   const [configs, setConfigs] = useState<IntegrationConfig[]>([]);
-  const [providers, setProviders] = useState<IntegrationProvider[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [addingChannel, setAddingChannel] = useState<string | null>(null);
+  const [openFormChannel, setOpenFormChannel] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, TestConnectionResult>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -43,9 +39,6 @@ export function CommunicationProvidersPage() {
   };
 
   useEffect(load, []);
-  useEffect(() => {
-    listIntegrationProviders().then(setProviders).catch(() => setProviders([]));
-  }, []);
 
   const configFor = (type: string) => configs.find((c) => c.integration_type === type);
 
@@ -117,14 +110,20 @@ export function CommunicationProvidersPage() {
                   <div className="space-x-3 text-xs">
                     {!config && (
                       <button
-                        type="button" onClick={() => setAddingChannel(addingChannel === type ? null : type)}
+                        type="button" onClick={() => setOpenFormChannel(openFormChannel === type ? null : type)}
                         className="text-primary hover:underline"
                       >
-                        {addingChannel === type ? "Cancel" : "+ Add"}
+                        {openFormChannel === type ? "Cancel" : "+ Add"}
                       </button>
                     )}
                     {config && (
                       <>
+                        <button
+                          type="button" onClick={() => setOpenFormChannel(openFormChannel === type ? null : type)}
+                          className="text-primary hover:underline"
+                        >
+                          {openFormChannel === type ? "Cancel" : "Edit"}
+                        </button>
                         <button type="button" disabled={busyId === config.id} onClick={() => handleTest(config)} className="text-primary hover:underline disabled:opacity-50">
                           Test
                         </button>
@@ -177,21 +176,16 @@ export function CommunicationProvidersPage() {
                   </div>
                 )}
 
-                {addingChannel === type && !config && (
+                {openFormChannel === type && (
                   <div className="mt-3 rounded border border-border p-4">
-                    <CreateConfigForm
-                      providers={providers.filter((p) => p.integration_type === type && p.provider === "msg91")}
-                      onSubmit={async (payload) => {
-                        setError(null);
-                        try {
-                          await createIntegrationConfig(payload);
-                          setAddingChannel(null);
-                          setMessage(`${label} configured.`);
-                          load();
-                        } catch (err) {
-                          setError(getErrorMessage(err));
-                        }
+                    <Msg91ConfigForm
+                      channel={type} label={label} existingConfig={config ?? null}
+                      onSaved={() => {
+                        setOpenFormChannel(null);
+                        setMessage(config ? `${label} configuration updated.` : `${label} configured.`);
+                        load();
                       }}
+                      onCancel={() => setOpenFormChannel(null)}
                     />
                   </div>
                 )}

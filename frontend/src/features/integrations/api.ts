@@ -136,7 +136,10 @@ export function listIntegrationTestLogs(configId: string) {
 }
 
 // Tests raw credentials before any config row exists — nothing is persisted server-side.
-export function testDraftConnection(payload: { integration_type: string; config: Record<string, string> }) {
+// `provider` is optional (defaults server-side to ""); pass it whenever a provider-specific
+// tester branch exists (e.g. MSG91's real balance/auth checks vs. the generic SMS/WhatsApp
+// field-presence check) — see testers.py.
+export function testDraftConnection(payload: { integration_type: string; provider?: string; config: Record<string, string> }) {
   return apiRequest<TestConnectionResult>("/integration-configs/test-draft", { method: "POST", body: JSON.stringify(payload) });
 }
 

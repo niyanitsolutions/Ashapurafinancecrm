@@ -391,8 +391,15 @@ class CommunicationService:
         # see communication/adapters.py's own module docstring.
         decrypted["_provider"] = config_doc.get("provider", "")
         adapter = ADAPTERS[item.channel]
+        # Config-level whatsapp_template_* (set on the Communication Providers screen, Stage
+        # 4 UI hardening) are only a fallback default — a template's own provider_template_*
+        # (Stage 2) always wins when set, so per-template overrides keep working unchanged.
         provider_template_meta = (
-            {"name": template.provider_template_name, "namespace": template.provider_template_namespace, "language": template.provider_template_language}
+            {
+                "name": template.provider_template_name or decrypted.get("whatsapp_template_name"),
+                "namespace": template.provider_template_namespace or decrypted.get("whatsapp_template_namespace"),
+                "language": template.provider_template_language or decrypted.get("whatsapp_template_language"),
+            }
             if template is not None
             else None
         )
