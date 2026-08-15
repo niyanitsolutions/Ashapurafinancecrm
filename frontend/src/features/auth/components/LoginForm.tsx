@@ -10,6 +10,7 @@ import { SubmitButton } from "@/features/auth/components/SubmitButton";
 import { getErrorMessage } from "@/features/auth/errors";
 import { useAuth } from "@/features/auth/useAuth";
 import { loginSchema, type LoginFormValues } from "@/features/auth/validation";
+import { getCurrentCoordinates } from "@/shared/geolocation";
 
 // `returnTo` rides in on a public, unauthenticated `?return=` query param — only ever
 // follow it if it's a plain in-app path. A bare `/` prefix without a second leading slash
@@ -48,7 +49,17 @@ export function LoginForm({ hidden, idPrefix, expectedRoles, wrongRoleMessage, r
   const onSubmit = async (values: LoginFormValues) => {
     setApiError(null);
     try {
-      const result = await login(values.mobile, values.password);
+      // Geo-Fenced Login only ever applies to Employees (see AuthService.login ->
+      // enforce_geo_fence, which no-ops for Owner and for any actor with no Employee
+      // record) — only request location on the internal (Owner/Employee/Referral
+      // Partner) tab, never prompt a Customer for their location on every login.
+      // getCurrentCoordinates() never throws and never blocks the form; it resolves
+      // null on denied/unavailable/timeout, same as CreateLeadPage's own geo-fence
+      // capture — the backend already defines the correct behavior for missing
+      // coordinates (denied, not silently bypassed, only when a login-scoped Geo
+      // Fence is actually configured).
+      const coordinates = idPrefix === "internal" ? await getCurrentCoordinates() : null;
+      const result = await login(values.mobile, values.password, coordinates);
       if (!expectedRoles.includes(result.role)) {
         setApiError(wrongRoleMessage);
         return;

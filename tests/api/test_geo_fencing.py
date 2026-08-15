@@ -419,3 +419,178 @@ async def test_create_lead_end_to_end_unaffected_when_no_fence_configured(client
     lead_master_data = await _lead_master_data(mock_db)
     r = await client.post("/api/v1/leads", json=_lead_payload(lead_master_data, mobile="9711111113"), headers=own_headers)
     assert r.status_code == 200, r.text
+
+
+# ---------------------------------------------------------------------- Login Geo-Fencing (Auth integration)
+#
+# `AuthService.login` reuses `enforce_geo_fence` unchanged (see auth/service.py) — these
+# tests prove the wiring (activity="login", the distinct login_geo_fence_denied error
+# code/message, and the Login-scoped GeoException.activity field) rather than re-proving
+# the shared engine's own distance/window logic already covered above.
+
+
+async def _login_raw(client, mobile, password, *, latitude=None, longitude=None):
+    payload = {"mobile": mobile, "password": password}
+    if latitude is not None:
+        payload["latitude"] = latitude
+    if longitude is not None:
+        payload["longitude"] = longitude
+    return await client.post("/api/v1/auth/login", json=payload)
+
+
+async def test_login_unaffected_when_no_login_fence_configured(client, owner_headers, master_data):
+    """Backward compatibility baseline: an existing employee's login must behave exactly
+    as before this feature existed when no Geo Fence has "login" in its
+    allowed_activities — even a fence configured for a different activity must not
+    affect login at all."""
+    await _create_employee(client, owner_headers, master_data, mobile="9455555501", email="login.baseline@example.com")
+    await client.post("/api/v1/geo-fences", json=_fence_payload(allowed_activities=[GeoActivity.LEAD_CREATION]), headers=owner_headers)
+
+    r = await _login_raw(client, "9455555501", "InitialPass1!", latitude=_OUTSIDE_LAT, longitude=_OUTSIDE_LON)
+    assert r.status_code == 200, r.text
+
+
+async def test_login_allowed_inside_configured_login_fence(client, owner_headers, master_data):
+    await _create_employee(client, owner_headers, master_data, mobile="9455555502", email="login.inside@example.com")
+    await client.post("/api/v1/geo-fences", json=_fence_payload(allowed_activities=[GeoActivity.LOGIN]), headers=owner_headers)
+
+    r = await _login_raw(client, "9455555502", "InitialPass1!", latitude=_INSIDE_LAT, longitude=_INSIDE_LON)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["access_token"]
+
+
+async def test_login_denied_outside_configured_login_fence_with_distinct_message(client, owner_headers, master_data):
+    await _create_employee(client, owner_headers, master_data, mobile="9455555503", email="login.outside@example.com")
+    await client.post("/api/v1/geo-fences", json=_fence_payload(allowed_activities=[GeoActivity.LOGIN]), headers=owner_headers)
+
+    r = await _login_raw(client, "9455555503", "InitialPass1!", latitude=_OUTSIDE_LAT, longitude=_OUTSIDE_LON)
+    assert r.status_code == 403, r.text
+    body = r.json()
+    assert body["error"]["code"] == "login_geo_fence_denied"
+    assert "authorized location" in body["error"]["message"]
+
+
+async def test_login_denied_when_login_fence_configured_and_no_coordinates_supplied(client, owner_headers, master_data):
+    """GPS failure must never silently bypass Geo-Fenced Login."""
+    await _create_employee(client, owner_headers, master_data, mobile="9455555504", email="login.nogps@example.com")
+    await client.post("/api/v1/geo-fences", json=_fence_payload(allowed_activities=[GeoActivity.LOGIN]), headers=owner_headers)
+
+    r = await _login_raw(client, "9455555504", "InitialPass1!")  # no latitude/longitude at all
+    assert r.status_code == 403, r.text
+    # AuthService.login catches every ForbiddenError enforce_geo_fence can raise
+    # (missing-coordinates included) and re-raises as the same distinct
+    # login_geo_fence_denied code/message — not silently bypassed, and not the
+    # generic "forbidden" every other permission denial uses.
+    body = r.json()
+    assert body["error"]["code"] == "login_geo_fence_denied"
+    assert "authorized location" in body["error"]["message"]
+
+
+async def test_login_geo_fence_never_applies_to_owner(client, owner_headers):
+    await client.post("/api/v1/geo-fences", json=_fence_payload(allowed_activities=[GeoActivity.LOGIN]), headers=owner_headers)
+    r = await _login_raw(client, "9000000001", "OwnerPass1!", latitude=_OUTSIDE_LAT, longitude=_OUTSIDE_LON)
+    assert r.status_code == 200, r.text
+    r = await _login_raw(client, "9000000001", "OwnerPass1!")  # not even coordinates supplied
+    assert r.status_code == 200, r.text
+
+
+async def test_login_denial_does_not_count_toward_failed_login_lockout(client, owner_headers, master_data):
+    """Deliberate design decision (see AuthService.login's own comment): a geo-fence
+    denial is a location problem, not a credentials-guessing one, so repeated denied
+    logins with CORRECT credentials must never lock the account the way repeated wrong
+    passwords would."""
+    await _create_employee(client, owner_headers, master_data, mobile="9455555505", email="login.lockout@example.com")
+    await client.post("/api/v1/geo-fences", json=_fence_payload(allowed_activities=[GeoActivity.LOGIN]), headers=owner_headers)
+
+    for _ in range(6):  # well past this app's failed-attempt lockout threshold
+        r = await _login_raw(client, "9455555505", "InitialPass1!", latitude=_OUTSIDE_LAT, longitude=_OUTSIDE_LON)
+        assert r.status_code == 403, r.text
+        assert r.json()["error"]["code"] == "login_geo_fence_denied"
+
+    # Correct credentials from an allowed location still succeed — never locked out.
+    r = await _login_raw(client, "9455555505", "InitialPass1!", latitude=_INSIDE_LAT, longitude=_INSIDE_LON)
+    assert r.status_code == 200, r.text
+
+
+async def test_login_scoped_geo_exception_allows_outside_radius(client, mock_db, owner_headers, master_data):
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9455555506", email="login.exception@example.com")
+    await client.post("/api/v1/geo-fences", json=_fence_payload(allowed_activities=[GeoActivity.LOGIN]), headers=owner_headers)
+
+    now = utc_now()
+    exception = GeoException(
+        employee_id=employee["id"], allowed_location=AllowedLocation(latitude=_OUTSIDE_LAT, longitude=_OUTSIDE_LON),
+        radius_meters=1000, start_date=now - timedelta(days=1), end_date=now + timedelta(days=1),
+        start_time="00:00", end_time="23:59", reason="Work from home", activity=GeoActivity.LOGIN, status="active",
+    )
+    await mock_db["geo_exceptions"].insert_one(exception.model_dump(by_alias=True, exclude={"id"}))
+
+    r = await _login_raw(client, "9455555506", "InitialPass1!", latitude=_OUTSIDE_LAT, longitude=_OUTSIDE_LON)
+    assert r.status_code == 200, r.text
+
+
+async def test_login_scoped_geo_exception_denied_after_expiry(client, mock_db, owner_headers, master_data):
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9455555507", email="login.expired@example.com")
+    await client.post("/api/v1/geo-fences", json=_fence_payload(allowed_activities=[GeoActivity.LOGIN]), headers=owner_headers)
+
+    now = utc_now()
+    exception = GeoException(
+        employee_id=employee["id"], allowed_location=AllowedLocation(latitude=_OUTSIDE_LAT, longitude=_OUTSIDE_LON),
+        radius_meters=1000, start_date=now - timedelta(days=10), end_date=now - timedelta(days=5),
+        start_time="00:00", end_time="23:59", reason="Expired", activity=GeoActivity.LOGIN, status="active",
+    )
+    await mock_db["geo_exceptions"].insert_one(exception.model_dump(by_alias=True, exclude={"id"}))
+
+    r = await _login_raw(client, "9455555507", "InitialPass1!", latitude=_OUTSIDE_LAT, longitude=_OUTSIDE_LON)
+    assert r.status_code == 403, r.text
+    assert r.json()["error"]["code"] == "login_geo_fence_denied"
+
+
+async def test_login_exception_belonging_to_different_employee_does_not_apply(client, mock_db, owner_headers, master_data):
+    await _create_employee(client, owner_headers, master_data, mobile="9455555508", email="login.notmine@example.com")
+    other_employee = await _create_employee(client, owner_headers, master_data, mobile="9455555509", email="login.other@example.com")
+    await client.post("/api/v1/geo-fences", json=_fence_payload(allowed_activities=[GeoActivity.LOGIN]), headers=owner_headers)
+
+    now = utc_now()
+    exception = GeoException(
+        employee_id=other_employee["id"], allowed_location=AllowedLocation(latitude=_OUTSIDE_LAT, longitude=_OUTSIDE_LON),
+        radius_meters=1000, start_date=now - timedelta(days=1), end_date=now + timedelta(days=1),
+        start_time="00:00", end_time="23:59", reason="Not this employee", activity=GeoActivity.LOGIN, status="active",
+    )
+    await mock_db["geo_exceptions"].insert_one(exception.model_dump(by_alias=True, exclude={"id"}))
+
+    r = await _login_raw(client, "9455555508", "InitialPass1!", latitude=_OUTSIDE_LAT, longitude=_OUTSIDE_LON)
+    assert r.status_code == 403, r.text
+
+
+async def test_login_blanket_pre_existing_exception_still_applies_to_login(client, mock_db, owner_headers, master_data):
+    """Backward compatibility: an exception granted before the `activity` field existed
+    (or explicitly created with no activity) reads back as `activity=None` and must keep
+    exempting the employee from every enforced activity, login included."""
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9455555510", email="login.blanket@example.com")
+    await client.post("/api/v1/geo-fences", json=_fence_payload(allowed_activities=[GeoActivity.LOGIN]), headers=owner_headers)
+
+    now = utc_now()
+    exception = GeoException(
+        employee_id=employee["id"], allowed_location=AllowedLocation(latitude=_OUTSIDE_LAT, longitude=_OUTSIDE_LON),
+        radius_meters=1000, start_date=now - timedelta(days=1), end_date=now + timedelta(days=1),
+        start_time="00:00", end_time="23:59", reason="Blanket, pre-dates activity field", activity=None, status="active",
+    )
+    await mock_db["geo_exceptions"].insert_one(exception.model_dump(by_alias=True, exclude={"id"}))
+
+    r = await _login_raw(client, "9455555510", "InitialPass1!", latitude=_OUTSIDE_LAT, longitude=_OUTSIDE_LON)
+    assert r.status_code == 200, r.text
+
+
+async def test_login_boundary_distance_equal_to_radius_is_allowed(client, owner_headers, master_data):
+    """Inherits enforce_geo_fence's existing `<=` comparison — not new behavior, just
+    confirmed to hold for the login activity too."""
+    await _create_employee(client, owner_headers, master_data, mobile="9455555511", email="login.boundary@example.com")
+    r = await client.post(
+        "/api/v1/geo-fences",
+        json=_fence_payload(allowed_activities=[GeoActivity.LOGIN], radius_meters=1),
+        headers=owner_headers,
+    )
+    fence = r.json()["data"]
+
+    r = await _login_raw(client, "9455555511", "InitialPass1!", latitude=fence["latitude"], longitude=fence["longitude"])
+    assert r.status_code == 200, r.text  # distance 0 <= radius 1

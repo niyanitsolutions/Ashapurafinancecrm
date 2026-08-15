@@ -6,6 +6,7 @@ export const GEO_ACTIVITIES = [
   { value: "customer_visit", label: "Customer Visit" },
   { value: "loan_application", label: "Loan Application" },
   { value: "insurance_application", label: "Insurance Application" },
+  { value: "login", label: "Login" },
 ] as const;
 
 export interface GeoFence {

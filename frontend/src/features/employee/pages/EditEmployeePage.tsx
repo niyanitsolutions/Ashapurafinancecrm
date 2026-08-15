@@ -13,7 +13,6 @@ import {
   type Permission,
 } from "@/features/access_control/api";
 import { Button } from "@/components/buttons/Button";
-import { CheckboxField } from "@/components/forms/CheckboxField";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
 import { SelectField } from "@/components/forms/SelectField";
@@ -32,7 +31,6 @@ import {
 import { PERMISSION_MATRIX_ROWS, buildMatrixGrants } from "@/features/employee/permissionMatrix";
 import { getErrorMessage } from "@/features/employee/errors";
 import { updateEmployeeSchema, type UpdateEmployeeFormValues } from "@/features/employee/validation";
-import { insuranceProductsApi, loanProductsApi, type NamedMasterData } from "@/features/system_settings/api";
 
 // The role this employee's Business Modules section reads from / writes to — the one
 // CreateEmployeePage.tsx auto-creates, identified by its description rather than by name
@@ -48,18 +46,12 @@ export function EditEmployeePage() {
   const [designations, setDesignations] = useState<MasterDataItem[]>([]);
   const [branches, setBranches] = useState<BranchItem[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
-  const [loanProducts, setLoanProducts] = useState<NamedMasterData[]>([]);
-  const [insuranceProducts, setInsuranceProducts] = useState<NamedMasterData[]>([]);
-  const [productIds, setProductIds] = useState<string[]>([]);
 
   const [permissions, setPermissions] = useState<Permission[]>([]);
+  const [permissionsLoadFailed, setPermissionsLoadFailed] = useState(false);
   const [personalRoleId, setPersonalRoleId] = useState<string | null>(null);
   const [hasExtraAccess, setHasExtraAccess] = useState(false);
   const [checkedPermissions, setCheckedPermissions] = useState<Record<string, Set<string>>>({});
-
-  const toggleProduct = (productId: string) => {
-    setProductIds((prev) => (prev.includes(productId) ? prev.filter((id) => id !== productId) : [...prev, productId]));
-  };
 
   const {
     register,
@@ -72,9 +64,18 @@ export function EditEmployeePage() {
     listDepartments().then(setDepartments).catch(() => setDepartments([]));
     listDesignations().then(setDesignations).catch(() => setDesignations([]));
     listBranches().then(setBranches).catch(() => setBranches([]));
-    loanProductsApi.list().then(setLoanProducts).catch(() => setLoanProducts([]));
-    insuranceProductsApi.list().then(setInsuranceProducts).catch(() => setInsuranceProducts([]));
-    listPermissions().then(setPermissions).catch(() => setPermissions([]));
+    // Distinguish "catalog genuinely fetched, nothing in it" from "fetch failed" — the
+    // latter must never be treated as "grant nothing" by onSubmit's full-replace call to
+    // setRolePermissions (see permissionsLoadFailed below).
+    listPermissions()
+      .then((data) => {
+        setPermissions(data);
+        setPermissionsLoadFailed(false);
+      })
+      .catch(() => {
+        setPermissions([]);
+        setPermissionsLoadFailed(true);
+      });
   }, []);
 
   useEffect(() => {
@@ -96,7 +97,6 @@ export function EditEmployeePage() {
         employment_type: e.employment_type as UpdateEmployeeFormValues["employment_type"],
         status: e.status as UpdateEmployeeFormValues["status"],
       });
-      setProductIds(e.product_ids);
       setIsLoaded(true);
     });
   }, [employeeId, reset]);
@@ -105,36 +105,58 @@ export function EditEmployeePage() {
   // Permissions matrix from its current grants — see AUTO_ROLE_DESCRIPTION above.
   useEffect(() => {
     if (!employeeId) return;
-    listEmployeeRoles(employeeId).then(async (assignments) => {
-      let personal: string | null = null;
-      for (const assignment of assignments) {
-        const role = await getRole(assignment.role_id);
-        if (role.description === AUTO_ROLE_DESCRIPTION) {
-          personal = assignment.role_id;
-          break;
+    listEmployeeRoles(employeeId)
+      .then(async (assignments) => {
+        let personal: string | null = null;
+        for (const assignment of assignments) {
+          const role = await getRole(assignment.role_id);
+          if (role.description === AUTO_ROLE_DESCRIPTION) {
+            personal = assignment.role_id;
+            break;
+          }
         }
-      }
-      setPersonalRoleId(personal);
-      setHasExtraAccess(assignments.some((a) => a.role_id !== personal));
-      if (!personal) return;
+        setPersonalRoleId(personal);
+        setHasExtraAccess(assignments.some((a) => a.role_id !== personal));
+        if (!personal) return;
 
-      const grants = await getRolePermissions(personal);
-      const nextChecked: Record<string, Set<string>> = {};
-      for (const grant of grants) {
-        const row = PERMISSION_MATRIX_ROWS.find((r) => r.module === grant.module && r.resource === grant.resource);
-        if (!row) continue; // a grant outside this simplified 8-row matrix — no checkbox to set
-        nextChecked[grant.permission_id] = new Set(grant.granted_actions.filter((a) => a === "view" || a === "create" || a === "edit"));
-      }
-      setCheckedPermissions(nextChecked);
-    });
+        const grants = await getRolePermissions(personal);
+        const nextChecked: Record<string, Set<string>> = {};
+        for (const grant of grants) {
+          const row = PERMISSION_MATRIX_ROWS.find((r) => r.module === grant.module && r.resource === grant.resource);
+          if (!row) continue; // a grant outside this simplified 8-row matrix — no checkbox to set
+          nextChecked[grant.permission_id] = new Set(grant.granted_actions.filter((a) => a === "view" || a === "create" || a === "edit"));
+        }
+        setCheckedPermissions(nextChecked);
+      })
+      .catch(() => {
+        // One bad/orphaned role reference (e.g. a stale EmployeeRole pointing at a
+        // deleted role) must not silently leave the Permissions section looking empty
+        // with no explanation — surface it instead of failing invisibly.
+        setApiError("Couldn't load this employee's current permissions. Please refresh and try again before saving.");
+      });
   }, [employeeId]);
 
   if (!employeeId) return null;
 
   const onSubmit = async (values: UpdateEmployeeFormValues) => {
     setApiError(null);
+
+    // The Permissions save below is a full replace (setRolePermissions soft-deletes every
+    // existing grant on the role and inserts only what buildMatrixGrants returns) — if the
+    // permission catalog failed to load, buildMatrixGrants can't resolve any row and would
+    // silently return an empty grant list regardless of what's actually checked, wiping
+    // this employee's real permissions with no error shown. Block the save instead.
+    if (permissionsLoadFailed) {
+      setApiError("Permissions couldn't be loaded, so saving now would erase this employee's existing access. Please refresh the page and try again.");
+      return;
+    }
+
     try {
-      await updateEmployee(employeeId, { ...values, product_ids: productIds });
+      // product_ids is intentionally omitted here — this form no longer edits Product
+      // Specialization; omitting the field (rather than sending []) preserves whatever
+      // value this employee already has, per UpdateEmployeeRequest's "omitted = don't
+      // touch" contract.
+      await updateEmployee(employeeId, values);
 
       // Permissions matrix — same convenience layer on top of Access Control (Module 3)
       // CreateEmployeePage.tsx uses, just reading from / writing to this employee's
@@ -239,23 +261,13 @@ export function EditEmployeePage() {
             </div>
           </div>
 
-          <div className="bg-card border border-border rounded-card shadow-card p-6">
-            <h2 className="text-sm font-semibold text-text mb-1">Product Specialization</h2>
-            <p className="text-xs text-text/50 mb-4">
-              Select products this employee is experienced with. Used only to improve Lead assignment
-              recommendations — it does not grant or remove access to Leads or any other module.
-            </p>
-            <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-              {[...loanProducts, ...insuranceProducts].map((p) => (
-                <CheckboxField
-                  key={p.id} label={p.name}
-                  checked={productIds.includes(p.id)} onChange={() => toggleProduct(p.id)}
-                />
-              ))}
-            </div>
-          </div>
-
           <PermissionMatrixSection permissions={permissions} checked={checkedPermissions} onChange={setCheckedPermissions} />
+          {permissionsLoadFailed && (
+            <p className="text-xs text-danger -mt-4">
+              Couldn't load the permission catalog — saving is disabled until this page is refreshed, to avoid
+              accidentally clearing this employee's existing access.
+            </p>
+          )}
           {hasExtraAccess && (
             <p className="text-xs text-text/50 -mt-4">
               This employee may have extra access configured separately — see Roles &amp; Permissions for details.

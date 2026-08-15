@@ -4,7 +4,6 @@ import { useForm } from "react-hook-form";
 import { useNavigate } from "react-router-dom";
 import { assignRole, createRole, listPermissions, setRolePermissions, type Permission } from "@/features/access_control/api";
 import { Button } from "@/components/buttons/Button";
-import { CheckboxField } from "@/components/forms/CheckboxField";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
 import { SelectField } from "@/components/forms/SelectField";
@@ -24,7 +23,6 @@ import {
 import { buildMatrixGrants } from "@/features/employee/permissionMatrix";
 import { getErrorMessage } from "@/features/employee/errors";
 import { simpleCreateEmployeeSchema, type SimpleCreateEmployeeFormValues } from "@/features/employee/validation";
-import { insuranceProductsApi, loanProductsApi, type NamedMasterData } from "@/features/system_settings/api";
 
 // Defaults for the two backend-required fields this simplified form doesn't ask about —
 // editable afterward via Edit / the Employee Profile's Employment tab.
@@ -39,24 +37,28 @@ export function CreateEmployeePage() {
   const [branches, setBranches] = useState<BranchItem[]>([]);
   const [managers, setManagers] = useState<EmployeeListItem[]>([]);
   const [permissions, setPermissions] = useState<Permission[]>([]);
+  const [permissionsLoadFailed, setPermissionsLoadFailed] = useState(false);
   const [checkedPermissions, setCheckedPermissions] = useState<Record<string, Set<string>>>({});
-  const [loanProducts, setLoanProducts] = useState<NamedMasterData[]>([]);
-  const [insuranceProducts, setInsuranceProducts] = useState<NamedMasterData[]>([]);
-  const [productIds, setProductIds] = useState<string[]>([]);
 
   useEffect(() => {
     listDepartments().then(setDepartments).catch(() => setDepartments([]));
     listDesignations().then(setDesignations).catch(() => setDesignations([]));
     listBranches().then(setBranches).catch(() => setBranches([]));
     listEmployees({ page: 1, page_size: 100 }).then((res) => setManagers(res.data)).catch(() => setManagers([]));
-    listPermissions().then(setPermissions).catch(() => setPermissions([]));
-    loanProductsApi.list().then(setLoanProducts).catch(() => setLoanProducts([]));
-    insuranceProductsApi.list().then(setInsuranceProducts).catch(() => setInsuranceProducts([]));
+    // Distinguish "catalog genuinely fetched, nothing in it" from "fetch failed" — the
+    // latter must never be treated as "grant nothing" by onSubmit's setRolePermissions
+    // call, which would otherwise create this employee's role with checkboxes that
+    // *looked* checked but silently granted nothing.
+    listPermissions()
+      .then((data) => {
+        setPermissions(data);
+        setPermissionsLoadFailed(false);
+      })
+      .catch(() => {
+        setPermissions([]);
+        setPermissionsLoadFailed(true);
+      });
   }, []);
-
-  const toggleProduct = (productId: string) => {
-    setProductIds((prev) => (prev.includes(productId) ? prev.filter((id) => id !== productId) : [...prev, productId]));
-  };
 
   const {
     register,
@@ -66,13 +68,18 @@ export function CreateEmployeePage() {
 
   const onSubmit = async (values: SimpleCreateEmployeeFormValues) => {
     setApiError(null);
+
+    if (permissionsLoadFailed) {
+      setApiError("Permissions couldn't be loaded, so any checked boxes wouldn't actually be granted. Please refresh the page and try again.");
+      return;
+    }
+
     try {
       const employee = await createEmployee({
         ...values,
         joining_date: todayIso(),
         employment_type: DEFAULT_EMPLOYMENT_TYPE,
         reporting_manager_id: values.reporting_manager_id || undefined,
-        product_ids: productIds,
       });
 
       // The Permissions matrix is a convenience layer on top of Access Control (Module
@@ -145,24 +152,12 @@ export function CreateEmployeePage() {
           </div>
         </div>
 
-        <div className="bg-card border border-border rounded-card shadow-card p-6">
-          <h2 className="text-sm font-semibold text-text mb-1">Product Specialization</h2>
-          <p className="text-xs text-text/50 mb-4">
-            Select products this employee is experienced with. Used only to improve Lead assignment
-            recommendations — it does not grant or remove access to Leads or any other module.
-          </p>
-          <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-            {[...loanProducts, ...insuranceProducts].map((p) => (
-              <CheckboxField
-                key={p.id} label={p.name}
-                checked={productIds.includes(p.id)} onChange={() => toggleProduct(p.id)}
-              />
-            ))}
-            {loanProducts.length === 0 && insuranceProducts.length === 0 && <p className="text-sm text-text/40">Loading…</p>}
-          </div>
-        </div>
-
         <PermissionMatrixSection permissions={permissions} checked={checkedPermissions} onChange={setCheckedPermissions} />
+        {permissionsLoadFailed && (
+          <p className="text-xs text-danger -mt-4">
+            Couldn't load the permission catalog — saving is disabled until this page is refreshed.
+          </p>
+        )}
 
         <div className="flex justify-end gap-3">
           <Button type="button" variant="secondary" onClick={() => navigate("/employees")}>

@@ -91,6 +91,12 @@ class GeoException(BaseDocument):
     start_time: str = Field(pattern=_TIME_PATTERN)
     end_time: str = Field(pattern=_TIME_PATTERN)
     reason: str
+    # None = applies to every enforced activity (the original, pre-Login-geo-fencing
+    # behavior — every exception ever granted before this field existed reads back as
+    # None and keeps working exactly as before). A specific GeoActivity value scopes the
+    # exception to only that activity, e.g. a Login-only exception must never also
+    # exempt the same employee from Lead Creation's geo-fence.
+    activity: str | None = None
     # status (BaseDocument): active/revoked
 
 

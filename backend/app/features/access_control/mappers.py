@@ -72,5 +72,5 @@ def geo_exception_to_response(geo_exception: GeoException) -> GeoExceptionRespon
         radius_meters=geo_exception.radius_meters,
         start_date=geo_exception.start_date.date(), end_date=geo_exception.end_date.date(),
         start_time=geo_exception.start_time, end_time=geo_exception.end_time,
-        reason=geo_exception.reason, status=geo_exception.status,
+        reason=geo_exception.reason, status=geo_exception.status, activity=geo_exception.activity,
     )

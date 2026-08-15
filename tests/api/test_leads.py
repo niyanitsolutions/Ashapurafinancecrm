@@ -259,6 +259,20 @@ async def _grant_leads_view_create(client, owner_headers, employee_id, role_name
     await client.post(f"/api/v1/roles/{role_id}/assign", json={"employee_id": employee_id}, headers=owner_headers)
 
 
+async def _grant_leads_actions(client, owner_headers, employee_id, actions, role_name):
+    """Grants exactly `actions` (a subset of view/create/edit/assign/export) on
+    leads:leads to a fresh role assigned to `employee_id` — for the explicit
+    view-only / view+create / view+create+edit / no-permission truth-table tests below.
+    An empty `actions` list assigns a role with zero grants (still distinct from "no
+    role at all" — both must behave identically as "no permission")."""
+    leads_permission_id = await _full_leads_permission_id(client, owner_headers)
+    role = await client.post("/api/v1/roles", json={"name": role_name}, headers=owner_headers)
+    role_id = role.json()["data"]["id"]
+    grants = [{"permission_id": leads_permission_id, "granted_actions": actions}] if actions else []
+    await client.put(f"/api/v1/roles/{role_id}/permissions", json={"grants": grants}, headers=owner_headers)
+    await client.post(f"/api/v1/roles/{role_id}/assign", json={"employee_id": employee_id}, headers=owner_headers)
+
+
 async def _login(client, mobile, password="InitialPass1!"):
     r = await client.post("/api/v1/auth/login", json={"mobile": mobile, "password": password})
     assert r.status_code == 200, r.text
@@ -354,6 +368,78 @@ async def test_check_duplicate_includes_own_unassigned_leads(client, mock_db, ow
     r = await client.get("/api/v1/leads/check-duplicate?mobile=9611111107", headers=headers)
     assert r.status_code == 200, r.text
     assert [m["id"] for m in r.json()["data"]["matches"]] == [lead["id"]]
+
+
+# ---------------------------------------------------------------------- permission truth table (view/create/edit independence)
+
+
+async def test_leads_view_only_permission_truth_table(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9766667001", email="viewonly@example.com")
+    await _grant_leads_actions(client, owner_headers, employee["id"], ["view"], role_name="View Only")
+    headers = await _login(client, "9766667001")
+
+    r = await client.get("/api/v1/leads", headers=headers)
+    assert r.status_code == 200, r.text
+
+    r = await client.post("/api/v1/leads", json=_lead_payload(lmd, mobile="9611112001"), headers=headers)
+    assert r.status_code == 403, r.text
+    assert "leads:leads:create" in r.json()["error"]["message"]
+
+    existing = await _create_lead(client, owner_headers, lmd, mobile="9611112002")
+    r = await client.patch(f"/api/v1/leads/{existing['id']}", json={"remarks": "attempt"}, headers=headers)
+    assert r.status_code == 403, r.text
+    assert "leads:leads:edit" in r.json()["error"]["message"]
+
+
+async def test_leads_view_create_permission_truth_table(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9766667002", email="viewcreate@example.com")
+    await _grant_leads_actions(client, owner_headers, employee["id"], ["view", "create"], role_name="View Create")
+    headers = await _login(client, "9766667002")
+
+    r = await client.get("/api/v1/leads", headers=headers)
+    assert r.status_code == 200, r.text
+
+    r = await client.post("/api/v1/leads", json=_lead_payload(lmd, mobile="9611112003"), headers=headers)
+    assert r.status_code == 200, r.text
+
+    existing = await _create_lead(client, owner_headers, lmd, mobile="9611112004")
+    r = await client.patch(f"/api/v1/leads/{existing['id']}", json={"remarks": "attempt"}, headers=headers)
+    assert r.status_code == 403, r.text
+    assert "leads:leads:edit" in r.json()["error"]["message"]
+
+
+async def test_leads_view_create_edit_permission_truth_table(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9766667003", email="full@example.com")
+    await _grant_leads_actions(client, owner_headers, employee["id"], ["view", "create", "edit"], role_name="View Create Edit")
+    headers = await _login(client, "9766667003")
+
+    r = await client.get("/api/v1/leads", headers=headers)
+    assert r.status_code == 200, r.text
+
+    created = await _create_lead(client, headers, lmd, mobile="9611112005")
+    r = await client.patch(f"/api/v1/leads/{created['id']}", json={"remarks": "attempt"}, headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["remarks"] == "attempt"
+
+
+async def test_leads_no_permission_truth_table(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9766667004", email="none@example.com")
+    await _grant_leads_actions(client, owner_headers, employee["id"], [], role_name="No Grants")
+    headers = await _login(client, "9766667004")
+
+    r = await client.get("/api/v1/leads", headers=headers)
+    assert r.status_code == 403, r.text
+
+    r = await client.post("/api/v1/leads", json=_lead_payload(lmd, mobile="9611112006"), headers=headers)
+    assert r.status_code == 403, r.text
+
+    existing = await _create_lead(client, owner_headers, lmd, mobile="9611112007")
+    r = await client.patch(f"/api/v1/leads/{existing['id']}", json={"remarks": "attempt"}, headers=headers)
+    assert r.status_code == 403, r.text
 
 
 # ---------------------------------------------------------------------- notes / timeline

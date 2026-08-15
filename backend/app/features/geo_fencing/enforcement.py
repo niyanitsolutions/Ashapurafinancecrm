@@ -5,11 +5,12 @@ decides whether the activity is allowed, and every outcome is audited. Never rai
 activity with zero configured Geo Fences — geo-fencing is opt-in per activity (spec's own
 rule), never a blanket restriction.
 
-Only `GeoActivity.LEAD_CREATION` and `GeoActivity.DOCUMENT_COLLECTION` are ever actually
-called with this function today (see router call sites in leads/loan_management/
-insurance_management) — `customer_visit`/`loan_application`/`insurance_application` are
-valid, storable `allowed_activities` values with no real employee-initiated single action
-in this codebase to attach enforcement to; see docs/GEO_FENCING.md.
+`GeoActivity.LEAD_CREATION`, `GeoActivity.DOCUMENT_COLLECTION`, and `GeoActivity.LOGIN`
+are the only activities ever actually called with this function today (see router call
+sites in leads/loan_management/insurance_management, and `AuthService.login`) —
+`customer_visit`/`loan_application`/`insurance_application` are valid, storable
+`allowed_activities` values with no real employee-initiated single action in this
+codebase to attach enforcement to; see docs/GEO_FENCING.md.
 """
 
 from typing import Any
@@ -55,7 +56,7 @@ async def enforce_geo_fence(
         raise ForbiddenError("Location is required for this action.")
 
     now = utc_now()
-    exceptions = await GeoExceptionRepository(db).find_active_for_employee(employee_id)
+    exceptions = await GeoExceptionRepository(db).find_active_for_employee(employee_id, activity=activity)
     for exception in exceptions:
         if within_daily_window(exception.start_date, exception.end_date, exception.start_time, exception.end_time, now):
             await write_audit_log(

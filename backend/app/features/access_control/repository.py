@@ -86,8 +86,16 @@ class GeoExceptionRepository(BaseRepository[GeoException]):
     collection_name = "geo_exceptions"
     model = GeoException
 
-    async def find_active_for_employee(self, employee_id: str) -> list[GeoException]:
-        return await self.find_many({"employee_id": employee_id, "status": AccessGrantStatus.ACTIVE}, limit=100)
+    async def find_active_for_employee(self, employee_id: str, *, activity: str | None = None) -> list[GeoException]:
+        query: dict[str, Any] = {"employee_id": employee_id, "status": AccessGrantStatus.ACTIVE}
+        # `activity=None` (the default, used by any caller that doesn't care) applies no
+        # filter — every active exception for the employee, matching pre-activity-field
+        # behavior exactly. When a caller (enforce_geo_fence) DOES pass an activity, a
+        # blanket exception (its own `activity` is None) still applies to everything, and
+        # an activity-scoped one only applies to its own activity.
+        if activity is not None:
+            query["$or"] = [{"activity": None}, {"activity": activity}]
+        return await self.find_many(query, limit=100)
 
     async def find_active_by_fence_id(self, geo_fence_id: str) -> list[GeoException]:
         return await self.find_many({"geo_fence_id": geo_fence_id, "status": AccessGrantStatus.ACTIVE}, limit=100)

@@ -1,8 +1,9 @@
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.features.access_control.constants import PermissionAction
+from app.features.geo_fencing.constants import GeoActivity
 
 _TIME_PATTERN = r"^([01]\d|2[0-3]):[0-5]\d$"
 
@@ -122,6 +123,17 @@ class CreateGeoExceptionRequest(BaseModel):
     start_time: str = Field(pattern=_TIME_PATTERN)
     end_time: str = Field(pattern=_TIME_PATTERN)
     reason: str
+    # None (default) = applies to every enforced activity, same as before this field
+    # existed. A specific GeoActivity value (e.g. "login") scopes the exception to only
+    # that one activity.
+    activity: str | None = None
+
+    @field_validator("activity")
+    @classmethod
+    def _check_activity(cls, value: str | None) -> str | None:
+        if value is not None and value not in GeoActivity.ALL:
+            raise ValueError(f"Unknown activity value: {value}")
+        return value
 
 
 class GeoExceptionResponse(BaseModel):
@@ -137,6 +149,7 @@ class GeoExceptionResponse(BaseModel):
     end_time: str
     reason: str
     status: str
+    activity: str | None
 
 
 class AccessibleModulesResponse(BaseModel):

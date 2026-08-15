@@ -4,12 +4,40 @@ import { MATRIX_ACTIONS, PERMISSION_MATRIX_ROWS, findRowPermission, type MatrixA
 
 const ACTION_LABELS: Record<MatrixAction, string> = { view: "View", create: "Create", edit: "Edit" };
 
+// Applies one checkbox change to a working copy of `checked`, enforcing the dependency
+// rule between View and Create/Edit: checking Create or Edit implies View (an action
+// can't be useful without access), and unchecking View clears Create/Edit for that same
+// row (they never grant access on their own). Mutates `next` in place; callers pass a
+// fresh shallow copy of `checked` before applying one or more cells.
+function applyCellChange(next: Record<string, Set<string>>, permission: Permission, action: MatrixAction, isChecked: boolean): void {
+  const current = new Set(next[permission.id] ?? []);
+  if (isChecked) {
+    current.add(action);
+    if ((action === "create" || action === "edit") && permission.actions.includes("view")) {
+      current.add("view");
+    }
+  } else {
+    current.delete(action);
+    if (action === "view") {
+      current.delete("create");
+      current.delete("edit");
+    }
+  }
+  next[permission.id] = current;
+}
+
 // Shared by CreateEmployeePage and EditEmployeePage — a controlled component; all
 // checkbox state (`checked`, keyed by permission_id -> the set of checked actions for
 // that row) lives in the parent page so Create can start empty and Edit can
 // pre-populate from the employee's existing grants. Renders a real table at `sm:` and
 // above; below that an 8-row x 3-column table doesn't reflow sensibly, so it switches to
 // a stacked block per module instead, sharing the same `checked`/`onChange` state.
+//
+// Backend enforcement is independent of this UI convenience: `require_permission`
+// checks each action (view/create/edit) completely separately server-side regardless of
+// what the frontend allowed to be checked together — this component's View-gates-
+// Create/Edit behavior only prevents the Owner from configuring a nonsensical state in
+// the first place, it is never itself a security boundary.
 export function PermissionMatrixSection({
   permissions,
   checked,
@@ -19,12 +47,10 @@ export function PermissionMatrixSection({
   checked: Record<string, Set<string>>;
   onChange: (next: Record<string, Set<string>>) => void;
 }) {
-  const toggleCell = (permissionId: string, action: MatrixAction) => {
+  const toggleCell = (permission: Permission, action: MatrixAction) => {
     const next = { ...checked };
-    const current = new Set(next[permissionId] ?? []);
-    if (current.has(action)) current.delete(action);
-    else current.add(action);
-    next[permissionId] = current;
+    const isCurrentlyChecked = (checked[permission.id] ?? new Set()).has(action);
+    applyCellChange(next, permission, action, !isCurrentlyChecked);
     onChange(next);
   };
 
@@ -39,10 +65,7 @@ export function PermissionMatrixSection({
     const allChecked = applicable.every((p) => (checked[p.id] ?? new Set()).has(action));
     const next = { ...checked };
     for (const permission of applicable) {
-      const current = new Set(next[permission.id] ?? []);
-      if (allChecked) current.delete(action);
-      else current.add(action);
-      next[permission.id] = current;
+      applyCellChange(next, permission, action, !allChecked);
     }
     onChange(next);
   };
@@ -51,9 +74,9 @@ export function PermissionMatrixSection({
     <div className="bg-card border border-border rounded-card shadow-card p-6">
       <h2 className="text-sm font-semibold text-text mb-1">Permissions</h2>
       <p className="text-xs text-text/50 mb-4">
-        Control what this employee can access and do. View does not mean they see every record — e.g. granting Leads
-        View/Create/Edit lets them use Leads and manage the ones they created or are assigned, not the whole company's
-        list.
+        View controls access to the module. Create and Edit provide additional actions and never grant access by
+        themselves. View does not mean they see every record either — e.g. granting Leads View/Create/Edit lets them
+        use Leads and manage the ones they created or are assigned, not the whole company's list.
       </p>
       {permissions.length === 0 && <p className="text-sm text-text/40">Loading…</p>}
 
@@ -88,7 +111,7 @@ export function PermissionMatrixSection({
                             hideLabel
                             className="justify-center"
                             checked={(checked[permission.id] ?? new Set()).has(action)}
-                            onChange={() => toggleCell(permission.id, action)}
+                            onChange={() => toggleCell(permission, action)}
                           />
                         ) : (
                           <span className="text-text/20">—</span>
@@ -117,7 +140,7 @@ export function PermissionMatrixSection({
                       key={action}
                       label={ACTION_LABELS[action]}
                       checked={(checked[permission.id] ?? new Set()).has(action)}
-                      onChange={() => toggleCell(permission.id, action)}
+                      onChange={() => toggleCell(permission, action)}
                     />
                   ))}
                 </div>

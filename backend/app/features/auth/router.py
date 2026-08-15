@@ -78,7 +78,9 @@ async def change_password(
 
 @router.post("/login", dependencies=[rate_limited(limit=10)])
 async def login(payload: LoginRequest, auth: AuthServiceDep, ctx: RequestContextDep) -> ApiResponse[LoginResponse]:
-    result = await auth.login(mobile=payload.mobile, password=payload.password, ctx=ctx)
+    result = await auth.login(
+        mobile=payload.mobile, password=payload.password, ctx=ctx, latitude=payload.latitude, longitude=payload.longitude
+    )
     return ApiResponse[LoginResponse].ok(result)
 
 

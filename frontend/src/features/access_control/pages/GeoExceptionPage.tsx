@@ -10,7 +10,12 @@ import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { Modal } from "@/components/overlays/Modal";
 import { createGeoException, listGeoExceptions, revokeGeoException, type GeoException } from "@/features/access_control/api";
 import { getErrorMessage } from "@/features/access_control/errors";
-import { listGeoFences, type GeoFence } from "@/features/geo_fencing/api";
+import { GEO_ACTIVITIES, listGeoFences, type GeoFence } from "@/features/geo_fencing/api";
+
+function activityLabel(activity: string | null): string {
+  if (!activity) return "All Activities";
+  return GEO_ACTIVITIES.find((a) => a.value === activity)?.label ?? activity;
+}
 
 function GrantExceptionModal({
   fences,
@@ -22,6 +27,7 @@ function GrantExceptionModal({
   onSaved: () => void;
 }) {
   const [employeeId, setEmployeeId] = useState("");
+  const [activity, setActivity] = useState("");
   const [geoFenceId, setGeoFenceId] = useState("");
   const [latitude, setLatitude] = useState("");
   const [longitude, setLongitude] = useState("");
@@ -51,6 +57,7 @@ function GrantExceptionModal({
     try {
       await createGeoException({
         employee_id: employeeId,
+        activity: activity || undefined,
         geo_fence_id: geoFenceId || undefined,
         latitude: latitude ? Number(latitude) : undefined,
         longitude: longitude ? Number(longitude) : undefined,
@@ -90,6 +97,13 @@ function GrantExceptionModal({
         <ErrorBanner message={error} />
         <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
           <EmployeeSelect label="Employee" value={employeeId} onChange={setEmployeeId} required />
+          <SelectField
+            label="Activity"
+            placeholder="All Activities"
+            value={activity}
+            onChange={(e) => setActivity(e.target.value)}
+            options={GEO_ACTIVITIES.map((a) => ({ value: a.value, label: a.label }))}
+          />
           <SelectField
             label="Geo Fence (optional)"
             placeholder="None — enter coordinates manually"
@@ -163,6 +177,7 @@ export function GeoExceptionPage() {
             <thead>
               <tr className="border-b border-border text-left text-text/60">
                 <th className="px-4 py-3">Employee</th>
+                <th className="px-4 py-3">Activity</th>
                 <th className="px-4 py-3">Location</th>
                 <th className="px-4 py-3">Window</th>
                 <th className="px-4 py-3">Reason</th>
@@ -174,6 +189,7 @@ export function GeoExceptionPage() {
               {items.map((item) => (
                 <tr key={item.id} className="border-b border-border last:border-0">
                   <td className="px-4 py-3">{employeeNames[item.employee_id] ?? item.employee_id}</td>
+                  <td className="px-4 py-3">{activityLabel(item.activity)}</td>
                   <td className="px-4 py-3">
                     {item.latitude.toFixed(4)}, {item.longitude.toFixed(4)} (±{item.radius_meters}m)
                   </td>

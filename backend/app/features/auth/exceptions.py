@@ -13,6 +13,16 @@ class AccountLockedError(AppError):
     http_status = status.HTTP_423_LOCKED
 
 
+class GeoFenceLoginDeniedError(AppError):
+    # Distinct code from the generic ForbiddenError `enforce_geo_fence` itself raises
+    # (`code = "forbidden"`, shared by every other permission-denial in the app) so the
+    # frontend can map a clear, login-specific message instead of the generic "You do
+    # not have permission to perform this action." — see AuthService.login, which
+    # catches the underlying ForbiddenError and re-raises this with the required copy.
+    code = "login_geo_fence_denied"
+    http_status = status.HTTP_403_FORBIDDEN
+
+
 class AlreadyRegisteredError(AppError):
     code = "already_registered"
     http_status = status.HTTP_409_CONFLICT

@@ -24,6 +24,7 @@ from app.features.auth.constants import (
 from app.features.auth.exceptions import (
     AccountLockedError,
     AlreadyRegisteredError,
+    GeoFenceLoginDeniedError,
     InvalidCredentialsError,
     InvalidRefreshTokenError,
     InvalidRoleForSignupError,
@@ -41,6 +42,8 @@ from app.features.auth.models import (
 from app.features.auth.repository import SessionRepository, UserRepository
 from app.features.auth.schemas import LoginResponse, ProfileResponse, TokenPairResponse
 from app.features.employee.repository import EmployeeRepository
+from app.features.geo_fencing.constants import GeoActivity
+from app.features.geo_fencing.enforcement import enforce_geo_fence
 from app.features.owner.repository import OwnerProfileRepository
 from app.security.hashing import hash_value
 from app.security.jwt import (
@@ -238,7 +241,9 @@ class AuthService:
 
     # ---------------------------------------------------------------- login / logout / refresh
 
-    async def login(self, *, mobile: str, password: str, ctx: RequestContext) -> LoginResponse:
+    async def login(
+        self, *, mobile: str, password: str, ctx: RequestContext, latitude: float | None = None, longitude: float | None = None
+    ) -> LoginResponse:
         if await lockout_service.is_locked(self._redis, mobile):
             raise AccountLockedError("Account is temporarily locked due to too many failed attempts.")
 
@@ -256,6 +261,21 @@ class AuthService:
 
         assert user is not None  # narrowed by _login_failure_reason returning None only when valid
         await lockout_service.reset_attempts(self._redis, mobile)
+
+        # Credentials are now fully trusted and `user.role` is known — the only safe
+        # place to check Geo-Fenced Login, strictly before any token is minted
+        # (issue_session, called next, is also shared with Owner-bootstrap registration
+        # and must stay untouched). Deliberately AFTER reset_attempts: a geo-fence denial
+        # is a location problem, not a credentials-guessing one, so it must never count
+        # toward the failed-login lockout counter. Reuses enforce_geo_fence completely
+        # unchanged (Owner bypass, opt-in-per-fence, GeoException check, haversine
+        # distance, audit logging) — only re-wrapped for a distinct user-facing message.
+        try:
+            await enforce_geo_fence(self._db, actor=user, activity=GeoActivity.LOGIN, latitude=latitude, longitude=longitude)
+        except ForbiddenError as exc:
+            raise GeoFenceLoginDeniedError(
+                "Login is restricted to an authorized location. Please move to your permitted location or contact your administrator."
+            ) from exc
 
         return await self.issue_session(user=user, ctx=ctx, login_method=LoginMethod.PASSWORD)
 

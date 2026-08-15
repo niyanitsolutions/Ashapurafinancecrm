@@ -382,3 +382,103 @@ async def test_geo_exception_via_geo_fence_id_prefills_location(client, owner_he
     assert data["latitude"] == 19.0760
     assert data["longitude"] == 72.8777
     assert data["radius_meters"] == 1000
+
+
+async def test_geo_exception_can_be_scoped_to_login_activity(client, owner_headers, master_data):
+    employee = await _create_employee(client, owner_headers, master_data)
+    now = utc_now()
+    r = await client.post(
+        "/api/v1/geo-exceptions",
+        json={
+            "employee_id": employee["id"], "activity": "login",
+            "latitude": 19.0760, "longitude": 72.8777, "radius_meters": 500,
+            "start_date": now.date().isoformat(), "end_date": (now + timedelta(days=1)).date().isoformat(),
+            "start_time": "09:00", "end_time": "23:59", "reason": "Work from home",
+        },
+        headers=owner_headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["activity"] == "login"
+
+    # Default/omitted activity still reads back as None (blanket — applies to every
+    # enforced activity), matching every exception granted before this field existed.
+    r2 = await client.post(
+        "/api/v1/geo-exceptions",
+        json={
+            "employee_id": employee["id"],
+            "latitude": 19.0760, "longitude": 72.8777, "radius_meters": 500,
+            "start_date": now.date().isoformat(), "end_date": (now + timedelta(days=1)).date().isoformat(),
+            "start_time": "09:00", "end_time": "23:59", "reason": "Blanket exception",
+        },
+        headers=owner_headers,
+    )
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["data"]["activity"] is None
+
+
+async def test_geo_exception_rejects_unknown_activity_value(client, owner_headers, master_data):
+    employee = await _create_employee(client, owner_headers, master_data)
+    now = utc_now()
+    r = await client.post(
+        "/api/v1/geo-exceptions",
+        json={
+            "employee_id": employee["id"], "activity": "skydiving",
+            "latitude": 19.0760, "longitude": 72.8777, "radius_meters": 500,
+            "start_date": now.date().isoformat(), "end_date": (now + timedelta(days=1)).date().isoformat(),
+            "start_time": "09:00", "end_time": "18:00", "reason": "Invalid activity",
+        },
+        headers=owner_headers,
+    )
+    assert r.status_code == 422, r.text
+
+
+async def test_geo_exception_rejects_same_day_end_time_not_after_start_time(client, owner_headers, master_data):
+    """The old date-only check (`end_date < start_date`) let a same-day window with
+    end_time <= start_time through uncaught — e.g. 09:00-09:00 or 18:00-09:00 on the
+    same day. Must now be rejected as an invalid period."""
+    employee = await _create_employee(client, owner_headers, master_data)
+    today = utc_now().date().isoformat()
+    r = await client.post(
+        "/api/v1/geo-exceptions",
+        json={
+            "employee_id": employee["id"],
+            "latitude": 19.0760, "longitude": 72.8777, "radius_meters": 500,
+            "start_date": today, "end_date": today,
+            "start_time": "18:00", "end_time": "09:00", "reason": "Invalid same-day window",
+        },
+        headers=owner_headers,
+    )
+    assert r.status_code == 422, r.text
+
+    r2 = await client.post(
+        "/api/v1/geo-exceptions",
+        json={
+            "employee_id": employee["id"],
+            "latitude": 19.0760, "longitude": 72.8777, "radius_meters": 500,
+            "start_date": today, "end_date": today,
+            "start_time": "09:00", "end_time": "09:00", "reason": "Zero-length window",
+        },
+        headers=owner_headers,
+    )
+    assert r2.status_code == 422, r2.text
+
+
+async def test_geo_exception_create_list_revoke_are_owner_only(client, employee_headers, master_data, owner_headers):
+    employee = await _create_employee(client, owner_headers, master_data)
+    now = utc_now()
+    payload = {
+        "employee_id": employee["id"],
+        "latitude": 19.0760, "longitude": 72.8777, "radius_meters": 500,
+        "start_date": now.date().isoformat(), "end_date": (now + timedelta(days=1)).date().isoformat(),
+        "start_time": "09:00", "end_time": "18:00", "reason": "Employee attempting self-service",
+    }
+    r = await client.post("/api/v1/geo-exceptions", json=payload, headers=employee_headers)
+    assert r.status_code == 403, r.text
+    r = await client.get(f"/api/v1/geo-exceptions?employee_id={employee['id']}", headers=employee_headers)
+    assert r.status_code == 403, r.text
+
+    # An Employee cannot even revoke an exception an Owner already granted to someone else.
+    granted = await client.post("/api/v1/geo-exceptions", json=payload, headers=owner_headers)
+    assert granted.status_code == 200, granted.text
+    r = await client.post(f"/api/v1/geo-exceptions/{granted.json()['data']['id']}/revoke", headers=employee_headers)
+    assert r.status_code == 403, r.text

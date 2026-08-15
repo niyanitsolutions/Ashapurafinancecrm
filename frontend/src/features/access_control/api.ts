@@ -67,6 +67,10 @@ export interface GeoException {
   end_time: string;
   reason: string;
   status: string;
+  // null = applies to every enforced activity (the original behavior, before a
+  // Login-specific exception could be scoped separately). A specific value (e.g.
+  // "login") restricts the exception to only that one activity.
+  activity: string | null;
 }
 
 export const PERMISSION_ACTIONS = [
@@ -180,6 +184,8 @@ export interface CreateGeoExceptionInput {
   start_time: string;
   end_time: string;
   reason: string;
+  // Omitted/undefined = applies to every enforced activity.
+  activity?: string;
 }
 
 export function listGeoExceptions(employeeId?: string) {

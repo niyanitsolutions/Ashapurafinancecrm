@@ -56,6 +56,13 @@ def _date_to_datetime(value: Any) -> datetime:
     return datetime(value.year, value.month, value.day, tzinfo=UTC)
 
 
+def _combine_date_time(value: Any, time_str: str) -> datetime:
+    # `time_str` is already validated against `_TIME_PATTERN` ("HH:MM") at the schema
+    # layer, so this parse can't fail here.
+    hour, minute = (int(part) for part in time_str.split(":"))
+    return datetime(value.year, value.month, value.day, hour, minute, tzinfo=UTC)
+
+
 class AccessControlService:
     def __init__(self, db: AsyncIOMotorDatabase[Any]) -> None:
         self._db = db
@@ -338,8 +345,14 @@ class AccessControlService:
     async def create_geo_exception(self, payload: CreateGeoExceptionRequest, owner: User) -> GeoException:
         if await self._employees.find_by_id(payload.employee_id) is None:
             raise ValidationError("Unknown employee_id.")
-        if payload.end_date < payload.start_date:
-            raise ValidationError("end_date must not be before start_date.")
+        # Full datetime comparison, not just dates — a same-day window with
+        # end_time <= start_time (e.g. 09:00-09:00 or 18:00-09:00 same day) must be
+        # rejected too, not just an outright end_date < start_date. The old date-only
+        # check let an invalid same-day period through.
+        start_at = _combine_date_time(payload.start_date, payload.start_time)
+        end_at = _combine_date_time(payload.end_date, payload.end_time)
+        if end_at <= start_at:
+            raise ValidationError("The exception's valid-until date/time must be after its valid-from date/time.")
 
         latitude, longitude, radius_meters = payload.latitude, payload.longitude, payload.radius_meters
         if payload.geo_fence_id:
@@ -362,6 +375,7 @@ class AccessControlService:
             start_time=payload.start_time,
             end_time=payload.end_time,
             reason=payload.reason,
+            activity=payload.activity,
             status=AccessGrantStatus.ACTIVE,
             created_by=owner.require_id(),
         )

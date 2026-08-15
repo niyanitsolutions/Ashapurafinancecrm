@@ -1,11 +1,11 @@
 """Geo Fencing constants.
 
-`GeoActivity` mirrors the spec's 5 named checkboxes so the frontend/data model can offer
-all of them, but only `LEAD_CREATION` and `DOCUMENT_COLLECTION` have a real enforcement
-hook wired up (see `enforcement.py`'s module docstring for why the other three don't map
-to any real single employee-initiated action in this codebase) — selecting them on a Geo
-Fence is accepted and stored, just inert, same "reserved value" posture this codebase
-already uses elsewhere (e.g. `IntegrationConfig.health_status`).
+`GeoActivity` mirrors the spec's named checkboxes so the frontend/data model can offer
+all of them, but only `LEAD_CREATION`, `DOCUMENT_COLLECTION`, and `LOGIN` have a real
+enforcement hook wired up (see `enforcement.py`'s module docstring for why the other
+three don't map to any real single employee-initiated action in this codebase) —
+selecting them on a Geo Fence is accepted and stored, just inert, same "reserved value"
+posture this codebase already uses elsewhere (e.g. `IntegrationConfig.health_status`).
 """
 
 
@@ -15,9 +15,10 @@ class GeoActivity:
     DOCUMENT_COLLECTION = "document_collection"
     LOAN_APPLICATION = "loan_application"
     INSURANCE_APPLICATION = "insurance_application"
+    LOGIN = "login"
 
-    ALL = (LEAD_CREATION, CUSTOMER_VISIT, DOCUMENT_COLLECTION, LOAN_APPLICATION, INSURANCE_APPLICATION)
-    ENFORCED = (LEAD_CREATION, DOCUMENT_COLLECTION)
+    ALL = (LEAD_CREATION, CUSTOMER_VISIT, DOCUMENT_COLLECTION, LOAN_APPLICATION, INSURANCE_APPLICATION, LOGIN)
+    ENFORCED = (LEAD_CREATION, DOCUMENT_COLLECTION, LOGIN)
 
 
 class GeoFenceStatus:

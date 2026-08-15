@@ -51,6 +51,12 @@ class ChangePasswordRequest(BaseModel):
 class LoginRequest(BaseModel):
     mobile: MobileStr
     password: str
+    # Optional — only meaningful for an Employee actor when an Owner has configured an
+    # active Geo Fence with "login" in its allowed_activities (see
+    # geo_fencing/enforcement.py::enforce_geo_fence, reused as-is from AuthService.login).
+    # Owner/Customer/Referral Partner logins are unaffected either way.
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
 
 
 class TokenPairResponse(BaseModel):
