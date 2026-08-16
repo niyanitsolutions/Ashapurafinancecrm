@@ -268,7 +268,6 @@ export const router = createBrowserRouter([
               { path: "/settings/departments", element: <DepartmentsPage /> },
               { path: "/settings/designations", element: <DesignationsPage /> },
               { path: "/temporary-access", element: <TemporaryAccessPage /> },
-              { path: "/geo-exceptions", element: <GeoExceptionPage /> },
             ],
           },
           {
@@ -308,6 +307,7 @@ export const router = createBrowserRouter([
                   { path: "/settings/insurance-products", element: <InsuranceProductsPage /> },
                   { path: "/settings/document-types", element: <DocumentTypesPage /> },
                   { path: "/settings/geo-fencing", element: <GeoFencingPage /> },
+                  { path: "/geo-exceptions", element: <GeoExceptionPage /> },
                   { path: "/settings/communication-providers", element: <CommunicationProvidersPage /> },
                   { path: "/settings/reminder-rules", element: <ReminderRulesPage /> },
                   { path: "/settings/branches", element: <BranchesPage /> },
@@ -323,19 +323,27 @@ export const router = createBrowserRouter([
               // which already covers the same providers with real Test Connection —
               // redirect rather than a dead link for anyone with the old URL bookmarked.
               { path: "/settings/api-settings", element: <Navigate to="/integrations" replace /> },
-              // Module 7 — Owner-side Referral Partners management (partner list,
-              // commission rules/ledger). The Referral Partner's own login portal
-              // (/referral-portal/*) is a separate role's destination and is unaffected —
-              // see router's own portal block below.
+              // Module 7 — Commission Rules/Ledger stay Owner-only (require_owner
+              // server-side, no Employee role for those). Referral Partners' own list
+              // moved out of this RequireOwner block (see below) once its backend
+              // gate became require_permission for an Employee with the right grant.
               {
                 element: <ReferralPartnersLayout />,
                 children: [
-                  { path: "/referral-partners", element: <ReferralPartnerListPage /> },
                   { path: "/commission-rules", element: <CommissionRulesPage /> },
                   { path: "/commission-ledger", element: <CommissionLedgerPage /> },
                 ],
               },
             ],
+          },
+          // Module 7 — Referral Partners list/create, permission-gated server-side
+          // (require_permission("referral_partner_management", "partners", action)),
+          // not require_owner — so, like /leads and /communication, it stays outside
+          // RequireOwner. Approve/deactivate (inside ReferralPartnerListPage itself)
+          // remain Owner-only, enforced server-side regardless of this route guard.
+          {
+            element: <ReferralPartnersLayout />,
+            children: [{ path: "/referral-partners", element: <ReferralPartnerListPage /> }],
           },
         ],
       },

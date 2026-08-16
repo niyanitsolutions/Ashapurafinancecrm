@@ -8,6 +8,7 @@ import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { EmptyState } from "@/components/layout/EmptyState";
 import { Pagination } from "@/components/tables/Pagination";
 import { Table, TableBody, TableHead, TableHeadRow, TableRow, Td, Th } from "@/components/tables/DataTable";
+import { usePermissions } from "@/features/access_control/usePermissions";
 import { GenerateLinkModal } from "@/features/leads/components/GenerateLinkModal";
 import { ASSIGNED_SENTINEL, UNASSIGNED_SENTINEL, exportLeadsCsvUrl, listLeads, type LeadListItem } from "@/features/leads/api";
 import { getErrorMessage } from "@/features/leads/errors";
@@ -64,6 +65,10 @@ async function downloadLeadsCsv(setError: (msg: string | null) => void) {
 }
 
 export function LeadListPage({ assignedOnly }: { assignedOnly: boolean }) {
+  const { can } = usePermissions();
+  const canCreate = can("leads:leads", "create");
+  const canEdit = can("leads:leads", "edit");
+  const canExport = can("leads:leads", "export");
   const [items, setItems] = useState<LeadListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -173,21 +178,25 @@ export function LeadListPage({ assignedOnly }: { assignedOnly: boolean }) {
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <Button
-                variant="secondary"
-                size="sm"
-                icon={<Icon name="download" className="h-4 w-4 text-textSecondary" />}
-                onClick={() => downloadLeadsCsv(setError)}
-              >
-                Export
-              </Button>
-              <Link
-                to="/leads/new"
-                className={`${BUTTON_BASE_CLASSES} ${BUTTON_VARIANT_CLASSES.primary} ${BUTTON_SIZE_CLASSES.sm}`}
-              >
-                <Icon name="plus" className="h-4 w-4" />
-                Create Lead
-              </Link>
+              {canExport && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={<Icon name="download" className="h-4 w-4 text-textSecondary" />}
+                  onClick={() => downloadLeadsCsv(setError)}
+                >
+                  Export
+                </Button>
+              )}
+              {canCreate && (
+                <Link
+                  to="/leads/new"
+                  className={`${BUTTON_BASE_CLASSES} ${BUTTON_VARIANT_CLASSES.primary} ${BUTTON_SIZE_CLASSES.sm}`}
+                >
+                  <Icon name="plus" className="h-4 w-4" />
+                  Create Lead
+                </Link>
+              )}
             </div>
           </div>
 
@@ -277,7 +286,7 @@ export function LeadListPage({ assignedOnly }: { assignedOnly: boolean }) {
                           icon="leads"
                           title="You haven't created any leads yet"
                           description="Create your first lead to begin tracking a prospect through to a loan or insurance application."
-                          primaryAction={{ label: "Create Lead", to: "/leads/new" }}
+                          primaryAction={canCreate ? { label: "Create Lead", to: "/leads/new" } : undefined}
                         />
                       )}
                     </td>
@@ -331,7 +340,7 @@ export function LeadListPage({ assignedOnly }: { assignedOnly: boolean }) {
                         <div className="flex items-center gap-2">
                           <ActionButton to={`/leads/${lead.id}`} variant="view" />
                           <ActionButton variant="link" onClick={() => setLinkModalLead(lead)} />
-                          <ActionButton to={`/leads/${lead.id}`} state={{ startEditing: true }} variant="edit" />
+                          {canEdit && <ActionButton to={`/leads/${lead.id}`} state={{ startEditing: true }} variant="edit" />}
                         </div>
                       </Td>
                     </TableRow>

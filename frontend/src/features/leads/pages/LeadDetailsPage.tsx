@@ -7,6 +7,7 @@ import { FormField } from "@/components/forms/FormField";
 import { SubmitButton } from "@/components/forms/SubmitButton";
 import { TextareaField } from "@/components/forms/TextareaField";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { usePermissions } from "@/features/access_control/usePermissions";
 import { MessagesPanel } from "@/features/communication/components/MessagesPanel";
 import { SendMessageModal } from "@/features/communication/components/SendMessageModal";
 import { GenerateLinkModal } from "@/features/leads/components/GenerateLinkModal";
@@ -88,6 +89,11 @@ function TimelineItem({ entry }: { entry: TimelineEntry }) {
 }
 
 export function LeadDetailsPage() {
+  const { can } = usePermissions();
+  const canEdit = can("leads:leads", "edit");
+  const canAssign = can("leads:leads", "assign");
+  const canAddTask = can("reminders:tasks", "create");
+  const canSendMessage = can("communication:send", "create");
   const { leadId } = useParams<{ leadId: string }>();
   const location = useLocation();
   const [lead, setLead] = useState<LeadDetail | null>(null);
@@ -179,9 +185,9 @@ export function LeadDetailsPage() {
             <>
               <HeaderButton icon="print" label="Print" onClick={() => window.print()} />
               <HeaderButton icon="link" label="Generate Link" onClick={() => setIsLinkModalOpen(true)} />
-              <HeaderButton icon="chat" label="Send Message" onClick={() => setIsSendMessageOpen(true)} />
-              <HeaderButton icon="tasks" label="Add Task" onClick={() => setIsTaskModalOpen(true)} />
-              <HeaderButton icon="edit" label="Edit" onClick={() => setIsEditing(true)} primary />
+              {canSendMessage && <HeaderButton icon="chat" label="Send Message" onClick={() => setIsSendMessageOpen(true)} />}
+              {canAddTask && <HeaderButton icon="tasks" label="Add Task" onClick={() => setIsTaskModalOpen(true)} />}
+              {canEdit && <HeaderButton icon="edit" label="Edit" onClick={() => setIsEditing(true)} primary />}
             </>
           )}
         </div>
@@ -239,36 +245,38 @@ export function LeadDetailsPage() {
           )}
         </div>
 
-        <div className="bg-card border border-border rounded-card shadow-card p-6 space-y-3">
-          <h3 className="text-sm font-semibold text-text/70">Assignment</h3>
-          {lead.assigned_to ? (
-            <Button
-              variant="secondary"
-              size="sm"
-              className="w-full"
-              onClick={() => runAction(() => unassignLead(leadId), "Lead unassigned.")}
-            >
-              Unassign ({lead.assigned_to_name})
-            </Button>
-          ) : (
-            <div className="space-y-2">
-              <EligibleAssigneeSelect
-                productCategory={lead.product_category}
-                productId={lead.product_id}
-                value={assigneeId}
-                onChange={setAssigneeId}
-              />
+        {canAssign && (
+          <div className="bg-card border border-border rounded-card shadow-card p-6 space-y-3">
+            <h3 className="text-sm font-semibold text-text/70">Assignment</h3>
+            {lead.assigned_to ? (
               <Button
+                variant="secondary"
                 size="sm"
                 className="w-full"
-                disabled={!assigneeId}
-                onClick={() => runAction(() => assignLead(leadId, assigneeId), "Lead assigned.")}
+                onClick={() => runAction(() => unassignLead(leadId), "Lead unassigned.")}
               >
-                Assign
+                Unassign ({lead.assigned_to_name})
               </Button>
-            </div>
-          )}
-        </div>
+            ) : (
+              <div className="space-y-2">
+                <EligibleAssigneeSelect
+                  productCategory={lead.product_category}
+                  productId={lead.product_id}
+                  value={assigneeId}
+                  onChange={setAssigneeId}
+                />
+                <Button
+                  size="sm"
+                  className="w-full"
+                  disabled={!assigneeId}
+                  onClick={() => runAction(() => assignLead(leadId, assigneeId), "Lead assigned.")}
+                >
+                  Assign
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="mt-6 bg-card border border-border rounded-card shadow-card p-6">

@@ -20,6 +20,8 @@ from app.features.leads.schemas import (
     EligibleAssigneeResponse,
     LeadDetailResponse,
     LeadListItem,
+    LeadLookupResponse,
+    LookupItem,
     NoteResponse,
     TimelineEntryResponse,
     UpdateLeadRequest,
@@ -60,6 +62,20 @@ async def list_leads(
         for lead in leads
     ]
     return ApiResponse[list[LeadListItem]].ok(items, meta=ResponseMeta(pagination=page.build_meta(total)))
+
+
+@router.get("/lookup")
+async def get_lookup_data(service: ServiceDep, actor: Annotated[User, _perm("view")]) -> ApiResponse[LeadLookupResponse]:
+    # Backs the Create Lead form's Source/Product dropdowns — gated on leads:leads:view
+    # (not system_settings:lead_sources:view etc.), see LeadService.get_lookup_data.
+    sources, loan_products, insurance_products = await service.get_lookup_data()
+    return ApiResponse[LeadLookupResponse].ok(
+        LeadLookupResponse(
+            sources=[LookupItem(id=s.require_id(), name=s.name) for s in sources],
+            loan_products=[LookupItem(id=p.require_id(), name=p.name) for p in loan_products],
+            insurance_products=[LookupItem(id=p.require_id(), name=p.name) for p in insurance_products],
+        )
+    )
 
 
 @router.get("/export")

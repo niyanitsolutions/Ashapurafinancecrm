@@ -1,4 +1,4 @@
-import { apiRequest } from "@/shared/api/client";
+import { apiRequest, apiRequestRaw, type PaginationMeta } from "@/shared/api/client";
 
 export interface Role {
   id: string;
@@ -188,13 +188,39 @@ export interface CreateGeoExceptionInput {
   activity?: string;
 }
 
-export function listGeoExceptions(employeeId?: string) {
-  const qs = employeeId ? `?employee_id=${employeeId}` : "";
-  return apiRequest<GeoException[]>(`/geo-exceptions${qs}`);
+export interface GeoExceptionListParams {
+  employeeId?: string;
+  page?: number;
+  page_size?: number;
+}
+
+export async function listGeoExceptions(
+  params: GeoExceptionListParams = {}
+): Promise<{ items: GeoException[]; pagination: PaginationMeta | null }> {
+  const qs = new URLSearchParams();
+  if (params.employeeId) qs.set("employee_id", params.employeeId);
+  if (params.page) qs.set("page", String(params.page));
+  if (params.page_size) qs.set("page_size", String(params.page_size));
+  const query = qs.toString();
+  const res = await apiRequestRaw<GeoException[]>(`/geo-exceptions${query ? `?${query}` : ""}`);
+  return { items: res.data ?? [], pagination: res.meta?.pagination ?? null };
 }
 export function createGeoException(payload: CreateGeoExceptionInput) {
   return apiRequest<GeoException>("/geo-exceptions", { method: "POST", body: JSON.stringify(payload) });
 }
 export function revokeGeoException(id: string) {
   return apiRequest<GeoException>(`/geo-exceptions/${id}/revoke`, { method: "POST" });
+}
+
+// ---- my-permissions (UI support) ----
+
+export interface MyPermissions {
+  // "module:resource" -> granted actions, e.g. { "leads:leads": ["view", "create"] }.
+  // Empty for Owner — callers should short-circuit on role === "owner" before ever
+  // consulting this, never treat an empty object as "no access" for an Owner session.
+  grants: Record<string, string[]>;
+}
+
+export function getMyPermissions() {
+  return apiRequest<MyPermissions>("/my-permissions");
 }

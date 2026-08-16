@@ -49,6 +49,12 @@ async def _create_role(client, owner_headers, name="Loan Officer"):
     return r.json()["data"]
 
 
+async def _login(client, mobile, password="InitialPass1!"):
+    r = await client.post("/api/v1/auth/login", json={"mobile": mobile, "password": password})
+    assert r.status_code == 200, r.text
+    return {"Authorization": f"Bearer {r.json()['data']['access_token']}"}
+
+
 # ---------------------------------------------------------------------- roles
 
 
@@ -481,4 +487,94 @@ async def test_geo_exception_create_list_revoke_are_owner_only(client, employee_
     granted = await client.post("/api/v1/geo-exceptions", json=payload, headers=owner_headers)
     assert granted.status_code == 200, granted.text
     r = await client.post(f"/api/v1/geo-exceptions/{granted.json()['data']['id']}/revoke", headers=employee_headers)
+    assert r.status_code == 403, r.text
+
+
+async def test_geo_exceptions_are_paginated(client, owner_headers, master_data):
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9211119001", email="pag.geo@example.com")
+    now = utc_now()
+    for i in range(3):
+        await client.post(
+            "/api/v1/geo-exceptions",
+            json={
+                "employee_id": employee["id"],
+                "latitude": 19.0760, "longitude": 72.8777, "radius_meters": 500,
+                "start_date": now.date().isoformat(), "end_date": (now + timedelta(days=1)).date().isoformat(),
+                "start_time": "09:00", "end_time": "18:00", "reason": f"Exception {i}",
+            },
+            headers=owner_headers,
+        )
+    r = await client.get("/api/v1/geo-exceptions?page=1&page_size=2", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert len(r.json()["data"]) == 2
+    assert r.json()["meta"]["pagination"]["total"] == 3
+    assert r.json()["meta"]["pagination"]["total_pages"] == 2
+
+
+# ---------------------------------------------------------------------- my-permissions (UI support)
+
+
+async def test_my_permissions_empty_for_owner(client, owner_headers):
+    r = await client.get("/api/v1/my-permissions", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    # Owner is unrestricted — the frontend must never gate Owner UI on this endpoint,
+    # so it deliberately returns nothing rather than an enormous "everything" list.
+    assert r.json()["data"]["grants"] == {}
+
+
+async def test_my_permissions_empty_for_employee_with_no_roles(client, employee_headers):
+    r = await client.get("/api/v1/my-permissions", headers=employee_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["grants"] == {}
+
+
+async def test_my_permissions_reflects_employee_grants_exactly(client, owner_headers, master_data):
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9211119002", email="myperm@example.com")
+    headers = await _login(client, "9211119002")
+
+    # Before any grant — empty.
+    r = await client.get("/api/v1/my-permissions", headers=headers)
+    assert r.json()["data"]["grants"] == {}
+
+    leads_permission = await _create_permission(client, owner_headers, module="leads", resource="leads", actions=["view", "create", "edit", "assign", "export"])
+    customer_permission = await _create_permission(client, owner_headers, module="customer", resource="customers", actions=["view", "create", "edit"])
+    role = await _create_role(client, owner_headers, name="Grants Test Role")
+    await client.put(
+        f"/api/v1/roles/{role['id']}/permissions",
+        json={
+            "grants": [
+                {"permission_id": leads_permission["id"], "granted_actions": ["view", "create"]},
+                {"permission_id": customer_permission["id"], "granted_actions": ["view"]},
+            ]
+        },
+        headers=owner_headers,
+    )
+    await client.post(f"/api/v1/roles/{role['id']}/assign", json={"employee_id": employee["id"]}, headers=owner_headers)
+
+    r = await client.get("/api/v1/my-permissions", headers=headers)
+    assert r.status_code == 200, r.text
+    grants = r.json()["data"]["grants"]
+    assert set(grants["leads:leads"]) == {"view", "create"}
+    assert set(grants["customer:customers"]) == {"view"}
+    # Never granted anything for loan_management — must not appear in the response.
+    assert "loan_management:applications" not in grants
+    # "edit" was never granted for leads either, even though it's a checked action.
+    assert "edit" not in grants["leads:leads"]
+
+
+async def test_my_permissions_never_authoritative_for_writes(client, owner_headers, master_data):
+    """This endpoint is UI support only — confirms the real gate (require_permission on
+    the actual route) is untouched by it: an Employee whose /my-permissions shows no
+    leads:leads:create grant is still, independently, rejected by POST /leads itself."""
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9211119003", email="notauthoritative@example.com")
+    headers = await _login(client, "9211119003")
+
+    r = await client.get("/api/v1/my-permissions", headers=headers)
+    assert "leads:leads" not in r.json()["data"]["grants"]
+
+    r = await client.post(
+        "/api/v1/leads",
+        json={"full_name": "X", "mobile": "9611190001", "source_id": "000000000000000000000000", "product_category": "loan", "product_id": "000000000000000000000000"},
+        headers=headers,
+    )
     assert r.status_code == 403, r.text

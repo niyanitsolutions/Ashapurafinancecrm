@@ -3,6 +3,7 @@ import { Button } from "@/components/buttons/Button";
 import { EmptyState } from "@/components/layout/EmptyState";
 import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
 import { Modal } from "@/components/overlays/Modal";
+import { usePermissions } from "@/features/access_control/usePermissions";
 import {
   cancelBulkMessageJob,
   createBulkMessageJob,
@@ -32,6 +33,8 @@ const STATUS_LABEL: Record<string, string> = { queued: "Queued", processing: "Pr
 type Recipient = { id: string; full_name: string; mobile: string; email: string | null };
 
 export function BulkMessagesSection({ run }: { run: (action: () => Promise<unknown>, successMessage: string, after?: () => void) => void }) {
+  const { can } = usePermissions();
+  const canCreate = can("communication:bulk", "create");
   const [showComposer, setShowComposer] = useState(false);
   const [jobs, setJobs] = useState<BulkMessageJobListItem[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
@@ -46,9 +49,11 @@ export function BulkMessagesSection({ run }: { run: (action: () => Promise<unkno
     <div>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-text/60">Send one message to many Leads or Customers at once — queued through the same background delivery pipeline as every other message.</p>
-        <Button size="sm" onClick={() => setShowComposer(true)}>
-          + New Bulk Message
-        </Button>
+        {canCreate && (
+          <Button size="sm" onClick={() => setShowComposer(true)}>
+            + New Bulk Message
+          </Button>
+        )}
       </div>
 
       {showComposer && (
@@ -63,7 +68,7 @@ export function BulkMessagesSection({ run }: { run: (action: () => Promise<unkno
       )}
 
       {jobs.length === 0 ? (
-        <EmptyState icon="communication" title="No bulk messages yet" description="Send your first bulk message to a group of Leads or Customers." primaryAction={{ label: "+ New Bulk Message", onClick: () => setShowComposer(true) }} />
+        <EmptyState icon="communication" title="No bulk messages yet" description="Send your first bulk message to a group of Leads or Customers." primaryAction={canCreate ? { label: "+ New Bulk Message", onClick: () => setShowComposer(true) } : undefined} />
       ) : (
         <div className="bg-card border border-border rounded-card shadow-card overflow-x-auto">
           <table className="w-full text-sm">
@@ -256,6 +261,8 @@ function BulkJobDetailPanel({
   run: (action: () => Promise<unknown>, successMessage: string, after?: () => void) => void;
   onChanged: () => void;
 }) {
+  const { can } = usePermissions();
+  const canEdit = can("communication:bulk", "edit");
   const [job, setJob] = useState<BulkMessageJobDetail | null>(null);
   const [failed, setFailed] = useState<QueueItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -289,7 +296,7 @@ function BulkJobDetailPanel({
             <Button variant="secondary" size="sm" onClick={onViewFailed}>
               View Failed
             </Button>
-            {job.failed > 0 && (
+            {canEdit && job.failed > 0 && (
               <Button
                 variant="secondary" size="sm"
                 onClick={() => run(() => retryBulkMessageJobFailed(jobId), "Failed messages re-queued.", () => { load(); onChanged(); })}
@@ -297,7 +304,7 @@ function BulkJobDetailPanel({
                 Retry Failed
               </Button>
             )}
-            {(job.status === "queued" || job.status === "processing") && (
+            {canEdit && (job.status === "queued" || job.status === "processing") && (
               <Button variant="danger" size="sm" onClick={() => setConfirmCancel(true)}>
                 Cancel
               </Button>

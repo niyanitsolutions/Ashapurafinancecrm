@@ -12,6 +12,7 @@ const TABS = [
   { label: "Document Types", to: "/settings/document-types", matchKey: "settings" },
   { label: "Status Masters", to: "/settings/status-masters", matchKey: "settings" },
   { label: "Geo Fencing", to: "/settings/geo-fencing", matchKey: "settings" },
+  { label: "Geo Exceptions", to: "/geo-exceptions", matchKey: "geo_exceptions" },
   { label: "Communication Providers", to: "/settings/communication-providers", matchKey: "settings" },
   { label: "Notification Templates", to: "/settings/notification-templates", matchKey: "settings" },
   { label: "Lead Sources", to: "/settings/lead-sources", matchKey: "settings" },

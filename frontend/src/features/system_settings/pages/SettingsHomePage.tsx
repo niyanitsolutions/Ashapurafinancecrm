@@ -38,6 +38,10 @@ const SECTIONS: SettingsSection[] = [
     label: "Security & Location",
     items: [
       { to: "/settings/geo-fencing", icon: "map-pin", title: "Geo Fencing", description: "Configure location-based activity controls." },
+      {
+        to: "/geo-exceptions", icon: "shield-check", title: "Geo Exceptions",
+        description: "Allow specific employees to temporarily work outside an authorized location.",
+      },
     ],
   },
   {

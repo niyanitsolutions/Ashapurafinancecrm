@@ -370,6 +370,37 @@ async def test_check_duplicate_includes_own_unassigned_leads(client, mock_db, ow
     assert [m["id"] for m in r.json()["data"]["matches"]] == [lead["id"]]
 
 
+# ---------------------------------------------------------------------- lookup data (Create Lead form)
+
+
+async def test_lead_lookup_available_to_leads_view_without_settings_permission(client, mock_db, owner_headers, master_data):
+    """Regression test for a real production bug: an employee with only leads:leads
+    granted (no system_settings:lead_sources/loan_products/insurance_products) must be
+    able to load the Create Lead form's dropdowns via GET /leads/lookup — it must not
+    require Settings administration access."""
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9766668001", email="lookup@example.com")
+    await _grant_leads_view_create(client, owner_headers, employee["id"], role_name="Lookup Role")
+    headers = await _login(client, "9766668001")
+
+    r = await client.get("/api/v1/leads/lookup", headers=headers)
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert any(s["id"] == lmd["source_id"] for s in data["sources"])
+    assert any(p["id"] == lmd["loan_product_id"] for p in data["loan_products"])
+    assert any(p["id"] == lmd["insurance_product_id"] for p in data["insurance_products"])
+
+    # Confirm this employee genuinely has no Settings grant — the lookup succeeding is
+    # not because they were accidentally also granted system_settings access.
+    r = await client.get("/api/v1/lead-sources", headers=headers)
+    assert r.status_code == 403, r.text
+
+
+async def test_lead_lookup_denied_without_leads_view(client, mock_db, employee_headers):
+    r = await client.get("/api/v1/leads/lookup", headers=employee_headers)
+    assert r.status_code == 403, r.text
+
+
 # ---------------------------------------------------------------------- permission truth table (view/create/edit independence)
 
 

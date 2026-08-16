@@ -531,6 +531,31 @@ async def test_document_verify_reject_require_customer_edit_permission(client, m
     assert r.status_code == 404, r.text  # past the permission gate now, fails on "not found" instead
 
 
+async def test_customer_permission_truth_table(client, mock_db, owner_headers, master_data):
+    """The 4-case permission truth table (Part 10), for Customers specifically. Customer
+    has no staff-facing "create" route today (customers are only created via lead
+    conversion/self-registration — see customer:customers's own catalog note), so the
+    real, testable axis here is view (GET /customers) and edit (PATCH .../verify) — the
+    "no permission" and "view only" cases are covered explicitly; view+edit is covered by
+    test_document_verify_reject_require_customer_edit_permission above, not duplicated."""
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9500000012", email="truthtable.customer@example.com")
+    headers = await _login(client, "9500000012", "InitialPass1!")
+    dummy_id = "000000000000000000000000"
+
+    # CASE 1: no permission at all — GET and PATCH both denied.
+    r = await client.get("/api/v1/customers", headers=headers)
+    assert r.status_code == 403, r.text
+    r = await client.patch(f"/api/v1/applications/{dummy_id}/documents/{dummy_id}/verify", headers=headers)
+    assert r.status_code == 403, r.text
+
+    # CASE 2: view only — GET allowed, PATCH still denied.
+    await _grant_customer_permission(client, owner_headers, employee["id"], ["view"], role_name="Truth Table View Only")
+    r = await client.get("/api/v1/customers", headers=headers)
+    assert r.status_code == 200, r.text
+    r = await client.patch(f"/api/v1/applications/{dummy_id}/documents/{dummy_id}/verify", headers=headers)
+    assert r.status_code == 403, r.text
+
+
 async def test_owner_customer_access_unaffected_by_new_permission_gate(client, mock_db, owner_headers):
     # Owner holds zero explicit grants anywhere — PermissionEngine's unconditional Owner
     # bypass means the new customer:customers gate never blocks them.

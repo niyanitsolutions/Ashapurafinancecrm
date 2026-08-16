@@ -7,7 +7,9 @@ import { SelectField } from "@/components/forms/SelectField";
 import { useEmployeeNameMap } from "@/components/forms/useEmployeeNameMap";
 import { EmptyState } from "@/components/layout/EmptyState";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
 import { Modal } from "@/components/overlays/Modal";
+import { Pagination } from "@/components/tables/Pagination";
 import { createGeoException, listGeoExceptions, revokeGeoException, type GeoException } from "@/features/access_control/api";
 import { getErrorMessage } from "@/features/access_control/errors";
 import { GEO_ACTIVITIES, listGeoFences, type GeoFence } from "@/features/geo_fencing/api";
@@ -16,6 +18,27 @@ function activityLabel(activity: string | null): string {
   if (!activity) return "All Activities";
   return GEO_ACTIVITIES.find((a) => a.value === activity)?.label ?? activity;
 }
+
+// The DB only ever stores "active"/"revoked" (see GeoException's own docstring — same
+// lazy-evaluation convention as the sibling TemporaryAccess model: "expired" is never
+// stored, only ever computed at read/enforcement time). Combines end_date + end_time
+// into a real datetime for comparison, matching backend/app/utils/datetime.py's own
+// `within_daily_window` end-of-window semantics.
+type DisplayStatus = "active" | "expired" | "revoked";
+
+function displayStatus(item: GeoException, now: Date): DisplayStatus {
+  if (item.status === "revoked") return "revoked";
+  const [hour, minute] = item.end_time.split(":").map(Number);
+  const end = new Date(item.end_date);
+  end.setHours(hour, minute, 0, 0);
+  return now > end ? "expired" : "active";
+}
+
+const STATUS_BADGE: Record<DisplayStatus, string> = {
+  active: "bg-success/10 text-success",
+  expired: "bg-text/10 text-text/50",
+  revoked: "bg-danger/10 text-danger",
+};
 
 function GrantExceptionModal({
   fences,
@@ -125,42 +148,57 @@ function GrantExceptionModal({
   );
 }
 
-// Enforced server-side by app/features/geo_fencing/enforcement.py for lead_creation and
-// document_collection — see docs/GEO_FENCING.md. Selecting a Geo Fence in the modal
-// prefills latitude/longitude/radius from it; the fields stay editable to override if needed.
+// Owner-only end to end: the route is wrapped in RequireOwner (frontend) and every
+// /geo-exceptions endpoint is gated require_owner (backend) — see
+// access_control/dependencies.py. This page never needs its own extra role check.
+// Enforced server-side by app/features/geo_fencing/enforcement.py for lead_creation,
+// document_collection, and login — see docs/GEO_FENCING.md. Selecting a Geo Fence in
+// the modal prefills latitude/longitude/radius from it; the fields stay editable to
+// override if needed.
 export function GeoExceptionPage() {
   const employeeNames = useEmployeeNameMap();
   const [items, setItems] = useState<GeoException[]>([]);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
   const [fences, setFences] = useState<GeoFence[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [revokeTarget, setRevokeTarget] = useState<GeoException | null>(null);
 
   const load = () => {
-    listGeoExceptions().then(setItems).catch((err) => setError(getErrorMessage(err)));
+    listGeoExceptions({ page, page_size: pageSize })
+      .then(({ items: fetched, pagination }) => {
+        setItems(fetched);
+        setTotal(pagination?.total ?? fetched.length);
+        setTotalPages(pagination?.total_pages ?? 1);
+      })
+      .catch((err) => setError(getErrorMessage(err)));
   };
 
-  useEffect(load, []);
+  useEffect(load, [page, pageSize]);
   useEffect(() => {
     listGeoFences({ page_size: 100, status: "active" })
       .then(({ items }) => setFences(items))
       .catch(() => setFences([]));
   }, []);
 
-  const onRevoke = async (id: string) => {
+  const onRevoke = async () => {
+    if (!revokeTarget) return;
     setError(null);
-    try {
-      await revokeGeoException(id);
-      load();
-    } catch (err) {
-      setError(getErrorMessage(err));
-    }
+    await revokeGeoException(revokeTarget.id);
+    setRevokeTarget(null);
+    load();
   };
+
+  const now = new Date();
 
   return (
     <SimplePageLayout
-      title="Geo-fencing Exceptions"
+      title="Geo Exceptions"
       subtitle="Grant temporary location exceptions to individual employees."
-      actions={<Button size="sm" onClick={() => setIsModalOpen(true)}>+ Grant Exception</Button>}
+      actions={<Button size="sm" onClick={() => setIsModalOpen(true)}>+ Add Geo Exception</Button>}
     >
       <ErrorBanner message={error} />
 
@@ -169,47 +207,62 @@ export function GeoExceptionPage() {
           icon="map-pin"
           title="No geo exceptions yet"
           description="Grant a geo-fencing exception to let an employee act outside a configured fence for a limited window."
-          primaryAction={{ label: "+ Grant Exception", onClick: () => setIsModalOpen(true) }}
+          primaryAction={{ label: "+ Add Geo Exception", onClick: () => setIsModalOpen(true) }}
         />
       ) : (
-        <div className="bg-card border border-border rounded-card shadow-card overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-left text-text/60">
-                <th className="px-4 py-3">Employee</th>
-                <th className="px-4 py-3">Activity</th>
-                <th className="px-4 py-3">Location</th>
-                <th className="px-4 py-3">Window</th>
-                <th className="px-4 py-3">Reason</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((item) => (
-                <tr key={item.id} className="border-b border-border last:border-0">
-                  <td className="px-4 py-3">{employeeNames[item.employee_id] ?? item.employee_id}</td>
-                  <td className="px-4 py-3">{activityLabel(item.activity)}</td>
-                  <td className="px-4 py-3">
-                    {item.latitude.toFixed(4)}, {item.longitude.toFixed(4)} (±{item.radius_meters}m)
-                  </td>
-                  <td className="px-4 py-3">
-                    {item.start_date} → {item.end_date}, {item.start_time}–{item.end_time}
-                  </td>
-                  <td className="px-4 py-3">{item.reason}</td>
-                  <td className="px-4 py-3 capitalize">{item.status}</td>
-                  <td className="px-4 py-3">
-                    {item.status === "active" && (
-                      <button type="button" onClick={() => onRevoke(item.id)} className="text-danger hover:underline text-xs">
-                        Revoke
-                      </button>
-                    )}
-                  </td>
+        <>
+          <div className="bg-card border border-border rounded-card shadow-card overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border text-left text-text/60">
+                  <th className="px-4 py-3">Employee</th>
+                  <th className="px-4 py-3">Activity</th>
+                  <th className="px-4 py-3">Start</th>
+                  <th className="px-4 py-3">End</th>
+                  <th className="px-4 py-3">Reason</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3" />
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {items.map((item) => {
+                  const status = displayStatus(item, now);
+                  return (
+                    <tr key={item.id} className="border-b border-border last:border-0">
+                      <td className="px-4 py-3">{employeeNames[item.employee_id] ?? item.employee_id}</td>
+                      <td className="px-4 py-3">{activityLabel(item.activity)}</td>
+                      <td className="px-4 py-3">{item.start_date}, {item.start_time}</td>
+                      <td className="px-4 py-3">{item.end_date}, {item.end_time}</td>
+                      <td className="px-4 py-3">{item.reason}</td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-block rounded-full px-2 py-0.5 text-2xs font-medium capitalize ${STATUS_BADGE[status]}`}>
+                          {status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        {status === "active" && (
+                          <button type="button" onClick={() => setRevokeTarget(item)} className="text-danger hover:underline text-xs">
+                            Revoke
+                          </button>
+                        )}
+                        {status !== "active" && <span className="text-text/30">—</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            totalItems={total}
+            pageSize={pageSize}
+            itemLabel="geo exceptions"
+            onPageChange={setPage}
+            onPageSizeChange={(size) => { setPage(1); setPageSize(size); }}
+          />
+        </>
       )}
 
       {isModalOpen && (
@@ -218,10 +271,25 @@ export function GeoExceptionPage() {
           onClose={() => setIsModalOpen(false)}
           onSaved={() => {
             setIsModalOpen(false);
+            setPage(1);
             load();
           }}
         />
       )}
+
+      <ConfirmDialog
+        open={revokeTarget !== null}
+        title="Revoke this Geo Exception?"
+        message={
+          revokeTarget
+            ? `${employeeNames[revokeTarget.employee_id] ?? "This employee"} will no longer be allowed to bypass the ${activityLabel(revokeTarget.activity)} Geo Fence for this exception.`
+            : undefined
+        }
+        confirmLabel="Revoke"
+        confirmVariant="danger"
+        onConfirm={onRevoke}
+        onClose={() => setRevokeTarget(null)}
+      />
     </SimplePageLayout>
   );
 }

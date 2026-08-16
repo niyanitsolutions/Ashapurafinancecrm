@@ -97,6 +97,22 @@ class DuplicateCheckResponse(BaseModel):
     matches: list[LeadListItem]
 
 
+class LookupItem(BaseModel):
+    id: str
+    name: str
+
+
+class LeadLookupResponse(BaseModel):
+    """Backs the Create Lead form's Source/Product dropdowns — see
+    LeadService.get_lookup_data for why this is a Leads-owned read (gated on
+    `leads:leads:view`) rather than proxying `system_settings`'s own CRUD-gated
+    lead-sources/loan-products/insurance-products endpoints."""
+
+    sources: list[LookupItem]
+    loan_products: list[LookupItem]
+    insurance_products: list[LookupItem]
+
+
 class EligibleAssigneeResponse(BaseModel):
     """A candidate for Lead assignment — active employees who have module access
     matching the lead's product category (see LeadService.list_eligible_assignees /

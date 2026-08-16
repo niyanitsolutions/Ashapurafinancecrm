@@ -10,6 +10,7 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
 
+from app.constants.roles import OWNER
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.features.access_control.constants import (
     AccessGrantStatus,
@@ -61,6 +62,29 @@ def _combine_date_time(value: Any, time_str: str) -> datetime:
     # layer, so this parse can't fail here.
     hour, minute = (int(part) for part in time_str.split(":"))
     return datetime(value.year, value.month, value.day, hour, minute, tzinfo=UTC)
+
+
+# UI-support curation only — NOT a re-hardcoding of the permission system itself
+# (module/resource stay free-text/data-driven in the catalog, per this file's own
+# constants.py docstring). This is just the fixed set of (module, resource, actions)
+# pairs the main app's UI currently has buttons/routes for, so `get_my_permissions`
+# knows what to check. Adding a ninth module to the UI later means adding one row here,
+# not touching PermissionEngine or the catalog schema.
+_MY_PERMISSIONS_CATALOG: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("leads", "leads", ("view", "create", "edit", "assign", "export")),
+    ("customer", "customers", ("view", "create", "edit")),
+    ("reminders", "tasks", ("view", "create", "edit")),
+    ("reminders", "reminder_rules", ("view", "create", "edit")),
+    ("loan_management", "applications", ("view", "edit", "assign", "approve")),
+    ("insurance_management", "applications", ("view", "edit", "assign", "approve")),
+    ("referral_partner_management", "partners", ("view", "create")),
+    ("reporting", "reports", ("view", "export")),
+    ("reporting", "scheduled_reports", ("view", "create", "edit", "delete")),
+    ("communication", "templates", ("view", "create", "edit")),
+    ("communication", "queue", ("view", "edit")),
+    ("communication", "send", ("view", "create")),
+    ("communication", "bulk", ("view", "create", "edit")),
+)
 
 
 class AccessControlService:
@@ -397,9 +421,33 @@ class AccessControlService:
         )
         return updated or existing
 
-    async def list_geo_exceptions(self, employee_id: str | None) -> list[GeoException]:
+    async def list_geo_exceptions(
+        self, employee_id: str | None, *, skip: int = 0, limit: int = 500, sort: list[tuple[str, int]] | None = None
+    ) -> tuple[list[GeoException], int]:
         filters = {"employee_id": employee_id} if employee_id else {}
-        return await self._geo_exceptions.find_many(filters, limit=500, sort=[("start_date", -1)])
+        items = await self._geo_exceptions.find_many(filters, skip=skip, limit=limit, sort=sort or [("start_date", -1)])
+        total = await self._geo_exceptions.count(filters)
+        return items, total
+
+    # ---------------------------------------------------------------- my-permissions (UI support)
+
+    async def get_my_permissions(self, user: User) -> dict[str, list[str]]:
+        """Tells the frontend which buttons/routes to show for the CURRENTLY
+        authenticated user — e.g. `{"leads:leads": ["view", "create"]}` means this user
+        can see and create Leads but not edit them. Reuses `PermissionEngine.has_permission`
+        for every single check (the exact function every real write already goes
+        through), so this can never drift from what's actually enforced — it is purely
+        additive read-only UI support, never itself an authorization boundary. Owner
+        gets an empty result on purpose: the frontend treats Owner as unrestricted and
+        should never consult this for an Owner session."""
+        if user.role == OWNER:
+            return {}
+        result: dict[str, list[str]] = {}
+        for module, resource, actions in _MY_PERMISSIONS_CATALOG:
+            granted = [a for a in actions if await self._engine.has_permission(user, module=module, resource=resource, action=a)]
+            if granted:
+                result[f"{module}:{resource}"] = granted
+        return result
 
     # ---------------------------------------------------------------- internals
 

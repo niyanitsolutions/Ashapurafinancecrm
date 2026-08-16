@@ -7,6 +7,7 @@ import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
 import { Modal } from "@/components/overlays/Modal";
 import { Pagination } from "@/components/tables/Pagination";
+import { usePermissions } from "@/features/access_control/usePermissions";
 import { getErrorMessage } from "@/features/customer/errors";
 import {
   approveReferralPartner,
@@ -71,6 +72,8 @@ function CreatePartnerModal({ onClose, onSaved }: { onClose: () => void; onSaved
 }
 
 export function ReferralPartnerListPage() {
+  const { can, isOwner } = usePermissions();
+  const canCreate = can("referral_partner_management:partners", "create");
   const [items, setItems] = useState<ReferralPartner[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -112,7 +115,7 @@ export function ReferralPartnerListPage() {
     <SimplePageLayout
       title="Channel Partners"
       subtitle="Manage the partners who refer leads to you, and their approval status."
-      actions={<Button size="sm" onClick={() => setIsCreateOpen(true)}>+ Create Referral Partner</Button>}
+      actions={canCreate ? <Button size="sm" onClick={() => setIsCreateOpen(true)}>+ Create Referral Partner</Button> : undefined}
     >
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
       <ErrorBanner message={error} />
@@ -131,7 +134,7 @@ export function ReferralPartnerListPage() {
           icon="referral"
           title="No channel partners yet"
           description="Add your first channel partner to start tracking their referred leads and commissions."
-          primaryAction={{ label: "+ Create Referral Partner", onClick: () => setIsCreateOpen(true) }}
+          primaryAction={canCreate ? { label: "+ Create Referral Partner", onClick: () => setIsCreateOpen(true) } : undefined}
         />
       ) : (
         <div className="bg-card border border-border rounded-card shadow-card overflow-x-auto">
@@ -157,16 +160,19 @@ export function ReferralPartnerListPage() {
                     <td className="px-4 py-3">{partner.business_name || "—"}</td>
                     <td className="px-4 py-3 capitalize">{partner.approval_status.replace("_", " ")}</td>
                     <td className="px-4 py-3">
-                      {partner.approval_status !== "active" && (
+                      {/* Approve/Deactivate stay Owner-only server-side (no matrix-grantable
+                          permission exists for them) — gate on isOwner, not a permission check. */}
+                      {isOwner && partner.approval_status !== "active" && (
                         <button type="button" onClick={() => run(() => approveReferralPartner(partner.id), "Referral Partner approved.")} className="text-primary hover:underline text-xs mr-3">
                           Approve
                         </button>
                       )}
-                      {partner.approval_status !== "deactivated" && (
+                      {isOwner && partner.approval_status !== "deactivated" && (
                         <button type="button" onClick={() => setDeactivateTarget(partner)} className="text-danger hover:underline text-xs">
                           Deactivate
                         </button>
                       )}
+                      {!isOwner && <span className="text-text/30">—</span>}
                     </td>
                   </tr>
                 ))}

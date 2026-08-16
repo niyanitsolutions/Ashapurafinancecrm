@@ -10,6 +10,7 @@ import { SubmitButton } from "@/components/forms/SubmitButton";
 import { TextareaField } from "@/components/forms/TextareaField";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
+import { usePermissions } from "@/features/access_control/usePermissions";
 import { getErrorMessage } from "@/features/customer/errors";
 import {
   addLoanCaseNote,
@@ -65,6 +66,14 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 export function LoanCaseDetailsPage() {
+  const { can } = usePermissions();
+  // loan_management:applications's real backend actions: view/edit/approve/reject/
+  // assign — no "create" (cases originate from the workflow engine). "edit" covers
+  // every write below except Assign (assign) and Disburse (approve), which are
+  // separately, more coarsely permissioned server-side.
+  const canEdit = can("loan_management:applications", "edit");
+  const canAssign = can("loan_management:applications", "assign");
+  const canDisburse = can("loan_management:applications", "approve");
   const { caseId } = useParams<{ caseId: string }>();
   const [loanCase, setLoanCase] = useState<LoanCaseDetail | null>(null);
   const [timeline, setTimeline] = useState<CaseTimelineEntry[]>([]);
@@ -138,14 +147,16 @@ export function LoanCaseDetailsPage() {
             </div>
           </Section>
 
-          <Section title="Bank / NBFC Details">
-            <BankDetailsForm
-              details={details}
-              onSubmit={(payload) => run(() => recordBankDetails(caseId, payload), "Bank details updated.")}
-            />
-          </Section>
+          {canEdit && (
+            <Section title="Bank / NBFC Details">
+              <BankDetailsForm
+                details={details}
+                onSubmit={(payload) => run(() => recordBankDetails(caseId, payload), "Bank details updated.")}
+              />
+            </Section>
+          )}
 
-          {(status === "new_customer" || status === "documents_pending" || status === "additional_documents") && (
+          {canEdit && (status === "new_customer" || status === "documents_pending" || status === "additional_documents") && (
             <Section title="Document Verification">
               <p className="text-xs text-text/50">Pending: {loanCase.pending_document_type_ids.length === 0 ? "none requested" : loanCase.pending_document_type_ids.length}</p>
               <RequestDocumentsForm
@@ -160,7 +171,7 @@ export function LoanCaseDetailsPage() {
             </Section>
           )}
 
-          {status === "credit_evaluation" && (
+          {canEdit && status === "credit_evaluation" && (
             <Section title="Decision Screen — Credit Evaluation">
               <DecisionForm
                 onSubmit={(decision, reason, extra) =>
@@ -174,7 +185,11 @@ export function LoanCaseDetailsPage() {
           {status === "offer_acceptance" && (
             <Section title="Loan Offer">
               {details.offered_amount == null ? (
-                <OfferForm onSubmit={(payload) => run(() => recordOffer(caseId, payload), "Offer issued.")} />
+                canEdit ? (
+                  <OfferForm onSubmit={(payload) => run(() => recordOffer(caseId, payload), "Offer issued.")} />
+                ) : (
+                  <p className="text-sm text-text/40">No offer recorded yet.</p>
+                )
               ) : (
                 <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
                   <Field label="Offered Amount" value={details.offered_amount} />
@@ -187,7 +202,7 @@ export function LoanCaseDetailsPage() {
             </Section>
           )}
 
-          {status === "esign_nach_kyc" && (
+          {canEdit && status === "esign_nach_kyc" && (
             <Section title="eSign / NACH / KYC Checklist">
               <EsignNachKycForm
                 details={details}
@@ -196,7 +211,7 @@ export function LoanCaseDetailsPage() {
             </Section>
           )}
 
-          {status === "final_evaluation" && (
+          {canEdit && status === "final_evaluation" && (
             <Section title="Decision Screen — Final Evaluation">
               <DecisionForm
                 onSubmit={(decision, reason, extra) => run(() => recordFinalEvaluation(caseId, { remarks: extra.remarks, decision, rejection_reason: reason }), "Final evaluation recorded.")}
@@ -205,7 +220,7 @@ export function LoanCaseDetailsPage() {
             </Section>
           )}
 
-          {status === "send_for_disbursement" && (
+          {canDisburse && status === "send_for_disbursement" && (
             <Section title="Disbursement">
               <DisburseForm onSubmit={(payload) => run(() => disburseLoanCase(caseId, payload), "Loan disbursed.")} />
             </Section>
@@ -223,14 +238,16 @@ export function LoanCaseDetailsPage() {
         </div>
 
         <div className="space-y-6">
-          <Section title="Assignment">
-            <AssignForm
-              currentName={loanCase.assigned_to_name}
-              onSubmit={(employeeId) => run(() => assignLoanCase(caseId, employeeId), "Case assigned.")}
-            />
-          </Section>
+          {canAssign && (
+            <Section title="Assignment">
+              <AssignForm
+                currentName={loanCase.assigned_to_name}
+                onSubmit={(employeeId) => run(() => assignLoanCase(caseId, employeeId), "Case assigned.")}
+              />
+            </Section>
+          )}
 
-          {status !== "disbursed" && status !== "rejected" && (
+          {canEdit && status !== "disbursed" && status !== "rejected" && (
             <Section title="Case Status Control">
               {status === "on_hold" ? (
                 <Button size="sm" className="w-full" onClick={() => run(() => resumeLoanCase(caseId), "Case resumed.")}>
@@ -243,7 +260,7 @@ export function LoanCaseDetailsPage() {
           )}
 
           <Section title="Application History">
-            <NoteForm onSubmit={(text) => run(() => addLoanCaseNote(caseId, text), "Note added.")} />
+            {canEdit && <NoteForm onSubmit={(text) => run(() => addLoanCaseNote(caseId, text), "Note added.")} />}
             <div className="space-y-1 max-h-96 overflow-y-auto">
               {timeline.length === 0 && <p className="text-sm text-text/40">No activity yet.</p>}
               {timeline.map((entry, i) => (

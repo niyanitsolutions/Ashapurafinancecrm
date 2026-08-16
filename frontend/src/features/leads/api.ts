@@ -108,6 +108,20 @@ export function getLead(leadId: string) {
   return apiRequest<LeadDetail>(`/leads/${leadId}`);
 }
 
+export interface LeadLookupData {
+  sources: { id: string; name: string }[];
+  loan_products: { id: string; name: string }[];
+  insurance_products: { id: string; name: string }[];
+}
+
+// Backs the Create Lead form's Source/Product dropdowns — gated on leads:leads:view,
+// not system_settings's own CRUD-permission-gated lead-sources/loan-products/
+// insurance-products endpoints (which would otherwise require also granting Settings
+// administration access just to populate a dropdown). See backend leads/router.py.
+export function getLeadLookup() {
+  return apiRequest<LeadLookupData>("/leads/lookup");
+}
+
 export function createLead(payload: CreateLeadInput) {
   return apiRequest<LeadDetail>("/leads", { method: "POST", body: JSON.stringify(payload) });
 }

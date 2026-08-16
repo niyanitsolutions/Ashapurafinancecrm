@@ -465,6 +465,22 @@ class LeadService:
         combined.sort(key=lambda entry: entry[1].created_at, reverse=True)
         return combined
 
+    # ---------------------------------------------------------------- lookup data (Create Lead form)
+
+    async def get_lookup_data(self) -> tuple[list[Any], list[Any], list[Any]]:
+        """Lead Sources + Loan/Insurance Products for the Create Lead form's dropdowns —
+        owned by Leads (gated on `leads:leads:view`, the permission this form's caller
+        already has), not proxied through `system_settings`'s own CRUD-permission-gated
+        endpoints (`system_settings:lead_sources:view` etc.), which would otherwise force
+        granting Settings administration access just to populate a dropdown. Reuses the
+        exact same repositories/sort order `resolve_names` already reads from — no new
+        data access pattern, just a different, narrower permission boundary in front of
+        the same read."""
+        sources = await self._lead_sources.find_many({}, limit=500, sort=[("name", 1)])
+        loan_products = await self._loan_products.find_many({}, limit=500, sort=[("name", 1)])
+        insurance_products = await self._insurance_products.find_many({}, limit=500, sort=[("name", 1)])
+        return sources, loan_products, insurance_products
+
     # ---------------------------------------------------------------- name resolution / export
 
     async def resolve_names(self, leads: list[Lead]) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:

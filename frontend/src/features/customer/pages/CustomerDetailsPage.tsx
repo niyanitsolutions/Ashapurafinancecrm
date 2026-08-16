@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Button } from "@/components/buttons/Button";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { usePermissions } from "@/features/access_control/usePermissions";
 import { MessagesPanel } from "@/features/communication/components/MessagesPanel";
 import { SendMessageModal } from "@/features/communication/components/SendMessageModal";
 import { getCustomerStaff, type Customer } from "@/features/customer/api";
@@ -27,6 +28,9 @@ function Field({ label, value }: { label: string; value: string | null | undefin
 }
 
 export function CustomerDetailsPage() {
+  const { can } = usePermissions();
+  const canAddTask = can("reminders:tasks", "create");
+  const canSendMessage = can("communication:send", "create");
   const { customerId } = useParams<{ customerId: string }>();
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -64,8 +68,8 @@ export function CustomerDetailsPage() {
       backTo="/customers"
       actions={
         <div className="flex items-center gap-2.5">
-          <HeaderButton icon="chat" label="Send Message" onClick={() => setIsSendMessageOpen(true)} />
-          <HeaderButton icon="tasks" label="Add Task" onClick={() => setIsTaskModalOpen(true)} />
+          {canSendMessage && <HeaderButton icon="chat" label="Send Message" onClick={() => setIsSendMessageOpen(true)} />}
+          {canAddTask && <HeaderButton icon="tasks" label="Add Task" onClick={() => setIsTaskModalOpen(true)} />}
         </div>
       }
     >

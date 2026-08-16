@@ -156,5 +156,13 @@ class AccessibleModulesResponse(BaseModel):
     modules: list[str]
 
 
+class MyPermissionsResponse(BaseModel):
+    # "module:resource" -> granted actions, for the CURRENTLY authenticated user only —
+    # UI support for showing/hiding buttons, never itself an authorization boundary
+    # (every write still goes through require_permission independently). Empty for
+    # Owner — the frontend treats Owner as unrestricted and never consults this.
+    grants: dict[str, list[str]]
+
+
 class PermissionActionsResponse(BaseModel):
     actions: list[str] = Field(default_factory=lambda: list(PermissionAction.ALL))

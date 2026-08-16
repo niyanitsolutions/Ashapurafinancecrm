@@ -10,6 +10,7 @@ import { SubmitButton } from "@/components/forms/SubmitButton";
 import { TextareaField } from "@/components/forms/TextareaField";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
+import { usePermissions } from "@/features/access_control/usePermissions";
 import { getErrorMessage } from "@/features/customer/errors";
 import {
   addInsuranceCaseNote,
@@ -63,6 +64,13 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 export function InsuranceCaseDetailsPage() {
+  const { can } = usePermissions();
+  // insurance_management:applications's real backend actions: view/edit/approve/
+  // reject/assign — same pattern as Loan Management's mirror page. "edit" covers every
+  // write below except Assign (assign) and Issue Policy (approve).
+  const canEdit = can("insurance_management:applications", "edit");
+  const canAssign = can("insurance_management:applications", "assign");
+  const canIssuePolicy = can("insurance_management:applications", "approve");
   const { caseId } = useParams<{ caseId: string }>();
   const [insuranceCase, setInsuranceCase] = useState<InsuranceCaseDetail | null>(null);
   const [timeline, setTimeline] = useState<CaseTimelineEntry[]>([]);
@@ -137,7 +145,7 @@ export function InsuranceCaseDetailsPage() {
             </div>
           </Section>
 
-          {(status === "application_submitted" || status === "documents_pending" || status === "additional_documents") && (
+          {canEdit && (status === "application_submitted" || status === "documents_pending" || status === "additional_documents") && (
             <Section title="Document Verification">
               <p className="text-xs text-text/50">Pending: {insuranceCase.pending_document_type_ids.length === 0 ? "none requested" : insuranceCase.pending_document_type_ids.length}</p>
               <RequestDocumentsForm documentTypes={documentTypes} onSubmit={(ids) => run(() => requestInsuranceCaseDocuments(caseId, ids), "Documents requested.")} />
@@ -149,13 +157,13 @@ export function InsuranceCaseDetailsPage() {
             </Section>
           )}
 
-          {status === "underwriting" && (
+          {canEdit && status === "underwriting" && (
             <Section title="Decision Screen — Underwriting">
               <UnderwritingForm onSubmit={(payload) => run(() => recordUnderwriting(caseId, payload), "Underwriting recorded.")} />
             </Section>
           )}
 
-          {status === "medical_verification" && (
+          {canEdit && status === "medical_verification" && (
             <Section title="Decision Screen — Medical Verification">
               <MedicalVerificationForm onSubmit={(payload) => run(() => recordMedicalVerification(caseId, payload), "Medical verification recorded.")} />
             </Section>
@@ -164,7 +172,11 @@ export function InsuranceCaseDetailsPage() {
           {status === "premium_acceptance" && (
             <Section title="Premium Quote">
               {details.premium_amount == null ? (
-                <PremiumForm onSubmit={(payload) => run(() => recordPremium(caseId, payload), "Premium quote issued.")} />
+                canEdit ? (
+                  <PremiumForm onSubmit={(payload) => run(() => recordPremium(caseId, payload), "Premium quote issued.")} />
+                ) : (
+                  <p className="text-sm text-text/40">No premium quote issued yet.</p>
+                )
               ) : (
                 <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
                   <Field label="Premium Amount" value={details.premium_amount} />
@@ -178,16 +190,22 @@ export function InsuranceCaseDetailsPage() {
           {status === "policy_generation" && (
             <Section title="Policy Generation">
               {details.policy_number == null ? (
-                <GeneratePolicyForm onSubmit={(payload) => run(() => generatePolicy(caseId, payload), "Policy number generated.")} />
+                canEdit ? (
+                  <GeneratePolicyForm onSubmit={(payload) => run(() => generatePolicy(caseId, payload), "Policy number generated.")} />
+                ) : (
+                  <p className="text-sm text-text/40">No policy number generated yet.</p>
+                )
               ) : (
                 <>
                   <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
                     <Field label="Policy Number" value={details.policy_number} />
                     <Field label="Generated At" value={details.policy_generated_at ? new Date(details.policy_generated_at).toLocaleString() : null} />
                   </div>
-                  <Button size="sm" onClick={() => setConfirmIssue(true)}>
-                    Issue Policy
-                  </Button>
+                  {canIssuePolicy && (
+                    <Button size="sm" onClick={() => setConfirmIssue(true)}>
+                      Issue Policy
+                    </Button>
+                  )}
                 </>
               )}
             </Section>
@@ -204,11 +222,13 @@ export function InsuranceCaseDetailsPage() {
         </div>
 
         <div className="space-y-6">
-          <Section title="Assignment">
-            <AssignForm currentName={insuranceCase.assigned_to_name} onSubmit={(employeeId) => run(() => assignInsuranceCase(caseId, employeeId), "Case assigned.")} />
-          </Section>
+          {canAssign && (
+            <Section title="Assignment">
+              <AssignForm currentName={insuranceCase.assigned_to_name} onSubmit={(employeeId) => run(() => assignInsuranceCase(caseId, employeeId), "Case assigned.")} />
+            </Section>
+          )}
 
-          {status !== "policy_issued" && status !== "rejected" && (
+          {canEdit && status !== "policy_issued" && status !== "rejected" && (
             <Section title="Case Status Control">
               {status === "on_hold" ? (
                 <Button size="sm" className="w-full" onClick={() => run(() => resumeInsuranceCase(caseId), "Case resumed.")}>
@@ -221,7 +241,7 @@ export function InsuranceCaseDetailsPage() {
           )}
 
           <Section title="Application History">
-            <NoteForm onSubmit={(text) => run(() => addInsuranceCaseNote(caseId, text), "Note added.")} />
+            {canEdit && <NoteForm onSubmit={(text) => run(() => addInsuranceCaseNote(caseId, text), "Note added.")} />}
             <div className="space-y-1 max-h-96 overflow-y-auto">
               {timeline.length === 0 && <p className="text-sm text-text/40">No activity yet.</p>}
               {timeline.map((entry, i) => (

@@ -3,7 +3,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.core.response import ApiResponse
+from app.core.pagination import PageParams, page_params
+from app.core.response import ApiResponse, ResponseMeta
 from app.features.access_control import mappers
 from app.features.access_control.dependencies import CurrentUserDep, get_access_control_service
 from app.features.access_control.schemas import (
@@ -15,6 +16,7 @@ from app.features.access_control.schemas import (
     CreateTemporaryAccessRequest,
     EmployeeRoleResponse,
     GeoExceptionResponse,
+    MyPermissionsResponse,
     PermissionResponse,
     RolePermissionResponse,
     RoleResponse,
@@ -23,14 +25,27 @@ from app.features.access_control.schemas import (
     UpdateRoleRequest,
 )
 from app.features.access_control.service import AccessControlService
+from app.features.auth.dependencies import get_current_active_user
+from app.features.auth.models import User
 
 router = APIRouter(tags=["access-control"])
 
 ServiceDep = Annotated[AccessControlService, Depends(get_access_control_service)]
+PageParamsDep = Annotated[PageParams, Depends(page_params)]
+AnyStaffDep = Annotated[User, Depends(get_current_active_user)]
 
 
 class DuplicateRoleRequest(BaseModel):
     new_name: str
+
+
+# ---------------------------------------------------------------------- my-permissions (UI support)
+
+
+@router.get("/my-permissions")
+async def get_my_permissions(service: ServiceDep, current_user: AnyStaffDep) -> ApiResponse[MyPermissionsResponse]:
+    grants = await service.get_my_permissions(current_user)
+    return ApiResponse[MyPermissionsResponse].ok(MyPermissionsResponse(grants=grants))
 
 
 # ---------------------------------------------------------------------- roles
@@ -213,10 +228,12 @@ async def create_geo_exception(
 
 @router.get("/geo-exceptions")
 async def list_geo_exceptions(
-    service: ServiceDep, current_user: CurrentUserDep, employee_id: str | None = None
+    service: ServiceDep, current_user: CurrentUserDep, page: PageParamsDep, employee_id: str | None = None
 ) -> ApiResponse[list[GeoExceptionResponse]]:
-    items = await service.list_geo_exceptions(employee_id)
-    return ApiResponse[list[GeoExceptionResponse]].ok([mappers.geo_exception_to_response(g) for g in items])
+    items, total = await service.list_geo_exceptions(employee_id, skip=page.skip, limit=page.page_size, sort=page.sort)
+    return ApiResponse[list[GeoExceptionResponse]].ok(
+        [mappers.geo_exception_to_response(g) for g in items], meta=ResponseMeta(pagination=page.build_meta(total))
+    )
 
 
 @router.post("/geo-exceptions/{geo_exception_id}/revoke")

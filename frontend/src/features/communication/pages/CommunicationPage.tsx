@@ -6,6 +6,7 @@ import { EmptyState } from "@/components/layout/EmptyState";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { Modal } from "@/components/overlays/Modal";
 import { Pagination } from "@/components/tables/Pagination";
+import { usePermissions } from "@/features/access_control/usePermissions";
 import { BulkMessagesSection } from "@/features/communication/components/BulkMessagesSection";
 import {
   createTemplate,
@@ -86,6 +87,9 @@ export function CommunicationPage() {
 }
 
 function TemplatesSection({ run }: { run: (action: () => Promise<unknown>, successMessage: string, after?: () => void) => void }) {
+  const { can } = usePermissions();
+  const canCreate = can("communication:templates", "create");
+  const canEdit = can("communication:templates", "edit");
   const [templates, setTemplates] = useState<CommunicationTemplate[]>([]);
   const [channelFilter, setChannelFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
@@ -113,11 +117,13 @@ function TemplatesSection({ run }: { run: (action: () => Promise<unknown>, succe
             <option key={c} value={c}>{c.replace(/_/g, " ")}</option>
           ))}
         </select>
-        <div className="sm:ml-auto">
-          <Button size="sm" onClick={() => { setEditing(null); setShowForm(true); }}>
-            + New Template
-          </Button>
-        </div>
+        {canCreate && (
+          <div className="sm:ml-auto">
+            <Button size="sm" onClick={() => { setEditing(null); setShowForm(true); }}>
+              + New Template
+            </Button>
+          </div>
+        )}
       </div>
 
       {showForm && (
@@ -155,7 +161,7 @@ function TemplatesSection({ run }: { run: (action: () => Promise<unknown>, succe
                     icon="communication"
                     title="No message templates yet"
                     description="Create a template for WhatsApp, SMS, or Email — it'll be used automatically the next time a matching event happens (e.g. a lead is assigned)."
-                    primaryAction={{ label: "New Template", onClick: () => setShowForm(true) }}
+                    primaryAction={canCreate ? { label: "New Template", onClick: () => setShowForm(true) } : undefined}
                   />
                 </td>
               </tr>
@@ -168,9 +174,11 @@ function TemplatesSection({ run }: { run: (action: () => Promise<unknown>, succe
                 <td className="px-4 py-3 text-xs text-text/60">{t.variables.join(", ") || "—"}</td>
                 <td className="px-4 py-3 capitalize">{t.status}</td>
                 <td className="px-4 py-3">
-                  <button type="button" onClick={() => { setEditing(t); setShowForm(true); }} className="text-primary hover:underline text-xs">
-                    Edit
-                  </button>
+                  {canEdit && (
+                    <button type="button" onClick={() => { setEditing(t); setShowForm(true); }} className="text-primary hover:underline text-xs">
+                      Edit
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -266,6 +274,8 @@ function TemplateForm({
 }
 
 function QueueSection({ run }: { run: (action: () => Promise<unknown>, successMessage: string, after?: () => void) => void }) {
+  const { can } = usePermissions();
+  const canRetry = can("communication:queue", "edit");
   const [items, setItems] = useState<QueueItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -332,7 +342,7 @@ function QueueSection({ run }: { run: (action: () => Promise<unknown>, successMe
                 <td className="px-4 py-3 max-w-xs truncate" title={item.error_detail || ""}>{item.error_detail || "—"}</td>
                 <td className="px-4 py-3">{new Date(item.created_at).toLocaleString()}</td>
                 <td className="px-4 py-3">
-                  {(item.status === "failed" || item.status === "exhausted") && (
+                  {canRetry && (item.status === "failed" || item.status === "exhausted") && (
                     <button type="button" onClick={() => run(() => retryQueueItem(item.id), "Retry attempted.", load)} className="text-primary hover:underline text-xs">
                       Retry Now
                     </button>

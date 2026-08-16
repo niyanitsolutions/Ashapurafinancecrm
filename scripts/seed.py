@@ -650,13 +650,22 @@ async def seed_reminders_nav_items() -> None:
 
 
 async def seed_referral_partner_management_nav_items() -> None:
-    # Module 7 — same "future modules add their own nav item" pattern. All three are
-    # Owner-only (require_owner server-side, decision — see docs/decisions/DECISIONS.md),
-    # not require_permission, so `owner_only=True` is the correct gate here rather than a
-    # required_module/resource/action triple.
+    # Module 7 — same "future modules add their own nav item" pattern. Commission Rules
+    # and Commission Ledger stay Owner-only (require_owner server-side — no Employee
+    # role for those, see referral_partner_management/dependencies.py's own docstring),
+    # so `owner_only=True` remains the correct gate for those two. Referral Partners
+    # itself was retrofitted (Employee Permission Matrix redesign) with a real
+    # require_permission("referral_partner_management", "partners", "view") gate on
+    # list/detail alongside the existing require_owner routes (approve/deactivate stay
+    # Owner-only) — its nav item must mirror that with required_module/resource/action,
+    # not owner_only, or a permission-holding Employee would pass the backend check but
+    # never see the link at all.
     db = get_database()
     nav_defs = [
-        NavItem(key="referral_partners", label="Referral Partners", route="/referral-partners", order=29, owner_only=True),
+        NavItem(
+            key="referral_partners", label="Referral Partners", route="/referral-partners", order=29,
+            required_module="referral_partner_management", required_resource="partners", required_action=PermissionAction.VIEW,
+        ),
         NavItem(key="commission_rules", label="Commission Rules", route="/commission-rules", order=30, owner_only=True),
         NavItem(key="commission_ledger", label="Commission Ledger", route="/commission-ledger", order=31, owner_only=True),
     ]

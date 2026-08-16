@@ -6,11 +6,15 @@ import { SelectField } from "@/components/forms/SelectField";
 import { SubmitButton } from "@/components/forms/SubmitButton";
 import { TextareaField } from "@/components/forms/TextareaField";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
-import { checkDuplicate, createLead } from "@/features/leads/api";
+import { checkDuplicate, createLead, getLeadLookup } from "@/features/leads/api";
 import { getErrorMessage } from "@/features/leads/errors";
 import { getFieldErrors } from "@/shared/api/errors";
 import { getCurrentCoordinates } from "@/shared/geolocation";
-import { insuranceProductsApi, leadSourcesApi, loanProductsApi, type NamedMasterData } from "@/features/system_settings/api";
+
+interface LookupOption {
+  id: string;
+  name: string;
+}
 
 // Deliberately basic — an Employee taking a Create Lead call only ever knows Name/Mobile/
 // Product/Source, never the customer's own business details (GST/turnover/etc). Those
@@ -18,15 +22,16 @@ import { insuranceProductsApi, leadSourcesApi, loanProductsApi, type NamedMaster
 // Link flow (see docs/decisions/DECISIONS.md) — this page no longer renders the Product
 // Schema Engine's Basic Information fields at all.
 //
-// Source/Product dropdowns depend on Settings' own data (`system_settings:lead_sources`
-// etc.) — a role granted `leads:leads` but not those Settings permissions will see this
-// form fail to populate them. Documented as a known limitation, not a bug: each
-// resource's read is gated by its own permission, not bundled automatically.
+// Source/Product dropdowns come from `getLeadLookup()` (`GET /leads/lookup`, gated on
+// leads:leads:view) — a Leads-owned read, not a proxy through system_settings' own
+// CRUD-gated lead-sources/loan-products/insurance-products endpoints. Fixed a real
+// production bug: an employee with only leads:leads granted used to get "Missing
+// permission: system_settings:lead_sources:view" trying to open this form.
 export function CreateLeadPage() {
   const navigate = useNavigate();
-  const [sources, setSources] = useState<NamedMasterData[]>([]);
-  const [loanProducts, setLoanProducts] = useState<NamedMasterData[]>([]);
-  const [insuranceProducts, setInsuranceProducts] = useState<NamedMasterData[]>([]);
+  const [sources, setSources] = useState<LookupOption[]>([]);
+  const [loanProducts, setLoanProducts] = useState<LookupOption[]>([]);
+  const [insuranceProducts, setInsuranceProducts] = useState<LookupOption[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [fullName, setFullName] = useState("");
@@ -45,8 +50,8 @@ export function CreateLeadPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    Promise.all([leadSourcesApi.list(), loanProductsApi.list(), insuranceProductsApi.list()])
-      .then(([s, lp, ip]) => {
+    getLeadLookup()
+      .then(({ sources: s, loan_products: lp, insurance_products: ip }) => {
         setSources(s);
         setLoanProducts(lp);
         setInsuranceProducts(ip);
@@ -115,7 +120,7 @@ export function CreateLeadPage() {
         <div className="mb-4 rounded border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">{duplicateWarning}</div>
       )}
 
-      <form onSubmit={onSubmit} noValidate className="max-w-2xl mx-auto bg-card border border-border rounded-card shadow-card p-6">
+      <form onSubmit={onSubmit} noValidate className="max-w-4xl mx-auto bg-card border border-border rounded-card shadow-card p-6">
         <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
           <FormField
             label="Full Name"

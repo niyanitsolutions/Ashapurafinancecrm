@@ -5,7 +5,7 @@ import { EmptyState } from "@/components/layout/EmptyState";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { Pagination } from "@/components/tables/Pagination";
 import { Table, TableBody, TableHead, TableHeadRow, TableRow, Td, Th } from "@/components/tables/DataTable";
-import { useAuth } from "@/features/auth/useAuth";
+import { usePermissions } from "@/features/access_control/usePermissions";
 import { getErrorMessage } from "@/features/customer/errors";
 import { AddTaskModal } from "@/features/reminders/components/AddTaskModal";
 import { completeTask, listTasks, type Task } from "@/features/reminders/api";
@@ -27,7 +27,8 @@ function PriorityBadge({ priority }: { priority: string }) {
 }
 
 export function TaskListPage() {
-  const { role } = useAuth();
+  const { can } = usePermissions();
+  const canCreate = can("reminders:tasks", "create");
   const [items, setItems] = useState<Task[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -70,7 +71,7 @@ export function TaskListPage() {
     <SimplePageLayout
       title="Tasks"
       subtitle="Follow-up work assigned to your team, with reminders and escalation if something's overdue."
-      actions={role === "owner" ? <Button size="sm" onClick={() => setIsCreateOpen(true)}>+ Assign Task</Button> : undefined}
+      actions={canCreate ? <Button size="sm" onClick={() => setIsCreateOpen(true)}>+ Assign Task</Button> : undefined}
     >
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
       <ErrorBanner message={error} />
@@ -96,11 +97,11 @@ export function TaskListPage() {
           description={
             hasFilters
               ? "Try a different status or priority filter."
-              : role === "owner"
+              : canCreate
                 ? "Assign your first task to a team member."
                 : "You'll see tasks here once your manager assigns you one."
           }
-          primaryAction={role === "owner" && !hasFilters ? { label: "+ Assign Task", onClick: () => setIsCreateOpen(true) } : undefined}
+          primaryAction={canCreate && !hasFilters ? { label: "+ Assign Task", onClick: () => setIsCreateOpen(true) } : undefined}
         />
       ) : (
         <div className="overflow-x-auto rounded-card border border-border bg-card shadow-card">

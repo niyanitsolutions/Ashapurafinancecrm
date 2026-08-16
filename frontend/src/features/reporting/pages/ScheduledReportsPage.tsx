@@ -7,6 +7,7 @@ import { EmptyState } from "@/components/layout/EmptyState";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
 import { Modal } from "@/components/overlays/Modal";
+import { usePermissions } from "@/features/access_control/usePermissions";
 import { getErrorMessage } from "@/features/customer/errors";
 import {
   createScheduledReport,
@@ -98,6 +99,13 @@ function CreateScheduleModal({
 }
 
 export function ScheduledReportsPage() {
+  const { can } = usePermissions();
+  // "Reports & Analytics" 's real create/edit/delete UI lives here, under the
+  // reporting:scheduled_reports resource — distinct from reporting:reports (view/export
+  // only, the plain report-viewing permission, gates ReportCatalogPage/ReportViewerPage).
+  const canCreate = can("reporting:scheduled_reports", "create");
+  const canEdit = can("reporting:scheduled_reports", "edit");
+  const canDelete = can("reporting:scheduled_reports", "delete");
   const [items, setItems] = useState<ScheduledReport[]>([]);
   const [definitions, setDefinitions] = useState<ReportDefinition[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -135,7 +143,7 @@ export function ScheduledReportsPage() {
     <SimplePageLayout
       title="Automated Reports"
       subtitle="Set up a recurring schedule for any report — automatic email delivery is coming soon; for now, your schedule is saved and ready to activate."
-      actions={<Button size="sm" onClick={() => setIsCreateOpen(true)}>+ Create Schedule</Button>}
+      actions={canCreate ? <Button size="sm" onClick={() => setIsCreateOpen(true)}>+ Create Schedule</Button> : undefined}
     >
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
       <ErrorBanner message={error} />
@@ -145,7 +153,7 @@ export function ScheduledReportsPage() {
           icon="reports"
           title="No automated reports yet"
           description="Create a schedule to have a report ready on a recurring basis."
-          primaryAction={{ label: "+ Create Schedule", onClick: () => setIsCreateOpen(true) }}
+          primaryAction={canCreate ? { label: "+ Create Schedule", onClick: () => setIsCreateOpen(true) } : undefined}
         />
       ) : (
         <div className="bg-card border border-border rounded-card shadow-card overflow-x-auto">
@@ -170,18 +178,24 @@ export function ScheduledReportsPage() {
                     <td className="px-4 py-3 capitalize">{item.frequency}</td>
                     <td className="px-4 py-3">{item.recipient_user_ids.length}</td>
                     <td className="px-4 py-3">
-                      <Button
-                        variant={item.is_active ? "secondary" : "ghost"}
-                        size="sm"
-                        onClick={() => run(() => updateScheduledReport(item.id, { is_active: !item.is_active }), "Schedule updated.")}
-                      >
-                        {item.is_active ? "Active" : "Inactive"}
-                      </Button>
+                      {canEdit ? (
+                        <Button
+                          variant={item.is_active ? "secondary" : "ghost"}
+                          size="sm"
+                          onClick={() => run(() => updateScheduledReport(item.id, { is_active: !item.is_active }), "Schedule updated.")}
+                        >
+                          {item.is_active ? "Active" : "Inactive"}
+                        </Button>
+                      ) : (
+                        <span className="text-xs text-text/60 capitalize">{item.is_active ? "Active" : "Inactive"}</span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
-                      <button type="button" onClick={() => setDeleteTarget(item)} className="text-danger hover:underline text-xs">
-                        Delete
-                      </button>
+                      {canDelete && (
+                        <button type="button" onClick={() => setDeleteTarget(item)} className="text-danger hover:underline text-xs">
+                          Delete
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
