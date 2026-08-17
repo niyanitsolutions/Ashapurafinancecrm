@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends
 from app.core.response import ApiResponse
 from app.features.customer.dependencies import get_customer_service
 from app.features.customer.schemas import (
+    BypassVerifyMobileResponse,
     CompleteDirectRegistrationRequest,
     DirectRegisterRequest,
     OtpKickoffResponse,
@@ -38,8 +39,17 @@ async def resolve_secure_link(secure_code: str, service: ServiceDep) -> ApiRespo
 
 @router.post("/customer-registration/start", dependencies=[rate_limited(limit=5)])
 async def start_direct_registration(payload: DirectRegisterRequest, service: ServiceDep) -> ApiResponse[OtpKickoffResponse]:
-    dev_otp = await service.start_direct_registration(payload.mobile)
-    return ApiResponse[OtpKickoffResponse].ok(OtpKickoffResponse(dev_otp=dev_otp))
+    dev_otp, bypass_available = await service.start_direct_registration(payload.mobile)
+    return ApiResponse[OtpKickoffResponse].ok(OtpKickoffResponse(dev_otp=dev_otp, bypass_available=bypass_available))
+
+
+# TEMPORARY — MSG91 DLT Sender ID/template approval testing bypass, customer
+# self-registration only. See CustomerService.bypass_verify_registration_mobile. Remove
+# this endpoint (and Settings.registration_otp_bypass) once DLT approval lands.
+@router.post("/customer-registration/bypass-verify", dependencies=[rate_limited(limit=5)])
+async def bypass_verify_registration_mobile(payload: DirectRegisterRequest, service: ServiceDep) -> ApiResponse[BypassVerifyMobileResponse]:
+    token = await service.bypass_verify_registration_mobile(payload.mobile)
+    return ApiResponse[BypassVerifyMobileResponse].ok(BypassVerifyMobileResponse(otp_verified_token=token))
 
 
 @router.post("/customer-registration/complete", dependencies=[rate_limited(limit=5)])

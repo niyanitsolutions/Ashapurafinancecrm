@@ -9,7 +9,7 @@ import { FormField } from "@/features/auth/components/FormField";
 import { PasswordStrengthChecklist } from "@/features/auth/components/PasswordStrengthChecklist";
 import { SubmitButton } from "@/features/auth/components/SubmitButton";
 import { getErrorMessage as getAuthErrorMessage } from "@/features/auth/errors";
-import { completeDirectRegistration, startDirectRegistration } from "@/features/customer/api";
+import { bypassVerifyRegistrationMobile, completeDirectRegistration, startDirectRegistration } from "@/features/customer/api";
 import { getErrorMessage } from "@/features/customer/errors";
 import { directRegisterSchema, type DirectRegisterFormValues } from "@/features/customer/validation";
 
@@ -33,6 +33,10 @@ export function RegisterPage() {
   const [resendMessage, setResendMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // TEMPORARY — MSG91 DLT approval testing bypass; see startDirectRegistration/
+  // bypassVerifyRegistrationMobile in @/features/customer/api. Remove once DLT approval
+  // lands and the backend's Settings.registration_otp_bypass is retired.
+  const [bypassAvailable, setBypassAvailable] = useState(false);
 
   const {
     register,
@@ -45,7 +49,8 @@ export function RegisterPage() {
     setError(null);
     setIsSubmitting(true);
     try {
-      await startDirectRegistration(values.mobile);
+      const result = await startDirectRegistration(values.mobile);
+      setBypassAvailable(result.bypass_available);
       setFormValues(values);
       setStage("otp");
     } catch (err) {
@@ -64,6 +69,23 @@ export function RegisterPage() {
       setOtpVerifiedToken(result.otp_verified_token);
     } catch (err) {
       setError(getAuthErrorMessage(err));
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // TEMPORARY — MSG91 DLT approval testing bypass. The backend independently re-verifies
+  // the bypass is enabled (REGISTRATION_OTP_BYPASS=true); this button cannot itself mark
+  // anything verified, it only requests that check.
+  const onBypassVerifyMobile = async () => {
+    if (!formValues) return;
+    setError(null);
+    setIsSubmitting(true);
+    try {
+      const result = await bypassVerifyRegistrationMobile(formValues.mobile);
+      setOtpVerifiedToken(result.otp_verified_token);
+    } catch (err) {
+      setError(getErrorMessage(err));
     } finally {
       setIsSubmitting(false);
     }
@@ -115,13 +137,27 @@ export function RegisterPage() {
 
   if (stage === "otp" && formValues) {
     return (
-      <AuthPageLayout title="Verify your mobile number" subtitle={`We sent a 6-digit code to ${formValues.mobile}`}>
+      <AuthPageLayout
+        title="Verify your mobile number"
+        subtitle={bypassAvailable ? undefined : `We sent a 6-digit code to ${formValues.mobile}`}
+      >
         <ErrorBanner message={error} />
         {otpVerifiedToken ? (
           <>
-            <p className="text-sm text-success text-center mb-4">OTP Verified ✓</p>
+            <p className="text-sm text-success text-center mb-4">✓ Mobile number verified</p>
             <SubmitButton isSubmitting={isSubmitting} onClick={onCreateAccount}>
               Create Account
+            </SubmitButton>
+          </>
+        ) : bypassAvailable ? (
+          // TEMPORARY — MSG91 DLT approval testing bypass, shown for any valid mobile
+          // while REGISTRATION_OTP_BYPASS=true on the backend. Remove this branch once
+          // DLT approval lands.
+          <>
+            <p className="text-xs uppercase tracking-wide text-white/50 mb-1">Mobile Number</p>
+            <p className="text-sm text-white/90 mb-4">{formValues.mobile}</p>
+            <SubmitButton isSubmitting={isSubmitting} onClick={onBypassVerifyMobile}>
+              Verify Mobile
             </SubmitButton>
           </>
         ) : (

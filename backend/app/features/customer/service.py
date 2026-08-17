@@ -21,7 +21,7 @@ from app.constants.roles import CUSTOMER, EMPLOYEE, OWNER
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from app.features.auth.constants import OtpPurpose
 from app.features.auth.exceptions import AlreadyRegisteredError
-from app.features.auth.models import ACCOUNT_STATUS_ACTIVE, User
+from app.features.auth.models import ACCOUNT_STATUS_ACTIVE, ACCOUNT_STATUS_PENDING_PASSWORD, User
 from app.features.auth.repository import UserRepository
 from app.features.auth.service import AuthService
 from app.features.communication.constants import Channel, TemplateCategory
@@ -85,6 +85,7 @@ from app.features.customer.schemas import (
 )
 from app.features.employee.models import Employee
 from app.features.employee.repository import EmployeeRepository
+from app.features.employee.schemas import AddressSchema
 from app.features.leads.constants import LeadActivityType
 from app.features.leads.models import Lead, LeadActivity
 from app.features.leads.repository import LeadActivityRepository, LeadRepository
@@ -102,6 +103,7 @@ from app.features.workflow_engine.repository import (
     WorkflowDefinitionRepository,
 )
 from app.security.encryption import encrypt
+from app.security.jwt import create_otp_verified_token
 from app.services.storage.client import (
     generate_presigned_download_url,
     generate_presigned_upload_url,
@@ -423,7 +425,7 @@ class CustomerService:
 
     # ================================================================== onboarding: Flow 2 (direct portal)
 
-    async def start_direct_registration(self, mobile: str) -> str | None:
+    async def start_direct_registration(self, mobile: str) -> tuple[str | None, bool]:
         existing = await self._users.find_by_mobile(mobile)
         if existing is not None and existing.status == ACCOUNT_STATUS_ACTIVE:
             raise AlreadyRegisteredError("This mobile number is already registered. Please log in.")
@@ -442,7 +444,45 @@ class CustomerService:
         if pending_user is not None:
             await self._users.update(pending_user.require_id(), {"created_by": None})
 
-        return dev_otp
+        # TEMPORARY — MSG91 DLT approval testing bypass (see
+        # bypass_verify_registration_mobile below). Only tells the frontend whether to
+        # offer the bypass button; carries no authority of its own — the bypass-verify
+        # endpoint re-checks the same flag server-side regardless of what this says.
+        bypass_available = get_settings().registration_otp_bypass
+        return dev_otp, bypass_available
+
+    async def bypass_verify_registration_mobile(self, mobile: str) -> str:
+        """TEMPORARY — MSG91 DLT Sender ID/template approval is still pending, so real SMS
+        OTP delivery for customer self-registration can't be tested end-to-end yet. While
+        `Settings.registration_otp_bypass` is on, ANY valid mobile with a pending
+        registration can skip the SMS round-trip — gated *only* by that one explicit,
+        administrator-controlled flag (no allowlist: the flag itself is the temporary
+        switch, flipped directly in the real deployment's env, not by a caller). Must be
+        set back to false once DLT approval lands, and the whole feature removed once real
+        MSG91 OTP delivery is verified end-to-end.
+
+        Does not touch Redis OTP generation/hashing/verification/expiry/attempt-limits at
+        all (`otp_service.py`, unmodified) and never calls `AuthService._deliver_otp` — no
+        SMS is sent, no OTP of any kind is generated or stored for a bypassed mobile.
+        Produces the exact same `otp_verified_token` ticket `AuthService.verify_otp`
+        creates on a real OTP match (same `create_otp_verified_token` call, same SIGNUP
+        purpose) so `complete_direct_registration` cannot tell a bypassed verification
+        apart from a real one — no second, parallel "verified" state, no duplicated
+        registration logic, no new token format. Login, forgot-password, and every other
+        OTP purpose never call this and are completely unaffected.
+        """
+        if not get_settings().registration_otp_bypass:
+            raise ForbiddenError("Mobile OTP bypass is not available.")
+
+        pending_user = await self._users.find_by_mobile(mobile)
+        if pending_user is None or pending_user.status != ACCOUNT_STATUS_PENDING_PASSWORD:
+            raise NotFoundError("Start registration (request an OTP) for this number before verifying.")
+
+        await write_audit_log(
+            self._db, event_type=AuditEvent.REGISTRATION_OTP_BYPASSED, mobile=mobile,
+            metadata={"purpose": OtpPurpose.SIGNUP},
+        )
+        return create_otp_verified_token(mobile, claims={"purpose": OtpPurpose.SIGNUP, "jti": secrets.token_urlsafe(16)})
 
     async def complete_direct_registration(self, payload: CompleteDirectRegistrationRequest) -> None:
         """Production Customer self-registration — the only self-registration path in

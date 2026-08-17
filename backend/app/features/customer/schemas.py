@@ -40,6 +40,17 @@ class CompleteDirectRegistrationRequest(BaseModel):
 
 class OtpKickoffResponse(BaseModel):
     dev_otp: str | None = None
+    # TEMPORARY — true only when Settings.registration_otp_bypass is on (see
+    # CustomerService.start_direct_registration / bypass_verify_registration_mobile).
+    # Tells the frontend whether to offer the "Verify Mobile" bypass button instead of the
+    # normal OTP-entry step; the frontend is never trusted to decide this on its own, and
+    # the bypass-verify endpoint re-checks the same flag server-side regardless of what
+    # this flag said.
+    bypass_available: bool = False
+
+
+class BypassVerifyMobileResponse(BaseModel):
+    otp_verified_token: str
 
 
 class ResolveSecureLinkResponse(BaseModel):

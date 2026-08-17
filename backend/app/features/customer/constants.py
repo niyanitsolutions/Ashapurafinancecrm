@@ -113,6 +113,8 @@ class LinkResolution:
 
 class AuditEvent:
     CUSTOMER_REGISTERED = "customer_registered"
+    # TEMPORARY — see CustomerService.bypass_verify_registration_mobile / Settings.registration_otp_bypass.
+    REGISTRATION_OTP_BYPASSED = "registration_otp_bypassed"
     LEAD_CONVERTED = "lead_converted"
     SECURE_LINK_GENERATED = "secure_link_generated"
     SECURE_LINK_CLAIMED = "secure_link_claimed"

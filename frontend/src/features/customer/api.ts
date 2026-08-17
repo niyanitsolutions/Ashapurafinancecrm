@@ -306,7 +306,24 @@ export interface PaginatedResponse<T> {
 // ---- public onboarding ----
 
 export function startDirectRegistration(mobile: string) {
-  return apiRequest<{ dev_otp: string | null }>("/customer-registration/start", { method: "POST", body: JSON.stringify({ mobile }) });
+  // `bypass_available` is TEMPORARY — only true when the backend's MSG91 DLT-approval
+  // testing bypass (Settings.registration_otp_bypass) is on. Never trust this alone to
+  // mark a mobile verified — bypassVerifyMobile below re-checks the same flag on the
+  // backend regardless of what this said.
+  return apiRequest<{ dev_otp: string | null; bypass_available: boolean }>("/customer-registration/start", {
+    method: "POST",
+    body: JSON.stringify({ mobile }),
+  });
+}
+
+// TEMPORARY — MSG91 DLT Sender ID/template approval testing bypass, customer
+// self-registration only. Remove once DLT approval lands and
+// Settings.registration_otp_bypass is retired on the backend.
+export function bypassVerifyRegistrationMobile(mobile: string) {
+  return apiRequest<{ otp_verified_token: string }>("/customer-registration/bypass-verify", {
+    method: "POST",
+    body: JSON.stringify({ mobile }),
+  });
 }
 
 export interface CompleteDirectRegistrationInput {

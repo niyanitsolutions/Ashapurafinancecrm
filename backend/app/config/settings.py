@@ -67,6 +67,16 @@ class Settings(BaseSettings):
     # local dev overrides it via .env/.env.local.
     otp_mode: str = Field(default="production", pattern=r"^(development|production)$")
 
+    # TEMPORARY — MSG91 DLT Sender ID/template approval testing bypass for customer
+    # SELF-REGISTRATION ONLY (see CustomerService.bypass_verify_registration_mobile). The
+    # single flag is deliberately the *only* gate — no allowlist — since it's an explicit,
+    # administrator-controlled production env var, not something a caller can influence.
+    # Must be set back to false once DLT approval lands, and the whole feature removed
+    # once real MSG91 OTP delivery is verified end-to-end. Never consulted by login,
+    # forgot-password, or any other OTP purpose — those keep using the real Redis OTP
+    # flow regardless of this value. Off by default.
+    registration_otp_bypass: bool = False
+
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
     aws_region: str = "ap-south-1"
