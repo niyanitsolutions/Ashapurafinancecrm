@@ -67,9 +67,7 @@ def temporary_access_to_response(temp_access: TemporaryAccess, permissions_by_id
 
 def geo_exception_to_response(geo_exception: GeoException) -> GeoExceptionResponse:
     return GeoExceptionResponse(
-        id=geo_exception.require_id(), employee_id=geo_exception.employee_id, geo_fence_id=geo_exception.geo_fence_id,
-        latitude=geo_exception.allowed_location.latitude, longitude=geo_exception.allowed_location.longitude,
-        radius_meters=geo_exception.radius_meters,
+        id=geo_exception.require_id(), employee_id=geo_exception.employee_id,
         start_date=geo_exception.start_date.date(), end_date=geo_exception.end_date.date(),
         start_time=geo_exception.start_time, end_time=geo_exception.end_time,
         reason=geo_exception.reason, status=geo_exception.status, activity=geo_exception.activity,

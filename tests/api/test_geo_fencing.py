@@ -1,6 +1,8 @@
 """Tests for Geo Fencing (Stage 1 of the Geo Fencing / Temporary Permissions / MSG91
-work): named GeoFence CRUD, the GeoException -> GeoFence link, and the enforcement engine
-(`app/features/geo_fencing/enforcement.py`) that actually gates real activities.
+work): named GeoFence CRUD, GeoException as a bypass of Geo Fence enforcement (not a
+second, competing location restriction — see access_control/models.py:GeoException), and
+the enforcement engine (`app/features/geo_fencing/enforcement.py`) that actually gates
+real activities.
 
 End-to-end enforcement is proven through `POST /leads` (create_lead) — the same
 `enforce_geo_fence` function is called identically (just a different `activity` string)
@@ -14,7 +16,7 @@ from datetime import timedelta
 import pytest
 
 from app.core.exceptions import ForbiddenError
-from app.features.access_control.models import AllowedLocation, GeoException
+from app.features.access_control.models import GeoException
 from app.features.auth.models import ACCOUNT_STATUS_ACTIVE, User
 from app.features.employee.models import Branch, Department, Designation, Employee
 from app.features.geo_fencing.constants import GeoActivity
@@ -131,7 +133,11 @@ async def test_overlap_warning_is_non_blocking(client, owner_headers):
     assert "Fence A" in r.json()["data"]["overlaps_with"]
 
 
-async def test_delete_blocked_while_active_geo_exception_references_fence(client, owner_headers, master_data):
+async def test_delete_unaffected_by_active_geo_exceptions(client, owner_headers, master_data):
+    """A GeoException no longer references any one fence — it's a bypass of whichever
+    fence(s) would otherwise apply to the employee/activity (see this file's own module
+    docstring) — so an active exception for an employee must never block deleting an
+    unrelated GeoFence."""
     employee = await _create_employee(client, owner_headers, master_data)
     r = await client.post("/api/v1/geo-fences", json=_fence_payload(), headers=owner_headers)
     fence_id = r.json()["data"]["id"]
@@ -140,18 +146,16 @@ async def test_delete_blocked_while_active_geo_exception_references_fence(client
     r = await client.post(
         "/api/v1/geo-exceptions",
         json={
-            "employee_id": employee["id"], "geo_fence_id": fence_id,
+            "employee_id": employee["id"],
             "start_date": now.date().isoformat(), "end_date": (now + timedelta(days=1)).date().isoformat(),
             "start_time": "09:00", "end_time": "18:00", "reason": "Field visit",
         },
         headers=owner_headers,
     )
     assert r.status_code == 200, r.text
-    # Prefilled from the fence, not re-specified.
-    assert r.json()["data"]["latitude"] == _HQ_LAT
 
     r = await client.delete(f"/api/v1/geo-fences/{fence_id}", headers=owner_headers)
-    assert r.status_code == 409, r.text
+    assert r.status_code == 200, r.text
 
 
 async def test_delete_allowed_with_no_referencing_exceptions(client, owner_headers):
@@ -294,8 +298,8 @@ async def test_enforcement_valid_geo_exception_overrides_outside_radius(mock_db)
     await _make_fence(mock_db, activities=[GeoActivity.LEAD_CREATION])
     now = utc_now()
     exception = GeoException(
-        employee_id=employee.require_id(), allowed_location=AllowedLocation(latitude=_OUTSIDE_LAT, longitude=_OUTSIDE_LON),
-        radius_meters=1000, start_date=now - timedelta(days=1), end_date=now + timedelta(days=1),
+        employee_id=employee.require_id(),
+        start_date=now - timedelta(days=1), end_date=now + timedelta(days=1),
         start_time="00:00", end_time="23:59", reason="Approved remote work", status="active",
     )
     await mock_db["geo_exceptions"].insert_one(exception.model_dump(by_alias=True, exclude={"id"}))
@@ -309,12 +313,67 @@ async def test_enforcement_expired_geo_exception_does_not_override(mock_db):
     await _make_fence(mock_db, activities=[GeoActivity.LEAD_CREATION])
     now = utc_now()
     exception = GeoException(
-        employee_id=employee.require_id(), allowed_location=AllowedLocation(latitude=_OUTSIDE_LAT, longitude=_OUTSIDE_LON),
-        radius_meters=1000, start_date=now - timedelta(days=10), end_date=now - timedelta(days=5),
+        employee_id=employee.require_id(),
+        start_date=now - timedelta(days=10), end_date=now - timedelta(days=5),
         start_time="00:00", end_time="23:59", reason="Expired", status="active",
     )
     await mock_db["geo_exceptions"].insert_one(exception.model_dump(by_alias=True, exclude={"id"}))
 
+    with pytest.raises(ForbiddenError, match="outside the permitted work area"):
+        await enforce_geo_fence(mock_db, actor=user, activity=GeoActivity.LEAD_CREATION, latitude=_OUTSIDE_LAT, longitude=_OUTSIDE_LON)
+
+
+async def test_enforcement_revoked_geo_exception_does_not_override(mock_db):
+    """A revoked exception must stop bypassing immediately — the employee falls straight
+    back under normal Geo Fence enforcement (find_active_for_employee only ever
+    considers status=active)."""
+    user, employee = await _make_employee_user(mock_db, mobile="9500000010")
+    await _make_fence(mock_db, activities=[GeoActivity.LEAD_CREATION])
+    now = utc_now()
+    exception = GeoException(
+        employee_id=employee.require_id(),
+        start_date=now - timedelta(days=1), end_date=now + timedelta(days=1),
+        start_time="00:00", end_time="23:59", reason="Revoked before use", status="revoked",
+    )
+    await mock_db["geo_exceptions"].insert_one(exception.model_dump(by_alias=True, exclude={"id"}))
+
+    with pytest.raises(ForbiddenError, match="outside the permitted work area"):
+        await enforce_geo_fence(mock_db, actor=user, activity=GeoActivity.LEAD_CREATION, latitude=_OUTSIDE_LAT, longitude=_OUTSIDE_LON)
+
+
+async def test_enforcement_blanket_exception_bypasses_every_enforced_activity(mock_db):
+    """activity=None ("All Activities" in the UI) must exempt the employee from every
+    enforced activity's Geo Fence, not just the one under test elsewhere in this file."""
+    user, employee = await _make_employee_user(mock_db, mobile="9500000011")
+    await _make_fence(mock_db, activities=[GeoActivity.LEAD_CREATION])
+    await _make_fence(mock_db, activities=[GeoActivity.DOCUMENT_COLLECTION])
+    now = utc_now()
+    exception = GeoException(
+        employee_id=employee.require_id(),
+        start_date=now - timedelta(days=1), end_date=now + timedelta(days=1),
+        start_time="00:00", end_time="23:59", reason="All Activities, work from home", activity=None, status="active",
+    )
+    await mock_db["geo_exceptions"].insert_one(exception.model_dump(by_alias=True, exclude={"id"}))
+
+    await enforce_geo_fence(mock_db, actor=user, activity=GeoActivity.LEAD_CREATION, latitude=_OUTSIDE_LAT, longitude=_OUTSIDE_LON)
+    await enforce_geo_fence(mock_db, actor=user, activity=GeoActivity.DOCUMENT_COLLECTION, latitude=_OUTSIDE_LAT, longitude=_OUTSIDE_LON)
+
+
+async def test_enforcement_activity_scoped_exception_does_not_bypass_other_activities(mock_db):
+    """A Login-only exception must never also exempt the same employee from Lead
+    Creation's Geo Fence — only the exact activity it names is bypassed."""
+    user, employee = await _make_employee_user(mock_db, mobile="9500000012")
+    await _make_fence(mock_db, activities=[GeoActivity.LOGIN])
+    await _make_fence(mock_db, activities=[GeoActivity.LEAD_CREATION])
+    now = utc_now()
+    exception = GeoException(
+        employee_id=employee.require_id(),
+        start_date=now - timedelta(days=1), end_date=now + timedelta(days=1),
+        start_time="00:00", end_time="23:59", reason="Login only", activity=GeoActivity.LOGIN, status="active",
+    )
+    await mock_db["geo_exceptions"].insert_one(exception.model_dump(by_alias=True, exclude={"id"}))
+
+    await enforce_geo_fence(mock_db, actor=user, activity=GeoActivity.LOGIN, latitude=_OUTSIDE_LAT, longitude=_OUTSIDE_LON)
     with pytest.raises(ForbiddenError, match="outside the permitted work area"):
         await enforce_geo_fence(mock_db, actor=user, activity=GeoActivity.LEAD_CREATION, latitude=_OUTSIDE_LAT, longitude=_OUTSIDE_LON)
 
@@ -518,8 +577,8 @@ async def test_login_scoped_geo_exception_allows_outside_radius(client, mock_db,
 
     now = utc_now()
     exception = GeoException(
-        employee_id=employee["id"], allowed_location=AllowedLocation(latitude=_OUTSIDE_LAT, longitude=_OUTSIDE_LON),
-        radius_meters=1000, start_date=now - timedelta(days=1), end_date=now + timedelta(days=1),
+        employee_id=employee["id"],
+        start_date=now - timedelta(days=1), end_date=now + timedelta(days=1),
         start_time="00:00", end_time="23:59", reason="Work from home", activity=GeoActivity.LOGIN, status="active",
     )
     await mock_db["geo_exceptions"].insert_one(exception.model_dump(by_alias=True, exclude={"id"}))
@@ -534,8 +593,8 @@ async def test_login_scoped_geo_exception_denied_after_expiry(client, mock_db, o
 
     now = utc_now()
     exception = GeoException(
-        employee_id=employee["id"], allowed_location=AllowedLocation(latitude=_OUTSIDE_LAT, longitude=_OUTSIDE_LON),
-        radius_meters=1000, start_date=now - timedelta(days=10), end_date=now - timedelta(days=5),
+        employee_id=employee["id"],
+        start_date=now - timedelta(days=10), end_date=now - timedelta(days=5),
         start_time="00:00", end_time="23:59", reason="Expired", activity=GeoActivity.LOGIN, status="active",
     )
     await mock_db["geo_exceptions"].insert_one(exception.model_dump(by_alias=True, exclude={"id"}))
@@ -552,8 +611,8 @@ async def test_login_exception_belonging_to_different_employee_does_not_apply(cl
 
     now = utc_now()
     exception = GeoException(
-        employee_id=other_employee["id"], allowed_location=AllowedLocation(latitude=_OUTSIDE_LAT, longitude=_OUTSIDE_LON),
-        radius_meters=1000, start_date=now - timedelta(days=1), end_date=now + timedelta(days=1),
+        employee_id=other_employee["id"],
+        start_date=now - timedelta(days=1), end_date=now + timedelta(days=1),
         start_time="00:00", end_time="23:59", reason="Not this employee", activity=GeoActivity.LOGIN, status="active",
     )
     await mock_db["geo_exceptions"].insert_one(exception.model_dump(by_alias=True, exclude={"id"}))
@@ -571,8 +630,8 @@ async def test_login_blanket_pre_existing_exception_still_applies_to_login(clien
 
     now = utc_now()
     exception = GeoException(
-        employee_id=employee["id"], allowed_location=AllowedLocation(latitude=_OUTSIDE_LAT, longitude=_OUTSIDE_LON),
-        radius_meters=1000, start_date=now - timedelta(days=1), end_date=now + timedelta(days=1),
+        employee_id=employee["id"],
+        start_date=now - timedelta(days=1), end_date=now + timedelta(days=1),
         start_time="00:00", end_time="23:59", reason="Blanket, pre-dates activity field", activity=None, status="active",
     )
     await mock_db["geo_exceptions"].insert_one(exception.model_dump(by_alias=True, exclude={"id"}))

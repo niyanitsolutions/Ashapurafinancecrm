@@ -12,7 +12,7 @@ import { Modal } from "@/components/overlays/Modal";
 import { Pagination } from "@/components/tables/Pagination";
 import { createGeoException, listGeoExceptions, revokeGeoException, type GeoException } from "@/features/access_control/api";
 import { getErrorMessage } from "@/features/access_control/errors";
-import { GEO_ACTIVITIES, listGeoFences, type GeoFence } from "@/features/geo_fencing/api";
+import { GEO_ACTIVITIES } from "@/features/geo_fencing/api";
 
 function activityLabel(activity: string | null): string {
   if (!activity) return "All Activities";
@@ -41,20 +41,14 @@ const STATUS_BADGE: Record<DisplayStatus, string> = {
 };
 
 function GrantExceptionModal({
-  fences,
   onClose,
   onSaved,
 }: {
-  fences: GeoFence[];
   onClose: () => void;
   onSaved: () => void;
 }) {
   const [employeeId, setEmployeeId] = useState("");
   const [activity, setActivity] = useState("");
-  const [geoFenceId, setGeoFenceId] = useState("");
-  const [latitude, setLatitude] = useState("");
-  const [longitude, setLongitude] = useState("");
-  const [radius, setRadius] = useState("500");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [startTime, setStartTime] = useState("09:00");
@@ -62,16 +56,6 @@ function GrantExceptionModal({
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const onSelectFence = (fenceId: string) => {
-    setGeoFenceId(fenceId);
-    const fence = fences.find((f) => f.id === fenceId);
-    if (fence) {
-      setLatitude(String(fence.latitude));
-      setLongitude(String(fence.longitude));
-      setRadius(String(fence.radius_meters));
-    }
-  };
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -81,10 +65,6 @@ function GrantExceptionModal({
       await createGeoException({
         employee_id: employeeId,
         activity: activity || undefined,
-        geo_fence_id: geoFenceId || undefined,
-        latitude: latitude ? Number(latitude) : undefined,
-        longitude: longitude ? Number(longitude) : undefined,
-        radius_meters: radius ? Number(radius) : undefined,
         start_date: startDate,
         end_date: endDate,
         start_time: startTime,
@@ -104,6 +84,7 @@ function GrantExceptionModal({
       open
       onClose={onClose}
       title="Grant Geo Exception"
+      description="Temporarily bypasses the Geo Fence restriction for this employee — it does not set a new location."
       size="lg"
       footer={
         <>
@@ -119,7 +100,7 @@ function GrantExceptionModal({
       <form id="geo-exception-form" onSubmit={onSubmit}>
         <ErrorBanner message={error} />
         <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
-          <EmployeeSelect label="Employee" value={employeeId} onChange={setEmployeeId} required />
+          <EmployeeSelect label="Employee" value={employeeId} onChange={setEmployeeId} required activeOnly />
           <SelectField
             label="Activity"
             placeholder="All Activities"
@@ -127,17 +108,7 @@ function GrantExceptionModal({
             onChange={(e) => setActivity(e.target.value)}
             options={GEO_ACTIVITIES.map((a) => ({ value: a.value, label: a.label }))}
           />
-          <SelectField
-            label="Geo Fence (optional)"
-            placeholder="None — enter coordinates manually"
-            value={geoFenceId}
-            onChange={(e) => onSelectFence(e.target.value)}
-            options={fences.map((f) => ({ value: f.id, label: f.area_name }))}
-          />
           <FormField label="Reason" value={reason} onChange={(e) => setReason(e.target.value)} required />
-          <FormField label="Latitude" value={latitude} onChange={(e) => setLatitude(e.target.value)} required={!geoFenceId} />
-          <FormField label="Longitude" value={longitude} onChange={(e) => setLongitude(e.target.value)} required={!geoFenceId} />
-          <FormField label="Radius (meters)" type="number" value={radius} onChange={(e) => setRadius(e.target.value)} required={!geoFenceId} />
           <FormField label="Start date" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} required />
           <FormField label="End date" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} required />
           <FormField label="Start time (daily)" type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} required />
@@ -152,9 +123,9 @@ function GrantExceptionModal({
 // /geo-exceptions endpoint is gated require_owner (backend) — see
 // access_control/dependencies.py. This page never needs its own extra role check.
 // Enforced server-side by app/features/geo_fencing/enforcement.py for lead_creation,
-// document_collection, and login — see docs/GEO_FENCING.md. Selecting a Geo Fence in
-// the modal prefills latitude/longitude/radius from it; the fields stay editable to
-// override if needed.
+// document_collection, and login — see docs/GEO_FENCING.md. A Geo Exception carries no
+// location of its own: it's a temporary bypass of whichever Geo Fence(s) would
+// otherwise apply to the employee/activity, not a second location to configure.
 export function GeoExceptionPage() {
   const employeeNames = useEmployeeNameMap();
   const [items, setItems] = useState<GeoException[]>([]);
@@ -162,7 +133,6 @@ export function GeoExceptionPage() {
   const [pageSize, setPageSize] = useState(20);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
-  const [fences, setFences] = useState<GeoFence[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<GeoException | null>(null);
@@ -178,11 +148,6 @@ export function GeoExceptionPage() {
   };
 
   useEffect(load, [page, pageSize]);
-  useEffect(() => {
-    listGeoFences({ page_size: 100, status: "active" })
-      .then(({ items }) => setFences(items))
-      .catch(() => setFences([]));
-  }, []);
 
   const onRevoke = async () => {
     if (!revokeTarget) return;
@@ -197,8 +162,8 @@ export function GeoExceptionPage() {
   return (
     <SimplePageLayout
       title="Geo Exceptions"
-      subtitle="Grant temporary location exceptions to individual employees."
-      actions={<Button size="sm" onClick={() => setIsModalOpen(true)}>+ Add Geo Exception</Button>}
+      subtitle="Grant temporary Geo Fence bypasses to individual employees."
+      actions={<Button size="sm" onClick={() => setIsModalOpen(true)}>+ Grant Exception</Button>}
     >
       <ErrorBanner message={error} />
 
@@ -206,8 +171,8 @@ export function GeoExceptionPage() {
         <EmptyState
           icon="map-pin"
           title="No geo exceptions yet"
-          description="Grant a geo-fencing exception to let an employee act outside a configured fence for a limited window."
-          primaryAction={{ label: "+ Add Geo Exception", onClick: () => setIsModalOpen(true) }}
+          description="Grant a Geo Exception to let an employee bypass a configured Geo Fence for a limited window."
+          primaryAction={{ label: "+ Grant Exception", onClick: () => setIsModalOpen(true) }}
         />
       ) : (
         <>
@@ -217,9 +182,10 @@ export function GeoExceptionPage() {
                 <tr className="border-b border-border text-left text-text/60">
                   <th className="px-4 py-3">Employee</th>
                   <th className="px-4 py-3">Activity</th>
-                  <th className="px-4 py-3">Start</th>
-                  <th className="px-4 py-3">End</th>
                   <th className="px-4 py-3">Reason</th>
+                  <th className="px-4 py-3">Start Date</th>
+                  <th className="px-4 py-3">End Date</th>
+                  <th className="px-4 py-3">Time Window</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3" />
                 </tr>
@@ -231,9 +197,10 @@ export function GeoExceptionPage() {
                     <tr key={item.id} className="border-b border-border last:border-0">
                       <td className="px-4 py-3">{employeeNames[item.employee_id] ?? item.employee_id}</td>
                       <td className="px-4 py-3">{activityLabel(item.activity)}</td>
-                      <td className="px-4 py-3">{item.start_date}, {item.start_time}</td>
-                      <td className="px-4 py-3">{item.end_date}, {item.end_time}</td>
                       <td className="px-4 py-3">{item.reason}</td>
+                      <td className="px-4 py-3">{item.start_date}</td>
+                      <td className="px-4 py-3">{item.end_date}</td>
+                      <td className="px-4 py-3">{item.start_time}–{item.end_time}</td>
                       <td className="px-4 py-3">
                         <span className={`inline-block rounded-full px-2 py-0.5 text-2xs font-medium capitalize ${STATUS_BADGE[status]}`}>
                           {status}
@@ -267,7 +234,6 @@ export function GeoExceptionPage() {
 
       {isModalOpen && (
         <GrantExceptionModal
-          fences={fences}
           onClose={() => setIsModalOpen(false)}
           onSaved={() => {
             setIsModalOpen(false);

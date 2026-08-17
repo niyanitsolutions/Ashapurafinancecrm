@@ -110,14 +110,11 @@ class TemporaryAccessResponse(BaseModel):
 
 
 class CreateGeoExceptionRequest(BaseModel):
+    """No latitude/longitude/radius — a GeoException is a bypass of the employee's
+    applicable Geo Fence(s), not a second, competing location restriction (see
+    `app/features/geo_fencing/enforcement.py`)."""
+
     employee_id: str
-    # Either geo_fence_id (prefills the 3 fields below from the named fence) or the 3
-    # fields directly (freeform, pre-geo_fencing-module behavior) — at least one path
-    # must fully resolve latitude/longitude/radius_meters, validated in the service.
-    geo_fence_id: str | None = None
-    latitude: float | None = None
-    longitude: float | None = None
-    radius_meters: float | None = Field(default=None, gt=0)
     start_date: date
     end_date: date
     start_time: str = Field(pattern=_TIME_PATTERN)
@@ -139,10 +136,6 @@ class CreateGeoExceptionRequest(BaseModel):
 class GeoExceptionResponse(BaseModel):
     id: str
     employee_id: str
-    geo_fence_id: str | None
-    latitude: float
-    longitude: float
-    radius_meters: float
     start_date: date
     end_date: date
     start_time: str

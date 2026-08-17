@@ -12,8 +12,8 @@ see `docs/PERMISSIONS.md` and `docs/decisions/DECISIONS.md` #109:
 - **Temporary Permissions** — Access Control's `TemporaryAccess` (Module 3), enforced
   live inside `PermissionEngine`. Unmodified by this module.
 - **Geo Fencing Exceptions** — Access Control's `GeoException` (Module 3), Owner-only,
-  audited. Extended (decision 110) with an optional `geo_fence_id` reference to a named
-  `GeoFence`; otherwise unmodified.
+  audited. Redesigned (decision 123) to carry no location fields of its own — see
+  "Model" below.
 
 What this module actually adds:
 
@@ -28,14 +28,16 @@ What this module actually adds:
 
 ```
 GeoFence          — {area_name, address, latitude, longitude, radius_meters,
-                     allowed_activities[], status}. Delete blocked while an active
-                     GeoException references it (deactivate instead).
+                     allowed_activities[], status}. Deleting one is never blocked by a
+                     GeoException — see GeoException below for why.
 
-GeoException       — (Module 3, extended) {employee_id, geo_fence_id?, allowed_location
-                     {lat,lng}, radius_meters, start_date, end_date, start_time, end_time,
-                     reason, status}. geo_fence_id is provenance only — the exception's own
-                     allowed_location/radius_meters are its source of truth, prefilled from
-                     the fence at creation time but independent of it afterward.
+GeoException      — (Module 3, redesigned) {employee_id, activity?, start_date, end_date,
+                     start_time, end_time, reason, status}. No latitude/longitude/radius —
+                     a GeoException is a temporary BYPASS of the Geo Fence restriction for
+                     one employee (and one activity, or all of them if activity is None),
+                     not a second, competing location restriction. While valid, it exempts
+                     the employee from the distance check entirely, regardless of which
+                     active GeoFence would otherwise have applied.
 ```
 
 `GeoActivity` (fixed vocabulary): `lead_creation`, `document_collection`, `customer_visit`,
@@ -90,8 +92,9 @@ behaves byte-for-byte as before.
 
 - **Settings → Geo Fencing** (`/settings/geo-fencing`) — new page, list/create/edit/
   activate/deactivate/delete/search/filter/paginate.
-- **Administration → Geo Exceptions** (`/geo-exceptions`, pre-existing) — gained a "Geo
-  Fence" dropdown that prefills latitude/longitude/radius, still overridable.
+- **Settings → Security & Location → Geo Exceptions** (`/geo-exceptions`, pre-existing) —
+  Employee/Activity/Reason/date-time-window fields only; no location field of any kind
+  (see decision 123).
 - **Create Lead** and **Verify Documents** (Loan/Insurance case detail) — best-effort
   `navigator.geolocation` capture (`frontend/src/shared/geolocation.ts`) before submitting;
   permission-denied/unavailable/timeout all resolve to no coordinates, never blocking the

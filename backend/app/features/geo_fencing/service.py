@@ -1,16 +1,19 @@
-"""Geo Fencing business logic: named-area CRUD plus the one safety rule the spec asks
-for ("Delete only if safe") — a fence can't be hard-removed while a GeoException still
-references it. Overlap between two active fences is flagged as a non-blocking warning
-(`overlaps_with` in the response) rather than a `ConflictError`, since two legitimately
-close branches/work-areas are a real business case, not a data-entry mistake.
+"""Geo Fencing business logic: named-area CRUD plus enforcement. Overlap between two
+active fences is flagged as a non-blocking warning (`overlaps_with` in the response)
+rather than a `ConflictError`, since two legitimately close branches/work-areas are a
+real business case, not a data-entry mistake.
+
+A `GeoException` is a bypass of an employee's applicable fence(s), not a reference to
+any one specific fence (see `app/features/access_control/models.py:GeoException` and
+`enforcement.py`) — so deleting a `GeoFence` is never blocked by an active exception;
+there is nothing for the exception to lose a reference to.
 """
 
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.exceptions import ConflictError, NotFoundError
-from app.features.access_control.repository import GeoExceptionRepository
+from app.core.exceptions import NotFoundError
 from app.features.auth.models import User
 from app.features.geo_fencing.constants import AuditEvent, GeoFenceStatus
 from app.features.geo_fencing.geomath import haversine_distance_meters
@@ -24,7 +27,6 @@ class GeoFencingService:
     def __init__(self, db: AsyncIOMotorDatabase[Any]) -> None:
         self._db = db
         self._fences = GeoFenceRepository(db)
-        self._geo_exceptions = GeoExceptionRepository(db)
 
     async def create_geo_fence(self, payload: CreateGeoFenceRequest, owner: User) -> tuple[GeoFence, list[str]]:
         fence = GeoFence(
@@ -67,9 +69,6 @@ class GeoFencingService:
 
     async def delete_geo_fence(self, fence_id: str, owner: User) -> None:
         await self._get_or_404(fence_id)
-        referencing = await self._geo_exceptions.find_active_by_fence_id(fence_id)
-        if referencing:
-            raise ConflictError("This Geo Fence has active Geo Exceptions referencing it and cannot be deleted. Deactivate it instead.")
         await self._fences.soft_delete(fence_id, deleted_by=owner.require_id())
         await write_audit_log(self._db, event_type=AuditEvent.FENCE_DELETED, user_id=owner.require_id(), metadata={"geo_fence_id": fence_id})
 

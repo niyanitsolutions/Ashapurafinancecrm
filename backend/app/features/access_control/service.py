@@ -19,7 +19,6 @@ from app.features.access_control.constants import (
     RoleStatus,
 )
 from app.features.access_control.models import (
-    AllowedLocation,
     EmployeeRole,
     GeoException,
     Permission,
@@ -47,7 +46,6 @@ from app.features.access_control.schemas import (
 )
 from app.features.auth.models import User
 from app.features.employee.repository import EmployeeRepository
-from app.features.geo_fencing.repository import GeoFenceRepository
 from app.shared.audit_log import write_audit_log
 
 logger = logging.getLogger(__name__)
@@ -96,7 +94,6 @@ class AccessControlService:
         self._employee_roles = EmployeeRoleRepository(db)
         self._temporary_access = TemporaryAccessRepository(db)
         self._geo_exceptions = GeoExceptionRepository(db)
-        self._geo_fences = GeoFenceRepository(db)
         self._employees = EmployeeRepository(db)
         self._engine = PermissionEngine(db)
 
@@ -378,22 +375,8 @@ class AccessControlService:
         if end_at <= start_at:
             raise ValidationError("The exception's valid-until date/time must be after its valid-from date/time.")
 
-        latitude, longitude, radius_meters = payload.latitude, payload.longitude, payload.radius_meters
-        if payload.geo_fence_id:
-            fence = await self._geo_fences.find_by_id(payload.geo_fence_id)
-            if fence is None:
-                raise ValidationError("Unknown geo_fence_id.")
-            latitude = latitude if latitude is not None else fence.latitude
-            longitude = longitude if longitude is not None else fence.longitude
-            radius_meters = radius_meters if radius_meters is not None else fence.radius_meters
-        if latitude is None or longitude is None or radius_meters is None:
-            raise ValidationError("latitude, longitude, and radius_meters are required when geo_fence_id is not provided.")
-
         geo_exception = GeoException(
             employee_id=payload.employee_id,
-            geo_fence_id=payload.geo_fence_id,
-            allowed_location=AllowedLocation(latitude=latitude, longitude=longitude),
-            radius_meters=radius_meters,
             start_date=_date_to_datetime(payload.start_date),
             end_date=_date_to_datetime(payload.end_date),
             start_time=payload.start_time,

@@ -96,6 +96,3 @@ class GeoExceptionRepository(BaseRepository[GeoException]):
         if activity is not None:
             query["$or"] = [{"activity": None}, {"activity": activity}]
         return await self.find_many(query, limit=100)
-
-    async def find_active_by_fence_id(self, geo_fence_id: str) -> list[GeoException]:
-        return await self.find_many({"geo_fence_id": geo_fence_id, "status": AccessGrantStatus.ACTIVE}, limit=100)

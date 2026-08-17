@@ -8,7 +8,8 @@ export function useEmployeeNameMap(): Record<string, string> {
   const [names, setNames] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    listEmployees({ page: 1, page_size: 200 })
+    // page_size is capped at this app's MAX_PAGE_SIZE (100, see app/constants/api.py).
+    listEmployees({ page: 1, page_size: 100 })
       .then((res) => setNames(Object.fromEntries(res.data.map((e) => [e.id, e.display_name]))))
       .catch(() => setNames({}));
   }, []);

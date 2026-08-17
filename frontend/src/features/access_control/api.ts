@@ -57,19 +57,17 @@ export interface TemporaryAccess {
 export interface GeoException {
   id: string;
   employee_id: string;
-  geo_fence_id: string | null;
-  latitude: number;
-  longitude: number;
-  radius_meters: number;
+  // No location fields — a GeoException is a temporary BYPASS of the employee's
+  // applicable Geo Fence(s) during the given window, never a second, competing
+  // location restriction of its own.
   start_date: string;
   end_date: string;
   start_time: string;
   end_time: string;
   reason: string;
   status: string;
-  // null = applies to every enforced activity (the original behavior, before a
-  // Login-specific exception could be scoped separately). A specific value (e.g.
-  // "login") restricts the exception to only that one activity.
+  // null = applies to every enforced activity ("All Activities"). A specific value
+  // (e.g. "login") restricts the bypass to only that one activity.
   activity: string | null;
 }
 
@@ -173,18 +171,12 @@ export function revokeTemporaryAccess(id: string) {
 
 export interface CreateGeoExceptionInput {
   employee_id: string;
-  // Either geo_fence_id (server prefills latitude/longitude/radius_meters from the named
-  // fence) or the 3 fields directly — at least one path must resolve them.
-  geo_fence_id?: string;
-  latitude?: number;
-  longitude?: number;
-  radius_meters?: number;
   start_date: string;
   end_date: string;
   start_time: string;
   end_time: string;
   reason: string;
-  // Omitted/undefined = applies to every enforced activity.
+  // Omitted/undefined = applies to every enforced activity ("All Activities").
   activity?: string;
 }
 
