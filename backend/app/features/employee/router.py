@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Response
@@ -148,7 +148,11 @@ async def list_all_employee_documents(
 @router.get("/activity", dependencies=[Depends(require_owner)])
 async def list_all_employee_activity(
     service: EmployeeServiceDep, page: PageParamsDep, employee_id: str | None = None, event_type: str | None = None,
-    date_from: datetime | None = None, date_to: datetime | None = None,
+    # Business (IST) calendar dates, as picked by the Owner in the date-range filter —
+    # see EmployeeService.list_activity, which converts them to UTC instant bounds via
+    # the shared app.utils.datetime.ist_date_range_to_utc_bounds (same helper the
+    # reporting module's own date-range filters use).
+    date_from: date | None = None, date_to: date | None = None,
 ) -> ApiResponse[list[EmployeeActivityEntry]]:
     entries, name_map, total = await service.list_activity(
         employee_id=employee_id, event_type=event_type, date_from=date_from, date_to=date_to, skip=page.skip, limit=page.page_size,

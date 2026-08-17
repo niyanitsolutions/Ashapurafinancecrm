@@ -52,7 +52,7 @@ from app.security.encryption import decrypt, encrypt
 from app.security.password import hash_password
 from app.services.storage.client import generate_presigned_upload_url
 from app.shared.audit_log import write_audit_log
-from app.utils.datetime import utc_now
+from app.utils.datetime import ist_date_range_to_utc_bounds, utc_now
 from app.utils.id_generator import IdPrefix, generate_id
 
 _PHOTO_URL_EXPIRE_SECONDS = 300
@@ -469,7 +469,7 @@ class EmployeeService:
         return documents, name_map, total
 
     async def list_activity(
-        self, *, employee_id: str | None, event_type: str | None, date_from: datetime | None, date_to: datetime | None,
+        self, *, employee_id: str | None, event_type: str | None, date_from: date | None, date_to: date | None,
         skip: int, limit: int,
     ) -> tuple[list[dict[str, Any]], dict[str, str], int]:
         """Owner-only, company-wide counterpart of `list_employee_login_history` above —
@@ -482,12 +482,16 @@ class EmployeeService:
         query: dict[str, Any] = {}
         if event_type:
             query["event_type"] = event_type
-        if date_from or date_to:
+        # date_from/date_to are business (IST) calendar dates picked by the Owner —
+        # converted to UTC instant bounds the same way the reporting module's own
+        # date-range filters are (see docs/TIMEZONE.md).
+        lower, upper = ist_date_range_to_utc_bounds(date_from, date_to)
+        if lower is not None or upper is not None:
             query["created_at"] = {}
-            if date_from:
-                query["created_at"]["$gte"] = date_from
-            if date_to:
-                query["created_at"]["$lte"] = date_to
+            if lower is not None:
+                query["created_at"]["$gte"] = lower
+            if upper is not None:
+                query["created_at"]["$lt"] = upper
 
         if employee_id:
             employee = await self._get_or_404(employee_id)

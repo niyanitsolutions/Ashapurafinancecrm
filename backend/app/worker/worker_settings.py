@@ -44,6 +44,24 @@ def _redis_settings() -> RedisSettings:
 
 class WorkerSettings:
     functions: ClassVar[list[Any]] = []
+    # TIMEZONE NOTE (see docs/TIMEZONE.md): arq's `cron(hour=..., minute=...)` matches
+    # against the worker *process's own OS wall-clock* (stdlib `datetime.now()`, no tz
+    # parameter) — arq has no tz-aware cron primitive, so this app cannot make these
+    # trigger times IST-aware without deeper surgery (e.g. wrapping every job in its own
+    # IST-based self-gating). This is a disclosed, low-risk limitation, not an oversight:
+    # `check_re_eligible_cases`/`check_commission_triggers`/`refresh_meta_tokens` are
+    # internal daily maintenance batches with no user-facing "must fire at exactly 2am
+    # IST" promise, and their own business decisions never do a calendar-day-boundary
+    # comparison: `check_re_eligible_cases` compares `now < notify_at` (an absolute
+    # instant, duration-based — see `worker/tasks/reminders.py`), and
+    # `check_commission_triggers`/`refresh_meta_tokens` re-scan by *status*, not by date,
+    # each run (see `worker/tasks/referral_partner.py`, `worker/tasks/meta_token_
+    # refresh.py`) — confirmed timezone-safe as-is. The hours below
+    # assume the deployed worker process's OS clock is UTC (this app's documented
+    # default, see docs/TIMEZONE.md) — recorded in docs/KNOWN_LIMITATIONS.md.
+    # `check_task_reminders`/`poll_audit_events`/the communication queue jobs poll every
+    # 1-15 minutes specifically so their own trigger-hour precision never matters; what
+    # they decide is "due" is instant-based for the same reason.
     cron_jobs: ClassVar[list[Any]] = [
         # arq's own WorkerCoroutine Protocol doesn't structurally match a plain typed
         # async def under mypy --strict (a known friction point between arq's stubs and
@@ -51,9 +69,9 @@ class WorkerSettings:
         # arq's actual calling convention (ctx, *args, **kwargs).
         cron(poll_audit_events, minute=set(range(0, 60, 5)), run_at_startup=True),  # type: ignore[arg-type]  # every 5 minutes
         cron(check_task_reminders, minute=set(range(0, 60, 15)), run_at_startup=True),  # type: ignore[arg-type]  # every 15 minutes
-        cron(check_re_eligible_cases, hour={2}, minute={0}),  # type: ignore[arg-type]  # once daily
-        cron(check_commission_triggers, hour={3}, minute={0}),  # type: ignore[arg-type]  # once daily
-        cron(refresh_meta_tokens, hour={4}, minute={0}),  # type: ignore[arg-type]  # once daily
+        cron(check_re_eligible_cases, hour={2}, minute={0}),  # type: ignore[arg-type]  # once daily, assumes server clock = UTC
+        cron(check_commission_triggers, hour={3}, minute={0}),  # type: ignore[arg-type]  # once daily, assumes server clock = UTC
+        cron(refresh_meta_tokens, hour={4}, minute={0}),  # type: ignore[arg-type]  # once daily, assumes server clock = UTC
         cron(retry_capture_failures, minute=set(range(0, 60, 15)), run_at_startup=True),  # type: ignore[arg-type]  # every 15 minutes
         cron(poll_business_events, minute=set(range(0, 60, 2)), run_at_startup=True),  # type: ignore[arg-type]  # every 2 minutes
         cron(process_pending_queue, minute=set(range(0, 60, 1)), run_at_startup=True),  # type: ignore[arg-type]  # every minute

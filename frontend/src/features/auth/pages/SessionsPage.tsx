@@ -6,6 +6,7 @@ import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { getOwnSessions, logoutAllOtherSessions, revokeSession, type SessionSummary } from "@/features/auth/api";
 import { REFRESH_TOKEN_STORAGE_KEY } from "@/features/auth/context";
 import { getErrorMessage } from "@/features/auth/errors";
+import { formatISTDateTime } from "@/shared/dateFormat";
 
 // Self-service "Active Sessions" — every role's own devices (Owner/Employee/Referral
 // Partner/Customer alike), with per-session revoke and "Logout All Other Devices". This
@@ -98,8 +99,8 @@ export function SessionsPage({ backTo }: { backTo: string }) {
                   {s.ip_address || "—"}
                   {s.city || s.country ? ` (${[s.city, s.country].filter(Boolean).join(", ")})` : ""}
                 </td>
-                <td className="px-4 py-3">{new Date(s.login_at).toLocaleString()}</td>
-                <td className="px-4 py-3">{new Date(s.last_activity_at).toLocaleString()}</td>
+                <td className="px-4 py-3">{formatISTDateTime(s.login_at)}</td>
+                <td className="px-4 py-3">{formatISTDateTime(s.last_activity_at)}</td>
                 <td className="px-4 py-3 capitalize">{s.status}</td>
                 <td className="px-4 py-3 text-right">
                   {s.status === "active" && (

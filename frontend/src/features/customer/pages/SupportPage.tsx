@@ -13,6 +13,7 @@ import {
   type TicketPriority,
 } from "@/features/support/api";
 import { getErrorMessage } from "@/features/customer/errors";
+import { formatISTDateTime } from "@/shared/dateFormat";
 import { Icon } from "@/theme/icons";
 
 const ISSUE_TYPE_OPTIONS: { value: IssueType; label: string }[] = [
@@ -145,7 +146,7 @@ export function SupportPage() {
                 </p>
                 <div className="flex items-center justify-between text-xs text-text/40">
                   <span className="capitalize">{t.status}</span>
-                  <span>{new Date(t.created_at).toLocaleString()}</span>
+                  <span>{formatISTDateTime(t.created_at)}</span>
                 </div>
               </div>
             ))}

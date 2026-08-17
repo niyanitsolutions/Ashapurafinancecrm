@@ -3,6 +3,7 @@ import { EmptyState } from "@/components/layout/EmptyState";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { getErrorMessage } from "@/features/customer/errors";
 import { listAllEmployeeDocuments, type EmployeeDocumentOverviewItem } from "@/features/employee/api";
+import { formatISTDateTime } from "@/shared/dateFormat";
 
 const PAGE_SIZE = 20;
 
@@ -74,7 +75,7 @@ export function EmployeeDocumentsOverviewPage() {
                 <td className="px-4 py-3">{doc.employee_name || "—"}</td>
                 <td className="px-4 py-3 capitalize">{doc.document_type}</td>
                 <td className="px-4 py-3">{doc.file_name}</td>
-                <td className="px-4 py-3">{new Date(doc.created_at).toLocaleString()}</td>
+                <td className="px-4 py-3">{formatISTDateTime(doc.created_at)}</td>
               </tr>
             ))}
           </tbody>

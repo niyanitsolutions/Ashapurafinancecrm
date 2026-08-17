@@ -13,6 +13,7 @@ import {
   type SecureLink,
 } from "@/features/customer/api";
 import { getErrorMessage } from "@/features/leads/errors";
+import { formatISTDateTime } from "@/shared/dateFormat";
 import { Icon } from "@/theme/icons";
 
 const EXPIRY_DAY_OPTIONS = [7, 15, 30] as const;
@@ -215,11 +216,11 @@ export function GenerateLinkModal({ leadId, leadCode, onClose }: { leadId: strin
               <div className="rounded-lg border border-border bg-background px-3 py-2 text-2xs break-all text-text">{link.link_url}</div>
               <div className="flex justify-between">
                 <span className="text-textSecondary">Expiry Date</span>
-                <span className="text-text">{new Date(link.expires_at).toLocaleString()}</span>
+                <span className="text-text">{formatISTDateTime(link.expires_at)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-textSecondary">Created On</span>
-                <span className="text-text">{new Date(link.created_at).toLocaleString()}</span>
+                <span className="text-text">{formatISTDateTime(link.created_at)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-textSecondary">Created By</span>

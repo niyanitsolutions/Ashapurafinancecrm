@@ -22,7 +22,7 @@ async def _seed_employee(db, *, user_id: str) -> str:
 
 
 async def test_total_leads_scopes_to_assigned_employee_only():
-    db = AsyncMongoMockClient()["test_widget_scoping"]
+    db = AsyncMongoMockClient(tz_aware=True)["test_widget_scoping"]
     employee_user_id = str(ObjectId())
     employee_id = await _seed_employee(db, user_id=employee_user_id)
     other_employee_id = str(ObjectId())
@@ -46,7 +46,7 @@ async def test_total_leads_scopes_to_assigned_employee_only():
 async def test_employee_with_no_employee_record_sees_zero_not_an_error():
     # An Employee-role User with no matching Employee document (e.g. deleted/misconfigured)
     # must degrade to zero, never leak company-wide data or raise.
-    db = AsyncMongoMockClient()["test_widget_scoping_orphan"]
+    db = AsyncMongoMockClient(tz_aware=True)["test_widget_scoping_orphan"]
     await db["leads"].insert_one({"is_deleted": False, "assigned_to": str(ObjectId())})
 
     orphan_employee = User(mobile="9000000003", role=EMPLOYEE)
@@ -58,7 +58,7 @@ async def test_employee_with_no_employee_record_sees_zero_not_an_error():
 
 async def test_insurance_re_eligible_is_honestly_unavailable_without_an_active_rule():
     # No `reminder_rules` row seeded at all — must report unavailable, never a fabricated 0-as-real.
-    db = AsyncMongoMockClient()["test_widget_re_eligible"]
+    db = AsyncMongoMockClient(tz_aware=True)["test_widget_re_eligible"]
     owner = User(mobile="9000000004", role=OWNER)
     owner.id = str(ObjectId())
 
@@ -67,7 +67,7 @@ async def test_insurance_re_eligible_is_honestly_unavailable_without_an_active_r
 
 
 async def test_referral_commission_widgets_sum_real_amounts_not_fabricated():
-    db = AsyncMongoMockClient()["test_widget_commission"]
+    db = AsyncMongoMockClient(tz_aware=True)["test_widget_commission"]
     partner_id = str(ObjectId())
     await db["commission_entries"].insert_one({"is_deleted": False, "partner_id": partner_id, "status": "pending", "commission_amount": 1500.0})
     await db["commission_entries"].insert_one({"is_deleted": False, "partner_id": partner_id, "status": "approved", "commission_amount": 500.0})

@@ -3,6 +3,7 @@ import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { listOwnMessages, type MessageItem } from "@/features/customer/api";
 import { getErrorMessage } from "@/features/customer/errors";
+import { formatISTDateTime, istDateKey } from "@/shared/dateFormat";
 import { Icon, type IconName } from "@/theme/icons";
 
 const STATUS_STYLE: Record<string, string> = {
@@ -16,22 +17,21 @@ const CHANNEL_ICON: Record<string, IconName> = { whatsapp: "chat", sms: "phone",
 
 // Customer Portal redesign — 3 buckets (Today/Yesterday/Earlier) instead of 4, per the
 // requested grouping; still purely a client-side reshaping of the same `sent_at`/
-// `created_at` fields, no backend change.
-function dateBucket(iso: string, now: Date): string {
-  const date = new Date(iso);
-  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const daysAgo = Math.floor((startOfDay(now).getTime() - startOfDay(date).getTime()) / 86_400_000);
+// `created_at` fields, no backend change. Buckets by the IST calendar day (business
+// timezone), not the viewer's own browser timezone — see shared/dateFormat.ts.
+function dateBucket(iso: string): string {
+  const keyToMillis = (key: string) => Date.parse(`${key}T00:00:00Z`);
+  const daysAgo = Math.floor((keyToMillis(istDateKey()) - keyToMillis(istDateKey(iso))) / 86_400_000);
   if (daysAgo <= 0) return "Today";
   if (daysAgo === 1) return "Yesterday";
   return "Earlier";
 }
 
 function groupByDate(messages: MessageItem[]): [string, MessageItem[]][] {
-  const now = new Date();
   const order = ["Today", "Yesterday", "Earlier"];
   const groups = new Map<string, MessageItem[]>();
   for (const m of messages) {
-    const bucket = dateBucket(m.sent_at ?? m.created_at, now);
+    const bucket = dateBucket(m.sent_at ?? m.created_at);
     if (!groups.has(bucket)) groups.set(bucket, []);
     groups.get(bucket)!.push(m);
   }
@@ -102,7 +102,7 @@ export function MessagesPage() {
                     </div>
                     {m.body && <p className="text-sm text-text/70 whitespace-pre-wrap">{m.body}</p>}
                     <p className="text-xs text-text/40 mt-1 uppercase tracking-wide">
-                      {m.channel} · {new Date(m.sent_at ?? m.created_at).toLocaleString()}
+                      {m.channel} · {formatISTDateTime(m.sent_at ?? m.created_at)}
                     </p>
                   </div>
                 </div>

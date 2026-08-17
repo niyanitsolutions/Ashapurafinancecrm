@@ -11,13 +11,14 @@ import {
   type OwnerAccountListItem,
 } from "@/features/owner/api";
 import { getErrorMessage } from "@/shared/api/errors";
+import { formatISTDate } from "@/shared/dateFormat";
 
 const OWNER_TYPE_LABELS: Record<string, string> = { primary: "Primary Owner", secondary: "Secondary Owner" };
 const OWNER_TYPE_CLASSES: Record<string, string> = { primary: "bg-primary/10 text-primary", secondary: "bg-text/10 text-text/70" };
 const STATUS_CLASSES: Record<string, string> = { active: "bg-success/10 text-success", inactive: "bg-text/10 text-text/60" };
 
 function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  return formatISTDate(iso);
 }
 
 export function OwnerAccountListPage() {

@@ -11,6 +11,7 @@ import {
   type ResolvedSecureLink,
 } from "@/features/customer/api";
 import { getErrorMessage } from "@/features/customer/errors";
+import { formatISTDate } from "@/shared/dateFormat";
 
 function StatusScreen({
   title,
@@ -195,7 +196,7 @@ export function SecureLinkLandingPage() {
         <StatusScreen
           title="Application Already Submitted"
           message={`Your application (Ref: ${resolution.application_reference ?? "—"}) was submitted on ${
-            resolution.submitted_at ? new Date(resolution.submitted_at).toLocaleDateString() : "—"
+            resolution.submitted_at ? formatISTDate(resolution.submitted_at) : "—"
           }. Current status: ${resolution.application_status ?? "—"}.`}
           action={{ label: "Log in to check status", onClick: () => navigate(loginPath) }}
         />

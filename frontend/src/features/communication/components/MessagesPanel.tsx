@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { listEntityMessages, type CrmEntityType, type QueueItem } from "@/features/communication/api";
 import { getErrorMessage } from "@/shared/api/errors";
+import { formatISTDateTime } from "@/shared/dateFormat";
 
 const STATUS_COLOR: Record<string, string> = {
   pending: "text-text/50",
@@ -43,7 +44,7 @@ export function MessagesPanel({ entityType, entityId, refreshKey }: { entityType
                 <span className={`text-xs font-medium capitalize ${STATUS_COLOR[item.status] ?? "text-text/50"}`}>{item.status}</span>
               </div>
               <div className="text-xs text-text/60 truncate max-w-md" title={item.rendered_body}>{item.rendered_body}</div>
-              <div className="text-xs text-text/40">{new Date(item.created_at).toLocaleString()}</div>
+              <div className="text-xs text-text/40">{formatISTDateTime(item.created_at)}</div>
               {item.error_detail && <div className="text-xs text-danger">{item.error_detail}</div>}
             </div>
           ))}

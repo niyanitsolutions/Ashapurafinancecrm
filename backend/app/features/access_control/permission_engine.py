@@ -27,7 +27,7 @@ from app.features.auth.models import ACCOUNT_STATUS_ACTIVE, User
 from app.features.auth.repository import UserRepository
 from app.features.employee.repository import EmployeeRepository
 from app.middleware.auth import get_current_subject
-from app.utils.datetime import utc_now, within_daily_window
+from app.utils.datetime import now_ist, within_daily_window
 
 
 class PermissionEngine:
@@ -111,7 +111,10 @@ class PermissionEngine:
         return False
 
     async def _check_temporary_access(self, employee_id: str, permission_id: str, action: str) -> bool:
-        now = utc_now()
+        # A Temporary Access grant's daily window is an IST business-hours window (the
+        # Owner enters "09:00"-"18:00" meaning India time) — must be evaluated against
+        # IST "now", not UTC. See app/utils/datetime.py's within_daily_window docstring.
+        now = now_ist()
         active = await self._temporary_access.find_active_for_employee(employee_id)
         for grant_set in active:
             if not within_daily_window(grant_set.start_date, grant_set.end_date, grant_set.start_time, grant_set.end_time, now):

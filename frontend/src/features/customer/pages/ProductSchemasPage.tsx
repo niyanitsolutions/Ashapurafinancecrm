@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { listProductSchemas, type FormDefinition, type SchemaStatus } from "@/features/customer/api";
 import { getErrorMessage } from "@/features/customer/errors";
+import { formatISTDateTime } from "@/shared/dateFormat";
 
 // Phase 3.1 — Schema Version Display: internal version/status/audit metadata, visible
 // to Owner/Admin only (this page sits behind Settings' own `RequireOwner` route guard,
@@ -73,7 +74,7 @@ export function ProductSchemasPage() {
                 <td className="px-4 py-3 text-text/70">Version {s.schema_version}</td>
                 <td className="px-4 py-3 text-text/70">{s.fields.length}</td>
                 <td className="px-4 py-3 text-text/70">{s.required_documents.length}</td>
-                <td className="px-4 py-3 text-text/50 text-xs">{new Date(s.updated_at).toLocaleString()}</td>
+                <td className="px-4 py-3 text-text/50 text-xs">{formatISTDateTime(s.updated_at)}</td>
                 <td className="px-4 py-3 text-right">
                   <Link to={`/settings/product-schemas/${s.id}`} className="text-sm font-medium text-primary hover:underline">
                     {s.is_locked ? "View" : "Edit"}

@@ -9,6 +9,7 @@ import { usePermissions } from "@/features/access_control/usePermissions";
 import { getErrorMessage } from "@/features/customer/errors";
 import { AddTaskModal } from "@/features/reminders/components/AddTaskModal";
 import { completeTask, listTasks, type Task } from "@/features/reminders/api";
+import { formatISTDateTime } from "@/shared/dateFormat";
 
 const PAGE_SIZE = 20;
 
@@ -135,7 +136,7 @@ export function TaskListPage() {
                       <PriorityBadge priority={task.priority} />
                     </Td>
                     <Td>{task.assigned_to_name || "—"}</Td>
-                    <Td>{new Date(task.due_at).toLocaleString()}</Td>
+                    <Td>{formatISTDateTime(task.due_at)}</Td>
                     <Td className="capitalize">{task.status}</Td>
                     <Td>
                       {task.status === "pending" && (

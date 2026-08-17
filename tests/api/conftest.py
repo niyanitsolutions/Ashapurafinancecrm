@@ -27,7 +27,10 @@ from app.security.password import hash_password
 
 @pytest.fixture
 def mock_db():
-    return AsyncMongoMockClient()["afs_crm_test"]
+    # tz_aware=True matches the real client (app/config/database.py:get_client()) —
+    # verified mongomock_motor honors this identically, decoding stored datetimes as
+    # tz-aware UTC instead of naive.
+    return AsyncMongoMockClient(tz_aware=True)["afs_crm_test"]
 
 
 @pytest.fixture

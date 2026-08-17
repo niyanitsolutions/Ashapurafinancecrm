@@ -4,6 +4,7 @@ import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { getApplicationTimeline, type TimelineEntry } from "@/features/customer/api";
 import { getErrorMessage } from "@/features/customer/errors";
+import { formatISTDateTime } from "@/shared/dateFormat";
 import { Icon, type IconName } from "@/theme/icons";
 
 const STATE_STYLES: Record<TimelineEntry["state"], string> = {
@@ -64,7 +65,7 @@ export function ApplicationTimelinePage() {
                 {STATE_ICON[entry.state] && <Icon name={STATE_ICON[entry.state] as IconName} className="h-3.5 w-3.5" />}
               </span>
               <p className={`text-sm font-medium ${entry.state === "upcoming" ? "text-text/40" : "text-text"}`}>{entry.label}</p>
-              {entry.occurred_at && <p className="text-xs text-text/40">{new Date(entry.occurred_at).toLocaleString()}</p>}
+              {entry.occurred_at && <p className="text-xs text-text/40">{formatISTDateTime(entry.occurred_at)}</p>}
               {entry.actor_name && <p className="text-xs text-text/50">by {entry.actor_name}</p>}
               {entry.state === "current" && <p className="text-xs text-primary font-medium">In progress</p>}
             </li>

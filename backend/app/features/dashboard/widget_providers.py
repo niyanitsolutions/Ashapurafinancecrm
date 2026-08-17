@@ -25,14 +25,21 @@ genuinely doesn't exist yet (e.g. no active re-eligibility rule for a case type)
 """
 
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.constants.roles import OWNER
 from app.features.auth.models import User
-from app.utils.datetime import utc_now
+from app.utils.datetime import (
+    ist_month_start_utc,
+    now_ist,
+    start_of_day_ist,
+    start_of_month_ist,
+    to_ist,
+    utc_now,
+)
 from app.utils.helpers import to_object_id
 
 WidgetProvider = Callable[[AsyncIOMotorDatabase[Any], User], Awaitable[dict[str, Any]]]
@@ -59,7 +66,9 @@ async def _day_over_day_trend(
     yesterday. Only applied to the two Phase 4 widgets piloting the new standard
     (`applications_submitted`, `tasks_completed`) — not retrofitted onto every widget
     in one pass; see the Phase 4.1 report for which widgets keep the simpler shape."""
-    start_of_today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    # "Today"/"yesterday" mean the business (IST) calendar day, not UTC midnight — see
+    # app/utils/datetime.py.
+    start_of_today = start_of_day_ist(now)
     start_of_yesterday = start_of_today - timedelta(days=1)
     today_count = await db[collection_name].count_documents({**base_query, date_field: {"$gte": start_of_today}})
     yesterday_count = await db[collection_name].count_documents(
@@ -102,8 +111,8 @@ async def _department_summary(db: AsyncIOMotorDatabase[Any], _user: User) -> dic
 
 
 async def _today_leads(db: AsyncIOMotorDatabase[Any], user: User) -> dict[str, Any]:
-    now = utc_now()
-    start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    # "Today" means the business (IST) calendar day, not UTC midnight.
+    start_of_day = start_of_day_ist()
     query: dict[str, Any] = {"is_deleted": False, "created_at": {"$gte": start_of_day}}
     employee_id = await _scope_to_employee(db, user)
     if employee_id is not None:
@@ -363,13 +372,13 @@ async def _performance_summary(db: AsyncIOMotorDatabase[Any], user: User, *, sin
 
 
 async def _today_performance(db: AsyncIOMotorDatabase[Any], user: User) -> dict[str, Any]:
-    now = utc_now()
-    return await _performance_summary(db, user, since=now.replace(hour=0, minute=0, second=0, microsecond=0))
+    # "Today" means the business (IST) calendar day, not UTC midnight.
+    return await _performance_summary(db, user, since=start_of_day_ist())
 
 
 async def _monthly_performance(db: AsyncIOMotorDatabase[Any], user: User) -> dict[str, Any]:
-    now = utc_now()
-    return await _performance_summary(db, user, since=now.replace(day=1, hour=0, minute=0, second=0, microsecond=0))
+    # "This month" means the business (IST) calendar month, not UTC midnight of the 1st.
+    return await _performance_summary(db, user, since=start_of_month_ist())
 
 
 async def _lead_source_chart(db: AsyncIOMotorDatabase[Any], user: User) -> dict[str, Any]:
@@ -502,8 +511,8 @@ async def _insurance_revenue(db: AsyncIOMotorDatabase[Any], _user: User) -> dict
 
 
 async def _monthly_revenue(db: AsyncIOMotorDatabase[Any], _user: User) -> dict[str, Any]:
-    now = utc_now()
-    start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    # "This month" means the business (IST) calendar month, not UTC midnight of the 1st.
+    start_of_month = start_of_month_ist()
     loan_rows = await db["application_workflows"].aggregate(
         [
             {
@@ -532,10 +541,11 @@ async def _monthly_revenue(db: AsyncIOMotorDatabase[Any], _user: User) -> dict[s
 
 
 async def _revenue_trend_chart(db: AsyncIOMotorDatabase[Any], _user: User) -> dict[str, Any]:
-    # Last 6 calendar months — approximates "when revenue happened" via `updated_at`
-    # (the same approximation decision 088/089 already accepted for Reporting, since
-    # `ApplicationWorkflow` has no dedicated `disbursed_at` field), real amounts only.
-    now = utc_now()
+    # Last 6 calendar months (business/IST calendar, not UTC — see app/utils/datetime.py)
+    # — approximates "when revenue happened" via `updated_at` (the same approximation
+    # decision 088/089 already accepted for Reporting, since `ApplicationWorkflow` has
+    # no dedicated `disbursed_at` field), real amounts only.
+    now = now_ist()
     months: list[tuple[int, int]] = []
     y, m = now.year, now.month
     for _ in range(6):
@@ -544,7 +554,7 @@ async def _revenue_trend_chart(db: AsyncIOMotorDatabase[Any], _user: User) -> di
         if m == 0:
             m, y = 12, y - 1
     months.reverse()
-    range_start = datetime(months[0][0], months[0][1], 1, tzinfo=UTC)
+    range_start = ist_month_start_utc(months[0][0], months[0][1])
 
     totals: dict[tuple[int, int], float] = dict.fromkeys(months, 0.0)
     cursor = db["application_workflows"].find(
@@ -558,7 +568,8 @@ async def _revenue_trend_chart(db: AsyncIOMotorDatabase[Any], _user: User) -> di
         updated = doc.get("updated_at")
         if updated is None:
             continue
-        key = (updated.year, updated.month)
+        updated_ist = to_ist(updated)
+        key = (updated_ist.year, updated_ist.month)
         if key not in totals:
             continue
         if doc.get("case_type") == "loan":

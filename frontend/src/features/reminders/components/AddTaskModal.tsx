@@ -7,6 +7,7 @@ import { Modal } from "@/components/overlays/Modal";
 import { listEmployees, type EmployeeListItem } from "@/features/employee/api";
 import { createTask } from "@/features/reminders/api";
 import { getErrorMessage } from "@/features/leads/errors";
+import { istWallClockToUtcISO } from "@/shared/dateFormat";
 
 const ADD_TASK_FORM_ID = "add-task-form";
 
@@ -57,8 +58,14 @@ export function AddTaskModal({
     setError(null);
     setIsSubmitting(true);
     try {
+      // `dueAt` is a `type="datetime-local"` value ("YYYY-MM-DDTHH:MM") meant as IST
+      // wall-clock time regardless of the entering user's own browser timezone — must
+      // not be converted via `new Date(dueAt).toISOString()`, which silently interprets
+      // it as the *browser's* local time instead.
+      const [datePart, timePart] = dueAt.split("T");
       await createTask({
-        title, description: description || undefined, assigned_to: assignedTo, due_at: new Date(dueAt).toISOString(),
+        title, description: description || undefined, assigned_to: assignedTo,
+        due_at: istWallClockToUtcISO(datePart, timePart),
         priority, related_entity_type: relatedEntityType, related_entity_id: relatedEntityId,
       });
       onCreated?.();

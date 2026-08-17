@@ -6,6 +6,7 @@ import { Modal } from "@/components/overlays/Modal";
 import { Msg91ConfigForm } from "@/features/communication/components/Msg91ConfigForm";
 import { getErrorMessage } from "@/features/customer/errors";
 import { ConnectionCheckList } from "@/features/integrations/components/ConnectionCheckList";
+import { formatISTDateTime } from "@/shared/dateFormat";
 import {
   activateIntegrationConfig,
   disableIntegrationConfig,
@@ -154,7 +155,7 @@ export function CommunicationProvidersPage() {
 
                 {config && (
                   <p className="mt-1 text-xs text-text/50">
-                    {config.name} · Last tested: {config.last_tested_at ? new Date(config.last_tested_at).toLocaleString() : "Never"}
+                    {config.name} · Last tested: {config.last_tested_at ? formatISTDateTime(config.last_tested_at) : "Never"}
                   </p>
                 )}
 

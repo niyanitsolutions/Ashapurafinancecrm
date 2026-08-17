@@ -5,23 +5,30 @@ Every helper reads a frozen module's collection directly (never writes), the sam
 read-only-reuse pattern used by every report-consuming module since 6C.
 """
 
-from datetime import date, datetime, time
+from datetime import date
 from typing import Any
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.utils.datetime import ist_date_range_to_utc_bounds
+
 _NOT_DELETED: dict[str, Any] = {"is_deleted": False}
 
 
 def date_range_match(date_field: str, date_from: date | None, date_to: date | None) -> dict[str, Any]:
-    """`date_from`/`date_to` are calendar dates (inclusive both ends); `date_to` is
-    pushed to end-of-day since every stored timestamp has a time component."""
+    """`date_from`/`date_to` are business (IST) calendar dates, inclusive both ends, as
+    picked by a user in a report filter — converted to the equivalent UTC instant
+    bounds (`ist_date_range_to_utc_bounds`) before querying, since stored timestamps are
+    UTC. Previously combined the bare calendar dates with `time.min`/`time.max` with no
+    timezone applied at all, which filtered on UTC midnight-to-midnight instead of the
+    IST business day the user actually selected."""
+    lower, upper = ist_date_range_to_utc_bounds(date_from, date_to)
     range_query: dict[str, Any] = {}
-    if date_from is not None:
-        range_query["$gte"] = datetime.combine(date_from, time.min)
-    if date_to is not None:
-        range_query["$lte"] = datetime.combine(date_to, time.max)
+    if lower is not None:
+        range_query["$gte"] = lower
+    if upper is not None:
+        range_query["$lt"] = upper
     return {date_field: range_query} if range_query else {}
 
 

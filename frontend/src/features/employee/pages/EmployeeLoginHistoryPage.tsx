@@ -6,6 +6,7 @@ import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { Pagination } from "@/components/tables/Pagination";
 import { getEmployeeLoginHistory, getOwnLoginHistory, type LoginHistoryEntry } from "@/features/employee/api";
 import { getErrorMessage } from "@/features/employee/errors";
+import { formatISTDateTime } from "@/shared/dateFormat";
 
 const PAGE_SIZE = 20;
 
@@ -56,7 +57,7 @@ export function EmployeeLoginHistoryPage({ scope }: { scope: "self" | "owner" })
                 <tr key={i} className="border-b border-border last:border-0">
                   <td className="px-4 py-3 capitalize">{e.event_type.replace(/_/g, " ")}</td>
                   <td className="px-4 py-3">{e.ip_address || "—"}</td>
-                  <td className="px-4 py-3">{new Date(e.created_at).toLocaleString()}</td>
+                  <td className="px-4 py-3">{formatISTDateTime(e.created_at)}</td>
                 </tr>
               ))}
             </tbody>

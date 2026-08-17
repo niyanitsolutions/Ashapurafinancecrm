@@ -51,7 +51,7 @@ from app.features.system_settings.repository import (
 from app.features.workflow_engine.constants import TERMINAL_STATUSES_BY_CASE_TYPE
 from app.features.workflow_engine.repository import ApplicationWorkflowRepository
 from app.shared.audit_log import write_audit_log
-from app.utils.datetime import utc_now
+from app.utils.datetime import now_ist, start_of_day_ist
 from app.utils.id_generator import IdPrefix, generate_id
 
 _EXPORT_HEADER = ["Lead Code", "Name", "Mobile", "Email", "Source", "Product Category", "Product", "Status", "Assigned To", "Created At"]
@@ -365,12 +365,13 @@ class LeadService:
 
         candidate_ids = [e.require_id() for e in candidates]
         assigned_activities = await self._activities.find_assigned_for_employees(candidate_ids)
-        # Naive on purpose — Motor round-trips `created_at` as naive UTC (see
-        # app.utils.datetime.ensure_utc), so `now`/the day/week boundaries below must
-        # match that, not a tz-aware utc_now().
-        now = utc_now().replace(tzinfo=None)  # noqa: DTZ901
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        week_start = today_start - timedelta(days=today_start.weekday())  # Monday
+        # "Today"/"this week" mean the business (IST) calendar day/week, not UTC — see
+        # app/utils/datetime.py. Both are tz-aware UTC instants; `activity.created_at`
+        # (read from Mongo with tz_aware=True) is tz-aware UTC too, so these compare
+        # directly with no naive/aware mismatch.
+        ist_now = now_ist()
+        today_start = start_of_day_ist(ist_now)
+        week_start = today_start - timedelta(days=ist_now.weekday())  # Monday, IST calendar
         last_assigned_map: dict[str, datetime] = {}
         today_count_map: dict[str, int] = {}
         week_count_map: dict[str, int] = {}

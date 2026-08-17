@@ -21,6 +21,7 @@ import {
   type SchemaAuditEntry,
 } from "@/features/customer/api";
 import { getErrorMessage } from "@/features/customer/errors";
+import { formatISTDateTime } from "@/shared/dateFormat";
 import { Icon } from "@/theme/icons";
 
 // Governance round — the Owner-facing schema editor (replaces the read-only table's
@@ -790,7 +791,7 @@ function HistoryTab({ entries }: { entries: SchemaAuditEntry[] | null }) {
         <div key={entry.id} className="p-4">
           <div className="flex items-center justify-between gap-2 mb-1">
             <span className="text-sm font-medium text-text">{eventLabels[entry.event_type] ?? entry.event_type}</span>
-            <span className="text-xs text-text/40">{new Date(entry.changed_at).toLocaleString()}</span>
+            <span className="text-xs text-text/40">{formatISTDateTime(entry.changed_at)}</span>
           </div>
           <p className="text-xs text-text/50 mb-2">By {entry.changed_by_name ?? "Owner"}</p>
           {entry.changes.length > 0 && (

@@ -10,6 +10,7 @@ import {
   markNotificationRead,
   type AppNotification,
 } from "@/features/reminders/api";
+import { formatISTDateTime } from "@/shared/dateFormat";
 
 const PAGE_SIZE = 20;
 // Same rationale as LeadListPage's poll — no push transport exists in this project yet,
@@ -104,7 +105,7 @@ export function NotificationListPage() {
                   <span className="text-[10px] uppercase tracking-wide text-text/40 border border-border rounded px-1.5 py-0.5">{n.category}</span>
                 </div>
                 <div className="text-sm text-text/70">{n.message}</div>
-                <div className="text-xs text-text/40 mt-1">{new Date(n.created_at).toLocaleString()}</div>
+                <div className="text-xs text-text/40 mt-1">{formatISTDateTime(n.created_at)}</div>
               </div>
               <div className="flex gap-2 shrink-0">
                 {n.status === "unread" && (

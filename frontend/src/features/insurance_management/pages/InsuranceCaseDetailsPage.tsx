@@ -30,6 +30,7 @@ import {
   type InsuranceCaseDetail,
 } from "@/features/insurance_management/api";
 import { documentTypesApi, type NamedMasterData } from "@/features/system_settings/api";
+import { formatISTDateTime } from "@/shared/dateFormat";
 import { HOLD_REASONS } from "@/features/workflow_engine/holdReasons";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -199,7 +200,7 @@ export function InsuranceCaseDetailsPage() {
                 <>
                   <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
                     <Field label="Policy Number" value={details.policy_number} />
-                    <Field label="Generated At" value={details.policy_generated_at ? new Date(details.policy_generated_at).toLocaleString() : null} />
+                    <Field label="Generated At" value={details.policy_generated_at ? formatISTDateTime(details.policy_generated_at) : null} />
                   </div>
                   {canIssuePolicy && (
                     <Button size="sm" onClick={() => setConfirmIssue(true)}>
@@ -215,7 +216,7 @@ export function InsuranceCaseDetailsPage() {
             <Section title="Policy">
               <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
                 <Field label="Policy Number" value={details.policy_number} />
-                <Field label="Issued At" value={details.policy_issued_at ? new Date(details.policy_issued_at).toLocaleString() : null} />
+                <Field label="Issued At" value={details.policy_issued_at ? formatISTDateTime(details.policy_issued_at) : null} />
               </div>
             </Section>
           )}
@@ -255,7 +256,7 @@ export function InsuranceCaseDetailsPage() {
                       {entry.remarks ? ` (${entry.remarks})` : ""}
                     </div>
                   )}
-                  <div className="text-xs text-text/40">{new Date(entry.created_at).toLocaleString()}</div>
+                  <div className="text-xs text-text/40">{formatISTDateTime(entry.created_at)}</div>
                 </div>
               ))}
             </div>

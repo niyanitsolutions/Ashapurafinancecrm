@@ -16,6 +16,16 @@ class Settings(BaseSettings):
     app_env: str = "development"
     app_name: str = "AFS Financial CRM"
     api_v1_prefix: str = "/api/v1"
+
+    # The single business timezone for the entire application — every business-day/
+    # business-hour calculation (Geo Fencing, Dashboard "today", report date ranges,
+    # reminders, ...) goes through `app/utils/datetime.py`'s IST helpers, which read
+    # this value rather than hardcoding "Asia/Kolkata" a second time anywhere else.
+    # Storage stays UTC regardless (see docs/TIMEZONE.md) — this only governs how
+    # business dates/times are interpreted and displayed. A real IANA zone name
+    # (`zoneinfo.ZoneInfo`), not a fixed offset, so it stays correct even if this ever
+    # needs to change to a DST-observing zone in the future.
+    timezone: str = "Asia/Kolkata"
     # Safe-by-default (same reasoning as `otp_mode` below): a deployment that forgets to
     # set DEBUG explicitly must not get Starlette's traceback-and-source-dump error page,
     # since FastAPI(debug=...) short-circuits the app's own safe 500 handler when True.

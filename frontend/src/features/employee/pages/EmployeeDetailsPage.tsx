@@ -24,6 +24,7 @@ import {
 import { StatusBadge } from "@/features/employee/components/StatusBadge";
 import { getErrorMessage } from "@/features/employee/errors";
 import { insuranceProductsApi, loanProductsApi } from "@/features/system_settings/api";
+import { formatISTDateTime } from "@/shared/dateFormat";
 
 const DOCUMENT_TYPES = [
   { value: "pan", label: "PAN" },
@@ -344,8 +345,8 @@ function SessionsTab({ employeeId }: { employeeId: string }) {
             <tr key={s.id} className="border-b border-border last:border-0">
               <td className="px-4 py-3">{[s.browser, s.operating_system].filter(Boolean).join(" · ") || "—"}</td>
               <td className="px-4 py-3">{[s.city, s.country].filter(Boolean).join(", ") || s.ip_address || "—"}</td>
-              <td className="px-4 py-3">{new Date(s.login_at).toLocaleString()}</td>
-              <td className="px-4 py-3">{new Date(s.last_activity_at).toLocaleString()}</td>
+              <td className="px-4 py-3">{formatISTDateTime(s.login_at)}</td>
+              <td className="px-4 py-3">{formatISTDateTime(s.last_activity_at)}</td>
               <td className="px-4 py-3 capitalize">{s.status}</td>
             </tr>
           ))}
@@ -378,7 +379,7 @@ function LoginHistoryTab({ employeeId }: { employeeId: string }) {
             <tr key={i} className="border-b border-border last:border-0">
               <td className="px-4 py-3 capitalize">{h.event_type.replace(/_/g, " ")}</td>
               <td className="px-4 py-3">{h.ip_address || "—"}</td>
-              <td className="px-4 py-3">{new Date(h.created_at).toLocaleString()}</td>
+              <td className="px-4 py-3">{formatISTDateTime(h.created_at)}</td>
             </tr>
           ))}
         </tbody>
@@ -400,7 +401,7 @@ function ActivityTab({ employeeId }: { employeeId: string }) {
       <StatTile label="Total Logins" value={summary.total_logins} />
       <StatTile label="Failed Logins" value={summary.failed_login_count} />
       <StatTile label="Active Sessions" value={summary.active_session_count} />
-      <StatTile label="Last Login" value={summary.last_login_at ? new Date(summary.last_login_at).toLocaleString() : "—"} />
+      <StatTile label="Last Login" value={summary.last_login_at ? formatISTDateTime(summary.last_login_at) : "—"} />
       <StatTile label="Account Status" value={summary.account_status} />
       <StatTile label="Employment Status" value={summary.employment_status} />
     </div>

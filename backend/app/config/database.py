@@ -16,8 +16,15 @@ def get_client() -> AsyncIOMotorClient[Any]:
     global _client
     if _client is None:
         settings = get_settings()
+        # tz_aware=True: every datetime BSON round-trips as tz-aware UTC instead of
+        # naive. Every write in this app already goes through `utc_now()` (tz-aware),
+        # so nothing changes on the write side — this only fixes the *read* side, which
+        # previously discarded that information. Naive-but-actually-UTC values were
+        # serialized into API responses with no offset marker, which JS's `Date`
+        # parsing then silently misreads as browser-local time (see docs/TIMEZONE.md)
+        # — this single flag is the root-cause fix for that class of bug.
         _client = AsyncIOMotorClient(
-            settings.mongo_uri, serverSelectionTimeoutMS=_SERVER_SELECTION_TIMEOUT_MS
+            settings.mongo_uri, serverSelectionTimeoutMS=_SERVER_SELECTION_TIMEOUT_MS, tz_aware=True
         )
     return _client
 

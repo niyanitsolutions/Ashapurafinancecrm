@@ -21,6 +21,7 @@ import {
 import { listCustomersStaff, type CustomerListItem } from "@/features/customer/api";
 import { listLeads, type LeadListItem } from "@/features/leads/api";
 import { getErrorMessage } from "@/shared/api/errors";
+import { formatISTDateTime } from "@/shared/dateFormat";
 
 const CHANNELS = [
   { value: "whatsapp", label: "WhatsApp" },
@@ -86,7 +87,7 @@ export function BulkMessagesSection({ run }: { run: (action: () => Promise<unkno
             <tbody>
               {jobs.map((job) => (
                 <tr key={job.id} className="border-b border-border last:border-0 hover:bg-background">
-                  <td className="px-4 py-3">{new Date(job.created_at).toLocaleString()}</td>
+                  <td className="px-4 py-3">{formatISTDateTime(job.created_at)}</td>
                   <td className="px-4 py-3 capitalize">{job.channel}</td>
                   <td className="px-4 py-3">{job.recipient_count}</td>
                   <td className="px-4 py-3">{job.queued_count}</td>

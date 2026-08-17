@@ -4,6 +4,7 @@ import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { listOwnApplications, type ApplicationListItem } from "@/features/customer/api";
 import { getErrorMessage } from "@/features/customer/errors";
+import { formatISTDate } from "@/shared/dateFormat";
 import { Icon } from "@/theme/icons";
 
 function ApplicationRowCard({ app }: { app: ApplicationListItem }) {
@@ -29,7 +30,7 @@ function ApplicationRowCard({ app }: { app: ApplicationListItem }) {
         </div>
         <div>
           <p className="text-[11px] uppercase tracking-wide text-text/40">Created</p>
-          <p className="text-text/80">{new Date(app.created_at).toLocaleDateString()}</p>
+          <p className="text-text/80">{formatISTDate(app.created_at)}</p>
         </div>
       </div>
 

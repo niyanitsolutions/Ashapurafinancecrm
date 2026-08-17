@@ -23,11 +23,14 @@ import {
 import { buildMatrixGrants } from "@/features/employee/permissionMatrix";
 import { getErrorMessage } from "@/features/employee/errors";
 import { simpleCreateEmployeeSchema, type SimpleCreateEmployeeFormValues } from "@/features/employee/validation";
+import { todayISTDateString } from "@/shared/dateFormat";
 
 // Defaults for the two backend-required fields this simplified form doesn't ask about —
 // editable afterward via Edit / the Employee Profile's Employment tab.
 const DEFAULT_EMPLOYMENT_TYPE = "full_time";
-const todayIso = () => new Date().toISOString().slice(0, 10);
+// IST calendar date, not `new Date().toISOString().slice(0, 10)` (UTC) — the latter
+// would default to "yesterday" during the first 5.5 hours of the IST business day.
+const todayIso = () => todayISTDateString();
 
 export function CreateEmployeePage() {
   const navigate = useNavigate();

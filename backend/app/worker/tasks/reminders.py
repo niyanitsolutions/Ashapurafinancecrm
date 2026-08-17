@@ -99,6 +99,10 @@ async def check_re_eligible_cases(_ctx: dict[Any, Any], *_args: Any, **_kwargs: 
     reminders = ReminderRepository(db)
     employees = EmployeeRepository(db)
     service = RemindersService(db)
+    # Timezone audit note (see docs/TIMEZONE.md): every comparison below is against an
+    # absolute instant (`now < notify_at`, itself `eligible_at ± timedelta(...)`), never
+    # a calendar-day boundary — so `utc_now()` here is correct as-is and does not need
+    # an IST conversion; only "what wall-clock/calendar-day is it" comparisons do.
     now = utc_now()
 
     active_rules = await rules.find_active_by_type(ReminderRuleType.RE_ELIGIBILITY)
@@ -158,6 +162,10 @@ async def check_task_reminders(_ctx: dict[Any, Any], *_args: Any, **_kwargs: Any
     reminders = ReminderRepository(db)
     employees = EmployeeRepository(db)
     service = RemindersService(db)
+    # Same note as check_re_eligible_cases above: `now < due_at` is an absolute-instant
+    # comparison, not a calendar-day boundary, so `utc_now()` is correct here as-is.
+    # `due_at` itself must be the correct UTC instant for the Owner's intended IST
+    # wall-clock due time — enforced on the frontend input side (AddTaskModal.tsx).
     now = utc_now()
 
     active_rules = await rules.find_active_by_type(ReminderRuleType.TASK_DUE)

@@ -30,6 +30,7 @@ import {
   type TestConnectionResult,
 } from "@/features/integrations/api";
 import { fieldsFor } from "@/features/integrations/providerFields";
+import { formatISTDateTime } from "@/shared/dateFormat";
 
 const HEALTH_BADGE: Record<string, { label: string; icon: string; className: string }> = {
   healthy: { label: "Healthy", icon: "🟢", className: "text-success" },
@@ -47,7 +48,7 @@ const SETUP_STEPS: { key: keyof MetaStatus["setup_progress"]; label: string }[] 
 ];
 
 function formatDate(value: string | null): string {
-  return value ? new Date(value).toLocaleString() : "—";
+  return value ? formatISTDateTime(value) : "—";
 }
 
 function MetaConnectPanel({
@@ -526,7 +527,7 @@ export function IntegrationDetailsPage() {
                 {testResult.checks.some((c) => c.key === "token" && c.passed) && (
                   <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 border-t border-border pt-3 text-xs text-text/60">
                     <div>Response Time: {testResult.response_time_ms}ms</div>
-                    <div>Tested At: {new Date(testResult.tested_at).toLocaleString()}</div>
+                    <div>Tested At: {formatISTDateTime(testResult.tested_at)}</div>
                   </div>
                 )}
               </>
@@ -588,7 +589,7 @@ export function IntegrationDetailsPage() {
                   <td className="px-4 py-3">{log.response_time_ms}ms</td>
                   <td className="px-4 py-3">{log.error_message || "—"}</td>
                   <td className="px-4 py-3">{log.graph_api_version || "—"}</td>
-                  <td className="px-4 py-3">{new Date(log.tested_at).toLocaleString()}</td>
+                  <td className="px-4 py-3">{formatISTDateTime(log.tested_at)}</td>
                 </tr>
               ))}
             </tbody>

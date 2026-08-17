@@ -21,6 +21,7 @@ import {
   type QueueItem,
 } from "@/features/communication/api";
 import { getErrorMessage } from "@/features/customer/errors";
+import { formatISTDateTime } from "@/shared/dateFormat";
 
 const CHANNELS = ["whatsapp", "sms", "email"];
 const CATEGORIES = ["otp", "welcome", "lead_assigned", "reminder", "application_submitted", "document_request", "commission_approved"];
@@ -340,7 +341,7 @@ function QueueSection({ run }: { run: (action: () => Promise<unknown>, successMe
                 <td className="px-4 py-3 capitalize">{item.status}</td>
                 <td className="px-4 py-3">{item.retry_count}</td>
                 <td className="px-4 py-3 max-w-xs truncate" title={item.error_detail || ""}>{item.error_detail || "—"}</td>
-                <td className="px-4 py-3">{new Date(item.created_at).toLocaleString()}</td>
+                <td className="px-4 py-3">{formatISTDateTime(item.created_at)}</td>
                 <td className="px-4 py-3">
                   {canRetry && (item.status === "failed" || item.status === "exhausted") && (
                     <button type="button" onClick={() => run(() => retryQueueItem(item.id), "Retry attempted.", load)} className="text-primary hover:underline text-xs">
@@ -420,7 +421,7 @@ function HistorySection() {
                 <td className="px-4 py-3">{item.template_name}</td>
                 <td className="px-4 py-3 capitalize">{item.status}</td>
                 <td className="px-4 py-3">{item.retry_count}</td>
-                <td className="px-4 py-3">{item.sent_at ? new Date(item.sent_at).toLocaleString() : "—"}</td>
+                <td className="px-4 py-3">{item.sent_at ? formatISTDateTime(item.sent_at) : "—"}</td>
               </tr>
             ))}
           </tbody>

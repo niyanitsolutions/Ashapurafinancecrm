@@ -25,7 +25,7 @@ from app.features.geo_fencing.constants import AuditEvent
 from app.features.geo_fencing.geomath import haversine_distance_meters
 from app.features.geo_fencing.repository import GeoFenceRepository
 from app.shared.audit_log import write_audit_log
-from app.utils.datetime import utc_now, within_daily_window
+from app.utils.datetime import now_ist, within_daily_window
 
 _OWNER_ROLE = "owner"
 
@@ -55,7 +55,10 @@ async def enforce_geo_fence(
         )
         raise ForbiddenError("Location is required for this action.")
 
-    now = utc_now()
+    # A Geo Exception's daily window is an IST business-hours window (the Owner enters
+    # "09:00"-"18:00" meaning India time) — must be evaluated against IST "now", not
+    # UTC. See app/utils/datetime.py's within_daily_window docstring.
+    now = now_ist()
     exceptions = await GeoExceptionRepository(db).find_active_for_employee(employee_id, activity=activity)
     for exception in exceptions:
         if within_daily_window(exception.start_date, exception.end_date, exception.start_time, exception.end_time, now):

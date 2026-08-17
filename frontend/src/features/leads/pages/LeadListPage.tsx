@@ -14,6 +14,7 @@ import { ASSIGNED_SENTINEL, UNASSIGNED_SENTINEL, exportLeadsCsvUrl, listLeads, t
 import { getErrorMessage } from "@/features/leads/errors";
 import { leadSourcesApi, type NamedMasterData } from "@/features/system_settings/api";
 import { getAccessToken } from "@/shared/api/client";
+import { formatISTDate, formatISTTime } from "@/shared/dateFormat";
 import { Icon } from "@/theme/icons";
 
 // Leads (including Meta Lead Ads, which arrive via a server-side webhook the browser
@@ -35,11 +36,7 @@ const ALL_OPTIONAL_COLUMNS: ColumnOption[] = [
 ];
 
 function formatDateTime(iso: string): { date: string; time: string } {
-  const d = new Date(iso);
-  return {
-    date: d.toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" }),
-    time: d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true }),
-  };
+  return { date: formatISTDate(iso), time: formatISTTime(iso) };
 }
 
 // Plain `<a href>` can't carry the Bearer token (see shared/api/client.ts:getAccessToken)

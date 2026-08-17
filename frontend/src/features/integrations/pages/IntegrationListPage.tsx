@@ -18,6 +18,7 @@ import {
   type TestConnectionResult,
 } from "@/features/integrations/api";
 import { fieldsFor } from "@/features/integrations/providerFields";
+import { formatISTDateTime } from "@/shared/dateFormat";
 
 // Exported (additive — no behavior change to this page) so the Communication Providers
 // page (Settings, Stage 2 of the Geo Fencing/MSG91 request) can reuse the exact same
@@ -157,7 +158,7 @@ export function IntegrationListPage() {
                           <span className="text-text/40">Disabled</span>
                         )}
                       </td>
-                      <td className="px-4 py-3">{config.last_tested_at ? new Date(config.last_tested_at).toLocaleString() : "Never"}</td>
+                      <td className="px-4 py-3">{config.last_tested_at ? formatISTDateTime(config.last_tested_at) : "Never"}</td>
                     </tr>
                   ))}
                 </tbody>

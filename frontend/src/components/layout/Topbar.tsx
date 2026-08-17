@@ -6,6 +6,7 @@ import { useAuth } from "@/features/auth/useAuth";
 import { NotificationBell } from "@/features/dashboard/components/NotificationBell";
 import { ProfileMenu } from "@/features/dashboard/components/ProfileMenu";
 import { isEmployeeSearchRelevant, QuickSearch } from "@/features/dashboard/components/QuickSearch";
+import { currentISTHour } from "@/shared/dateFormat";
 import { Icon } from "@/theme/icons";
 
 function greetingForHour(hour: number) {
@@ -26,7 +27,9 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
   const mobile = profile?.mobile ?? "";
   const firstName = profile?.name?.trim().split(/\s+/)[0];
 
-  const greeting = greetingForHour(new Date().getHours());
+  // India business hours, not the viewer's own browser timezone — see
+  // frontend/src/shared/dateFormat.ts.
+  const greeting = greetingForHour(currentISTHour());
   const roleLabel = (role && ROLE_LABELS[role]) || null;
   const showSearch = isEmployeeSearchRelevant(location.pathname);
 

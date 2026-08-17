@@ -23,6 +23,7 @@ import {
   type TimelineEntry,
 } from "@/features/leads/api";
 import { getErrorMessage } from "@/features/leads/errors";
+import { formatISTDateTime } from "@/shared/dateFormat";
 import { Icon, type IconName } from "@/theme/icons";
 
 function HeaderButton({
@@ -71,7 +72,7 @@ function activityLabel(entry: TimelineEntry): string {
 }
 
 function TimelineItem({ entry }: { entry: TimelineEntry }) {
-  const when = new Date(entry.created_at).toLocaleString();
+  const when = formatISTDateTime(entry.created_at);
   if (entry.type === "note") {
     return (
       <div className="border-l-2 border-primary/40 pl-3 py-1">

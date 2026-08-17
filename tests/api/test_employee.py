@@ -356,21 +356,24 @@ async def test_list_all_employee_activity_filters_by_employee_id(client, owner_h
 
 
 async def test_list_all_employee_activity_date_range_filter(client, owner_headers, master_data):
+    # date_from/date_to are business (IST) calendar dates (see EmployeeService.
+    # list_activity), not full ISO datetimes — a bare "YYYY-MM-DD" is the real contract.
+    # +/-2 days (not 1) keeps this deterministic regardless of exactly when the test
+    # runs relative to the IST/UTC calendar-date skew (at most +-1 day) near midnight.
     from datetime import timedelta
-    from urllib.parse import quote
 
-    from app.utils.datetime import utc_now
+    from app.utils.datetime import now_ist
 
     employee = await _create_employee(client, owner_headers, master_data, mobile="9111111133", email="activity.range@example.com")
     r = await client.post("/api/v1/auth/login", json={"mobile": "9111111133", "password": "InitialPass1!"})
     assert r.status_code == 200, r.text
 
-    future_start = quote((utc_now() + timedelta(days=1)).isoformat())
+    future_start = (now_ist() + timedelta(days=2)).date().isoformat()
     r = await client.get(f"/api/v1/employees/activity?employee_id={employee['id']}&date_from={future_start}", headers=owner_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"] == []
 
-    past_start = quote((utc_now() - timedelta(days=1)).isoformat())
+    past_start = (now_ist() - timedelta(days=2)).date().isoformat()
     r = await client.get(f"/api/v1/employees/activity?employee_id={employee['id']}&date_from={past_start}", headers=owner_headers)
     assert r.status_code == 200, r.text
     assert len(r.json()["data"]) > 0

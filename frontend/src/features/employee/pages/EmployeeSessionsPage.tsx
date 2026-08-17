@@ -6,6 +6,7 @@ import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { Pagination } from "@/components/tables/Pagination";
 import { getEmployeeSessions, type SessionSummary } from "@/features/employee/api";
 import { getErrorMessage } from "@/features/employee/errors";
+import { formatISTDateTime } from "@/shared/dateFormat";
 
 const PAGE_SIZE = 20;
 
@@ -67,8 +68,8 @@ export function EmployeeSessionsPage() {
                     {s.ip_address || "—"}
                     {s.city || s.country ? ` (${[s.city, s.country].filter(Boolean).join(", ")})` : ""}
                   </td>
-                  <td className="px-4 py-3">{new Date(s.login_at).toLocaleString()}</td>
-                  <td className="px-4 py-3">{new Date(s.last_activity_at).toLocaleString()}</td>
+                  <td className="px-4 py-3">{formatISTDateTime(s.login_at)}</td>
+                  <td className="px-4 py-3">{formatISTDateTime(s.last_activity_at)}</td>
                   <td className="px-4 py-3 capitalize">{s.status}</td>
                 </tr>
               ))}

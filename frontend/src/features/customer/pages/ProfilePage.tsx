@@ -7,6 +7,7 @@ import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { SubmitButton } from "@/components/forms/SubmitButton";
 import { getOwnCustomerProfile, updateOwnProfile, type Address, type Customer } from "@/features/customer/api";
 import { getErrorMessage } from "@/features/customer/errors";
+import { formatISTDate } from "@/shared/dateFormat";
 
 const GENDER_OPTIONS = [
   { value: "male", label: "Male" },
@@ -153,7 +154,7 @@ export function ProfilePage() {
             </div>
             <div className="mb-4">
               <div className="text-text/50 text-xs mb-1">Member Since</div>
-              <div className="text-text">{new Date(customer.created_at).toLocaleDateString()}</div>
+              <div className="text-text">{formatISTDate(customer.created_at)}</div>
             </div>
           </div>
         </Section>

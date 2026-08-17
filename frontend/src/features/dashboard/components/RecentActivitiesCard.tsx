@@ -2,6 +2,7 @@ import { Card, CardHeader } from "@/components/cards/Card";
 import { NoDataState } from "@/components/charts/NoDataState";
 import type { Widget } from "@/features/dashboard/api";
 import { widgetData } from "@/features/dashboard/useDashboardWidgets";
+import { formatISTDate } from "@/shared/dateFormat";
 import { Icon, type IconName } from "@/theme/icons";
 
 function iconForEvent(eventType: string): IconName {
@@ -22,7 +23,7 @@ function relativeTime(iso: string): string {
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
   if (seconds < 86_400) return `${Math.floor(seconds / 3600)}h ago`;
   if (seconds < 2_592_000) return `${Math.floor(seconds / 86_400)}d ago`;
-  return new Date(iso).toLocaleDateString();
+  return formatISTDate(iso);
 }
 
 // recent_activities is minimal by design (event_type + created_at only, no actor name or

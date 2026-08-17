@@ -3,6 +3,7 @@ import { EmptyState } from "@/components/layout/EmptyState";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { getErrorMessage } from "@/features/customer/errors";
 import { listEmployeeActivity, type EmployeeActivityEntry } from "@/features/employee/api";
+import { formatISTDateTime } from "@/shared/dateFormat";
 
 const PAGE_SIZE = 20;
 
@@ -23,8 +24,12 @@ export function EmployeeActivityOverviewPage() {
     setIsLoading(true);
     listEmployeeActivity({
       page, page_size: PAGE_SIZE, employee_id: employeeId || undefined,
-      date_from: dateFrom ? new Date(dateFrom).toISOString() : undefined,
-      date_to: dateTo ? new Date(dateTo).toISOString() : undefined,
+      // Raw "YYYY-MM-DD" strings, not `new Date(...).toISOString()` — the backend
+      // interprets these as business (IST) calendar dates, converting to the correct
+      // UTC instant bounds itself (see EmployeeService.list_activity). Converting
+      // through `Date` here would filter on UTC day boundaries instead.
+      date_from: dateFrom || undefined,
+      date_to: dateTo || undefined,
     })
       .then((res) => {
         setItems(res.data);
@@ -77,7 +82,7 @@ export function EmployeeActivityOverviewPage() {
                 <td className="px-4 py-3">{entry.employee_name || "—"}</td>
                 <td className="px-4 py-3 capitalize">{entry.event_type.replace(/_/g, " ")}</td>
                 <td className="px-4 py-3">{entry.ip_address || "—"}</td>
-                <td className="px-4 py-3">{new Date(entry.created_at).toLocaleString()}</td>
+                <td className="px-4 py-3">{formatISTDateTime(entry.created_at)}</td>
               </tr>
             ))}
           </tbody>

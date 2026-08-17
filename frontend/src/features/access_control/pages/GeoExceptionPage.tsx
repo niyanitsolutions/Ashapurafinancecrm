@@ -13,6 +13,7 @@ import { Pagination } from "@/components/tables/Pagination";
 import { createGeoException, listGeoExceptions, revokeGeoException, type GeoException } from "@/features/access_control/api";
 import { getErrorMessage } from "@/features/access_control/errors";
 import { GEO_ACTIVITIES } from "@/features/geo_fencing/api";
+import { istWallClockToUtcISO } from "@/shared/dateFormat";
 
 function activityLabel(activity: string | null): string {
   if (!activity) return "All Activities";
@@ -21,16 +22,17 @@ function activityLabel(activity: string | null): string {
 
 // The DB only ever stores "active"/"revoked" (see GeoException's own docstring — same
 // lazy-evaluation convention as the sibling TemporaryAccess model: "expired" is never
-// stored, only ever computed at read/enforcement time). Combines end_date + end_time
-// into a real datetime for comparison, matching backend/app/utils/datetime.py's own
-// `within_daily_window` end-of-window semantics.
+// stored, only ever computed at read/enforcement time). `end_date`/`end_time` mean IST
+// wall-clock (the same business timezone the backend's own `within_daily_window`
+// evaluates the exception against — see docs/TIMEZONE.md), regardless of the viewing
+// browser's own timezone — so the comparison instant must be built via
+// `istWallClockToUtcISO`, not a bare `new Date(end_date)` + `.setHours(...)` (which
+// mixes a UTC-parsed date with the *browser's* local hour/minute).
 type DisplayStatus = "active" | "expired" | "revoked";
 
 function displayStatus(item: GeoException, now: Date): DisplayStatus {
   if (item.status === "revoked") return "revoked";
-  const [hour, minute] = item.end_time.split(":").map(Number);
-  const end = new Date(item.end_date);
-  end.setHours(hour, minute, 0, 0);
+  const end = new Date(istWallClockToUtcISO(item.end_date, item.end_time));
   return now > end ? "expired" : "active";
 }
 

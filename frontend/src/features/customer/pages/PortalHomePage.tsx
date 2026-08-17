@@ -4,6 +4,7 @@ import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { getOwnCustomerProfile, getOwnDashboard, type Customer, type DocumentPreviewItem, type PortalDashboard } from "@/features/customer/api";
 import { getErrorMessage } from "@/features/customer/errors";
 import { buildMilestones, type MilestoneState } from "@/features/customer/timelineSummary";
+import { formatISTDateTime } from "@/shared/dateFormat";
 import { Icon, type IconName } from "@/theme/icons";
 
 const MILESTONE_STYLES: Record<MilestoneState, string> = {
@@ -234,7 +235,7 @@ function RecentActivity({ dashboard }: { dashboard: PortalDashboard }) {
             </span>
             <span>
               <span className="block text-text capitalize">{a.event_type.replace(/_/g, " ")}</span>
-              {a.created_at && <span className="block text-xs text-text/40">{new Date(a.created_at).toLocaleString()}</span>}
+              {a.created_at && <span className="block text-xs text-text/40">{formatISTDateTime(a.created_at)}</span>}
             </span>
           </li>
         ))}
