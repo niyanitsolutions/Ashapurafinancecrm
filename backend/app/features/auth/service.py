@@ -2,6 +2,7 @@
 described in docs/AUTHENTICATION.md lives here.
 """
 
+import json
 import logging
 import secrets
 from dataclasses import dataclass
@@ -41,10 +42,13 @@ from app.features.auth.models import (
 )
 from app.features.auth.repository import SessionRepository, UserRepository
 from app.features.auth.schemas import LoginResponse, ProfileResponse, TokenPairResponse
+from app.features.communication.adapters import send_sms
 from app.features.employee.repository import EmployeeRepository
 from app.features.geo_fencing.constants import GeoActivity
 from app.features.geo_fencing.enforcement import enforce_geo_fence
+from app.features.integrations.constants import IntegrationType
 from app.features.owner.repository import OwnerProfileRepository
+from app.security.encryption import decrypt
 from app.security.hashing import hash_value
 from app.security.jwt import (
     TokenError,
@@ -56,7 +60,6 @@ from app.security.jwt import (
 )
 from app.security.password import hash_password, verify_password
 from app.services.geoip.client import GeoLocation, NotConfiguredGeoIpClient
-from app.services.sms.client import NotConfiguredSmsClient
 from app.shared.audit_log import write_audit_log
 from app.utils.datetime import utc_now
 from app.utils.user_agent import parse_user_agent
@@ -499,10 +502,40 @@ class AuthService:
         if get_settings().otp_mode == "development":
             logger.info("[DEV MODE] Generated OTP %s for mobile %s", otp, mobile)
             return
-        try:
-            await NotConfiguredSmsClient().send_sms(mobile, f"Your AFS Financial CRM OTP is {otp}")
-        except NotImplementedError:
-            pass  # no SMS provider configured yet — see docs/KNOWN_LIMITATIONS.md
+        config = await self._active_sms_config()
+        if config is None:
+            return  # no SMS provider configured yet — see docs/KNOWN_LIMITATIONS.md
+        outcome = await send_sms(
+            recipient=mobile,
+            subject=None,
+            body=f"Your AFS Financial CRM OTP is {otp}. It expires shortly — do not share it with anyone.",
+            config=config,
+            variables={"otp": otp},
+            variable_order=["otp"],
+        )
+        if not outcome.success:
+            # Never log `config` (carries auth_key) or `otp` itself here — only the
+            # adapter's own classified, provider-response-derived error string.
+            logger.warning("OTP SMS delivery failed for %s: %s", mobile, outcome.error)
+
+    async def _active_sms_config(self) -> dict[str, str] | None:
+        """Loads the Owner-configured, active SMS provider from Module 9A's existing
+        `IntegrationConfig` store (`communication/service.py:_active_config` uses the
+        identical query+decrypt shape) — Auth never gets its own credential storage.
+        `otp_flow_id`, if the Owner has set one, overrides `flow_id` for MSG91: OTP text
+        is its own DLT-approved template, distinct from whatever template other
+        transactional SMS (Message Center) is configured to use.
+        """
+        doc = await self._db["integration_configs"].find_one(
+            {"integration_type": IntegrationType.SMS, "is_active": True, "is_deleted": False}
+        )
+        if doc is None:
+            return None
+        config: dict[str, str] = json.loads(decrypt(doc["config_encrypted"])) if doc.get("config_encrypted") else {}
+        config["_provider"] = doc.get("provider", "")
+        if config.get("_provider") == "msg91" and config.get("otp_flow_id"):
+            config["flow_id"] = config["otp_flow_id"]
+        return config
 
     async def _lookup_geo(self, ip_address: str | None) -> GeoLocation | None:
         if not ip_address:

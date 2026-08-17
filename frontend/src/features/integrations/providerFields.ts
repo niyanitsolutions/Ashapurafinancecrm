@@ -72,6 +72,10 @@ export const MSG91_SMS_FIELDS: ProviderField[] = [
   { key: "auth_key", label: "Auth Key", secret: true, section: "credentials", helpText: "Your MSG91 account Auth Key (Dashboard → API → Auth Key)." },
   { key: "sender_id", label: "Sender ID", section: "channel", helpText: "The approved 6-character DLT sender ID, e.g. AFSFIN." },
   { key: "flow_id", label: "SMS Template ID (Flow ID)", section: "channel", helpText: "The Flow ID of the approved SMS template in MSG91." },
+  {
+    key: "otp_flow_id", label: "Login OTP Flow ID", section: "channel", optional: true,
+    helpText: "Flow ID of a separate, DLT-approved OTP template, if login/signup OTPs use different wording than the Flow ID above. Leave blank to reuse it.",
+  },
   { key: "dlt_template_id", label: "DLT Template ID", section: "channel", optional: true, helpText: "TRAI DLT-registered template ID, required in India for promotional/transactional SMS. Leave blank if not applicable." },
   // Set this to any value you choose, then configure MSG91's own SMS DLR webhook URL as
   // {API_BASE_URL}/communication/webhooks/msg91?secret=<same value> — see the Delivery
