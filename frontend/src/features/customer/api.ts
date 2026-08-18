@@ -1,4 +1,4 @@
-import { apiRequest, apiRequestRaw, type PaginationMeta } from "@/shared/api/client";
+import { ApiError, apiRequest, apiRequestRaw, type PaginationMeta } from "@/shared/api/client";
 import type { NamedMasterData } from "@/features/system_settings/api";
 
 export interface Address {
@@ -551,6 +551,36 @@ export function markDocumentNotAvailable(applicationId: string, documentTypeId: 
 
 export function getDocumentHistory(applicationId: string, documentTypeId: string) {
   return apiRequest<ApplicationDocument[]>(`/applications/${applicationId}/documents/${documentTypeId}/history`);
+}
+
+// The browser's PUT goes straight to S3 (not through this backend), so failures here are
+// never an ApiError from apiRequest — a CORS-blocked preflight or any other network-level
+// failure surfaces as a bare, detail-free TypeError, and a non-2xx S3 response (e.g. a
+// signature mismatch) resolves normally with `response.ok === false` rather than
+// throwing. Both are normalized into the same ApiError shape the rest of the app already
+// knows how to turn into friendly copy (see shared/api/errors.ts) — full technical detail
+// goes to the console either way, never into the message shown to the customer.
+async function putFileToStorage(uploadUrl: string, file: File): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type || "application/octet-stream" } });
+  } catch (err) {
+    console.error("[Document Upload] Storage PUT failed before a response was received (network/CORS)", err);
+    throw new ApiError("document_upload_failed", "Document upload failed. Please try again.", err);
+  }
+  if (!response.ok) {
+    console.error(`[Document Upload] Storage rejected the upload: ${response.status} ${response.statusText}`);
+    throw new ApiError("document_upload_failed", "Document upload failed. Please try again.", { status: response.status, statusText: response.statusText });
+  }
+}
+
+/** The full three-step upload flow (get presigned URL -> PUT to storage -> confirm) —
+ * the one place this is implemented, used by every page that lets a customer upload a
+ * document (Document Center, the Application form's own checklist). */
+export async function uploadApplicationDocument(applicationId: string, documentTypeId: string, file: File): Promise<ApplicationDocument> {
+  const { upload_url, s3_key } = await getDocumentUploadUrl(applicationId, documentTypeId, file.name, file.type);
+  await putFileToStorage(upload_url, file);
+  return confirmDocument(applicationId, documentTypeId, file.name, s3_key, file.type);
 }
 
 // ---- document verification (staff) ----

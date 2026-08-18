@@ -9,14 +9,13 @@ import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
 import { useAuth } from "@/features/auth/useAuth";
 import { documentCompletionSummary, DocumentChecklist } from "@/features/customer/components/DocumentChecklist";
 import {
-  confirmDocument,
   getApplication,
-  getDocumentUploadUrl,
   getFormDefinition,
   listDocuments,
   markDocumentNotAvailable,
   updateApplication,
   submitApplication,
+  uploadApplicationDocument,
   type ApplicationDetail,
   type ApplicationDocument,
   type FormDefinition,
@@ -222,9 +221,7 @@ export function ApplicationPage() {
     setError(null);
     setUploadingFor(documentTypeId);
     try {
-      const { upload_url, s3_key } = await getDocumentUploadUrl(id, documentTypeId, file.name, file.type);
-      await fetch(upload_url, { method: "PUT", body: file, headers: { "Content-Type": file.type || "application/octet-stream" } });
-      await confirmDocument(id, documentTypeId, file.name, s3_key, file.type);
+      await uploadApplicationDocument(id, documentTypeId, file);
       const docs = await listDocuments(id);
       setDocuments(docs);
     } catch (err) {

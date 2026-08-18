@@ -3,12 +3,11 @@ import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { DocumentChecklist } from "@/features/customer/components/DocumentChecklist";
 import {
-  confirmDocument,
-  getDocumentUploadUrl,
   getFormDefinition,
   listDocuments,
   listOwnApplications,
   markDocumentNotAvailable,
+  uploadApplicationDocument,
   type ApplicationDocument,
   type ApplicationListItem,
   type FormDefinition,
@@ -58,9 +57,7 @@ export function DocumentsPage() {
     setError(null);
     setUploadingFor(documentTypeId);
     try {
-      const { upload_url, s3_key } = await getDocumentUploadUrl(applicationId, documentTypeId, file.name, file.type);
-      await fetch(upload_url, { method: "PUT", body: file, headers: { "Content-Type": file.type || "application/octet-stream" } });
-      await confirmDocument(applicationId, documentTypeId, file.name, s3_key, file.type);
+      await uploadApplicationDocument(applicationId, documentTypeId, file);
       await load();
     } catch (err) {
       setError(getErrorMessage(err));

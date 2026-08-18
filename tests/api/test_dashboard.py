@@ -100,6 +100,49 @@ async def test_nav_permission_gated_item_requires_grant(client, mock_db, owner_h
     assert {i["key"] for i in r.json()["data"]} == {"settings"}
 
 
+async def test_customers_nav_items_require_customer_view_permission(client, mock_db, owner_headers, master_data):
+    # Regression test for the Employee Permission Matrix redesign gap: `customer/router.py`
+    # gates GET /customers and GET /applications behind `CustomerViewDep`
+    # (require_permission("customer", "customers", "view")), but the "customers"/
+    # "applications" nav_items rows (scripts/seed.py's seed_ui_navigation_nav_items) were
+    # never updated to match, so the sidebar link stayed visible to every employee
+    # regardless of grant. Mirrors exactly what seed.py now seeds for these two keys —
+    # see scripts/migrate_gate_customer_nav_items.py for the already-provisioned-database
+    # backfill.
+    await _seed_nav_item(
+        mock_db, key="customers", label="Customers", route="/customers", order=40,
+        required_module="customer", required_resource="customers", required_action="view",
+    )
+    await _seed_nav_item(
+        mock_db, key="applications", label="Applications", route="/applications", order=41,
+        required_module="customer", required_resource="customers", required_action="view",
+    )
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9422222222", email="navcustomer.test@example.com")
+    own_headers = await _login(client, "9422222222")
+
+    r = await client.get("/api/v1/dashboard/nav", headers=own_headers)
+    assert r.json()["data"] == []
+
+    permission = await client.post(
+        "/api/v1/permissions", json={"module": "customer", "resource": "customers", "actions": ["view", "create", "edit"]}, headers=owner_headers
+    )
+    role = await client.post("/api/v1/roles", json={"name": "Customer Nav Viewer"}, headers=owner_headers)
+    role_id = role.json()["data"]["id"]
+    await client.put(
+        f"/api/v1/roles/{role_id}/permissions",
+        json={"grants": [{"permission_id": permission.json()["data"]["id"], "granted_actions": ["view"]}]},
+        headers=owner_headers,
+    )
+    await client.post(f"/api/v1/roles/{role_id}/assign", json={"employee_id": employee["id"]}, headers=owner_headers)
+
+    r = await client.get("/api/v1/dashboard/nav", headers=own_headers)
+    assert {i["key"] for i in r.json()["data"]} == {"customers", "applications"}
+
+    # Owner is unaffected by the gate — unconditional PermissionEngine bypass.
+    r = await client.get("/api/v1/dashboard/nav", headers=owner_headers)
+    assert {i["key"] for i in r.json()["data"]} == {"customers", "applications"}
+
+
 # ---------------------------------------------------------------------- layout
 
 

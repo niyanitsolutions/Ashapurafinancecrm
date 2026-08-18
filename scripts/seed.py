@@ -925,19 +925,30 @@ async def seed_ui_navigation_nav_items() -> None:
     # UI Navigation Enhancement pass — five existing routes (built by earlier modules)
     # that never got a nav_items row, so they were only reachable by typed URL. Each
     # gate mirrors exactly how its route is actually protected today (decision 033's own
-    # rule), verified against the real backend dependency each route uses, not guessed:
-    # Customers/Applications (customer/router.py) are gated by `_staff: StaffDep` only
-    # (any authenticated Owner or Employee, no fine-grained permission) — same "no gate"
-    # shape as the existing `notifications` nav item. Reminder Rules
-    # (reminders/router.py) is gated by `require_permission("reminders", "reminder_rules",
-    # "view")`. Temporary Access / Geo Exceptions (access_control/router.py) — the API
-    # itself only requires an authenticated user, but the frontend route wraps them in
-    # RequireOwner, so `owner_only=True` matches the same "mirror the frontend guard"
-    # precedent already used for Employees/Roles/Referral Partner Management above.
+    # rule), verified against the real backend dependency each route uses, not guessed.
+    # Customers/Applications (customer/router.py) were originally gated by `_staff:
+    # StaffDep` only (any authenticated Owner or Employee, no fine-grained permission);
+    # the Employee Permission Matrix redesign later added `CustomerViewDep` —
+    # `require_permission("customer", "customers", "view")` — in front of both routes
+    # (list_customers, list_applications), but this nav catalog was never updated to
+    # match, so the sidebar link stayed visible to every employee regardless of grant
+    # even though the API itself would 403 them. Gated here to match the route for real.
+    # Reminder Rules (reminders/router.py) is gated by `require_permission("reminders",
+    # "reminder_rules", "view")`. Temporary Access / Geo Exceptions
+    # (access_control/router.py) — the API itself only requires an authenticated user,
+    # but the frontend route wraps them in RequireOwner, so `owner_only=True` matches the
+    # same "mirror the frontend guard" precedent already used for Employees/Roles/
+    # Referral Partner Management above.
     db = get_database()
     nav_defs = [
-        NavItem(key="customers", label="Customers", route="/customers", order=40),
-        NavItem(key="applications", label="Applications", route="/applications", order=41),
+        NavItem(
+            key="customers", label="Customers", route="/customers", order=40,
+            required_module="customer", required_resource="customers", required_action=PermissionAction.VIEW,
+        ),
+        NavItem(
+            key="applications", label="Applications", route="/applications", order=41,
+            required_module="customer", required_resource="customers", required_action=PermissionAction.VIEW,
+        ),
         NavItem(key="reminder_rules", label="Reminder Rules", route="/reminder-rules", order=42, required_module="reminders", required_resource="reminder_rules", required_action=PermissionAction.VIEW),
         NavItem(key="temporary_access", label="Temporary Access", route="/temporary-access", order=43, owner_only=True),
         NavItem(key="geo_exceptions", label="Geo Exceptions", route="/geo-exceptions", order=44, owner_only=True),
