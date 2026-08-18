@@ -252,6 +252,23 @@ class AccessControlService:
                     module=permission.module, resource=permission.resource, invalid_actions=invalid,
                 )
                 raise ValidationError(f"Action(s) {invalid} not available for '{permission.module}:{permission.resource}'.")
+
+            # Create/Edit must never independently grant access without View — same rule
+            # PermissionEngine.has_permission enforces at read time; rejected here too so
+            # a role is never saved in a state that looks like it grants Create/Edit but
+            # silently doesn't.
+            needs_view = PermissionAction.VIEW in permission.actions and (
+                PermissionAction.CREATE in grant.granted_actions or PermissionAction.EDIT in grant.granted_actions
+            )
+            if needs_view and PermissionAction.VIEW not in grant.granted_actions:
+                await self._log_permission_validation_failure(
+                    role_id, "create/edit granted without view", permission_id=grant.permission_id,
+                    module=permission.module, resource=permission.resource, granted_actions=grant.granted_actions,
+                )
+                raise ValidationError(
+                    f"'{permission.module}:{permission.resource}': View must be granted for Create/Edit to take effect."
+                )
+
             resolved.append(
                 RolePermission(
                     role_id=role_id, permission_id=grant.permission_id, granted_actions=grant.granted_actions,

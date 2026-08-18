@@ -1,4 +1,5 @@
 import { apiRequest, apiRequestRaw, type PaginationMeta } from "@/shared/api/client";
+import type { NamedMasterData } from "@/features/system_settings/api";
 
 export interface Address {
   line1: string;
@@ -392,6 +393,12 @@ export function updateOwnProfile(payload: UpdateProfileInput) {
 
 export function getFormDefinition(productCategory: string, productId: string) {
   return apiRequest<FormDefinition>(`/application-form-definitions?product_category=${productCategory}&product_id=${productId}`);
+}
+
+// ---- active products (Customer Portal's own read — never system_settings' employee-gated endpoints) ----
+
+export function listPortalProducts(category: "loan" | "insurance") {
+  return apiRequest<NamedMasterData[]>(`/portal-products?category=${category}`);
 }
 
 // ---- product schema authoring (Owner) ----

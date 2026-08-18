@@ -50,6 +50,7 @@ from app.features.customer.schemas import (
     UpdateProfileRequest,
 )
 from app.features.customer.service import CustomerService
+from app.features.system_settings.schemas import NamedMasterDataResponse
 
 router = APIRouter(tags=["customer"])
 
@@ -231,6 +232,26 @@ async def get_form_definition(
     form_def = await service.get_form_definition(product_category, product_id)
     result = await _resolve_form_definition_response(service, form_def)
     return ApiResponse[FormDefinitionResponse].ok(result)
+
+
+# Customer Portal's "Apply for Loan/Insurance" product picker — CustomerDep, never
+# require_permission. system_settings' own /loan-products and /insurance-products are
+# Employee/Owner-only (require_permission("system_settings", ..., "view")) and
+# unconditionally deny a Customer role; this is the customer-scoped equivalent, same
+# reasoning as /leads/lookup above for Employee Create Lead.
+@router.get("/portal-products")
+async def list_portal_products(
+    category: str, service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep
+) -> ApiResponse[list[NamedMasterDataResponse]]:
+    products = await service.list_active_products(category)
+    items = [
+        NamedMasterDataResponse(
+            id=p.require_id(), name=p.name, description=p.description, status=p.status,
+            created_at=p.created_at, updated_at=p.updated_at,
+        )
+        for p in products
+    ]
+    return ApiResponse[list[NamedMasterDataResponse]].ok(items)
 
 
 # ---------------------------------------------------------------------- product schema authoring (Owner)

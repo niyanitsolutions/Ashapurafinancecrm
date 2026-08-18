@@ -12,6 +12,7 @@ import {
   type Permission,
 } from "@/features/access_control/api";
 import { getErrorMessage } from "@/features/access_control/errors";
+import { applyActionToggle, sanitizeGrantedActions } from "@/features/access_control/permissionHierarchy";
 
 // Rows = catalog entries (module:resource); columns = only the actions each entry
 // declares as applicable (per the data-driven design — not every action applies to
@@ -33,8 +34,12 @@ export function PermissionMatrixPage() {
     try {
       const [allPermissions, roleGrants] = await Promise.all([listPermissions(), getRolePermissions(roleId)]);
       setPermissions(allPermissions);
+      const permissionById = new Map(allPermissions.map((p) => [p.id, p]));
       const grantMap: Record<string, Set<string>> = {};
-      for (const g of roleGrants) grantMap[g.permission_id] = new Set(g.granted_actions);
+      for (const g of roleGrants) {
+        const availableActions = permissionById.get(g.permission_id)?.actions ?? g.granted_actions;
+        grantMap[g.permission_id] = sanitizeGrantedActions(g.granted_actions, availableActions);
+      }
       setGrants(grantMap);
     } catch (err) {
       setError(getErrorMessage(err));
@@ -50,10 +55,10 @@ export function PermissionMatrixPage() {
 
   const toggle = (permissionId: string, action: string) => {
     setGrants((prev) => {
-      const current = new Set(prev[permissionId] ?? []);
-      if (current.has(action)) current.delete(action);
-      else current.add(action);
-      return { ...prev, [permissionId]: current };
+      const current = prev[permissionId] ?? new Set<string>();
+      const availableActions = permissions.find((p) => p.id === permissionId)?.actions ?? [];
+      const next = applyActionToggle(current, action, !current.has(action), availableActions);
+      return { ...prev, [permissionId]: next };
     });
   };
 

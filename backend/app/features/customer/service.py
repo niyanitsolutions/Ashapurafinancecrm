@@ -92,6 +92,7 @@ from app.features.leads.repository import LeadActivityRepository, LeadRepository
 from app.features.reminders.constants import NotificationType
 from app.features.reminders.schemas import CreateTaskRequest
 from app.features.reminders.service import RemindersService
+from app.features.system_settings.constants import MasterDataStatus
 from app.features.system_settings.repository import (
     DocumentTypeRepository,
     InsuranceProductRepository,
@@ -589,7 +590,27 @@ class CustomerService:
         customer_id = await self._customers.insert(customer)
         event = AuditEvent.LEAD_CONVERTED if converted_from_lead_id else AuditEvent.CUSTOMER_REGISTERED
         await write_audit_log(self._db, event_type=event, user_id=actor.require_id(), metadata={"customer_id": customer_id})
+        await self._link_existing_leads_to_customer(actor.mobile, customer_id, actor.require_id())
         return await self._customers.find_by_id(customer_id) or customer
+
+    async def _link_existing_leads_to_customer(self, mobile: str, customer_id: str, user_id: str) -> None:
+        """A Lead is not proof of a Customer account (registration only ever blocks on an
+        existing `users` row, see `start_direct_registration`) — so a Lead logged by staff
+        before this mobile ever registered is never itself linked to anything. Runs once,
+        right after a Customer row is actually created (both Flow 1 profile-completion and
+        Flow 2 direct self-registration): every unlinked Lead sharing this mobile gets
+        associated, not just the one lead a secure link might already point at (see
+        `claim_secure_link`), so no lead created before registration is left orphaned.
+        Only touches customer_id/user_id/account_created/account_created_at — ownership,
+        assignment, source, product, remarks are all preserved untouched. Never creates a
+        Lead."""
+        for lead in await self._leads.find_by_mobile(mobile):
+            if lead.customer_id is not None:
+                continue
+            update: dict[str, Any] = {"customer_id": customer_id}
+            if not lead.account_created:
+                update.update({"user_id": user_id, "account_created": True, "account_created_at": utc_now()})
+            await self._leads.update(lead.require_id(), update)
 
     # ================================================================== applications (customer side)
 
@@ -630,6 +651,19 @@ class CustomerService:
         starting an application/lead — shared by every portal (Customer Application,
         Employee Create Lead, Referral Partner Add Lead), see Product Schema Engine."""
         return await self._get_or_error_form_definition(product_category, product_id)
+
+    async def list_active_products(self, category: str) -> list[Any]:
+        """Loan/Insurance products for the Customer Portal's "Apply for Loan/Insurance"
+        product picker — owned by Customer (CurrentUserDep + CustomerDep, never
+        `require_permission`), not proxied through `system_settings`'s own
+        CRUD-permission-gated `/loan-products`/`/insurance-products` endpoints, which are
+        Employee/Owner-only and unconditionally deny any Customer role. Same reasoning as
+        `LeadService.get_lookup_data`'s narrower boundary for Create Lead, for a different
+        audience. Active-only, matching the Product Visibility Rule."""
+        if category not in ("loan", "insurance"):
+            raise ValidationError("category must be 'loan' or 'insurance'.")
+        repo = self._loan_products if category == "loan" else self._insurance_products
+        return await repo.find_many({"status": MasterDataStatus.ACTIVE}, limit=500, sort=[("name", 1)])
 
     # ================================================================== product schema authoring (Owner)
 

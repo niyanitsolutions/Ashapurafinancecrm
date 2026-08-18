@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
-import { startApplication } from "@/features/customer/api";
+import { listPortalProducts, startApplication } from "@/features/customer/api";
 import { getErrorMessage } from "@/features/customer/errors";
-import { insuranceProductsApi, loanProductsApi, type NamedMasterData } from "@/features/system_settings/api";
+import type { NamedMasterData } from "@/features/system_settings/api";
 
 export function ProductSelectionPage() {
   const [searchParams] = useSearchParams();
@@ -14,8 +14,7 @@ export function ProductSelectionPage() {
   const [isStarting, setIsStarting] = useState<string | null>(null);
 
   useEffect(() => {
-    const api = category === "loan" ? loanProductsApi : insuranceProductsApi;
-    api.list().then(setProducts).catch((err) => setError(getErrorMessage(err)));
+    listPortalProducts(category).then(setProducts).catch((err) => setError(getErrorMessage(err)));
   }, [category]);
 
   const onSelect = async (productId: string) => {

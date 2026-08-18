@@ -43,6 +43,7 @@ from app.features.leads.schemas import (
     EligibleAssigneeResponse,
     UpdateLeadRequest,
 )
+from app.features.system_settings.constants import MasterDataStatus
 from app.features.system_settings.repository import (
     InsuranceProductRepository,
     LeadSourceRepository,
@@ -476,10 +477,16 @@ class LeadService:
         granting Settings administration access just to populate a dropdown. Reuses the
         exact same repositories/sort order `resolve_names` already reads from — no new
         data access pattern, just a different, narrower permission boundary in front of
-        the same read."""
-        sources = await self._lead_sources.find_many({}, limit=500, sort=[("name", 1)])
-        loan_products = await self._loan_products.find_many({}, limit=500, sort=[("name", 1)])
-        insurance_products = await self._insurance_products.find_many({}, limit=500, sort=[("name", 1)])
+        the same read.
+
+        Filtered to `status=active` — a deactivated Lead Source/Product must not appear
+        as a selectable option on a brand new Lead (Product Visibility Rule); this never
+        affects `resolve_names`, which reads an already-assigned lead's source/product by
+        id directly and must keep showing historical selections regardless of status."""
+        active_filter = {"status": MasterDataStatus.ACTIVE}
+        sources = await self._lead_sources.find_many(active_filter, limit=500, sort=[("name", 1)])
+        loan_products = await self._loan_products.find_many(active_filter, limit=500, sort=[("name", 1)])
+        insurance_products = await self._insurance_products.find_many(active_filter, limit=500, sort=[("name", 1)])
         return sources, loan_products, insurance_products
 
     # ---------------------------------------------------------------- name resolution / export

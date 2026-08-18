@@ -364,10 +364,15 @@ async def test_employee_granted_partner_create_permission_still_blocked_by_auth_
     scope boundary. So today a Create grant on this row is real router-level scaffolding
     that reaches the endpoint but still can't complete the invite; same class of no-op
     as Customer's `create` action (see customer/router.py notes) until/unless a product
-    decision widens the Auth invite-role set for Referral Partner."""
+    decision widens the Auth invite-role set for Referral Partner.
+
+    Granted with `view` alongside `create` — View->Create/Edit hierarchy (View must be
+    granted for Create/Edit to take effect) means a `create`-only grant would now be
+    rejected by `set_role_permissions` itself, before ever reaching this test's actual
+    target (Auth's invite-role check)."""
     employee = await _create_employee(client, owner_headers, master_data, "9500000103", "create.partner@example.com")
     headers = await _login(client, "9500000103", "InitialPass1!")
-    await _grant_partner_permission(client, owner_headers, employee["id"], ["create"])
+    await _grant_partner_permission(client, owner_headers, employee["id"], ["view", "create"])
 
     r = await client.post(
         "/api/v1/referral-partners", json={"full_name": "Employee-Created Partner", "mobile": "9700000103"}, headers=headers

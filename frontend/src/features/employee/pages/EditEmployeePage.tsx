@@ -19,6 +19,7 @@ import { SelectField } from "@/components/forms/SelectField";
 import { SubmitButton } from "@/components/forms/SubmitButton";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { PermissionMatrixSection } from "@/features/employee/components/PermissionMatrixSection";
+import { sanitizeGrantedActions } from "@/features/access_control/permissionHierarchy";
 import {
   getEmployee,
   listBranches,
@@ -28,7 +29,7 @@ import {
   type BranchItem,
   type MasterDataItem,
 } from "@/features/employee/api";
-import { PERMISSION_MATRIX_ROWS, buildMatrixGrants } from "@/features/employee/permissionMatrix";
+import { MATRIX_ACTIONS, PERMISSION_MATRIX_ROWS, buildMatrixGrants } from "@/features/employee/permissionMatrix";
 import { getErrorMessage } from "@/features/employee/errors";
 import { updateEmployeeSchema, type UpdateEmployeeFormValues } from "@/features/employee/validation";
 
@@ -124,7 +125,8 @@ export function EditEmployeePage() {
         for (const grant of grants) {
           const row = PERMISSION_MATRIX_ROWS.find((r) => r.module === grant.module && r.resource === grant.resource);
           if (!row) continue; // a grant outside this simplified 8-row matrix — no checkbox to set
-          nextChecked[grant.permission_id] = new Set(grant.granted_actions.filter((a) => a === "view" || a === "create" || a === "edit"));
+          const relevant = grant.granted_actions.filter((a) => a === "view" || a === "create" || a === "edit");
+          nextChecked[grant.permission_id] = sanitizeGrantedActions(relevant, MATRIX_ACTIONS);
         }
         setCheckedPermissions(nextChecked);
       })

@@ -17,6 +17,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.config.database import get_database
 from app.constants.roles import EMPLOYEE, OWNER
 from app.core.exceptions import ForbiddenError, UnauthorizedError
+from app.features.access_control.constants import PermissionAction
 from app.features.access_control.repository import (
     EmployeeRoleRepository,
     PermissionRepository,
@@ -63,6 +64,18 @@ class PermissionEngine:
             return False
 
         permission_id = permission.require_id()
+
+        # Create/Edit must never independently grant access without View (the CRM's
+        # required permission hierarchy) — checked here, once, so every caller of
+        # has_permission/require_permission gets it for free, rather than relying on
+        # the frontend hiding Create/Edit buttons.
+        if action in (PermissionAction.CREATE, PermissionAction.EDIT) and PermissionAction.VIEW in permission.actions:
+            has_view = await self._check_role_grants(
+                employee_id, permission_id, PermissionAction.VIEW, department_id, branch_id
+            ) or await self._check_temporary_access(employee_id, permission_id, PermissionAction.VIEW)
+            if not has_view:
+                return False
+
         if await self._check_role_grants(employee_id, permission_id, action, department_id, branch_id):
             return True
         return await self._check_temporary_access(employee_id, permission_id, action)

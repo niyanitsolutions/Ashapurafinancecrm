@@ -141,6 +141,53 @@ async def test_set_role_permissions_rejects_action_outside_catalog(client, owner
     assert r.status_code == 422, r.text
 
 
+async def test_set_role_permissions_rejects_create_without_view(client, owner_headers):
+    """View must never be implied by Create/Edit alone — a role can't be saved granting
+    Create without also granting View for the same resource."""
+    permission = await _create_permission(client, owner_headers, actions=["view", "create", "edit"])
+    role = await _create_role(client, owner_headers)
+
+    r = await client.put(
+        f"/api/v1/roles/{role['id']}/permissions",
+        json={"grants": [{"permission_id": permission["id"], "granted_actions": ["create"]}]},
+        headers=owner_headers,
+    )
+    assert r.status_code == 422, r.text
+
+
+async def test_set_role_permissions_rejects_edit_without_view(client, owner_headers):
+    permission = await _create_permission(client, owner_headers, actions=["view", "create", "edit"])
+    role = await _create_role(client, owner_headers)
+
+    r = await client.put(
+        f"/api/v1/roles/{role['id']}/permissions",
+        json={"grants": [{"permission_id": permission["id"], "granted_actions": ["edit"]}]},
+        headers=owner_headers,
+    )
+    assert r.status_code == 422, r.text
+
+
+async def test_set_role_permissions_allows_view_alone_and_view_with_create_edit(client, owner_headers):
+    """Confirms the new hierarchy check doesn't over-reject valid grants: View alone, and
+    View+Create+Edit together, must both still save cleanly."""
+    permission = await _create_permission(client, owner_headers, actions=["view", "create", "edit"])
+    role = await _create_role(client, owner_headers)
+
+    r = await client.put(
+        f"/api/v1/roles/{role['id']}/permissions",
+        json={"grants": [{"permission_id": permission["id"], "granted_actions": ["view"]}]},
+        headers=owner_headers,
+    )
+    assert r.status_code == 200, r.text
+
+    r = await client.put(
+        f"/api/v1/roles/{role['id']}/permissions",
+        json={"grants": [{"permission_id": permission["id"], "granted_actions": ["view", "create", "edit"]}]},
+        headers=owner_headers,
+    )
+    assert r.status_code == 200, r.text
+
+
 # ---------------------------------------------------------------------- employee <-> role assignment
 
 
@@ -303,6 +350,39 @@ async def test_temporary_access_outside_date_window_is_denied(client, mock_db, o
     engine = PermissionEngine(mock_db)
 
     allowed = await engine.has_permission(employee_user, module="loan_management", resource="leads", action="view")
+    assert allowed is False
+
+
+async def test_temporary_access_create_without_view_does_not_grant_access(client, mock_db, owner_headers, master_data):
+    """Same View->Create/Edit hierarchy rule applies regardless of grant source. Unlike
+    the Permission Matrix's `set_role_permissions` (which now rejects saving Create/Edit
+    without View), Temporary Access grants don't validate that combination at write time
+    — so this is a real, reachable way to end up with a "create granted, view not
+    granted" state, and `has_permission` must still deny it at read time."""
+    employee = await _create_employee(client, owner_headers, master_data)
+    permission = await _create_permission(client, owner_headers)
+
+    now = utc_now()
+    r = await client.post(
+        "/api/v1/temporary-access",
+        json={
+            "employee_id": employee["id"],
+            "grants": [{"permission_id": permission["id"], "actions": ["create"]}],
+            "start_date": (now - timedelta(days=1)).date().isoformat(),
+            "end_date": (now + timedelta(days=1)).date().isoformat(),
+            "start_time": "00:00",
+            "end_time": "23:59",
+            "reason": "Testing hierarchy enforcement",
+        },
+        headers=owner_headers,
+    )
+    assert r.status_code == 200, r.text
+
+    user_doc = await mock_db["users"].find_one({"mobile": employee["mobile"]})
+    employee_user = User.model_validate(user_doc)
+    engine = PermissionEngine(mock_db)
+
+    allowed = await engine.has_permission(employee_user, module="loan_management", resource="leads", action="create")
     assert allowed is False
 
 

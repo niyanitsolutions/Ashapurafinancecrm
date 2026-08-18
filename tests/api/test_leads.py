@@ -4,10 +4,13 @@ search/filter, CSV export, permission gating (leads:leads), and that Dashboard's
 today_leads/assigned_leads widgets now compute real data (decision 039).
 """
 
+from datetime import timedelta
+
 from app.features.customer.models import ApplicationFormDefinition, FormFieldDefinition
 from app.features.dashboard.constants import WidgetType
 from app.features.dashboard.models import DashboardWidget
 from app.features.system_settings.models import InsuranceProduct, LeadSource, LoanProduct
+from app.utils.datetime import utc_now
 
 
 async def _lead_master_data(mock_db) -> dict:
@@ -401,6 +404,29 @@ async def test_lead_lookup_denied_without_leads_view(client, mock_db, employee_h
     assert r.status_code == 403, r.text
 
 
+async def test_lead_lookup_excludes_inactive_sources_and_products(client, mock_db, owner_headers, master_data):
+    """Product Visibility Rule: a deactivated Lead Source/Loan Product/Insurance Product
+    must not appear as a selectable option on the Create Lead form."""
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9766668002", email="activeonly@example.com")
+    await _grant_leads_view_create(client, owner_headers, employee["id"], role_name="Active Only Role")
+    headers = await _login(client, "9766668002")
+
+    r = await client.patch(f"/api/v1/lead-sources/{lmd['source_id']}/deactivate", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    r = await client.patch(f"/api/v1/loan-products/{lmd['loan_product_id']}/deactivate", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    r = await client.patch(f"/api/v1/insurance-products/{lmd['insurance_product_id']}/deactivate", headers=owner_headers)
+    assert r.status_code == 200, r.text
+
+    r = await client.get("/api/v1/leads/lookup", headers=headers)
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert not any(s["id"] == lmd["source_id"] for s in data["sources"])
+    assert not any(p["id"] == lmd["loan_product_id"] for p in data["loan_products"])
+    assert not any(p["id"] == lmd["insurance_product_id"] for p in data["insurance_products"])
+
+
 # ---------------------------------------------------------------------- permission truth table (view/create/edit independence)
 
 
@@ -469,6 +495,59 @@ async def test_leads_no_permission_truth_table(client, mock_db, owner_headers, m
     assert r.status_code == 403, r.text
 
     existing = await _create_lead(client, owner_headers, lmd, mobile="9611112007")
+    r = await client.patch(f"/api/v1/leads/{existing['id']}", json={"remarks": "attempt"}, headers=headers)
+    assert r.status_code == 403, r.text
+
+
+async def _grant_leads_temporary_access(client, owner_headers, employee_id, actions):
+    # Temporary Access grants (unlike the Permission Matrix's set_role_permissions) don't
+    # validate the View->Create/Edit hierarchy at write time, so this is the only real API
+    # path left that can construct a "create/edit granted without view" state — used here
+    # specifically to prove has_permission still denies it at read time regardless of how
+    # the grant was written.
+    leads_permission_id = await _full_leads_permission_id(client, owner_headers)
+    now = utc_now()
+    r = await client.post(
+        "/api/v1/temporary-access",
+        json={
+            "employee_id": employee_id,
+            "grants": [{"permission_id": leads_permission_id, "actions": actions}],
+            "start_date": (now - timedelta(days=1)).date().isoformat(),
+            "end_date": (now + timedelta(days=1)).date().isoformat(),
+            "start_time": "00:00",
+            "end_time": "23:59",
+            "reason": "Testing view/create/edit hierarchy enforcement",
+        },
+        headers=owner_headers,
+    )
+    assert r.status_code == 200, r.text
+
+
+async def test_leads_create_without_view_permission_truth_table(client, mock_db, owner_headers, master_data):
+    """View must never be implied by Create/Edit alone — an employee holding only
+    `create` (no `view`) must not be able to reach the create API either, even though the
+    raw action itself was granted. Regression test for a real gap:
+    PermissionEngine.has_permission used to check only the single requested action, so
+    this state actually worked."""
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9766667005", email="createonly@example.com")
+    await _grant_leads_temporary_access(client, owner_headers, employee["id"], ["create"])
+    headers = await _login(client, "9766667005")
+
+    r = await client.get("/api/v1/leads", headers=headers)
+    assert r.status_code == 403, r.text
+
+    r = await client.post("/api/v1/leads", json=_lead_payload(lmd, mobile="9611112008"), headers=headers)
+    assert r.status_code == 403, r.text
+
+
+async def test_leads_edit_without_view_permission_truth_table(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9766667006", email="editonly@example.com")
+    await _grant_leads_temporary_access(client, owner_headers, employee["id"], ["edit"])
+    headers = await _login(client, "9766667006")
+
+    existing = await _create_lead(client, owner_headers, lmd, mobile="9611112009")
     r = await client.patch(f"/api/v1/leads/{existing['id']}", json={"remarks": "attempt"}, headers=headers)
     assert r.status_code == 403, r.text
 

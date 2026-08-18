@@ -8,8 +8,14 @@ Employees, unrestricted for Owner).
 
 from datetime import UTC, datetime
 
+from bson import ObjectId
+
 from app.features.customer.constants import FieldType
-from app.features.customer.models import ApplicationFormDefinition, FormFieldDefinition, RequiredDocumentDefinition
+from app.features.customer.models import (
+    ApplicationFormDefinition,
+    FormFieldDefinition,
+    RequiredDocumentDefinition,
+)
 from app.features.leads.models import Lead
 from app.features.system_settings.models import DocumentType, InsuranceProduct, LoanProduct
 from app.features.workflow_engine.constants import CaseType, LoanAuditEvent, LoanStatus
@@ -193,6 +199,99 @@ async def test_direct_registration_is_not_attributed_to_a_seeded_owner(client, m
     pending_user = await mock_db["users"].find_one({"mobile": mobile})
     assert pending_user is not None
     assert pending_user["created_by"] is None
+
+
+async def test_direct_registration_links_pre_existing_lead_to_new_customer(client, mock_db, owner_headers):
+    """A Lead logged by staff before a customer ever registers is not proof of a Customer
+    account (registration only ever blocks on an existing `users` row — see
+    `start_direct_registration`), but once the matching Customer account is created, that
+    pre-existing Lead must be associated with it. No duplicate Lead is created, and an
+    unrelated Lead with a different mobile is left untouched."""
+    product = await _seed_product_and_form(mock_db)
+    mobile = "9744444444"
+    other_mobile = "9755555555"
+
+    lead_id = await _create_lead_doc(mock_db, product, mobile=mobile, full_name="Existing Lead")
+    other_lead_id = await _create_lead_doc(mock_db, product, mobile=other_mobile, full_name="Unrelated Lead")
+
+    leads_before = await mock_db["leads"].count_documents({})
+
+    r = await client.post("/api/v1/customer-registration/start", json={"mobile": mobile})
+    assert r.status_code == 200, r.text
+    dev_otp = r.json()["data"]["dev_otp"]
+
+    r = await client.post("/api/v1/auth/verify-otp", json={"mobile": mobile, "otp": dev_otp, "purpose": "signup"})
+    assert r.status_code == 200, r.text
+    token = r.json()["data"]["otp_verified_token"]
+
+    r = await client.post(
+        "/api/v1/customer-registration/complete",
+        json={
+            "full_name": "Existing Lead", "email": "existing.lead@example.com", "mobile": mobile,
+            "password": "CustomerPass1!", "address_line1": "1 Main St", "city": "Mumbai", "state": "MH",
+            "pincode": "400001", "otp_verified_token": token,
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    assert await mock_db["leads"].count_documents({}) == leads_before  # no duplicate Lead created
+
+    customer_doc = await mock_db["customers"].find_one({"mobile": mobile})
+    assert customer_doc is not None
+    customer_id = str(customer_doc["_id"])
+
+    linked_lead = await mock_db["leads"].find_one({"_id": ObjectId(lead_id)})
+    assert linked_lead["customer_id"] == customer_id
+    assert linked_lead["account_created"] is True
+    assert linked_lead["user_id"] is not None
+    # Ownership/assignment/source/product must be preserved untouched.
+    assert linked_lead["full_name"] == "Existing Lead"
+    assert linked_lead["product_id"] == product["product_id"]
+
+    untouched_lead = await mock_db["leads"].find_one({"_id": ObjectId(other_lead_id)})
+    assert untouched_lead["customer_id"] is None
+
+
+# ---------------------------------------------------------------------- portal products (Apply for Loan/Insurance)
+
+
+async def test_portal_products_returns_active_products_without_settings_permission(client, mock_db, owner_headers):
+    """Regression test for a real production bug: the Customer Portal's product picker
+    must never require an employee `system_settings:loan_products:view`/
+    `insurance_products:view` grant — a Customer role always fails that check. Also
+    confirms active-only filtering (Product Visibility Rule)."""
+    active_product = await _seed_product_and_form(mock_db, product_name="Personal Loan")
+    inactive_product = await _seed_product_and_form(mock_db, product_name="Discontinued Loan")
+
+    r = await client.patch(f"/api/v1/loan-products/{inactive_product['product_id']}/deactivate", headers=owner_headers)
+    assert r.status_code == 200, r.text
+
+    mobile = "9766666601"
+    r = await client.post("/api/v1/customer-registration/start", json={"mobile": mobile})
+    dev_otp = r.json()["data"]["dev_otp"]
+    customer_headers = await _signup_via_otp(client, mobile, dev_otp)
+
+    r = await client.get("/api/v1/portal-products?category=loan", headers=customer_headers)
+    assert r.status_code == 200, r.text
+    ids = {p["id"] for p in r.json()["data"]}
+    assert active_product["product_id"] in ids
+    assert inactive_product["product_id"] not in ids
+
+    # Confirm this customer genuinely has no Settings grant — the fixture doesn't apply
+    # employee RBAC to a Customer at all (has_permission always returns False for a
+    # non-Employee/non-Owner role), so this is the real proof the endpoint never checks it.
+    r = await client.get("/api/v1/loan-products", headers=customer_headers)
+    assert r.status_code == 403, r.text
+
+
+async def test_portal_products_rejects_invalid_category(client, mock_db, owner_headers):
+    mobile = "9766666602"
+    r = await client.post("/api/v1/customer-registration/start", json={"mobile": mobile})
+    dev_otp = r.json()["data"]["dev_otp"]
+    customer_headers = await _signup_via_otp(client, mobile, dev_otp)
+
+    r = await client.get("/api/v1/portal-products?category=bogus", headers=customer_headers)
+    assert r.status_code == 422, r.text
 
 
 # ---------------------------------------------------------------------- Flow 1: secure link from an existing Lead

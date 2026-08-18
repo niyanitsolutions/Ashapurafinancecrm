@@ -1,6 +1,7 @@
 import { createBrowserRouter, Navigate } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
 import { HomeRedirect } from "@/app/HomeRedirect";
+import { RequirePermission } from "@/features/access_control/components/RequirePermission";
 import { GeoExceptionPage } from "@/features/access_control/pages/GeoExceptionPage";
 import { RoleListPage } from "@/features/access_control/pages/RoleListPage";
 import { TemporaryAccessPage } from "@/features/access_control/pages/TemporaryAccessPage";
@@ -168,7 +169,15 @@ export const router = createBrowserRouter([
               { path: "assigned", element: <LeadListPage assignedOnly /> },
             ],
           },
-          { path: "/leads/new", element: <CreateLeadPage /> },
+          {
+            // Direct-URL/bookmark protection: View must never imply Create (see the
+            // Permission Matrix's View-gates-Create/Edit rule) — everything else on this
+            // page relies on backend 403 + hidden buttons (see comments elsewhere in this
+            // file), but Create Lead has no other guard preventing the form itself from
+            // rendering before the create API call.
+            element: <RequirePermission module="leads" resource="leads" action="create" redirectTo="/leads" />,
+            children: [{ path: "/leads/new", element: <CreateLeadPage /> }],
+          },
           { path: "/leads/:leadId", element: <LeadDetailsPage /> },
           // Module 6B staff views — role-gated server-side (require_staff / require_owner,
           // decision 050), not permission-based, so no RequireOwner wrapper here either.

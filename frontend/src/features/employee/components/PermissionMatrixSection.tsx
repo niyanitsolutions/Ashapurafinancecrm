@@ -1,29 +1,16 @@
 import type { Permission } from "@/features/access_control/api";
 import { CheckboxField } from "@/components/forms/CheckboxField";
+import { applyActionToggle } from "@/features/access_control/permissionHierarchy";
 import { MATRIX_ACTIONS, PERMISSION_MATRIX_ROWS, findRowPermission, type MatrixAction } from "@/features/employee/permissionMatrix";
 
 const ACTION_LABELS: Record<MatrixAction, string> = { view: "View", create: "Create", edit: "Edit" };
 
 // Applies one checkbox change to a working copy of `checked`, enforcing the dependency
-// rule between View and Create/Edit: checking Create or Edit implies View (an action
-// can't be useful without access), and unchecking View clears Create/Edit for that same
-// row (they never grant access on their own). Mutates `next` in place; callers pass a
-// fresh shallow copy of `checked` before applying one or more cells.
+// rule between View and Create/Edit via the shared applyActionToggle (see
+// permissionHierarchy.ts). Mutates `next` in place; callers pass a fresh shallow copy of
+// `checked` before applying one or more cells.
 function applyCellChange(next: Record<string, Set<string>>, permission: Permission, action: MatrixAction, isChecked: boolean): void {
-  const current = new Set(next[permission.id] ?? []);
-  if (isChecked) {
-    current.add(action);
-    if ((action === "create" || action === "edit") && permission.actions.includes("view")) {
-      current.add("view");
-    }
-  } else {
-    current.delete(action);
-    if (action === "view") {
-      current.delete("create");
-      current.delete("edit");
-    }
-  }
-  next[permission.id] = current;
+  next[permission.id] = applyActionToggle(next[permission.id] ?? new Set(), action, isChecked, permission.actions);
 }
 
 // Shared by CreateEmployeePage and EditEmployeePage — a controlled component; all
@@ -33,11 +20,10 @@ function applyCellChange(next: Record<string, Set<string>>, permission: Permissi
 // above; below that an 8-row x 3-column table doesn't reflow sensibly, so it switches to
 // a stacked block per module instead, sharing the same `checked`/`onChange` state.
 //
-// Backend enforcement is independent of this UI convenience: `require_permission`
-// checks each action (view/create/edit) completely separately server-side regardless of
-// what the frontend allowed to be checked together — this component's View-gates-
-// Create/Edit behavior only prevents the Owner from configuring a nonsensical state in
-// the first place, it is never itself a security boundary.
+// The backend independently enforces the same View-gates-Create/Edit rule
+// (PermissionEngine.has_permission / set_role_permissions) — this component's version is
+// UI convenience so the Owner never sees a nonsensical state in the first place, not the
+// security boundary itself.
 export function PermissionMatrixSection({
   permissions,
   checked,
