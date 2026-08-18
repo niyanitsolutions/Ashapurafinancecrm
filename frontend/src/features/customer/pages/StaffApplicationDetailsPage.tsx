@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { Button } from "@/components/buttons/Button";
 import { EmployeeSelect } from "@/components/forms/EmployeeSelect";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
@@ -199,6 +199,17 @@ export function StaffApplicationDetailsPage() {
             <p className="text-sm text-text/60 mb-2 capitalize">
               {application.product_name} · {application.status}
             </p>
+            {application.case_id && (
+              <p className="text-sm text-text/60 mb-2">
+                Case {application.case_code}: <span className="font-medium text-text">{application.case_status_label}</span>{" "}
+                <Link
+                  to={application.case_type === "insurance" ? `/insurance-cases/${application.case_id}` : `/loan-cases/${application.case_id}`}
+                  className="text-primary hover:underline"
+                >
+                  Manage Status →
+                </Link>
+              </p>
+            )}
             <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
               {Object.entries(application.form_data).map(([key, value]) => (
                 <div key={key}>

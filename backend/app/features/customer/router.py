@@ -16,7 +16,7 @@ from app.features.customer.dependencies import (
     require_owner,
     require_staff,
 )
-from app.features.customer.models import Application, SecureLink
+from app.features.customer.models import Application, Customer, SecureLink
 from app.features.customer.schemas import (
     ApplicationDetailResponse,
     ApplicationDocumentResponse,
@@ -91,13 +91,25 @@ async def _resolve_application_response(service: CustomerService, application: A
     customer_map, product_map, employee_map = await service.resolve_names_for_applications([application])
     form_def = await service.get_form_definition_by_id(application.form_definition_id)
     progress_percent = service.compute_progress(form_def, application.form_data)
+    case_map = await service.resolve_case_info_for_applications([application])
+    case = case_map.get(application.require_id())
+    case_status_label = None
+    if case is not None:
+        case_status_label = (await service.resolve_case_status_labels([case])).get(case.require_id())
     return mappers.application_to_detail(
         application,
         customer_map.get(application.customer_id or "", None),
         product_map.get(application.product_id, ""),
         employee_map.get(application.assigned_to or "", None),
         progress_percent,
+        case,
+        case_status_label,
     )
+
+
+async def _resolve_customer_response(service: CustomerService, customer: Customer) -> CustomerResponse:
+    lead_code, lead_source_name = await service.resolve_lead_info(customer)
+    return mappers.customer_to_response(customer, lead_code, lead_source_name)
 
 
 # ---------------------------------------------------------------------- secure links (Lead-side, staff)
@@ -175,7 +187,7 @@ async def claim_secure_link(
 @router.get("/customers/me")
 async def get_own_profile(service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep) -> ApiResponse[CustomerResponse | None]:
     customer = await service.get_own_customer(current_user)
-    return ApiResponse[CustomerResponse | None].ok(mappers.customer_to_response(customer) if customer else None)
+    return ApiResponse[CustomerResponse | None].ok(await _resolve_customer_response(service, customer) if customer else None)
 
 
 @router.post("/customers/me")
@@ -183,7 +195,7 @@ async def complete_own_profile(
     payload: CompleteProfileRequest, service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep
 ) -> ApiResponse[CustomerResponse]:
     customer = await service.complete_profile(payload, current_user)
-    return ApiResponse[CustomerResponse].ok(mappers.customer_to_response(customer))
+    return ApiResponse[CustomerResponse].ok(await _resolve_customer_response(service, customer))
 
 
 @router.patch("/customers/me")
@@ -191,7 +203,7 @@ async def update_own_profile(
     payload: UpdateProfileRequest, service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep
 ) -> ApiResponse[CustomerResponse]:
     customer = await service.update_own_profile(payload, current_user)
-    return ApiResponse[CustomerResponse].ok(mappers.customer_to_response(customer))
+    return ApiResponse[CustomerResponse].ok(await _resolve_customer_response(service, customer))
 
 
 # ---------------------------------------------------------------------- Phase 5: Portal Home / Dashboard
@@ -538,10 +550,17 @@ async def list_applications(
         status=status, product_category=product_category, skip=page.skip, limit=page.page_size, sort=page.sort,
     )
     customer_map, product_map, employee_map = await service.resolve_names_for_applications(applications)
-    items = [
-        mappers.application_to_list_item(a, customer_map.get(a.customer_id or "", None), product_map.get(a.product_id, ""), employee_map.get(a.assigned_to or "", None))
-        for a in applications
-    ]
+    case_map = await service.resolve_case_info_for_applications(applications)
+    label_map = await service.resolve_case_status_labels(list(case_map.values()))
+    items = []
+    for a in applications:
+        case = case_map.get(a.require_id())
+        items.append(
+            mappers.application_to_list_item(
+                a, customer_map.get(a.customer_id or "", None), product_map.get(a.product_id, ""), employee_map.get(a.assigned_to or "", None),
+                case=case, case_status_label=label_map.get(case.require_id()) if case else None,
+            )
+        )
     return ApiResponse[list[ApplicationListItem]].ok(items, meta=ResponseMeta(pagination=page.build_meta(total)))
 
 
@@ -564,4 +583,4 @@ async def list_customers(service: ServiceDep, current_user: CurrentUserDep, _sta
 @router.get("/customers/{customer_id}")
 async def get_customer(customer_id: str, service: ServiceDep, current_user: CurrentUserDep, _staff: CustomerViewDep) -> ApiResponse[CustomerResponse]:
     customer = await service.get_customer_for_staff(customer_id, current_user)
-    return ApiResponse[CustomerResponse].ok(mappers.customer_to_response(customer))
+    return ApiResponse[CustomerResponse].ok(await _resolve_customer_response(service, customer))

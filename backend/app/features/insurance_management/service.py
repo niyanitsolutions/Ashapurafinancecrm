@@ -9,8 +9,13 @@ per-case judgment the underwriter records during Underwriting — never a fixed 
 attribute. Policy Generation (the policy number/document is prepared) and Policy Issued
 (terminal) are deliberately two distinct statuses, not one.
 
-Same reuse posture as Loan: Module 6B's `Application`/`ApplicationDocument` are read-only,
-never modified.
+Same reuse posture as Loan: Module 6B's `Application`/`ApplicationDocument` are mostly
+read-only. One deliberate, narrow exception: `assign_case` also writes
+`Application.assigned_to` (see that method) — see `loan_management/service.py`'s module
+docstring for the full rationale (Application and its Case each used to carry an
+independently-editable `assigned_to`, which is exactly why Loan/Insurance Management
+could show a case as assigned while Customer Applications showed the same underlying
+application as Unassigned; they're now kept as mirrors of each other).
 """
 
 from typing import Any
@@ -20,7 +25,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.constants.roles import EMPLOYEE, OWNER
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from app.features.auth.models import User
-from app.features.customer.constants import DocumentAvailabilityStatus
+from app.features.customer.constants import AuditEvent, DocumentAvailabilityStatus
 from app.features.customer.models import Application
 from app.features.customer.repository import (
     ApplicationDocumentRepository,
@@ -186,6 +191,14 @@ class InsuranceCaseService:
             self._db, event_type=WorkflowAuditEvent.CASE_REASSIGNED if is_reassignment else WorkflowAuditEvent.CASE_ASSIGNED,
             user_id=actor.require_id(), metadata={"application_workflow_id": case_id, "employee_id": employee_id},
         )
+        # Assignment-consistency fix — see module docstring. Mirrors this reassignment
+        # onto the Application the case came from, so Customer Applications / the
+        # Customer View can never show a different assignee than this case does.
+        if await self._applications.update(case.application_id, {"assigned_to": employee_id}, updated_by=actor.require_id()) is not None:
+            await write_audit_log(
+                self._db, event_type=AuditEvent.APPLICATION_ASSIGNED, user_id=actor.require_id(),
+                metadata={"application_id": case.application_id, "employee_id": employee_id},
+            )
         return updated
 
     # ---------------------------------------------------------------- hold / resume

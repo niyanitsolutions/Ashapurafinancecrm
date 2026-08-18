@@ -10,6 +10,8 @@ export interface Address {
   country?: string;
 }
 
+export type RegistrationSource = "lead" | "direct";
+
 export interface Customer {
   id: string;
   customer_code: string;
@@ -23,6 +25,9 @@ export interface Customer {
   address: Address | null;
   status: string;
   converted_from_lead_id: string | null;
+  registration_source: RegistrationSource;
+  lead_code: string | null;
+  lead_source_name: string | null;
   created_at: string;
 }
 
@@ -33,6 +38,7 @@ export interface CustomerListItem {
   mobile: string;
   email: string | null;
   status: string;
+  registration_source: RegistrationSource;
   created_at: string;
 }
 
@@ -227,6 +233,15 @@ export interface ApplicationListItem {
   created_at: string;
   submitted_at: string | null;
   progress_percent: number;
+  // Assignment/status consistency — the linked Loan/Insurance Case, if one exists yet.
+  // `assigned_to`/`assigned_to_name` above are always kept in sync with the case's own
+  // assignment server-side; these are purely additive so a caller can also show the
+  // case's own pipeline status (intentionally distinct from `status` above).
+  case_id: string | null;
+  case_type: "loan" | "insurance" | null;
+  case_code: string | null;
+  case_status: string | null;
+  case_status_label: string | null;
 }
 
 export interface ApplicationDetail extends ApplicationListItem {

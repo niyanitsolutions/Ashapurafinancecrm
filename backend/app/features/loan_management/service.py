@@ -1,11 +1,17 @@
 """Module 6C — Loan Case processing pipeline (docs/MODULE_6C_WORKFLOW_PROPOSAL.md).
 
-Reuses, read-only: Module 6B's `ApplicationRepository`/`ApplicationDocumentRepository`/
-`CustomerRepository` (never modified — Application is only ever read here, its own
-`draft`/`submitted` status is untouched), Module 2's `EmployeeRepository`, Module 4's
-`LoanProductRepository`/`DocumentTypeRepository`. The generic `WorkflowEngine`
-(workflow_engine/engine.py) performs every status transition; this service supplies
-loan-specific data/decisions only.
+Reuses, mostly read-only: Module 6B's `ApplicationRepository`/`ApplicationDocumentRepository`/
+`CustomerRepository` — Application's own `draft`/`submitted` status is never touched here,
+Module 2's `EmployeeRepository`, Module 4's `LoanProductRepository`/`DocumentTypeRepository`.
+The generic `WorkflowEngine` (workflow_engine/engine.py) performs every status transition;
+this service supplies loan-specific data/decisions only.
+
+One deliberate, narrow exception to "Application is read-only": `assign_case` also writes
+`Application.assigned_to` (see that method) — Application and its Case each used to carry
+an independently-editable `assigned_to`, which is exactly why Loan Management could show a
+case as assigned while Customer Applications showed the same underlying application as
+Unassigned. The two are now kept as mirrors of each other; `CustomerService.
+assign_application` performs the matching write in the other direction.
 
 A case is created lazily (get-or-create), not via a live hook into 6B's frozen
 `submit_application` — see docs/decisions/DECISIONS.md and
@@ -23,7 +29,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.constants.roles import EMPLOYEE, OWNER
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from app.features.auth.models import User
-from app.features.customer.constants import DocumentAvailabilityStatus
+from app.features.customer.constants import AuditEvent, DocumentAvailabilityStatus
 from app.features.customer.models import Application
 from app.features.customer.repository import (
     ApplicationDocumentRepository,
@@ -191,6 +197,14 @@ class LoanCaseService:
             self._db, event_type=WorkflowAuditEvent.CASE_REASSIGNED if is_reassignment else WorkflowAuditEvent.CASE_ASSIGNED,
             user_id=actor.require_id(), metadata={"application_workflow_id": case_id, "employee_id": employee_id},
         )
+        # Assignment-consistency fix — see module docstring. Mirrors this reassignment
+        # onto the Application the case came from, so Customer Applications / the
+        # Customer View can never show a different assignee than this case does.
+        if await self._applications.update(case.application_id, {"assigned_to": employee_id}, updated_by=actor.require_id()) is not None:
+            await write_audit_log(
+                self._db, event_type=AuditEvent.APPLICATION_ASSIGNED, user_id=actor.require_id(),
+                metadata={"application_id": case.application_id, "employee_id": employee_id},
+            )
         return updated
 
     # ---------------------------------------------------------------- hold / resume

@@ -272,7 +272,13 @@ class Application(BaseDocument):
     # exists at creation time, decision 047).
     pending_profile: dict[str, Any] | None = None
 
-    assigned_to: str | None = None  # ref: employees (Module 2, read-only) — Owner-assignable
+    # ref: employees (Module 2, read-only) — Owner-assignable via `assign_application`.
+    # Assignment-consistency fix: once a Loan/Insurance Case exists for this Application,
+    # this field is kept as a live mirror of `ApplicationWorkflow.assigned_to` (both
+    # `assign_application` and Loan/Insurance `assign_case` write both sides) — never
+    # read this in isolation as "the" assignment for an application with a case; it's
+    # guaranteed equal to the case's own field, not a separate value.
+    assigned_to: str | None = None
 
     status: str = Field(default=ApplicationStatus.DRAFT, pattern=f"^({'|'.join(ApplicationStatus.ALL)})$")
     submitted_at: datetime | None = None

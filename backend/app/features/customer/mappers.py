@@ -23,9 +23,10 @@ from app.features.customer.schemas import (
 )
 from app.features.employee.schemas import AddressSchema
 from app.features.employee.service import EmployeeService
+from app.features.workflow_engine.models import ApplicationWorkflow
 
 
-def customer_to_response(customer: Customer) -> CustomerResponse:
+def customer_to_response(customer: Customer, lead_code: str | None = None, lead_source_name: str | None = None) -> CustomerResponse:
     return CustomerResponse(
         id=customer.require_id(),
         customer_code=customer.customer_code,
@@ -39,6 +40,9 @@ def customer_to_response(customer: Customer) -> CustomerResponse:
         address=AddressSchema(**customer.address.model_dump()) if customer.address else None,
         status=customer.status,
         converted_from_lead_id=customer.converted_from_lead_id,
+        registration_source="lead" if customer.converted_from_lead_id else "direct",
+        lead_code=lead_code,
+        lead_source_name=lead_source_name,
         created_at=customer.created_at,
     )
 
@@ -46,7 +50,9 @@ def customer_to_response(customer: Customer) -> CustomerResponse:
 def customer_to_list_item(customer: Customer) -> CustomerListItem:
     return CustomerListItem(
         id=customer.require_id(), customer_code=customer.customer_code, full_name=customer.full_name,
-        mobile=customer.mobile, email=customer.email, status=customer.status, created_at=customer.created_at,
+        mobile=customer.mobile, email=customer.email, status=customer.status,
+        registration_source="lead" if customer.converted_from_lead_id else "direct",
+        created_at=customer.created_at,
     )
 
 
@@ -112,7 +118,8 @@ def form_definition_to_response(
 
 
 def application_to_list_item(
-    application: Application, customer_name: str | None, product_name: str, employee_name: str | None, progress_percent: int = 0
+    application: Application, customer_name: str | None, product_name: str, employee_name: str | None, progress_percent: int = 0,
+    case: ApplicationWorkflow | None = None, case_status_label: str | None = None,
 ) -> ApplicationListItem:
     return ApplicationListItem(
         id=application.require_id(),
@@ -129,14 +136,20 @@ def application_to_list_item(
         created_at=application.created_at,
         submitted_at=application.submitted_at,
         progress_percent=progress_percent,
+        case_id=case.require_id() if case else None,
+        case_type=case.case_type if case else None,
+        case_code=case.case_code if case else None,
+        case_status=case.current_status if case else None,
+        case_status_label=case_status_label,
     )
 
 
 def application_to_detail(
-    application: Application, customer_name: str | None, product_name: str, employee_name: str | None, progress_percent: int = 0
+    application: Application, customer_name: str | None, product_name: str, employee_name: str | None, progress_percent: int = 0,
+    case: ApplicationWorkflow | None = None, case_status_label: str | None = None,
 ) -> ApplicationDetailResponse:
     return ApplicationDetailResponse(
-        **application_to_list_item(application, customer_name, product_name, employee_name, progress_percent).model_dump(),
+        **application_to_list_item(application, customer_name, product_name, employee_name, progress_percent, case, case_status_label).model_dump(),
         form_definition_id=application.form_definition_id,
         form_data=application.form_data,
         updated_at=application.updated_at,

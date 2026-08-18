@@ -97,8 +97,11 @@ from app.features.system_settings.constants import MasterDataStatus
 from app.features.system_settings.repository import (
     DocumentTypeRepository,
     InsuranceProductRepository,
+    LeadSourceRepository,
     LoanProductRepository,
 )
+from app.features.workflow_engine.constants import WorkflowAuditEvent
+from app.features.workflow_engine.models import ApplicationWorkflow
 from app.features.workflow_engine.repository import (
     ApplicationStatusHistoryRepository,
     ApplicationWorkflowRepository,
@@ -151,6 +154,7 @@ class CustomerService:
         self._secure_links = SecureLinkRepository(db)
         self._leads = LeadRepository(db)
         self._lead_activities = LeadActivityRepository(db)
+        self._lead_sources = LeadSourceRepository(db)
         self._users = UserRepository(db)
         self._employees = EmployeeRepository(db)
         self._loan_products = LoanProductRepository(db)
@@ -1442,6 +1446,21 @@ class CustomerService:
             self._db, event_type=AuditEvent.APPLICATION_ASSIGNED, user_id=actor.require_id(),
             metadata={"application_id": application_id, "employee_id": employee_id},
         )
+        # Assignment-consistency fix: once a Loan/Insurance Case exists for this
+        # Application, `ApplicationWorkflow.assigned_to` (Loan Management's own copy) is
+        # kept in sync too, so it can never diverge from what this endpoint just set —
+        # this used to be entirely independent, which is exactly why Loan Management
+        # could show "Satyaa K" while Customer Applications showed "Unassigned" for the
+        # same case. Mirrored in the other direction by
+        # LoanCaseService/InsuranceCaseService.assign_case.
+        case = await self._workflows.find_by_application_id(application_id)
+        if case is not None and case.assigned_to != employee_id:
+            is_reassignment = case.assigned_to is not None
+            await self._workflows.update(case.require_id(), {"assigned_to": employee_id}, updated_by=actor.require_id())
+            await write_audit_log(
+                self._db, event_type=WorkflowAuditEvent.CASE_REASSIGNED if is_reassignment else WorkflowAuditEvent.CASE_ASSIGNED,
+                user_id=actor.require_id(), metadata={"application_workflow_id": case.require_id(), "employee_id": employee_id},
+            )
         return updated
 
     async def list_customers_for_staff(self, actor: User, *, search: str | None, skip: int, limit: int, sort: list[tuple[str, int]] | None) -> tuple[list[Customer], int]:
@@ -1467,6 +1486,44 @@ class CustomerService:
         return customer
 
     # ================================================================== name resolution
+
+    async def resolve_lead_info(self, customer: Customer) -> tuple[str | None, str | None]:
+        """`(lead_code, lead_source_name)` for a Lead-origin Customer, `(None, None)` for
+        a Direct one. `Customer.converted_from_lead_id` is the sole source of truth for
+        "did this customer originate from a Lead" (never product/employee/referral) — see
+        that field's own docstring. Resolves the Lead's `source_id` the same way
+        `LeadService.resolve_names` does for Leads themselves — one resolution pattern,
+        not two — except this one intentionally does NOT filter by active status:
+        a Lead source that's since been deactivated shouldn't make a converted
+        customer's original source disappear from their record."""
+        if customer.converted_from_lead_id is None:
+            return None, None
+        lead = await self._leads.find_by_id(customer.converted_from_lead_id)
+        if lead is None:
+            return None, None
+        source = await self._lead_sources.find_by_id(lead.source_id)
+        return lead.lead_code, source.name if source else None
+
+    async def resolve_case_info_for_applications(self, applications: list[Application]) -> dict[str, ApplicationWorkflow]:
+        """Application id -> its linked Loan/Insurance Case, batched — the same
+        `find_by_application_id` relationship the Portal dashboard already uses
+        one-at-a-time (see `_own_dashboard`), just resolved for many applications at once
+        for the staff Applications list/detail and the Customer View."""
+        application_ids = [a.require_id() for a in applications]
+        if not application_ids:
+            return {}
+        cases = await self._workflows.find_many({"application_id": {"$in": application_ids}}, limit=len(application_ids))
+        return {c.application_id: c for c in cases}
+
+    async def resolve_case_status_labels(self, cases: list[ApplicationWorkflow]) -> dict[str, str]:
+        """Case id -> human-readable current-stage label, via the exact same
+        `WorkflowDefinition` lookup the Portal dashboard already uses (`_own_dashboard`) —
+        one label-resolution implementation for both surfaces."""
+        labels: dict[str, str] = {}
+        for case in cases:
+            definition = await self._workflow_defs.find_by_case_type_status(case.case_type, case.current_status)
+            labels[case.require_id()] = definition.label if definition else case.current_status
+        return labels
 
     async def resolve_names_for_applications(self, applications: list[Application]) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
         customer_ids = {a.customer_id for a in applications if a.customer_id}

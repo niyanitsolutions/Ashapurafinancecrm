@@ -36,7 +36,9 @@ export function CustomerListPage() {
       return next;
     });
   const isVisible = (key: string) => visibleColumns.has(key);
-  const columnCount = 2 + OPTIONAL_COLUMNS.filter((c) => isVisible(c.key)).length;
+  // Source is always visible — it's the customer's original entry path (Lead vs Direct
+  // registration), not an incidental detail worth hiding behind the columns toggle.
+  const columnCount = 3 + OPTIONAL_COLUMNS.filter((c) => isVisible(c.key)).length;
 
   useEffect(() => {
     setIsLoading(true);
@@ -96,6 +98,7 @@ export function CustomerListPage() {
                   <Th>Name</Th>
                   {isVisible("mobile") && <Th>Mobile</Th>}
                   {isVisible("email") && <Th>Email</Th>}
+                  <Th>Source</Th>
                   {isVisible("status") && <Th>Status</Th>}
                   <Th>Actions</Th>
                 </TableHeadRow>
@@ -146,6 +149,11 @@ export function CustomerListPage() {
                       </Td>
                     )}
                     {isVisible("email") && <Td className={c.email ? "text-text" : "text-textSecondary"}>{c.email || "—"}</Td>}
+                    <Td>
+                      <Badge tone={c.registration_source === "lead" ? "info" : "neutral"}>
+                        {c.registration_source === "lead" ? "Lead" : "Direct"}
+                      </Badge>
+                    </Td>
                     {isVisible("status") && (
                       <Td>
                         <Badge tone={c.status === "active" ? "success" : "neutral"}>{c.status}</Badge>

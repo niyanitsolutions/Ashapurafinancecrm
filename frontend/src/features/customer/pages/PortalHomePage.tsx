@@ -331,6 +331,23 @@ export function PortalHomePage() {
           <TimelineSummaryWidget dashboard={dashboard} />
 
           {dashboard.recent_activity.length > 0 && <RecentActivity dashboard={dashboard} />}
+
+          {/* Having an application for one product must never hide the ability to apply
+              for another — this card is always reachable, not conditioned on has_application. */}
+          <div className="bg-card border border-border rounded-card shadow-card p-6">
+            <h2 className="text-sm font-semibold text-text/70 mb-3">Apply for another product</h2>
+            <div className="flex gap-3">
+              <Link to="/portal/applications/new?category=loan" className="rounded bg-primary text-white text-sm font-medium py-2 px-4 hover:bg-primary-light">
+                Apply for a Loan
+              </Link>
+              <Link
+                to="/portal/applications/new?category=insurance"
+                className="rounded border border-primary text-primary text-sm font-medium py-2 px-4 hover:bg-primary/10"
+              >
+                Apply for Insurance
+              </Link>
+            </div>
+          </div>
         </div>
       )}
     </div>

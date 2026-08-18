@@ -147,6 +147,11 @@ class CustomerResponse(BaseModel):
     address: AddressSchema | None
     status: str
     converted_from_lead_id: str | None
+    # "lead" | "direct" — derived purely from `converted_from_lead_id is not None`, never
+    # guessed from product/employee/referral/status. See `Customer.converted_from_lead_id`.
+    registration_source: str
+    lead_code: str | None = None
+    lead_source_name: str | None = None
     created_at: datetime
 
 
@@ -157,6 +162,7 @@ class CustomerListItem(BaseModel):
     mobile: str
     email: str | None
     status: str
+    registration_source: str
     created_at: datetime
 
 
@@ -412,6 +418,19 @@ class ApplicationListItem(BaseModel):
     # Originally Detail-only; the Customer Portal redesign's My Applications card layout
     # needs it on the list too, computed the same way (see `compute_progress_for_application`).
     progress_percent: int = 0
+    # Assignment/status consistency — the linked Loan/Insurance Case, if one exists yet.
+    # `assigned_to`/`assigned_to_name` above are already kept in sync with the case's own
+    # (see `CustomerService.assign_application`/`LoanCaseService.assign_case`); these are
+    # purely additive so a caller can also show the case's own pipeline status (which is
+    # intentionally NOT the same thing as `status` above — see `ApplicationWorkflow.
+    # current_status` vs `Application.status`). All default `None` — every existing
+    # caller of `application_to_list_item`/`application_to_detail` keeps working
+    # unmodified unless it opts in to resolving case info.
+    case_id: str | None = None
+    case_type: str | None = None
+    case_code: str | None = None
+    case_status: str | None = None
+    case_status_label: str | None = None
 
 
 class ApplicationDetailResponse(ApplicationListItem):

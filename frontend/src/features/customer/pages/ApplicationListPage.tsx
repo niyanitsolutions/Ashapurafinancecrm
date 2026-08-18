@@ -65,7 +65,15 @@ export function ApplicationListPage() {
   useEffect(load, []);
 
   return (
-    <SimplePageLayout title="My Applications" backTo="/portal">
+    <SimplePageLayout
+      title="My Applications"
+      backTo="/portal"
+      actions={
+        <Link to="/portal/applications/new" className="rounded-lg bg-primary text-white text-sm font-medium py-2 px-4 hover:bg-primary-light">
+          Start New Application
+        </Link>
+      }
+    >
       <ErrorBanner message={error} />
       {error && (
         <button type="button" onClick={load} className="mb-4 text-sm font-medium text-primary hover:underline">
