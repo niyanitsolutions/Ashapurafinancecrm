@@ -1,5 +1,8 @@
+import type { ReactNode } from "react";
 import { groupBySection } from "@/components/forms/ProductSchemaForm";
+import { FileDropZone } from "@/components/uploads/FileDropZone";
 import type { ApplicationDocument, RequiredDocument } from "@/features/customer/api";
+import { formatISTDateTime } from "@/shared/dateFormat";
 import { Icon, type IconName } from "@/theme/icons";
 
 const STATUS_BADGE: Record<ApplicationDocument["verification_status"], { label: string; className: string; icon: IconName }> = {
@@ -8,23 +11,182 @@ const STATUS_BADGE: Record<ApplicationDocument["verification_status"], { label: 
   pending: { label: "Pending Review", className: "text-text/50", icon: "clock" },
 };
 
+function formatFileSize(bytes: number | null): string | null {
+  if (bytes == null) return null;
+  const mb = bytes / (1024 * 1024);
+  return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+function isImage(contentType: string | null): boolean {
+  return Boolean(contentType?.startsWith("image/"));
+}
+
+function UploadedDocumentCard({
+  doc,
+  previewEnabled,
+  extraActions,
+}: {
+  doc: ApplicationDocument;
+  previewEnabled: boolean;
+  extraActions?: (doc: ApplicationDocument) => ReactNode;
+}) {
+  const badge = STATUS_BADGE[doc.verification_status];
+  const size = formatFileSize(doc.file_size_bytes);
+  return (
+    <div className="mt-2 flex items-start gap-3 rounded-md bg-text/5 p-2.5">
+      {isImage(doc.content_type) && previewEnabled && doc.download_url ? (
+        <img src={doc.download_url} alt={doc.file_name ?? "preview"} className="h-10 w-10 rounded object-cover shrink-0" />
+      ) : (
+        <Icon name="documents" className="h-8 w-8 shrink-0 text-text/30" />
+      )}
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5 text-xs text-success font-medium">
+          <Icon name="check-circle" className="h-3.5 w-3.5" /> Uploaded
+        </div>
+        <p className="truncate text-sm text-text">{doc.file_name}</p>
+        <p className="text-xs text-text/40">
+          {size && `${size} · `}
+          {formatISTDateTime(doc.created_at)}
+        </p>
+        <div className="mt-1 flex items-center gap-2 flex-wrap">
+          <span className={`flex items-center gap-1 text-xs font-medium ${badge.className}`}>
+            <Icon name={badge.icon} className="h-3.5 w-3.5" />
+            {badge.label}
+          </span>
+          {doc.download_url && previewEnabled && (
+            <a href={doc.download_url} target="_blank" rel="noreferrer" className="text-primary hover:underline text-xs font-medium">
+              Preview
+            </a>
+          )}
+          {extraActions?.(doc)}
+        </div>
+        {doc.verification_status === "rejected" && doc.rejection_reason && (
+          <p className="mt-1 text-xs text-danger">Rejected — {doc.rejection_reason}. Please re-upload this document.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DocumentRow({
+  doc,
+  current,
+  onUpload,
+  onMarkNotAvailable,
+  uploadingFor,
+  disabled,
+  canMarkNotAvailable,
+  extraActions,
+}: {
+  doc: RequiredDocument;
+  current: ApplicationDocument[];
+  onUpload: (documentTypeId: string, file: File) => void;
+  onMarkNotAvailable?: (documentTypeId: string) => void;
+  uploadingFor: string | null;
+  disabled: boolean;
+  canMarkNotAvailable: boolean;
+  extraActions?: (doc: ApplicationDocument) => ReactNode;
+}) {
+  const typeId = doc.document_type_id;
+  const isRequired = doc.required !== false;
+  const isMultiple = doc.multiple_upload === true;
+  const previewEnabled = doc.preview_enabled !== false;
+  const isUploading = uploadingFor === typeId;
+  const uploadedDocs = current.filter((d) => d.document_status === "uploaded");
+  const notAvailable = uploadedDocs.length === 0 && current.some((d) => d.document_status === "not_available");
+  const hasUploads = uploadedDocs.length > 0;
+  const displayName = current[0]?.document_type_name || doc.name_override || doc.document_type_name || "Document";
+  const canAddMore = !disabled && (isMultiple || !hasUploads);
+
+  return (
+    <li className="text-sm rounded-lg border border-border p-3">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <span className="font-medium text-text">
+          {displayName}
+          {isRequired ? <span className="text-danger"> *</span> : <span className="font-normal text-text/40"> (Optional)</span>}
+          {doc.note && <span className="font-normal text-text/40"> — {doc.note}</span>}
+        </span>
+        {!hasUploads && !notAvailable && (
+          <span className={`text-xs font-medium ${isRequired ? "text-danger" : "text-text/40"}`}>{isRequired ? "Required" : "Not Uploaded"}</span>
+        )}
+      </div>
+
+      {uploadedDocs.map((d) => (
+        <UploadedDocumentCard key={d.id} doc={d} previewEnabled={previewEnabled} extraActions={extraActions} />
+      ))}
+
+      {notAvailable && (
+        <div className="mt-2 flex items-center gap-1.5 rounded-md bg-text/5 px-3 py-2 text-xs text-text/50">
+          <Icon name="x-circle" className="h-3.5 w-3.5" /> Not Available
+        </div>
+      )}
+
+      {canAddMore && (
+        <div className="mt-2">
+          {isUploading ? (
+            <p className="text-xs text-text/50">Uploading…</p>
+          ) : hasUploads || notAvailable ? (
+            <FileDropZone
+              accept={doc.allowed_types}
+              maxSizeBytes={doc.max_size_mb ? doc.max_size_mb * 1024 * 1024 : null}
+              onFile={(file) => onUpload(typeId, file)}
+              compact
+              compactLabel={isMultiple ? "Add Document" : "Re-upload"}
+            />
+          ) : (
+            <FileDropZone
+              accept={doc.allowed_types}
+              maxSizeBytes={doc.max_size_mb ? doc.max_size_mb * 1024 * 1024 : null}
+              onFile={(file) => onUpload(typeId, file)}
+            />
+          )}
+          {!isRequired && !hasUploads && !notAvailable && canMarkNotAvailable && onMarkNotAvailable && !isUploading && (
+            <button
+              type="button"
+              onClick={() => onMarkNotAvailable(typeId)}
+              className="mt-1.5 block text-xs text-text/50 hover:text-text hover:underline"
+            >
+              I don't have this document
+            </button>
+          )}
+        </div>
+      )}
+      {notAvailable && !disabled && (
+        <p className="mt-1 text-xs text-text/40">Upload it any time before submitting — it will replace this "not available" marker.</p>
+      )}
+    </li>
+  );
+}
+
 // Phase 5 (status badges added in the Customer Portal redesign) — extracted from
-// ApplicationPage (Phase 3.1) so the Application form's own Documents step and the
-// Customer Portal's dedicated Document Center render the exact same grouped checklist,
-// with the exact same upload behavior and the same real verification status per file —
-// one component, not two copies of the same business logic.
+// ApplicationPage (Phase 3.1) so the Application form's own Documents step, the Customer
+// Portal's dedicated Document Center, and (Document Management redesign) the
+// Employee/Owner Staff Application view all render the exact same grouped checklist, off
+// the exact same Product Schema data and the exact same document records — one
+// component, not several copies of the same business logic per role.
 export function DocumentChecklist({
   requiredDocuments,
   uploadedDocuments,
   onUpload,
+  onMarkNotAvailable,
   uploadingFor,
   disabled = false,
+  canMarkNotAvailable = false,
+  extraActions,
 }: {
   requiredDocuments: RequiredDocument[];
   uploadedDocuments: ApplicationDocument[];
   onUpload: (documentTypeId: string, file: File) => void;
+  onMarkNotAvailable?: (documentTypeId: string) => void;
   uploadingFor: string | null;
   disabled?: boolean;
+  // Section 6 ("I don't have this document") is Customer-only — staff never waive a
+  // document on someone else's behalf (the backend endpoint is Customer-only too); this
+  // just keeps the Staff view from offering an action the backend would reject anyway.
+  canMarkNotAvailable?: boolean;
+  // Staff-only extras (Verify/Reject) rendered next to a specific uploaded document,
+  // without forking this component for the Staff Application page.
+  extraActions?: (doc: ApplicationDocument) => ReactNode;
 }) {
   // Governance round — a `hidden` required-document entry (Owner-set, see
   // SchemaEditorPage) is never shown, same as a hidden field never renders.
@@ -36,68 +198,32 @@ export function DocumentChecklist({
         <div key={sectionName ?? "_default"} className={groupIndex > 0 ? "mt-4 pt-4 border-t border-border" : ""}>
           {sectionName && <h3 className="text-xs font-semibold text-text/50 uppercase tracking-wide mb-2">{sectionName}</h3>}
           <ul className="space-y-2.5">
-            {docs.map((doc) => {
-              const typeId = doc.document_type_id;
-              const uploaded = uploadedDocuments.filter((d) => d.document_type_id === typeId);
-              const isUploaded = uploaded.length > 0;
-              const latest = uploaded[0];
-              const badge = latest ? STATUS_BADGE[latest.verification_status] : null;
-              const displayName = latest?.document_type_name || doc.name_override || doc.document_type_name || "Document";
-              const accept = doc.allowed_types?.length ? doc.allowed_types.map((t) => `.${t.replace(/^\./, "")}`).join(",") : undefined;
-              return (
-                <li key={typeId} className="text-sm rounded-lg border border-border p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className={isUploaded ? "text-text" : "text-text/70"}>
-                      <Icon name={isUploaded ? "check-circle" : "clock"} className={`inline h-4 w-4 mr-1.5 -mt-0.5 ${isUploaded ? "text-success" : "text-text/30"}`} />
-                      {displayName}
-                      {doc.required === false && <span className="text-text/40"> (Optional)</span>}
-                      {doc.note && <span className="text-text/40"> ({doc.note})</span>}
-                      {doc.max_size_mb != null && <span className="text-text/30"> · max {doc.max_size_mb}MB</span>}
-                    </span>
-                    <div className="flex items-center gap-2 shrink-0">
-                      {badge && (
-                        <span className={`flex items-center gap-1 text-xs font-medium ${badge.className}`}>
-                          <Icon name={badge.icon} className="h-3.5 w-3.5" />
-                          {badge.label}
-                        </span>
-                      )}
-                      {!disabled && (
-                        <label className="text-primary hover:underline cursor-pointer text-xs font-medium">
-                          {uploadingFor === typeId ? "Uploading…" : isUploaded ? "Replace" : "Upload"}
-                          <input
-                            type="file"
-                            className="hidden"
-                            accept={accept}
-                            disabled={uploadingFor === typeId}
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              if (file) onUpload(typeId, file);
-                            }}
-                          />
-                        </label>
-                      )}
-                    </div>
-                  </div>
-                  {latest?.verification_status === "rejected" && latest.rejection_reason && (
-                    <p className="mt-1.5 text-xs text-danger">Rejected — {latest.rejection_reason}. Please re-upload this document.</p>
-                  )}
-                  {uploaded.map((d) => (
-                    <div key={d.id} className="text-xs text-text/50 pl-5 mt-1">
-                      {d.download_url ? (
-                        <a href={d.download_url} target="_blank" rel="noreferrer" className="hover:underline">
-                          {d.file_name}
-                        </a>
-                      ) : (
-                        d.file_name
-                      )}
-                    </div>
-                  ))}
-                </li>
-              );
-            })}
+            {docs.map((doc) => (
+              <DocumentRow
+                key={doc.document_type_id}
+                doc={doc}
+                current={uploadedDocuments.filter((d) => d.document_type_id === doc.document_type_id && d.is_current)}
+                onUpload={onUpload}
+                onMarkNotAvailable={onMarkNotAvailable}
+                uploadingFor={uploadingFor}
+                disabled={disabled}
+                canMarkNotAvailable={canMarkNotAvailable}
+                extraActions={extraActions}
+              />
+            ))}
           </ul>
         </div>
       ))}
     </>
   );
+}
+
+/** "3 / 5 required documents completed" + the list of what's still missing — spec §7/§8.
+ * Derived purely from schema + current documents already in scope at every call site, no
+ * extra API call. */
+export function documentCompletionSummary(requiredDocuments: RequiredDocument[], uploadedDocuments: ApplicationDocument[]) {
+  const required = requiredDocuments.filter((d) => !d.hidden && d.required !== false);
+  const uploadedTypeIds = new Set(uploadedDocuments.filter((d) => d.is_current && d.document_status === "uploaded").map((d) => d.document_type_id));
+  const missing = required.filter((d) => !uploadedTypeIds.has(d.document_type_id));
+  return { total: required.length, completed: required.length - missing.length, missing };
 }

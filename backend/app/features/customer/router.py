@@ -402,21 +402,49 @@ async def submit_application(
 
 @router.post("/applications/{application_id}/documents/upload-url")
 async def get_document_upload_url(
-    application_id: str, payload: DocumentUploadUrlRequest, service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep
+    application_id: str, payload: DocumentUploadUrlRequest, service: ServiceDep, current_user: CurrentUserDep
 ) -> ApiResponse[DocumentUploadUrlResponse]:
+    # Customer (own application) OR assigned Employee/Owner (staff re-upload, spec §12) —
+    # `service.get_document_upload_url` does the same role-branched ownership check
+    # `get_application`/`list_documents` use, so this can't be reached for an application
+    # the caller doesn't own/isn't assigned to.
     url, s3_key = await service.get_document_upload_url(application_id, payload.document_type_id, payload.file_name, current_user, payload.content_type)
     return ApiResponse[DocumentUploadUrlResponse].ok(DocumentUploadUrlResponse(upload_url=url, s3_key=s3_key))
 
 
 @router.post("/applications/{application_id}/documents")
 async def confirm_document(
-    application_id: str, payload: ConfirmDocumentRequest, service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep
+    application_id: str, payload: ConfirmDocumentRequest, service: ServiceDep, current_user: CurrentUserDep
 ) -> ApiResponse[ApplicationDocumentResponse]:
     document = await service.confirm_document(application_id, payload, current_user)
     type_names = await service.resolve_document_type_names([document])
     return ApiResponse[ApplicationDocumentResponse].ok(
         mappers.document_to_response(document, type_names.get(document.document_type_id, ""), None)
     )
+
+
+@router.post("/applications/{application_id}/documents/{document_type_id}/not-available")
+async def mark_document_not_available(
+    application_id: str, document_type_id: str, service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep
+) -> ApiResponse[ApplicationDocumentResponse]:
+    document = await service.mark_document_not_available(application_id, document_type_id, current_user)
+    type_names = await service.resolve_document_type_names([document])
+    return ApiResponse[ApplicationDocumentResponse].ok(
+        mappers.document_to_response(document, type_names.get(document.document_type_id, ""), None)
+    )
+
+
+@router.get("/applications/{application_id}/documents/{document_type_id}/history")
+async def get_document_history(
+    application_id: str, document_type_id: str, service: ServiceDep, current_user: CurrentUserDep
+) -> ApiResponse[list[ApplicationDocumentResponse]]:
+    documents = await service.get_document_history(application_id, document_type_id, current_user)
+    type_names = await service.resolve_document_type_names(documents)
+    items = [
+        mappers.document_to_response(d, type_names.get(d.document_type_id, ""), service.document_download_url(d))
+        for d in documents
+    ]
+    return ApiResponse[list[ApplicationDocumentResponse]].ok(items)
 
 
 # ---------------------------------------------------------------------- applications (shared: customer-self OR staff)

@@ -8,6 +8,7 @@ import {
   getFormDefinition,
   listDocuments,
   listOwnApplications,
+  markDocumentNotAvailable,
   type ApplicationDocument,
   type ApplicationListItem,
   type FormDefinition,
@@ -68,6 +69,16 @@ export function DocumentsPage() {
     }
   };
 
+  const onMarkNotAvailable = async (applicationId: string, documentTypeId: string) => {
+    setError(null);
+    try {
+      await markDocumentNotAvailable(applicationId, documentTypeId);
+      await load();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    }
+  };
+
   return (
     <SimplePageLayout title="Document Center" backTo="/portal">
       <ErrorBanner message={error} />
@@ -105,6 +116,8 @@ export function DocumentsPage() {
             requiredDocuments={formDef.required_documents}
             uploadedDocuments={documents}
             onUpload={(documentTypeId, file) => onUpload(application.id, documentTypeId, file)}
+            onMarkNotAvailable={(documentTypeId) => onMarkNotAvailable(application.id, documentTypeId)}
+            canMarkNotAvailable={application.status !== "submitted"}
             uploadingFor={uploadingFor}
             disabled={application.status === "submitted"}
           />

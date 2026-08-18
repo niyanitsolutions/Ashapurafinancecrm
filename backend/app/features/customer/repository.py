@@ -11,6 +11,8 @@ from app.features.customer.models import (
     SecureLink,
 )
 from app.shared.base_repository import BaseRepository
+from app.utils.datetime import utc_now
+from app.utils.helpers import to_object_id
 
 _SEARCH_FIELDS = ("customer_code", "full_name", "mobile", "email")
 
@@ -149,7 +151,36 @@ class ApplicationDocumentRepository(BaseRepository[ApplicationDocument]):
     model = ApplicationDocument
 
     async def find_for_application(self, application_id: str) -> list[ApplicationDocument]:
+        # Unfiltered — full history, including superseded/not-available rows. Only meant
+        # as a building block for `find_for_application_and_type` below; every other
+        # caller (submission checks, dashboards, the default document list) must use
+        # `find_current_for_application` instead so an application with several rounds of
+        # re-upload doesn't silently truncate against this limit.
         return await self.find_many({"application_id": application_id}, limit=100)
+
+    async def find_current_for_application(self, application_id: str) -> list[ApplicationDocument]:
+        return await self.find_many({"application_id": application_id, "is_current": True}, limit=200)
+
+    async def find_for_application_and_type(self, application_id: str, document_type_id: str) -> list[ApplicationDocument]:
+        return await self.find_many({"application_id": application_id, "document_type_id": document_type_id}, limit=50)
+
+    async def supersede_current(
+        self, application_id: str, document_type_id: str, *, keep_document_id: str, updated_by: str | None
+    ) -> None:
+        # Insert-then-sweep: the caller inserts the new row first and passes its id here,
+        # so this demotes every OTHER current row for the same (application, document
+        # type) — including one demoted by a concurrent re-upload that raced this one.
+        # Whichever sweep runs last always converges on exactly one current row, unlike a
+        # naive find-current-then-demote-then-insert sequence, which can leave two.
+        await self.collection.update_many(
+            {
+                "application_id": application_id,
+                "document_type_id": document_type_id,
+                "is_current": True,
+                "_id": {"$ne": to_object_id(keep_document_id)},
+            },
+            {"$set": {"is_current": False, "updated_at": utc_now(), "updated_by": updated_by}},
+        )
 
 
 class SecureLinkRepository(BaseRepository[SecureLink]):

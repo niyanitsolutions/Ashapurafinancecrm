@@ -29,6 +29,7 @@ from app.features.communication.service import CommunicationService
 from app.features.customer.constants import (
     ApplicationStatus,
     AuditEvent,
+    DocumentAvailabilityStatus,
     DocumentVerificationStatus,
     LeadTimelineEvent,
     LinkResolution,
@@ -108,6 +109,7 @@ from app.security.jwt import create_otp_verified_token
 from app.services.storage.client import (
     generate_presigned_download_url,
     generate_presigned_upload_url,
+    get_object_size,
 )
 from app.shared.audit_log import write_audit_log
 from app.utils.datetime import ensure_utc, utc_now
@@ -1156,8 +1158,8 @@ class CustomerService:
         if errors:
             raise ValidationError(" ".join(errors))
 
-        documents = await self._documents.find_for_application(application_id)
-        uploaded_type_ids = {d.document_type_id for d in documents}
+        documents = await self._documents.find_current_for_application(application_id)
+        uploaded_type_ids = {d.document_type_id for d in documents if d.document_status == DocumentAvailabilityStatus.UPLOADED}
         missing_docs = [t for t in form_def.required_document_type_ids if t not in uploaded_type_ids]
         if missing_docs:
             raise ValidationError("Please upload all required documents before submitting.")
@@ -1201,10 +1203,62 @@ class CustomerService:
 
     # ================================================================== documents
 
+    async def _resolve_application_for_actor(self, application_id: str, actor: User) -> Application:
+        # Same role split as the `GET /applications/{id}` router endpoint, centralized
+        # here so every document operation (upload, confirm, history) shares it — a
+        # Customer only ever reaches their own application, Employee only one assigned to
+        # them, Owner unrestricted; anything else (e.g. Referral Partner) is denied
+        # outright rather than falling through to the staff branch.
+        if actor.role == CUSTOMER:
+            return await self.get_own_application(application_id, actor)
+        if actor.role in (OWNER, EMPLOYEE):
+            return await self.get_application_for_staff(application_id, actor)
+        raise ForbiddenError("You do not have access to this application.")
+
+    async def _required_document_definition(self, application: Application, document_type_id: str) -> RequiredDocumentDefinition | None:
+        # `None` means this document type isn't part of the product's Product Schema
+        # checklist at all — that's a legitimate case, not an error: the Loan/Insurance
+        # Case pipeline's "request additional documents" flow
+        # (loan_management/insurance_management `request_documents`) lets staff ask for
+        # an ad-hoc document type mid-processing that was never anticipated in the
+        # original schema. Only a document type the schema DOES know about is subject to
+        # its `hidden`/`allowed_types` rules; an ad-hoc one falls back to the original,
+        # pre-Product-Schema behavior of "any known document_type_id is uploadable."
+        form_def = await self._form_defs.find_by_id(application.form_definition_id)
+        if form_def is None:
+            return None
+        for rd in form_def.required_documents:
+            if rd.document_type_id == document_type_id:
+                return rd
+        return None
+
+    def _assert_document_upload_allowed(self, rd: RequiredDocumentDefinition | None, file_name: str) -> None:
+        if rd is None:
+            return
+        # `hidden` is blocked for every role, not just Customer — a hidden required-document
+        # entry is "never asked for" at all (see RequiredDocumentDefinition's own intent),
+        # and nothing in this feature asks for a staff-only bypass of that.
+        if rd.hidden:
+            raise ValidationError("This document type is not available for upload.")
+        if rd.allowed_types:
+            extension = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
+            allowed = {t.lower().lstrip(".") for t in rd.allowed_types}
+            if extension not in allowed:
+                raise ValidationError(f"File type not allowed. Allowed types: {', '.join(sorted(allowed))}.")
+
+    async def _next_doc_version(self, application_id: str, document_type_id: str) -> tuple[int, str | None]:
+        current = await self._documents.find_current_for_application(application_id)
+        existing = next((d for d in current if d.document_type_id == document_type_id), None)
+        if existing is None:
+            return 1, None
+        return existing.doc_version + 1, existing.require_id()
+
     async def get_document_upload_url(self, application_id: str, document_type_id: str, file_name: str, actor: User, content_type: str | None) -> tuple[str, str]:
-        application = await self.get_own_application(application_id, actor)
+        application = await self._resolve_application_for_actor(application_id, actor)
         if await self._document_types.find_by_id(document_type_id) is None:
             raise ValidationError("Unknown document_type_id.")
+        rd = await self._required_document_definition(application, document_type_id)
+        self._assert_document_upload_allowed(rd, file_name)
         s3_key = f"application-documents/{application.application_code}/{document_type_id}/{file_name}"
         url = generate_presigned_upload_url(s3_key, expires_in=_UPLOAD_URL_EXPIRE_SECONDS, content_type=content_type)
         return url, s3_key
@@ -1217,27 +1271,88 @@ class CustomerService:
         # server-side with the exact same expression `get_document_upload_url` used to
         # mint the presigned PUT, so the only key ever persisted is the one this
         # application's own upload flow actually issued.
-        application = await self.get_own_application(application_id, actor)
+        application = await self._resolve_application_for_actor(application_id, actor)
         if await self._document_types.find_by_id(payload.document_type_id) is None:
             raise ValidationError("Unknown document_type_id.")
+        rd = await self._required_document_definition(application, payload.document_type_id)
+        self._assert_document_upload_allowed(rd, payload.file_name)
+
         s3_key = f"application-documents/{application.application_code}/{payload.document_type_id}/{payload.file_name}"
+        size = get_object_size(s3_key)
+        if size is None:
+            raise ValidationError("Upload did not complete — please try again.")
+        if rd is not None and rd.max_size_mb is not None and size > rd.max_size_mb * 1024 * 1024:
+            raise ValidationError(f"File exceeds the maximum size of {rd.max_size_mb}MB.")
+
+        # A document type outside the Product Schema (the Case pipeline's ad-hoc
+        # "additional documents requested" flow — see `_required_document_definition`)
+        # has no `multiple_upload` setting to consult; default to the single-current-slot
+        # behavior, same as every schema-known type defaults to.
+        multiple_upload = rd.multiple_upload if rd is not None else False
+        doc_version, replaces_id = (1, None) if multiple_upload else await self._next_doc_version(application_id, payload.document_type_id)
         document = ApplicationDocument(
             application_id=application_id, document_type_id=payload.document_type_id, file_name=payload.file_name,
             s3_key=s3_key, content_type=payload.content_type, created_by=actor.require_id(),
+            file_size_bytes=size, doc_version=doc_version, replaces_document_id=replaces_id,
         )
         document_id = await self._documents.insert(document)
+        if not multiple_upload:
+            # Insert-then-sweep, not find-then-demote-then-insert: this always converges
+            # on exactly one current row per (application, document type) even if two
+            # re-uploads race each other, because each sweep demotes every OTHER current
+            # row, including one just inserted by a concurrent call.
+            await self._documents.supersede_current(application_id, payload.document_type_id, keep_document_id=document_id, updated_by=actor.require_id())
         await write_audit_log(self._db, event_type=AuditEvent.DOCUMENT_UPLOADED, user_id=actor.require_id(), metadata={"application_id": application_id})
+        return await self._documents.find_by_id(document_id) or document
+
+    async def mark_document_not_available(self, application_id: str, document_type_id: str, actor: User) -> ApplicationDocument:
+        application = await self.get_own_application(application_id, actor)  # Customer-only: staff don't declare a document "unavailable" on someone else's behalf.
+        if await self._document_types.find_by_id(document_type_id) is None:
+            raise ValidationError("Unknown document_type_id.")
+        rd = await self._required_document_definition(application, document_type_id)
+        if rd is None:
+            # No schema entry to consult for required/optional — this is either an
+            # unknown-to-this-application type or a Case-pipeline ad-hoc request; either
+            # way there's no basis to authorize an exception to "upload it," so don't.
+            raise ValidationError("This document type is not part of this application's document checklist.")
+        if rd.required:
+            raise ForbiddenError("This document is required and cannot be marked unavailable.")
+        if rd.hidden:
+            raise ValidationError("This document type is not available for upload.")
+
+        doc_version, replaces_id = await self._next_doc_version(application_id, document_type_id)
+        document = ApplicationDocument(
+            application_id=application_id, document_type_id=document_type_id, created_by=actor.require_id(),
+            document_status=DocumentAvailabilityStatus.NOT_AVAILABLE, doc_version=doc_version, replaces_document_id=replaces_id,
+        )
+        document_id = await self._documents.insert(document)
+        # A real upload always supersedes a prior "not available" placeholder too — this
+        # sweep is unconditional (unlike confirm_document's, which skips it for
+        # multiple_upload types), since "not available" is a single-slot concept
+        # regardless of the document type's multiple_upload setting.
+        await self._documents.supersede_current(application_id, document_type_id, keep_document_id=document_id, updated_by=actor.require_id())
+        await write_audit_log(
+            self._db, event_type=AuditEvent.DOCUMENT_MARKED_UNAVAILABLE, user_id=actor.require_id(),
+            metadata={"application_id": application_id, "document_type_id": document_type_id},
+        )
         return await self._documents.find_by_id(document_id) or document
 
     async def list_own_documents(self, application_id: str, actor: User) -> list[ApplicationDocument]:
         await self.get_own_application(application_id, actor)
-        return await self._documents.find_for_application(application_id)
+        return await self._documents.find_current_for_application(application_id)
 
     async def list_documents_for_staff(self, application_id: str, actor: User) -> list[ApplicationDocument]:
         await self.get_application_for_staff(application_id, actor)
-        return await self._documents.find_for_application(application_id)
+        return await self._documents.find_current_for_application(application_id)
 
-    def document_download_url(self, document: ApplicationDocument) -> str:
+    async def get_document_history(self, application_id: str, document_type_id: str, actor: User) -> list[ApplicationDocument]:
+        await self._resolve_application_for_actor(application_id, actor)
+        history = await self._documents.find_for_application_and_type(application_id, document_type_id)
+        return sorted(history, key=lambda d: d.created_at, reverse=True)
+
+    def document_download_url(self, document: ApplicationDocument) -> str | None:
+        if document.s3_key is None:
+            return None
         return generate_presigned_download_url(document.s3_key, expires_in=_DOWNLOAD_URL_EXPIRE_SECONDS)
 
     async def _get_document_for_staff(self, application_id: str, document_id: str, actor: User) -> ApplicationDocument:
@@ -1507,8 +1622,8 @@ class CustomerService:
         completed_count = 0
         document_groups: list[DocumentGroupPreview] = []
         if form_def is not None:
-            uploaded = await self._documents.find_for_application(application.require_id())
-            uploaded_type_ids = {d.document_type_id for d in uploaded}
+            uploaded = await self._documents.find_current_for_application(application.require_id())
+            uploaded_type_ids = {d.document_type_id for d in uploaded if d.document_status == DocumentAvailabilityStatus.UPLOADED}
             completed_count = sum(1 for rd in form_def.required_documents if rd.document_type_id in uploaded_type_ids)
             pending_count = len(form_def.required_documents) - completed_count
 

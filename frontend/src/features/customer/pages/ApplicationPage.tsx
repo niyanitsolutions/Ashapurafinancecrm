@@ -7,13 +7,14 @@ import { ProductSchemaForm, RepeatableGroupsForm, groupBySection } from "@/compo
 import { SubmitButton } from "@/components/forms/SubmitButton";
 import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
 import { useAuth } from "@/features/auth/useAuth";
-import { DocumentChecklist } from "@/features/customer/components/DocumentChecklist";
+import { documentCompletionSummary, DocumentChecklist } from "@/features/customer/components/DocumentChecklist";
 import {
   confirmDocument,
   getApplication,
   getDocumentUploadUrl,
   getFormDefinition,
   listDocuments,
+  markDocumentNotAvailable,
   updateApplication,
   submitApplication,
   type ApplicationDetail,
@@ -233,6 +234,17 @@ export function ApplicationPage() {
     }
   };
 
+  const onMarkDocumentNotAvailable = async (documentTypeId: string) => {
+    setError(null);
+    try {
+      await markDocumentNotAvailable(id, documentTypeId);
+      const docs = await listDocuments(id);
+      setDocuments(docs);
+    } catch (err) {
+      setError(getErrorMessage(err));
+    }
+  };
+
   const onSaveDraft = async () => {
     if (!id) return;
     if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
@@ -272,6 +284,9 @@ export function ApplicationPage() {
     setStepIndex((i) => Math.max(i - 1, 0));
   };
 
+  const docSummary = documentCompletionSummary(formDef.required_documents, documents);
+  const documentsComplete = docSummary.missing.length === 0;
+
   const onSubmit = async () => {
     setError(null);
     const errors = validateFormData(formDef.fields, formData);
@@ -280,6 +295,15 @@ export function ApplicationPage() {
       setError("Please fix the highlighted fields before submitting.");
       const firstBadStep = steps.findIndex((s) => s.kind === "fields" && s.fields.some((f) => errors[f.key]));
       if (firstBadStep >= 0) setStepIndex(firstBadStep);
+      return;
+    }
+    if (!documentsComplete) {
+      // UX pre-emption only — the backend's own check in `submit_application` is what
+      // actually enforces this (a customer could otherwise call the API directly), this
+      // just avoids a round-trip and surfaces the exact spec-required message.
+      setError("Please upload all required documents before submitting your application.");
+      const documentsStepIndex = steps.findIndex((s) => s.kind === "documents");
+      if (documentsStepIndex >= 0) setStepIndex(documentsStepIndex);
       return;
     }
     setIsSubmitting(true);
@@ -299,7 +323,6 @@ export function ApplicationPage() {
   const progress = computeProgress(formDef.fields, formData);
   const savedSecondsAgo = savedAt ? Math.floor((nowTick - savedAt.getTime()) / 1000) : null;
   const statusLabel = application.status === "submitted" ? "Submitted" : "Draft";
-  const documentsComplete = formDef.required_documents.every((rd) => documents.some((d) => d.document_type_id === rd.document_type_id));
 
   const isStepComplete = (step: WizardStep): boolean => {
     if (step.kind === "fields") return computeProgress(step.fields, formData) === 100;
@@ -420,13 +443,34 @@ export function ApplicationPage() {
 
           {currentStep.kind === "documents" && (
             <div className="bg-card border border-border rounded-card shadow-card p-6 mb-6">
-              <h2 className="text-sm font-semibold text-text/70 mb-4">Required Documents</h2>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-sm font-semibold text-text/70">Required Documents</h2>
+                {docSummary.total > 0 && (
+                  <span className={`text-xs font-medium ${documentsComplete ? "text-success" : "text-text/50"}`}>
+                    {docSummary.completed} / {docSummary.total} required documents completed
+                  </span>
+                )}
+              </div>
               <DocumentChecklist
                 requiredDocuments={formDef.required_documents}
                 uploadedDocuments={documents}
                 onUpload={onUploadDocument}
+                onMarkNotAvailable={onMarkDocumentNotAvailable}
+                canMarkNotAvailable
                 uploadingFor={uploadingFor}
               />
+              {docSummary.missing.length > 0 && (
+                <div className="mt-4 rounded-lg bg-danger/5 border border-danger/20 p-3">
+                  <p className="text-xs font-medium text-danger flex items-center gap-1.5">
+                    <Icon name="alert-triangle" className="h-3.5 w-3.5" /> Missing required documents:
+                  </p>
+                  <ul className="mt-1 text-xs text-danger/80 list-disc list-inside">
+                    {docSummary.missing.map((d) => (
+                      <li key={d.document_type_id}>{d.name_override || d.document_type_name}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
 
@@ -455,6 +499,8 @@ export function ApplicationPage() {
                   requiredDocuments={formDef.required_documents}
                   uploadedDocuments={documents}
                   onUpload={onUploadDocument}
+                  onMarkNotAvailable={onMarkDocumentNotAvailable}
+                  canMarkNotAvailable
                   uploadingFor={uploadingFor}
                 />
               </div>

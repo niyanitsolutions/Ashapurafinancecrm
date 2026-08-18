@@ -449,7 +449,7 @@ class ApplicationDocumentResponse(BaseModel):
     application_id: str
     document_type_id: str
     document_type_name: str
-    file_name: str
+    file_name: str | None
     content_type: str | None
     download_url: str | None
     created_at: datetime
@@ -457,6 +457,11 @@ class ApplicationDocumentResponse(BaseModel):
     verified_by_name: str | None = None
     verified_at: datetime | None = None
     rejection_reason: str | None = None
+    document_status: str = "uploaded"
+    file_size_bytes: int | None = None
+    is_current: bool = True
+    doc_version: int = 1
+    replaces_document_id: str | None = None
 
 
 class RejectDocumentRequest(BaseModel):

@@ -38,6 +38,20 @@ def mock_redis():
     return fakeredis.aioredis.FakeRedis(decode_responses=True)
 
 
+@pytest.fixture(autouse=True)
+def _stub_document_object_size(monkeypatch):
+    # `CustomerService.confirm_document` HEADs the uploaded object in S3 to enforce a
+    # Product Schema's `max_size_mb` for real (see docs on that method) — the one place
+    # in the document-upload flow that would otherwise make a genuine network call, unlike
+    # `generate_presigned_url` (pure local signing). Stubbed to a small, well-under-any-
+    # schema-limit default so the existing "no real AWS calls in the test suite"
+    # invariant holds; a test that specifically exercises the oversized-file rejection
+    # path overrides this with its own `monkeypatch.setattr(customer_service, "get_object_size", ...)`.
+    from app.features.customer import service as customer_service
+
+    monkeypatch.setattr(customer_service, "get_object_size", lambda key: 1024)
+
+
 @pytest.fixture
 async def client(mock_db, mock_redis):
     await ensure_auth_indexes(mock_db)

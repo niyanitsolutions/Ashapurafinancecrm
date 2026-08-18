@@ -235,12 +235,14 @@ export interface ApplicationDetail extends ApplicationListItem {
   updated_at: string;
 }
 
+export type DocumentAvailabilityStatus = "uploaded" | "not_available";
+
 export interface ApplicationDocument {
   id: string;
   application_id: string;
   document_type_id: string;
   document_type_name: string;
-  file_name: string;
+  file_name: string | null;
   content_type: string | null;
   download_url: string | null;
   created_at: string;
@@ -248,6 +250,11 @@ export interface ApplicationDocument {
   verified_by_name: string | null;
   verified_at: string | null;
   rejection_reason: string | null;
+  document_status: DocumentAvailabilityStatus;
+  file_size_bytes: number | null;
+  is_current: boolean;
+  doc_version: number;
+  replaces_document_id: string | null;
 }
 
 // `link_status` is the only field guaranteed to be present — every other field is
@@ -521,6 +528,14 @@ export function confirmDocument(applicationId: string, documentTypeId: string, f
 
 export function listDocuments(applicationId: string) {
   return apiRequest<ApplicationDocument[]>(`/applications/${applicationId}/documents`);
+}
+
+export function markDocumentNotAvailable(applicationId: string, documentTypeId: string) {
+  return apiRequest<ApplicationDocument>(`/applications/${applicationId}/documents/${documentTypeId}/not-available`, { method: "POST" });
+}
+
+export function getDocumentHistory(applicationId: string, documentTypeId: string) {
+  return apiRequest<ApplicationDocument[]>(`/applications/${applicationId}/documents/${documentTypeId}/history`);
 }
 
 // ---- document verification (staff) ----

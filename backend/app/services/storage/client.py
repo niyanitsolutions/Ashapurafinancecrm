@@ -6,6 +6,7 @@ from functools import lru_cache
 
 import boto3
 from botocore.client import BaseClient
+from botocore.exceptions import ClientError
 
 from app.config.storage import get_storage_config
 
@@ -38,3 +39,18 @@ def generate_presigned_download_url(key: str, *, expires_in: int = 300) -> str:
         ExpiresIn=expires_in,
     )
     return str(url)
+
+
+def get_object_size(key: str) -> int | None:
+    """Actual uploaded size straight from S3 (never the client-reported one) — the only
+    way to enforce a Product Schema's `max_size_mb` for real, since the presigned-PUT flow
+    never routes the file bytes through this backend. `None` means the object isn't there
+    yet (e.g. the client's PUT to S3 never completed)."""
+    config = get_storage_config()
+    try:
+        response = get_s3_client().head_object(Bucket=config.bucket_name, Key=key)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") in ("404", "NoSuchKey"):
+            return None
+        raise
+    return int(response["ContentLength"])

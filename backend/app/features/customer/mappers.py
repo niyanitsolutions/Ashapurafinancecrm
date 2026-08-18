@@ -176,4 +176,9 @@ def document_to_response(
         verified_by_name=verified_by_name,
         verified_at=document.verified_at,
         rejection_reason=document.rejection_reason,
+        document_status=document.document_status,
+        file_size_bytes=document.file_size_bytes,
+        is_current=document.is_current,
+        doc_version=document.doc_version,
+        replaces_document_id=document.replaces_document_id,
     )

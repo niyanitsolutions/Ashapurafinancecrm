@@ -6,11 +6,13 @@ import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { Modal } from "@/components/overlays/Modal";
-import { Icon } from "@/theme/icons";
 import { useAuth } from "@/features/auth/useAuth";
+import { DocumentChecklist } from "@/features/customer/components/DocumentChecklist";
 import {
   assignApplication,
+  confirmDocument,
   getApplication,
+  getDocumentUploadUrl,
   listDocuments,
   rejectDocument,
   verifyDocument,
@@ -18,12 +20,7 @@ import {
   type ApplicationDocument,
 } from "@/features/customer/api";
 import { getErrorMessage } from "@/features/customer/errors";
-
-const STATUS_BADGE: Record<ApplicationDocument["verification_status"], { label: string; className: string; icon: "check-circle" | "x-circle" | "clock" }> = {
-  verified: { label: "Verified", className: "text-success", icon: "check-circle" },
-  rejected: { label: "Rejected", className: "text-danger", icon: "x-circle" },
-  pending: { label: "Pending Review", className: "text-text/50", icon: "clock" },
-};
+import { useProductSchema } from "@/features/customer/useProductSchema";
 
 function RejectDocumentModal({
   fileName,
@@ -79,6 +76,15 @@ export function StaffApplicationDetailsPage() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [rejectingDoc, setRejectingDoc] = useState<ApplicationDocument | null>(null);
+  const [uploadingFor, setUploadingFor] = useState<string | null>(null);
+
+  // Document Management redesign — the Staff Application view now reads the exact same
+  // Product Schema (`required_documents`) and renders it through the exact same
+  // `DocumentChecklist` component the Customer Portal uses, so Employee/Owner see missing
+  // required documents too, not only the ones already uploaded — and Customer/Employee/
+  // Owner are guaranteed to be looking at the same document records, never a separate
+  // staff-only rendering of them.
+  const { data: formDef } = useProductSchema(application?.product_category, application?.product_id);
 
   const load = () => {
     if (!applicationId) return;
@@ -145,6 +151,42 @@ export function StaffApplicationDetailsPage() {
     }
   };
 
+  const onUploadDocument = async (documentTypeId: string, file: File) => {
+    setError(null);
+    setUploadingFor(documentTypeId);
+    try {
+      const { upload_url, s3_key } = await getDocumentUploadUrl(applicationId, documentTypeId, file.name, file.type);
+      await fetch(upload_url, { method: "PUT", body: file, headers: { "Content-Type": file.type || "application/octet-stream" } });
+      await confirmDocument(applicationId, documentTypeId, file.name, s3_key, file.type);
+      setMessage("Document uploaded.");
+      load();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setUploadingFor(null);
+    }
+  };
+
+  const documentExtraActions = (doc: ApplicationDocument) => (
+    <>
+      {doc.download_url && (
+        <a href={doc.download_url} download={doc.file_name ?? undefined} className="text-primary hover:underline text-xs font-medium">
+          Download
+        </a>
+      )}
+      {doc.verification_status === "pending" && (
+        <>
+          <button type="button" onClick={() => onVerify(doc.id)} className="text-xs font-medium text-success hover:underline">
+            Verify
+          </button>
+          <button type="button" onClick={() => setRejectingDoc(doc)} className="text-xs font-medium text-danger hover:underline">
+            Reject
+          </button>
+        </>
+      )}
+    </>
+  );
+
   return (
     <SimplePageLayout title={application.application_code} backTo="/applications">
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
@@ -169,47 +211,17 @@ export function StaffApplicationDetailsPage() {
 
           <div className="bg-card border border-border rounded-card shadow-card p-6">
             <h2 className="text-sm font-semibold text-text/70 mb-3">Documents</h2>
-            {documents.length === 0 && (
-              <p className="text-sm text-text/50">No documents uploaded yet.</p>
+            {formDef ? (
+              <DocumentChecklist
+                requiredDocuments={formDef.required_documents}
+                uploadedDocuments={documents}
+                onUpload={onUploadDocument}
+                uploadingFor={uploadingFor}
+                extraActions={documentExtraActions}
+              />
+            ) : (
+              <p className="text-sm text-text/50">Loading…</p>
             )}
-            <ul className="space-y-3">
-              {documents.map((d) => {
-                const badge = STATUS_BADGE[d.verification_status];
-                return (
-                  <li key={d.id} className="border border-border rounded-lg p-3 text-sm">
-                    <div className="flex items-center justify-between gap-2">
-                      <div>
-                        <span className="text-text/70">{d.document_type_name}: </span>
-                        {d.download_url ? (
-                          <a href={d.download_url} target="_blank" rel="noreferrer" className="text-primary hover:underline">
-                            {d.file_name}
-                          </a>
-                        ) : (
-                          d.file_name
-                        )}
-                      </div>
-                      <span className={`flex items-center gap-1 text-xs font-medium ${badge.className}`}>
-                        <Icon name={badge.icon} className="h-4 w-4" />
-                        {badge.label}
-                      </span>
-                    </div>
-                    {d.verification_status === "rejected" && d.rejection_reason && (
-                      <p className="mt-1 text-xs text-danger">Reason: {d.rejection_reason}</p>
-                    )}
-                    {d.verification_status === "pending" && (
-                      <div className="mt-2 flex items-center gap-2">
-                        <Button variant="secondary" size="sm" onClick={() => onVerify(d.id)}>
-                          Verify
-                        </Button>
-                        <Button variant="danger" size="sm" onClick={() => setRejectingDoc(d)}>
-                          Reject
-                        </Button>
-                      </div>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
           </div>
         </div>
 
@@ -229,7 +241,7 @@ export function StaffApplicationDetailsPage() {
 
       {rejectingDoc && (
         <RejectDocumentModal
-          fileName={rejectingDoc.file_name}
+          fileName={rejectingDoc.file_name ?? rejectingDoc.document_type_name}
           onClose={() => setRejectingDoc(null)}
           onConfirm={(reason) => onReject(rejectingDoc.id, reason)}
         />

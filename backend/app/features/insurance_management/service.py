@@ -20,6 +20,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.constants.roles import EMPLOYEE, OWNER
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from app.features.auth.models import User
+from app.features.customer.constants import DocumentAvailabilityStatus
 from app.features.customer.models import Application
 from app.features.customer.repository import (
     ApplicationDocumentRepository,
@@ -229,8 +230,8 @@ class InsuranceCaseService:
             raise ConflictError("This case is not awaiting document verification.")
         # An empty `pending_document_type_ids` (nothing was actually requested) is
         # vacuously satisfied, not an error — verify still advances the case.
-        uploaded = await self._documents.find_for_application(case.application_id)
-        uploaded_type_ids = {d.document_type_id for d in uploaded}
+        uploaded = await self._documents.find_current_for_application(case.application_id)
+        uploaded_type_ids = {d.document_type_id for d in uploaded if d.document_status == DocumentAvailabilityStatus.UPLOADED}
         missing = [t for t in case.pending_document_type_ids if t not in uploaded_type_ids]
         if missing:
             raise ValidationError("Not all requested documents have been uploaded yet.")

@@ -73,8 +73,10 @@ class Customer(BaseDocument):
 class ApplicationDocument(BaseDocument):
     application_id: str
     document_type_id: str  # ref: system_settings.document_types (Module 4, read-only)
-    file_name: str
-    s3_key: str
+    # `None` only for a `document_status=NOT_AVAILABLE` placeholder row (see below) — every
+    # row that actually holds a file always has both.
+    file_name: str | None = None
+    s3_key: str | None = None
     content_type: str | None = None
 
     # Customer Portal redesign — staff review. Defaults PENDING so every document uploaded
@@ -83,6 +85,23 @@ class ApplicationDocument(BaseDocument):
     verified_by: str | None = None  # ref: employees — who verified/rejected it
     verified_at: datetime | None = None
     rejection_reason: str | None = None  # set only when verification_status == "rejected"
+
+    # Document management redesign — re-upload/versioning + the optional-document
+    # "I don't have this" flow. Defaults reproduce prior behavior exactly for every row
+    # written before this existed (a real uploaded file, and the only/current one), so no
+    # migration is needed.
+    document_status: str = "uploaded"  # DocumentAvailabilityStatus: "uploaded" | "not_available"
+    file_size_bytes: int | None = None  # from an S3 HEAD at confirm time — never client-trusted
+    # A `RequiredDocumentDefinition.multiple_upload=False` document type has at most one
+    # `is_current=True` row at a time; re-uploading (or marking not-available) atomically
+    # supersedes the previous current row (see CustomerService.confirm_document) rather
+    # than leaving two "current" documents. `multiple_upload=True` types never supersede —
+    # every confirmed upload stays current. `doc_version`/`replaces_document_id` exist for
+    # the version-history endpoint only; ordering for display uses `created_at`, since
+    # concurrent re-uploads make version numbers only advisory, not authoritative.
+    is_current: bool = True
+    doc_version: int = 1
+    replaces_document_id: str | None = None  # ref: application_documents — the row this superseded, if any
 
 
 class FieldCondition(BaseModel):

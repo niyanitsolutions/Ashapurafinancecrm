@@ -90,6 +90,13 @@ class DocumentVerificationStatus:
     ALL = (PENDING, VERIFIED, REJECTED)
 
 
+class DocumentAvailabilityStatus:
+    UPLOADED = "uploaded"
+    NOT_AVAILABLE = "not_available"
+
+    ALL = (UPLOADED, NOT_AVAILABLE)
+
+
 class SecureLinkStatus:
     ACTIVE = "active"
     USED = "used"
@@ -126,6 +133,7 @@ class AuditEvent:
     DOCUMENT_UPLOADED = "document_uploaded"
     DOCUMENT_VERIFIED = "document_verified"
     DOCUMENT_REJECTED = "document_rejected"
+    DOCUMENT_MARKED_UNAVAILABLE = "document_marked_unavailable"
 
     # Product Schema Engine governance — one entry per mutation, read back by
     # `GET /product-schemas/audit` (see CustomerService). `metadata.changes` on
