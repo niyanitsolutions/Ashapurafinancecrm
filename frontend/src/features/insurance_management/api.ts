@@ -79,6 +79,13 @@ export function assignInsuranceCase(caseId: string, employeeId: string) {
   return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/assign`, { method: "POST", body: JSON.stringify({ employee_id: employeeId }) });
 }
 
+// Generic Case Status control (Insurance Case detail page) — mirrors
+// `loan_management/api.ts`'s `updateLoanCaseStatus`; the backend validates against
+// `InsuranceStatus.ALL` and its own transition graph, never `LoanStatus`.
+export function updateInsuranceCaseStatus(caseId: string, status: string) {
+  return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
+}
+
 export function holdInsuranceCase(caseId: string, reason: string, remarks?: string) {
   return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/hold`, { method: "POST", body: JSON.stringify({ reason, remarks }) });
 }

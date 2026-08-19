@@ -22,7 +22,7 @@ case on every call; `get_own_case`/staff `get_case` also sync individually by
 `application_id` so a case is never more than one request away from existing.
 """
 
-from typing import Any
+from typing import Any, ClassVar
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -216,6 +216,50 @@ class LoanCaseService:
     async def resume_case(self, case_id: str, actor: User) -> ApplicationWorkflow:
         case = await self.get_case(case_id, actor)
         return await engine_resume_case(self._engine, case, actor)
+
+    # ---------------------------------------------------------------- generic status control
+
+    # (from_status, to_status) pairs the generic Case Status control (detail page dropdown
+    # + PATCH /{case_id}/status) is allowed to execute directly — deliberately NOT every
+    # edge `WorkflowDefinition.allowed_next_statuses` permits. Every other forward move in
+    # this pipeline already requires mandatory business data a bare `{"status": ...}`
+    # request can't carry (Credit/Final Evaluation's decision+reason, Disbursement's
+    # amount+reference, Hold's reason) or is a Customer-only action (accept/decline
+    # offer) — those keep using their existing dedicated action/form; this control never
+    # bypasses them. The three pairs below need no extra data because they already work
+    # with none: `request_documents` accepts an empty `document_type_ids` list, and
+    # `verify_documents` re-validates its own precondition (all requested documents
+    # uploaded) from existing case state, not from anything the caller supplies.
+    _SIMPLE_STATUS_TRANSITIONS: ClassVar[set[tuple[str, str]]] = {
+        (LoanStatus.NEW_CUSTOMER, LoanStatus.DOCUMENTS_PENDING),
+        (LoanStatus.DOCUMENTS_PENDING, LoanStatus.CREDIT_EVALUATION),
+        (LoanStatus.ADDITIONAL_DOCUMENTS, LoanStatus.ESIGN_NACH_KYC),
+    }
+
+    async def update_status(self, case_id: str, new_status: str, actor: User) -> ApplicationWorkflow:
+        """The single Case Status control's backend — database status is the only source
+        of truth (list/filter/customer portal all read it live, nothing caches a second
+        copy). Selecting the case's own current status is a no-op (idempotent, no
+        history/audit noise from a double-submit). Any other target must both be a real
+        next step per the existing Workflow Engine's transition graph (`WorkflowEngine.
+        assert_transition_allowed` — the same check every dedicated action already goes
+        through) AND be one of `_SIMPLE_STATUS_TRANSITIONS`; anything else means the
+        target status has existing mandatory business data this bare control can't
+        collect, so it's rejected with a pointer to the real action instead of silently
+        dropping that requirement.
+        """
+        case = await self.get_case(case_id, actor)
+        if new_status == case.current_status:
+            return case
+        await self._engine.assert_transition_allowed(CaseType.LOAN, case.current_status, new_status)
+        transition_key = (case.current_status, new_status)
+        if transition_key == (LoanStatus.NEW_CUSTOMER, LoanStatus.DOCUMENTS_PENDING):
+            return await self.request_documents(case_id, [], actor)
+        if transition_key in self._SIMPLE_STATUS_TRANSITIONS:
+            return await self.verify_documents(case_id, actor)
+        raise ConflictError(
+            f"Moving this case to '{new_status}' requires additional information — use the dedicated action for this step instead."
+        )
 
     # ---------------------------------------------------------------- documents
 

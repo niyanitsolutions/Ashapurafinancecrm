@@ -25,10 +25,12 @@ import {
   recordUnderwriting,
   requestInsuranceCaseDocuments,
   resumeInsuranceCase,
+  updateInsuranceCaseStatus,
   verifyInsuranceCaseDocuments,
   type CaseTimelineEntry,
   type InsuranceCaseDetail,
 } from "@/features/insurance_management/api";
+import { getInsuranceStatusControlInfo, type StatusControlInfo } from "@/features/insurance_management/statusControl";
 import { documentTypesApi, type NamedMasterData } from "@/features/system_settings/api";
 import { formatISTDateTime } from "@/shared/dateFormat";
 import { HOLD_REASONS } from "@/features/workflow_engine/holdReasons";
@@ -145,6 +147,19 @@ export function InsuranceCaseDetailsPage() {
               <Field label="Status" value={STATUS_LABELS[status] ?? status} />
             </div>
           </Section>
+
+          {canEdit && (
+            <Section title="Case Status">
+              <p className="text-sm text-text">
+                Current Status: <span className="font-medium">{STATUS_LABELS[status] ?? status}</span>
+              </p>
+              <StatusUpdateControl
+                info={getInsuranceStatusControlInfo(status)}
+                labels={STATUS_LABELS}
+                onUpdate={(nextStatus) => run(() => updateInsuranceCaseStatus(caseId, nextStatus), "Status updated.")}
+              />
+            </Section>
+          )}
 
           {canEdit && (status === "application_submitted" || status === "documents_pending" || status === "additional_documents") && (
             <Section title="Document Verification">
@@ -288,6 +303,45 @@ export function InsuranceCaseDetailsPage() {
       />
     </SimplePageLayout>
   );
+}
+
+// See LoanCaseDetailsPage.tsx's own `StatusUpdateControl` — identical shape, kept as a
+// separate copy (not shared) since Loan and Insurance stay independent modules. The
+// backend (WorkflowEngine + InsuranceCaseService.update_status) still independently
+// validates and enforces every one of these rules regardless of what this shows.
+function StatusUpdateControl({
+  info,
+  labels,
+  onUpdate,
+}: {
+  info: StatusControlInfo;
+  labels: Record<string, string>;
+  onUpdate: (nextStatus: string) => void;
+}) {
+  if (info.kind === "simple") {
+    return (
+      <div className="flex items-center justify-between gap-3 rounded border border-border bg-background/50 px-3 py-2">
+        <span className="text-sm text-text/70">
+          Next: <span className="font-medium text-text">{labels[info.nextStatus] ?? info.nextStatus}</span>
+        </span>
+        <Button size="sm" onClick={() => onUpdate(info.nextStatus)}>
+          Update Status
+        </Button>
+      </div>
+    );
+  }
+  if (info.kind === "dedicated") {
+    return (
+      <p className="text-xs text-text/50">
+        This status requires additional information. Please use the existing{" "}
+        <span className="font-medium text-text">{info.actionLabel}</span> action{info.actionLabel === "Resume" ? "" : " below"}.
+      </p>
+    );
+  }
+  if (info.kind === "customerOnly") {
+    return <p className="text-xs text-text/50">{info.note}</p>;
+  }
+  return <p className="text-xs text-text/50">No direct status update is available from the current status. Please use the appropriate case action.</p>;
 }
 
 function AssignForm({ currentName, onSubmit }: { currentName: string | null; onSubmit: (employeeId: string) => void }) {

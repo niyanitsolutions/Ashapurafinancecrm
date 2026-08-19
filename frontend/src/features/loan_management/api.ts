@@ -87,6 +87,14 @@ export function assignLoanCase(caseId: string, employeeId: string) {
   return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/assign`, { method: "POST", body: JSON.stringify({ employee_id: employeeId }) });
 }
 
+// Generic Case Status control (Loan Case detail page) — the same source of truth as
+// every other write here: the backend re-validates the status value against
+// `LoanStatus.ALL` and the existing Workflow Engine transition graph, so this can never
+// persist an Insurance status or an out-of-order jump even if called directly.
+export function updateLoanCaseStatus(caseId: string, status: string) {
+  return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
+}
+
 export function holdLoanCase(caseId: string, reason: string, remarks?: string) {
   return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/hold`, { method: "POST", body: JSON.stringify({ reason, remarks }) });
 }

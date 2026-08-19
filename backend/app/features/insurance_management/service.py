@@ -18,7 +18,7 @@ could show a case as assigned while Customer Applications showed the same underl
 application as Unassigned; they're now kept as mirrors of each other).
 """
 
-from typing import Any
+from typing import Any, ClassVar
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -210,6 +210,38 @@ class InsuranceCaseService:
     async def resume_case(self, case_id: str, actor: User) -> ApplicationWorkflow:
         case = await self.get_case(case_id, actor)
         return await engine_resume_case(self._engine, case, actor)
+
+    # ---------------------------------------------------------------- generic status control
+
+    # Same posture as `LoanCaseService._SIMPLE_STATUS_TRANSITIONS` — see that constant's
+    # own comment for the full rationale. Underwriting/Medical Verification/Premium/Policy
+    # Generation/Policy Issue all carry mandatory business data (decision+remarks, outcome,
+    # premium amount, policy number, ...) a bare status control can't collect, so they stay
+    # on their existing dedicated actions; only the two document-gated hops need nothing
+    # beyond re-checking already-stored case state.
+    _SIMPLE_STATUS_TRANSITIONS: ClassVar[set[tuple[str, str]]] = {
+        (InsuranceStatus.APPLICATION_SUBMITTED, InsuranceStatus.DOCUMENTS_PENDING),
+        (InsuranceStatus.DOCUMENTS_PENDING, InsuranceStatus.UNDERWRITING),
+        (InsuranceStatus.ADDITIONAL_DOCUMENTS, InsuranceStatus.PREMIUM_ACCEPTANCE),
+    }
+
+    async def update_status(self, case_id: str, new_status: str, actor: User) -> ApplicationWorkflow:
+        """See `LoanCaseService.update_status`'s docstring — identical design, kept as a
+        separate method (not a shared helper) because it dispatches into this pipeline's
+        own `request_documents`/`verify_documents` and validates against
+        `InsuranceStatus`, never `LoanStatus`."""
+        case = await self.get_case(case_id, actor)
+        if new_status == case.current_status:
+            return case
+        await self._engine.assert_transition_allowed(CaseType.INSURANCE, case.current_status, new_status)
+        transition_key = (case.current_status, new_status)
+        if transition_key == (InsuranceStatus.APPLICATION_SUBMITTED, InsuranceStatus.DOCUMENTS_PENDING):
+            return await self.request_documents(case_id, [], actor)
+        if transition_key in self._SIMPLE_STATUS_TRANSITIONS:
+            return await self.verify_documents(case_id, actor)
+        raise ConflictError(
+            f"Moving this case to '{new_status}' requires additional information — use the dedicated action for this step instead."
+        )
 
     # ---------------------------------------------------------------- documents
 

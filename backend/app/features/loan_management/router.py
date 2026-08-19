@@ -35,6 +35,7 @@ from app.features.loan_management.schemas import (
     FinalEvaluationRequest,
     LoanCaseDetailResponse,
     LoanCaseListItem,
+    LoanStatusUpdateRequest,
     OfferRequest,
 )
 from app.features.loan_management.service import LoanCaseService
@@ -141,6 +142,14 @@ async def assign_case(
     case_id: str, payload: AssignCaseRequest, service: ServiceDep, actor: Annotated[User, _perm("assign")]
 ) -> ApiResponse[LoanCaseDetailResponse]:
     await service.assign_case(case_id, payload.employee_id, actor)
+    return await _detail(service, case_id, actor)
+
+
+@router.patch("/{case_id}/status")
+async def update_status(
+    case_id: str, payload: LoanStatusUpdateRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[LoanCaseDetailResponse]:
+    await service.update_status(case_id, payload.status, actor)
     return await _detail(service, case_id, actor)
 
 

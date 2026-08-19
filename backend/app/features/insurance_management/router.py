@@ -25,6 +25,7 @@ from app.features.insurance_management.schemas import (
     GeneratePolicyRequest,
     InsuranceCaseDetailResponse,
     InsuranceCaseListItem,
+    InsuranceStatusUpdateRequest,
     MedicalVerificationRequest,
     PremiumRequest,
     UnderwritingRequest,
@@ -133,6 +134,14 @@ async def assign_case(
     case_id: str, payload: AssignCaseRequest, service: ServiceDep, actor: Annotated[User, _perm("assign")]
 ) -> ApiResponse[InsuranceCaseDetailResponse]:
     await service.assign_case(case_id, payload.employee_id, actor)
+    return await _detail(service, case_id, actor)
+
+
+@router.patch("/{case_id}/status")
+async def update_status(
+    case_id: str, payload: InsuranceStatusUpdateRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[InsuranceCaseDetailResponse]:
+    await service.update_status(case_id, payload.status, actor)
     return await _detail(service, case_id, actor)
 
 

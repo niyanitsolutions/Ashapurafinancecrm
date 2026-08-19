@@ -1,6 +1,26 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+from app.features.workflow_engine.constants import InsuranceStatus
+
+
+class InsuranceStatusUpdateRequest(BaseModel):
+    """Backs the generic Case Status control on the Insurance Case detail page —
+    validated against `InsuranceStatus.ALL` only, so a Loan status value (or any other
+    string) is rejected here at the schema layer, before the service layer even runs the
+    existing `WorkflowEngine` transition-graph check. See
+    `InsuranceCaseService.update_status`'s own docstring for why only some transitions
+    actually succeed through this endpoint."""
+
+    status: str
+
+    @field_validator("status")
+    @classmethod
+    def _status_must_be_valid_insurance_status(cls, value: str) -> str:
+        if value not in InsuranceStatus.ALL:
+            raise ValueError(f"'{value}' is not a valid Insurance Case status.")
+        return value
 
 
 class UnderwritingRequest(BaseModel):
