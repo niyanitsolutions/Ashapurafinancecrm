@@ -93,6 +93,14 @@ def ist_date_range_to_utc_bounds(date_from: date | None, date_to: date | None) -
     return lower, upper
 
 
+def ist_date_to_utc_midnight(d: date) -> datetime:
+    """The UTC instant corresponding to business-timezone midnight of a single calendar
+    date — the same conversion `ist_date_range_to_utc_bounds`'s `lower` already performs,
+    extracted here for callers that only ever have one date (e.g. a Lead's
+    `next_follow_up_date`), not a from/to range."""
+    return datetime(d.year, d.month, d.day, tzinfo=_business_zone()).astimezone(UTC)
+
+
 def add_days(dt: datetime, days: int) -> datetime:
     return dt + timedelta(days=days)
 

@@ -56,13 +56,10 @@ export const NAV_SECTIONS: NavSection[] = [
     label: "CRM",
     items: [
       { label: "Leads", to: "/leads", icon: "leads", matchKey: "leads" },
-      {
-        label: "Customers",
-        to: "/customers",
-        icon: "customers",
-        matchKey: ["customers", "applications"],
-        activePrefixes: ["/applications"],
-      },
+      // "Customers" removed from the sidebar (decision 125, Leads workflow redesign
+      // Phase 1) — the underlying Customer entity, its routes, and Loan Management's
+      // dependency on them are untouched; only the confusing top-level nav entry is
+      // gone. Customer creation now happens as part of the Lead workflow (Phase 2).
       { label: "Tasks", to: "/tasks", icon: "tasks", matchKey: "tasks" },
     ],
   },

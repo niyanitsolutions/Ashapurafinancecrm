@@ -10,6 +10,9 @@ async def ensure_lead_indexes(db: AsyncIOMotorDatabase[Any]) -> None:
     await db["leads"].create_index("source_id")
     await db["leads"].create_index("product_category")
     await db["leads"].create_index("status")
+    await db["leads"].create_index("stage")
+    await db["leads"].create_index([("assigned_to", 1), ("stage", 1)])
+    await db["leads"].create_index("next_follow_up_date")
 
     await db["lead_notes"].create_index("lead_id")
     await db["lead_activities"].create_index("lead_id")

@@ -69,7 +69,7 @@ def _combine_date_time(value: Any, time_str: str) -> datetime:
 # knows what to check. Adding a ninth module to the UI later means adding one row here,
 # not touching PermissionEngine or the catalog schema.
 _MY_PERMISSIONS_CATALOG: tuple[tuple[str, str, tuple[str, ...]], ...] = (
-    ("leads", "leads", ("view", "create", "edit", "assign", "export")),
+    ("leads", "leads", ("view", "create", "edit", "assign", "export", "reject")),
     ("customer", "customers", ("view", "create", "edit")),
     ("reminders", "tasks", ("view", "create", "edit")),
     ("reminders", "reminder_rules", ("view", "create", "edit")),

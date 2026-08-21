@@ -109,6 +109,7 @@ from app.features.workflow_engine.repository import (
 )
 from app.security.encryption import encrypt
 from app.security.jwt import create_otp_verified_token
+from app.security.password import hash_password
 from app.services.storage.client import (
     generate_presigned_download_url,
     generate_presigned_upload_url,
@@ -617,6 +618,51 @@ class CustomerService:
             if not lead.account_created:
                 update.update({"user_id": user_id, "account_created": True, "account_created_at": utc_now()})
             await self._leads.update(lead.require_id(), update)
+
+    async def create_staff_initiated_account(self, lead_id: str, password: str, actor: User) -> Customer:
+        """Leads workflow redesign Phase 2 (decision 125) — My Leads' "Create Customer
+        Account" panel. A staff member (Owner/Employee, `actor`) sets the password
+        directly for a Customer login, exactly the way `create_employee`
+        (`employee/service.py`, decision #017) already sets an Owner-chosen initial
+        password for a new Employee, with zero OTP round-trip — that decision already
+        established this codebase's "staff-initiated account, no OTP" precedent; this is
+        its first application to `role=CUSTOMER`.
+
+        The new User's mobile is always the Lead's own `mobile` (never a
+        separately-typed value — enforced by this method taking no `mobile` parameter of
+        its own), so `_link_existing_leads_to_customer` below correctly attaches
+        `customer_id`/`user_id`/`account_created`/`account_created_at` to this lead (and
+        any sibling leads sharing that mobile) via its normal mobile-matching logic — no
+        new linking code needed.
+
+        Deliberately does NOT create an `Application` — `Customer` itself is
+        product-agnostic (no product_category/product_id field); associating this new
+        account with an Application is Phase 3's job (Document Collection), reached via
+        the existing Generate Link -> secure-link-claim flow, unchanged by this method."""
+        lead = await self._leads.find_by_id(lead_id)
+        if lead is None:
+            raise NotFoundError("Lead not found.")
+        if lead.account_created:
+            raise ValidationError("This lead already has a customer account.")
+        if await self._users.find_by_mobile(lead.mobile) is not None:
+            raise ValidationError("An account with this mobile number already exists.")
+
+        user = User(
+            mobile=lead.mobile,
+            role=CUSTOMER,
+            status=ACCOUNT_STATUS_ACTIVE,
+            password_hash=hash_password(password),
+            is_mobile_verified=True,
+            must_change_password=True,
+            created_by=actor.require_id(),
+        )
+        user_id = await self._users.insert(user)
+        new_user = await self._users.find_by_id(user_id)
+        if new_user is None:
+            raise NotFoundError("Newly created account could not be read back.")
+
+        profile = CompleteProfileRequest(full_name=lead.full_name, email=lead.email)
+        return await self._create_customer_from_profile(profile, new_user, converted_from_lead_id=lead_id)
 
     # ================================================================== applications (customer side)
 

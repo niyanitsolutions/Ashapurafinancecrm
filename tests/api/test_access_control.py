@@ -631,6 +631,35 @@ async def test_my_permissions_reflects_employee_grants_exactly(client, owner_hea
     assert "edit" not in grants["leads:leads"]
 
 
+async def test_my_permissions_includes_reject_for_leads_leads(client, owner_headers, master_data):
+    """Regression test: `_MY_PERMISSIONS_CATALOG` (the hardcoded module/resource/action
+    list `get_my_permissions` iterates over) must be kept in sync with the real
+    `leads:leads` permission catalog. The "reject" action was added to that catalog by
+    the Leads workflow redesign (decision 125) but this hardcoded UI-support list was
+    initially missed — an Employee granted `leads:leads:reject` saw `/my-permissions`
+    silently omit it, hiding the Reject button in My Leads' Update screen even though
+    the grant itself, and the real `POST /leads/{id}/reject` gate, both worked
+    correctly. Caught by manual browser testing, not by the original automated suite —
+    this test closes that gap."""
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9211119004", email="rejectperm@example.com")
+    headers = await _login(client, "9211119004")
+
+    leads_permission = await _create_permission(
+        client, owner_headers, module="leads", resource="leads", actions=["view", "create", "edit", "assign", "export", "reject"]
+    )
+    role = await _create_role(client, owner_headers, name="Reject Grant Test Role")
+    await client.put(
+        f"/api/v1/roles/{role['id']}/permissions",
+        json={"grants": [{"permission_id": leads_permission["id"], "granted_actions": ["view", "reject"]}]},
+        headers=owner_headers,
+    )
+    await client.post(f"/api/v1/roles/{role['id']}/assign", json={"employee_id": employee["id"]}, headers=owner_headers)
+
+    r = await client.get("/api/v1/my-permissions", headers=headers)
+    assert r.status_code == 200, r.text
+    assert set(r.json()["data"]["grants"]["leads:leads"]) == {"view", "reject"}
+
+
 async def test_my_permissions_never_authoritative_for_writes(client, owner_headers, master_data):
     """This endpoint is UI support only — confirms the real gate (require_permission on
     the actual route) is untouched by it: an Employee whose /my-permissions shows no

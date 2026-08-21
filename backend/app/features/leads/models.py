@@ -10,10 +10,33 @@ job). `product_id` references either `loan_products` or `insurance_products`
 from datetime import datetime
 from typing import Any
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
-from app.features.leads.constants import LeadStatus, ProductCategory
+from app.features.leads.constants import LeadStage, LeadStatus, ProductCategory
 from app.shared.base_document import BaseDocument
+
+
+class LeadFinancialAssessment(BaseModel):
+    """My Leads' Update screen — financial/customer assessment (spec section 13, Phase
+    2 / decision 125). A single embedded snapshot, not a history — unlike LeadNote's
+    Comment History, each save wholesale-replaces the previous assessment; only
+    `updated_at`/`updated_by` track the most recent save."""
+
+    mock_off_salary: float | None = None
+    salary_mode: str | None = None  # SalaryMode.ALL
+    emi_range: str | None = None
+    total_experience: str | None = None
+    current_company_experience: str | None = None
+    company_location: str | None = None
+    any_loan: bool | None = None
+    last_3_months_salary: str | None = None  # LastThreeMonthsSalary.ALL
+    # Mutually exclusive by construction (see LeadService.set_financial_assessment):
+    # cibil_unknown=True always clears cibil_score to None on save.
+    cibil_score: int | None = None
+    cibil_unknown: bool = False
+    remarks: str | None = None
+    updated_at: datetime | None = None
+    updated_by: str | None = None
 
 
 class Lead(BaseDocument):
@@ -57,6 +80,32 @@ class Lead(BaseDocument):
     # Overrides BaseDocument.status's generic "active" default — only one value exists
     # this round (see constants.py docstring); the real pipeline is Module 6C's job.
     status: str = Field(default=LeadStatus.NEW, pattern=f"^({'|'.join(LeadStatus.ALL)})$")
+
+    # Leads-redesign pipeline (decision 125) — SEPARATE from `status` above, which stays
+    # untouched. Every Lead created before this existed defaults to `fresh`; the
+    # migration script (scripts/migrate_backfill_lead_stage.py) backfills the correct
+    # value for pre-existing leads based on whether `assigned_to` was already set.
+    stage: str = Field(default=LeadStage.FRESH, pattern=f"^({'|'.join(LeadStage.ALL)})$")
+    salary_in_hand: float | None = None
+    # The UTC instant of business-timezone (IST) midnight for the follow-up calendar
+    # date — see app.utils.datetime.ist_date_to_utc_midnight. Never a naive/local date.
+    next_follow_up_date: datetime | None = None
+    # Who/when the CURRENT assignment happened — the actor's own User id (BaseDocument's
+    # created_by/updated_by convention), not the assignee's Employee id (`assigned_to`
+    # itself). Both reset to None on unassign; both null for a Lead that predates this
+    # field, or one whose only historical assignment was backfilled by the migration
+    # script (no actor to recover for that case — see the script's own docstring).
+    assigned_by: str | None = None
+    assigned_at: datetime | None = None
+    # Set together on reject_lead; `assigned_to` itself is left untouched by rejection
+    # (still shows who was handling it) — only `stage` moves to "rejected".
+    rejected_reason: str | None = None
+    rejected_by: str | None = None
+    rejected_at: datetime | None = None
+
+    # My Leads' Update screen — financial assessment (Phase 2 / decision 125). None
+    # until the first save; a whole-object snapshot, not a partial-field history.
+    financial_assessment: LeadFinancialAssessment | None = None
 
 
 class LeadNote(BaseDocument):

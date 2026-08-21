@@ -108,6 +108,24 @@ class ApplicationRepository(BaseRepository[Application]):
         )
         return self.model.model_validate(doc) if doc else None
 
+    async def find_by_lead_id(self, lead_id: str) -> Application | None:
+        """Leads workflow redesign Phase 3 (decision 126) — the reverse lookup
+        `claim_secure_link` already does inline (`find_many({"lead_id": ...}, limit=1)`),
+        extracted here as a named, reusable read for Module 6A's Document Collection tab
+        to resolve which Application (if any) belongs to a given Lead. Most recent first:
+        a lead is expected to have at most one Application in practice (`claim_secure_link`
+        is itself get-or-create per lead+user), but this stays defensive against an
+        unexpected second row rather than assuming uniqueness."""
+        results = await self.find_many({"lead_id": lead_id}, limit=1, sort=[("created_at", -1)])
+        return results[0] if results else None
+
+    async def find_for_leads(self, lead_ids: list[str]) -> list[Application]:
+        """Batched counterpart of `find_by_lead_id`, for list views enriching many Leads
+        at once (Document Collection tab) without one query per row."""
+        if not lead_ids:
+            return []
+        return await self.find_many({"lead_id": {"$in": lead_ids}}, limit=len(lead_ids) * 2, sort=[("created_at", -1)])
+
     async def search_and_filter(
         self,
         *,

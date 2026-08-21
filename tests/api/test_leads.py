@@ -2,9 +2,30 @@
 (flags, never blocks), assignment, Notes/Activities merged into one Timeline,
 search/filter, CSV export, permission gating (leads:leads), and that Dashboard's
 today_leads/assigned_leads widgets now compute real data (decision 039).
+
+Also covers the Leads workflow redesign Phase 1 (decision 125): `Lead.stage`
+(fresh/assigned/document_collection/rejected), assignment-at-creation (including
+"Self"), reject, stage transitions, follow-up tracking with non-overwriting Comment
+History, the tab counts endpoint, and the Fresh Leads/Document Collection/Rejected/
+Assigned visibility-scoping fix.
+
+Also covers Phase 3 (decision 126): Document Collection's read-only enrichment from the
+existing Application/ApplicationDocument entities (Module 6B) — Pending/Submitted status,
+the document-completion summary — and the one new business rule this phase adds, the
+verified-documents gate on Document Collection -> Loan Management.
 """
 
 from datetime import timedelta
+
+from app.features.customer.constants import FieldType
+from app.features.customer.models import (
+    Application,
+    ApplicationDocument,
+    ApplicationFormDefinition,
+    FormFieldDefinition,
+    RequiredDocumentDefinition,
+)
+from app.features.system_settings.models import DocumentType, LoanProduct
 
 from app.features.customer.models import ApplicationFormDefinition, FormFieldDefinition
 from app.features.dashboard.constants import WidgetType
@@ -241,7 +262,8 @@ async def _full_leads_permission_id(client, owner_headers) -> str:
     # this one needs "create"/"edit" too, matching the real seeded catalog's full action
     # set for leads:leads.
     r = await client.post(
-        "/api/v1/permissions", json={"module": "leads", "resource": "leads", "actions": ["view", "create", "edit", "assign", "export"]},
+        "/api/v1/permissions",
+        json={"module": "leads", "resource": "leads", "actions": ["view", "create", "edit", "assign", "export", "reject"]},
         headers=owner_headers,
     )
     if r.status_code == 200:
@@ -931,3 +953,644 @@ async def test_dashboard_today_leads_and_assigned_leads_widgets_reflect_real_dat
     widgets = {w["key"]: w["data"] for w in r.json()["data"]}
     assert widgets["today_leads"] == {"available": True, "value": 1}
     assert widgets["assigned_leads"] == {"available": True, "value": 1}
+
+
+# ---------------------------------------------------------------------- Phase 1 redesign: stage / assignment-at-creation (decision 125)
+
+
+async def test_create_lead_with_self_assignment_sets_stage_assigned(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880001", email="self1@example.com")
+    await _grant_leads_view_create(client, owner_headers, employee["id"], role_name="Self Assign Role")
+    headers = await _login(client, "9788880001")
+
+    lead = await _create_lead(client, headers, lmd, mobile="9611130001", assigned_to="__self__")
+    assert lead["stage"] == "assigned"
+    assert lead["assigned_to"] == employee["id"]
+    assert lead["assigned_by"] is not None
+    assert lead["assigned_at"] is not None
+
+
+async def test_create_lead_with_specific_employee_assignment_sets_stage_assigned(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880002", email="specific1@example.com")
+
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611130002", assigned_to=employee["id"])
+    assert lead["stage"] == "assigned"
+    assert lead["assigned_to"] == employee["id"]
+    assert lead["assigned_to_name"] == employee["display_name"]
+
+
+async def test_create_lead_without_assignment_stays_stage_fresh(client, mock_db, owner_headers):
+    lmd = await _lead_master_data(mock_db)
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611130003")
+    assert lead["stage"] == "fresh"
+    assert lead["assigned_to"] is None
+
+
+async def test_create_lead_with_comment_seeds_first_note(client, mock_db, owner_headers):
+    lmd = await _lead_master_data(mock_db)
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611130004", comment="Customer interested in Personal Loan.")
+
+    r = await client.get(f"/api/v1/leads/{lead['id']}/timeline", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    notes = [e for e in r.json()["data"] if e["type"] == "note"]
+    assert [n["text"] for n in notes] == ["Customer interested in Personal Loan."]
+
+
+async def test_create_lead_with_salary_and_follow_up_date(client, mock_db, owner_headers):
+    lmd = await _lead_master_data(mock_db)
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611130005", salary_in_hand=35000, next_follow_up_date="2026-08-22")
+    assert lead["salary_in_hand"] == 35000
+    assert lead["next_follow_up_date"] is not None
+
+
+# ---------------------------------------------------------------------- Phase 1 redesign: reject
+
+
+async def test_reject_lead_requires_reason_and_sets_fields(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611130006")
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880006", email="reject1@example.com")
+    await client.post(f"/api/v1/leads/{lead['id']}/assign", json={"employee_id": employee["id"]}, headers=owner_headers)
+
+    r = await client.post(f"/api/v1/leads/{lead['id']}/reject", json={"reason": ""}, headers=owner_headers)
+    assert r.status_code == 422, r.text
+
+    r = await client.post(f"/api/v1/leads/{lead['id']}/reject", json={"reason": "Customer not interested"}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert data["stage"] == "rejected"
+    assert data["rejected_reason"] == "Customer not interested"
+    assert data["rejected_by"] is not None
+    assert data["rejected_at"] is not None
+
+
+async def test_reject_lead_requires_already_assigned_lead(client, mock_db, owner_headers):
+    lmd = await _lead_master_data(mock_db)
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611130007")
+
+    r = await client.post(f"/api/v1/leads/{lead['id']}/reject", json={"reason": "Not a fit"}, headers=owner_headers)
+    assert r.status_code == 422, r.text
+
+
+async def test_reject_lead_twice_is_blocked(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611130008")
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880008", email="reject2@example.com")
+    await client.post(f"/api/v1/leads/{lead['id']}/assign", json={"employee_id": employee["id"]}, headers=owner_headers)
+    await client.post(f"/api/v1/leads/{lead['id']}/reject", json={"reason": "First reject"}, headers=owner_headers)
+
+    r = await client.post(f"/api/v1/leads/{lead['id']}/reject", json={"reason": "Second attempt"}, headers=owner_headers)
+    assert r.status_code == 422, r.text
+
+
+# ---------------------------------------------------------------------- Phase 1 redesign: stage transitions / unassign
+
+
+async def test_set_stage_to_document_collection_requires_assigned_lead(client, mock_db, owner_headers):
+    lmd = await _lead_master_data(mock_db)
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611130009")
+
+    r = await client.post(f"/api/v1/leads/{lead['id']}/stage", json={"stage": "document_collection"}, headers=owner_headers)
+    assert r.status_code == 422, r.text
+
+
+async def test_set_stage_round_trips_between_assigned_and_document_collection(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611130010")
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880010", email="stage1@example.com")
+    await client.post(f"/api/v1/leads/{lead['id']}/assign", json={"employee_id": employee["id"]}, headers=owner_headers)
+
+    r = await client.post(f"/api/v1/leads/{lead['id']}/stage", json={"stage": "document_collection"}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["stage"] == "document_collection"
+
+    r = await client.post(f"/api/v1/leads/{lead['id']}/stage", json={"stage": "assigned"}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["stage"] == "assigned"
+
+
+async def test_set_stage_blocked_for_rejected_lead(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611130011")
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880011", email="stage2@example.com")
+    await client.post(f"/api/v1/leads/{lead['id']}/assign", json={"employee_id": employee["id"]}, headers=owner_headers)
+    await client.post(f"/api/v1/leads/{lead['id']}/reject", json={"reason": "No longer eligible"}, headers=owner_headers)
+
+    r = await client.post(f"/api/v1/leads/{lead['id']}/stage", json={"stage": "document_collection"}, headers=owner_headers)
+    assert r.status_code == 422, r.text
+
+
+async def test_unassign_resets_stage_to_fresh_and_blocked_for_rejected_lead(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611130012")
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880012", email="unassign1@example.com")
+    await client.post(f"/api/v1/leads/{lead['id']}/assign", json={"employee_id": employee["id"]}, headers=owner_headers)
+
+    r = await client.post(f"/api/v1/leads/{lead['id']}/unassign", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["stage"] == "fresh"
+
+    await client.post(f"/api/v1/leads/{lead['id']}/assign", json={"employee_id": employee["id"]}, headers=owner_headers)
+    await client.post(f"/api/v1/leads/{lead['id']}/reject", json={"reason": "Test"}, headers=owner_headers)
+    r = await client.post(f"/api/v1/leads/{lead['id']}/unassign", headers=owner_headers)
+    assert r.status_code == 422, r.text
+
+
+# ---------------------------------------------------------------------- Phase 1 redesign: follow-up + Comment History
+
+
+async def test_follow_up_creates_multiple_notes_without_overwriting_and_updates_date(client, mock_db, owner_headers):
+    lmd = await _lead_master_data(mock_db)
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611130013")
+
+    r = await client.post(
+        f"/api/v1/leads/{lead['id']}/follow-up",
+        json={"next_follow_up_date": "2026-08-22", "comment": "Customer interested in Personal Loan."},
+        headers=owner_headers,
+    )
+    assert r.status_code == 200, r.text
+    first_follow_up = r.json()["data"]["next_follow_up_date"]
+
+    r = await client.post(
+        f"/api/v1/leads/{lead['id']}/follow-up",
+        json={"next_follow_up_date": "2026-08-23", "comment": "Customer requested a call tomorrow."},
+        headers=owner_headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["next_follow_up_date"] != first_follow_up
+
+    r = await client.get(f"/api/v1/leads/{lead['id']}/timeline", headers=owner_headers)
+    notes = [e["text"] for e in r.json()["data"] if e["type"] == "note"]
+    assert set(notes) == {"Customer interested in Personal Loan.", "Customer requested a call tomorrow."}
+    assert len(notes) == 2
+
+
+async def test_follow_up_without_comment_does_not_create_a_note(client, mock_db, owner_headers):
+    lmd = await _lead_master_data(mock_db)
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611130014")
+
+    r = await client.post(f"/api/v1/leads/{lead['id']}/follow-up", json={"next_follow_up_date": "2026-08-22"}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+
+    r = await client.get(f"/api/v1/leads/{lead['id']}/timeline", headers=owner_headers)
+    notes = [e for e in r.json()["data"] if e["type"] == "note"]
+    assert notes == []
+
+
+async def test_update_lead_extended_fields_and_reassignment_and_comment(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611130015")
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880015", email="update1@example.com")
+
+    r = await client.patch(
+        f"/api/v1/leads/{lead['id']}",
+        json={
+            "full_name": "Ravi Kumar Updated", "source_id": lmd["source_id"], "salary_in_hand": 40000,
+            "assigned_to": employee["id"], "comment": "Reassigning to specialist",
+        },
+        headers=owner_headers,
+    )
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert data["full_name"] == "Ravi Kumar Updated"
+    assert data["salary_in_hand"] == 40000
+    assert data["assigned_to"] == employee["id"]
+    assert data["stage"] == "assigned"
+
+    r = await client.get(f"/api/v1/leads/{lead['id']}/timeline", headers=owner_headers)
+    notes = [e["text"] for e in r.json()["data"] if e["type"] == "note"]
+    assert notes == ["Reassigning to specialist"]
+
+
+# ---------------------------------------------------------------------- Phase 1 redesign: tab counts + visibility scoping
+
+
+async def test_counts_endpoint_matches_tab_list_counts_for_owner(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880016", email="counts1@example.com")
+
+    fresh_lead = await _create_lead(client, owner_headers, lmd, mobile="9611130016")
+    my_lead = await _create_lead(client, owner_headers, lmd, mobile="9611130017", assigned_to=employee["id"])
+    doc_lead = await _create_lead(client, owner_headers, lmd, mobile="9611130018", assigned_to=employee["id"])
+    await client.post(f"/api/v1/leads/{doc_lead['id']}/stage", json={"stage": "document_collection"}, headers=owner_headers)
+    rejected_lead = await _create_lead(client, owner_headers, lmd, mobile="9611130019", assigned_to=employee["id"])
+    await client.post(f"/api/v1/leads/{rejected_lead['id']}/reject", json={"reason": "Not eligible"}, headers=owner_headers)
+
+    r = await client.get("/api/v1/leads/counts", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    counts = r.json()["data"]
+
+    r = await client.get("/api/v1/leads?assigned_to=__unassigned__&stage=fresh", headers=owner_headers)
+    assert counts["fresh"] == len(r.json()["data"])
+    assert fresh_lead["id"] in {x["id"] for x in r.json()["data"]}
+
+    r = await client.get("/api/v1/leads?stage=document_collection", headers=owner_headers)
+    assert counts["document_collection"] == len(r.json()["data"])
+    assert doc_lead["id"] in {x["id"] for x in r.json()["data"]}
+
+    r = await client.get("/api/v1/leads?stage=rejected", headers=owner_headers)
+    assert counts["rejected"] == len(r.json()["data"])
+    assert rejected_lead["id"] in {x["id"] for x in r.json()["data"]}
+
+    r = await client.get("/api/v1/leads?assigned_to=__assigned__&exclude_stage=rejected", headers=owner_headers)
+    assert counts["assigned"] == len(r.json()["data"])
+    ids = {x["id"] for x in r.json()["data"]}
+    assert my_lead["id"] in ids and doc_lead["id"] in ids and rejected_lead["id"] not in ids
+
+
+async def test_fresh_pool_visible_to_assign_permission_holder_not_plain_employee(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    broad = await _create_employee(client, owner_headers, master_data, mobile="9788880020", email="broad1@example.com")
+    narrow = await _create_employee(client, owner_headers, master_data, mobile="9788880021", email="narrow1@example.com")
+    await _grant_leads_actions(client, owner_headers, broad["id"], ["view", "create", "assign"], role_name="Broad Visibility Role")
+    await _grant_leads_view_create(client, owner_headers, narrow["id"], role_name="Narrow Visibility Role")
+    broad_headers = await _login(client, "9788880020")
+    narrow_headers = await _login(client, "9788880021")
+
+    other_lead = await _create_lead(client, owner_headers, lmd, mobile="9611130021")
+
+    r = await client.get("/api/v1/leads?assigned_to=__unassigned__&stage=fresh", headers=broad_headers)
+    assert other_lead["id"] in {x["id"] for x in r.json()["data"]}
+
+    r = await client.get("/api/v1/leads?assigned_to=__unassigned__&stage=fresh", headers=narrow_headers)
+    assert other_lead["id"] not in {x["id"] for x in r.json()["data"]}
+
+
+async def test_my_leads_tab_scoped_to_own_assigned_leads_only(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee_a = await _create_employee(client, owner_headers, master_data, mobile="9788880022", email="mya@example.com")
+    employee_b = await _create_employee(client, owner_headers, master_data, mobile="9788880023", email="myb@example.com")
+    await _grant_leads_view_create(client, owner_headers, employee_a["id"], role_name="My Leads A Role")
+    await _grant_leads_view_create(client, owner_headers, employee_b["id"], role_name="My Leads B Role")
+    headers_a = await _login(client, "9788880022")
+
+    lead_a = await _create_lead(client, owner_headers, lmd, mobile="9611130022", assigned_to=employee_a["id"])
+    await _create_lead(client, owner_headers, lmd, mobile="9611130023", assigned_to=employee_b["id"])
+
+    r = await client.get("/api/v1/leads?assigned_to=__self__&stage=assigned", headers=headers_a)
+    assert r.status_code == 200, r.text
+    assert [x["id"] for x in r.json()["data"]] == [lead_a["id"]]
+
+
+async def test_assigned_and_rejected_tabs_scoped_to_own_leads_for_plain_employee(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee_a = await _create_employee(client, owner_headers, master_data, mobile="9788880024", email="scopeda@example.com")
+    employee_b = await _create_employee(client, owner_headers, master_data, mobile="9788880025", email="scopedb@example.com")
+    await _grant_leads_view_create(client, owner_headers, employee_a["id"], role_name="Scoped A Role")
+    headers_a = await _login(client, "9788880024")
+
+    lead_a = await _create_lead(client, owner_headers, lmd, mobile="9611130024", assigned_to=employee_a["id"])
+    lead_b = await _create_lead(client, owner_headers, lmd, mobile="9611130025", assigned_to=employee_b["id"])
+
+    r = await client.get("/api/v1/leads?assigned_to=__assigned__&exclude_stage=rejected", headers=headers_a)
+    assert r.status_code == 200, r.text
+    ids = {x["id"] for x in r.json()["data"]}
+    assert lead_a["id"] in ids
+    assert lead_b["id"] not in ids
+
+
+# ---------------------------------------------------------------------- Phase 2: financial assessment (decision 125)
+
+
+_FINANCIAL_ASSESSMENT_PAYLOAD = {
+    "mock_off_salary": 35000,
+    "salary_mode": "account",
+    "emi_range": "10000-15000",
+    "total_experience": "5 Years",
+    "current_company_experience": "2 Years",
+    "company_location": "Bangalore",
+    "any_loan": False,
+    "last_3_months_salary": "same",
+    "cibil_score": 750,
+    "cibil_unknown": False,
+    "remarks": "Looks like a strong candidate.",
+}
+
+
+async def test_save_financial_assessment_persists_all_fields(client, mock_db, owner_headers):
+    lmd = await _lead_master_data(mock_db)
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611150001")
+
+    r = await client.patch(f"/api/v1/leads/{lead['id']}/financial-assessment", json=_FINANCIAL_ASSESSMENT_PAYLOAD, headers=owner_headers)
+    assert r.status_code == 200, r.text
+
+    r = await client.get(f"/api/v1/leads/{lead['id']}", headers=owner_headers)
+    fa = r.json()["data"]["financial_assessment"]
+    for key, value in _FINANCIAL_ASSESSMENT_PAYLOAD.items():
+        assert fa[key] == value, key
+    assert fa["updated_at"] is not None
+    assert fa["updated_by"] is not None
+
+
+async def test_financial_assessment_dont_know_clears_cibil_score(client, mock_db, owner_headers):
+    lmd = await _lead_master_data(mock_db)
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611150002")
+
+    payload = {**_FINANCIAL_ASSESSMENT_PAYLOAD, "cibil_score": 720, "cibil_unknown": True}
+    r = await client.patch(f"/api/v1/leads/{lead['id']}/financial-assessment", json=payload, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["financial_assessment"]["cibil_score"] is None
+    assert r.json()["data"]["financial_assessment"]["cibil_unknown"] is True
+
+
+async def test_financial_assessment_save_overwrites_not_merges(client, mock_db, owner_headers):
+    lmd = await _lead_master_data(mock_db)
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611150003")
+
+    await client.patch(f"/api/v1/leads/{lead['id']}/financial-assessment", json=_FINANCIAL_ASSESSMENT_PAYLOAD, headers=owner_headers)
+
+    second_save = {"salary_mode": "cash"}  # every other field omitted
+    r = await client.patch(f"/api/v1/leads/{lead['id']}/financial-assessment", json=second_save, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    fa = r.json()["data"]["financial_assessment"]
+    assert fa["salary_mode"] == "cash"
+    # Whole-object replace, not a merge — every field not present in the second save
+    # reverts to the schema default (None/False), it does NOT retain the first save's values.
+    assert fa["emi_range"] is None
+    assert fa["mock_off_salary"] is None
+
+
+async def test_financial_assessment_logs_activity(client, mock_db, owner_headers):
+    lmd = await _lead_master_data(mock_db)
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611150004")
+
+    await client.patch(f"/api/v1/leads/{lead['id']}/financial-assessment", json=_FINANCIAL_ASSESSMENT_PAYLOAD, headers=owner_headers)
+
+    r = await client.get(f"/api/v1/leads/{lead['id']}/timeline", headers=owner_headers)
+    event_types = {e["event_type"] for e in r.json()["data"] if e["type"] == "activity"}
+    assert "financial_assessment_updated" in event_types
+
+
+async def test_financial_assessment_does_not_affect_stage_status_or_counts(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880030", email="fa1@example.com")
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611150005", assigned_to=employee["id"])
+
+    before = (await client.get("/api/v1/leads/counts", headers=owner_headers)).json()["data"]
+
+    r = await client.patch(f"/api/v1/leads/{lead['id']}/financial-assessment", json=_FINANCIAL_ASSESSMENT_PAYLOAD, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["stage"] == "assigned"
+    assert r.json()["data"]["status"] == "new"
+
+    after = (await client.get("/api/v1/leads/counts", headers=owner_headers)).json()["data"]
+    assert after == before
+
+
+async def test_financial_assessment_requires_leads_edit_permission(client, mock_db, owner_headers, employee_headers):
+    lmd = await _lead_master_data(mock_db)
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611150006")
+
+    r = await client.patch(f"/api/v1/leads/{lead['id']}/financial-assessment", json=_FINANCIAL_ASSESSMENT_PAYLOAD, headers=employee_headers)
+    assert r.status_code == 403, r.text
+
+
+# ---------------------------------------------------------------------- Phase 3: Document Collection <-> Application (decision 126)
+
+
+async def _seed_form_definition(mock_db, product_category, product_id, *, document_type_ids):
+    form_def = ApplicationFormDefinition(
+        product_category=product_category, product_id=product_id,
+        fields=[FormFieldDefinition(key="loan_amount", label="Loan Amount", field_type=FieldType.NUMBER, required=True)],
+        required_documents=[RequiredDocumentDefinition(document_type_id=doc_id) for doc_id in document_type_ids],
+        status="active",
+    )
+    result = await mock_db["application_form_definitions"].insert_one(form_def.model_dump(by_alias=True, exclude={"id"}))
+    return str(result.inserted_id)
+
+
+async def _seed_document_type(mock_db, name):
+    doc_type = DocumentType(name=name)
+    result = await mock_db["document_types"].insert_one(doc_type.model_dump(by_alias=True, exclude={"id"}))
+    return str(result.inserted_id)
+
+
+async def _seed_application(mock_db, *, lead_id, form_definition_id, product_category, product_id, status="draft", user_id="000000000000000000000099"):
+    application = Application(
+        application_code="AFS-APP-TEST", user_id=user_id, lead_id=lead_id,
+        product_category=product_category, product_id=product_id, form_definition_id=form_definition_id, status=status,
+    )
+    result = await mock_db["applications"].insert_one(application.model_dump(by_alias=True, exclude={"id"}))
+    return str(result.inserted_id)
+
+
+async def _seed_document(mock_db, *, application_id, document_type_id, verification_status="pending", is_current=True):
+    document = ApplicationDocument(
+        application_id=application_id, document_type_id=document_type_id,
+        verification_status=verification_status, is_current=is_current,
+    )
+    await mock_db["application_documents"].insert_one(document.model_dump(by_alias=True, exclude={"id"}))
+
+
+async def _lead_in_document_collection(client, owner_headers, lmd, mobile, employee_id):
+    lead = await _create_lead(client, owner_headers, lmd, mobile=mobile, assigned_to=employee_id)
+    r = await client.post(f"/api/v1/leads/{lead['id']}/stage", json={"stage": "document_collection"}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    return lead
+
+
+async def test_document_collection_list_shows_pending_when_no_application(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880040", email="dc1@example.com")
+    lead = await _lead_in_document_collection(client, owner_headers, lmd, "9611160001", employee["id"])
+
+    r = await client.get("/api/v1/leads?stage=document_collection", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    row = next(x for x in r.json()["data"] if x["id"] == lead["id"])
+    assert row["application_id"] is None
+    assert row["application_status"] is None
+
+
+async def test_document_collection_list_shows_pending_when_application_draft(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880041", email="dc2@example.com")
+    lead = await _lead_in_document_collection(client, owner_headers, lmd, "9611160002", employee["id"])
+    doc_type_id = await _seed_document_type(mock_db, "PAN")
+    form_def_id = await _seed_form_definition(mock_db, "loan", lmd["loan_product_id"], document_type_ids=[doc_type_id])
+    await _seed_application(
+        mock_db, lead_id=lead["id"], form_definition_id=form_def_id, product_category="loan", product_id=lmd["loan_product_id"], status="draft"
+    )
+
+    r = await client.get("/api/v1/leads?stage=document_collection", headers=owner_headers)
+    row = next(x for x in r.json()["data"] if x["id"] == lead["id"])
+    assert row["application_status"] == "draft"
+
+
+async def test_document_collection_list_shows_submitted(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880042", email="dc3@example.com")
+    lead = await _lead_in_document_collection(client, owner_headers, lmd, "9611160003", employee["id"])
+    doc_type_id = await _seed_document_type(mock_db, "PAN")
+    form_def_id = await _seed_form_definition(mock_db, "loan", lmd["loan_product_id"], document_type_ids=[doc_type_id])
+    application_id = await _seed_application(
+        mock_db, lead_id=lead["id"], form_definition_id=form_def_id, product_category="loan", product_id=lmd["loan_product_id"], status="submitted"
+    )
+
+    r = await client.get("/api/v1/leads?stage=document_collection", headers=owner_headers)
+    row = next(x for x in r.json()["data"] if x["id"] == lead["id"])
+    assert row["application_status"] == "submitted"
+    assert row["application_id"] == application_id
+
+
+async def test_lead_detail_document_completion_summary_ignores_superseded_documents(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880043", email="dc4@example.com")
+    lead = await _lead_in_document_collection(client, owner_headers, lmd, "9611160004", employee["id"])
+    pan_id = await _seed_document_type(mock_db, "PAN")
+    bank_id = await _seed_document_type(mock_db, "Bank Statement")
+    form_def_id = await _seed_form_definition(mock_db, "loan", lmd["loan_product_id"], document_type_ids=[pan_id, bank_id])
+    application_id = await _seed_application(
+        mock_db, lead_id=lead["id"], form_definition_id=form_def_id, product_category="loan", product_id=lmd["loan_product_id"], status="submitted"
+    )
+    # PAN: an old, superseded rejected version (must NOT count) + a current verified one.
+    await _seed_document(mock_db, application_id=application_id, document_type_id=pan_id, verification_status="rejected", is_current=False)
+    await _seed_document(mock_db, application_id=application_id, document_type_id=pan_id, verification_status="verified", is_current=True)
+    # Bank Statement: current, still pending.
+    await _seed_document(mock_db, application_id=application_id, document_type_id=bank_id, verification_status="pending", is_current=True)
+
+    r = await client.get(f"/api/v1/leads/{lead['id']}", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert data["documents_required"] == 2
+    assert data["documents_verified"] == 1
+    assert data["all_documents_verified"] is False
+
+
+async def test_move_to_loan_management_blocked_without_application(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880044", email="dc5@example.com")
+    lead = await _lead_in_document_collection(client, owner_headers, lmd, "9611160005", employee["id"])
+
+    r = await client.post(f"/api/v1/leads/{lead['id']}/stage", json={"stage": "loan_management"}, headers=owner_headers)
+    assert r.status_code == 422, r.text
+    assert "submit their application" in r.json()["error"]["message"]
+
+
+async def test_move_to_loan_management_blocked_when_application_draft(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880045", email="dc6@example.com")
+    lead = await _lead_in_document_collection(client, owner_headers, lmd, "9611160006", employee["id"])
+    doc_type_id = await _seed_document_type(mock_db, "PAN")
+    form_def_id = await _seed_form_definition(mock_db, "loan", lmd["loan_product_id"], document_type_ids=[doc_type_id])
+    await _seed_application(
+        mock_db, lead_id=lead["id"], form_definition_id=form_def_id, product_category="loan", product_id=lmd["loan_product_id"], status="draft"
+    )
+
+    r = await client.post(f"/api/v1/leads/{lead['id']}/stage", json={"stage": "loan_management"}, headers=owner_headers)
+    assert r.status_code == 422, r.text
+
+
+async def test_move_to_loan_management_blocked_when_documents_incomplete(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880046", email="dc7@example.com")
+    lead = await _lead_in_document_collection(client, owner_headers, lmd, "9611160007", employee["id"])
+    pan_id = await _seed_document_type(mock_db, "PAN")
+    bank_id = await _seed_document_type(mock_db, "Bank Statement")
+    form_def_id = await _seed_form_definition(mock_db, "loan", lmd["loan_product_id"], document_type_ids=[pan_id, bank_id])
+    application_id = await _seed_application(
+        mock_db, lead_id=lead["id"], form_definition_id=form_def_id, product_category="loan", product_id=lmd["loan_product_id"], status="submitted"
+    )
+    await _seed_document(mock_db, application_id=application_id, document_type_id=pan_id, verification_status="verified")
+    await _seed_document(mock_db, application_id=application_id, document_type_id=bank_id, verification_status="pending")
+
+    r = await client.post(f"/api/v1/leads/{lead['id']}/stage", json={"stage": "loan_management"}, headers=owner_headers)
+    assert r.status_code == 422, r.text
+    assert "1 of 2 required documents" in r.json()["error"]["message"]
+
+    # And the lead really did stay put.
+    detail = await client.get(f"/api/v1/leads/{lead['id']}", headers=owner_headers)
+    assert detail.json()["data"]["stage"] == "document_collection"
+
+
+async def test_move_to_loan_management_succeeds_when_all_verified(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880047", email="dc8@example.com")
+    lead = await _lead_in_document_collection(client, owner_headers, lmd, "9611160008", employee["id"])
+    pan_id = await _seed_document_type(mock_db, "PAN")
+    form_def_id = await _seed_form_definition(mock_db, "loan", lmd["loan_product_id"], document_type_ids=[pan_id])
+    application_id = await _seed_application(
+        mock_db, lead_id=lead["id"], form_definition_id=form_def_id, product_category="loan", product_id=lmd["loan_product_id"], status="submitted"
+    )
+    await _seed_document(mock_db, application_id=application_id, document_type_id=pan_id, verification_status="verified")
+
+    cases_before = await mock_db["application_workflows"].count_documents({})
+
+    r = await client.post(f"/api/v1/leads/{lead['id']}/stage", json={"stage": "loan_management"}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["stage"] == "loan_management"
+
+    # No case was created by this endpoint — it's purely a completion gate in front of an
+    # already-existing (or, in this fixture, simply absent) handoff, never a creator of one.
+    cases_after = await mock_db["application_workflows"].count_documents({})
+    assert cases_after == cases_before
+
+    r = await client.get("/api/v1/leads?stage=document_collection", headers=owner_headers)
+    assert lead["id"] not in {x["id"] for x in r.json()["data"]}
+
+    r = await client.get(f"/api/v1/leads/{lead['id']}/timeline", headers=owner_headers)
+    event_types = {e["event_type"] for e in r.json()["data"] if e["type"] == "activity"}
+    assert "moved_to_loan_management" in event_types
+
+
+async def test_move_to_loan_management_blocked_from_wrong_stage(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880048", email="dc9@example.com")
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611160009", assigned_to=employee["id"])  # stage=assigned
+
+    r = await client.post(f"/api/v1/leads/{lead['id']}/stage", json={"stage": "loan_management"}, headers=owner_headers)
+    assert r.status_code == 422, r.text
+    assert "Document Collection" in r.json()["error"]["message"]
+
+
+async def test_reject_blocked_once_lead_reached_loan_management(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880049", email="dc10@example.com")
+    lead = await _lead_in_document_collection(client, owner_headers, lmd, "9611160010", employee["id"])
+    pan_id = await _seed_document_type(mock_db, "PAN")
+    form_def_id = await _seed_form_definition(mock_db, "loan", lmd["loan_product_id"], document_type_ids=[pan_id])
+    application_id = await _seed_application(
+        mock_db, lead_id=lead["id"], form_definition_id=form_def_id, product_category="loan", product_id=lmd["loan_product_id"], status="submitted"
+    )
+    await _seed_document(mock_db, application_id=application_id, document_type_id=pan_id, verification_status="verified")
+    await client.post(f"/api/v1/leads/{lead['id']}/stage", json={"stage": "loan_management"}, headers=owner_headers)
+
+    r = await client.post(f"/api/v1/leads/{lead['id']}/reject", json={"reason": "Too late"}, headers=owner_headers)
+    assert r.status_code == 422, r.text
+
+
+async def test_move_to_loan_management_requires_leads_edit_permission(client, mock_db, owner_headers, employee_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880050", email="dc11@example.com")
+    lead = await _lead_in_document_collection(client, owner_headers, lmd, "9611160011", employee["id"])
+
+    r = await client.post(f"/api/v1/leads/{lead['id']}/stage", json={"stage": "loan_management"}, headers=employee_headers)
+    assert r.status_code == 403, r.text
+
+
+async def test_insurance_lead_document_completion_is_product_agnostic(client, mock_db, owner_headers, master_data):
+    """Product-category correctness (explicit user requirement): the verification gate
+    must work identically for an insurance lead, and must never touch loan-specific case
+    logic — this test only exercises the Leads-side gate, confirming it is computed
+    purely from Application/ApplicationDocument regardless of product_category."""
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880051", email="dc12@example.com")
+    lead = await _create_lead(
+        client, owner_headers, lmd, mobile="9611160012", product_category="insurance",
+        product_id=lmd["insurance_product_id"], assigned_to=employee["id"],
+    )
+    r = await client.post(f"/api/v1/leads/{lead['id']}/stage", json={"stage": "document_collection"}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+
+    doc_type_id = await _seed_document_type(mock_db, "Health Declaration")
+    form_def_id = await _seed_form_definition(mock_db, "insurance", lmd["insurance_product_id"], document_type_ids=[doc_type_id])
+    application_id = await _seed_application(
+        mock_db, lead_id=lead["id"], form_definition_id=form_def_id, product_category="insurance",
+        product_id=lmd["insurance_product_id"], status="submitted",
+    )
+    await _seed_document(mock_db, application_id=application_id, document_type_id=doc_type_id, verification_status="verified")
+
+    r = await client.post(f"/api/v1/leads/{lead['id']}/stage", json={"stage": "loan_management"}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["stage"] == "loan_management"

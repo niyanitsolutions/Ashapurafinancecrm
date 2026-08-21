@@ -680,3 +680,76 @@ async def test_customer_cannot_view_another_customers_application(client, mock_d
 
     r = await client.get(f"/api/v1/applications/{application_id}", headers=headers_b)
     assert r.status_code == 403, r.text
+
+
+# ---------------------------------------------------------------------- staff-initiated Customer Account (Phase 2, decision 125)
+
+
+async def test_create_staff_initiated_customer_account_happy_path(client, mock_db, owner_headers):
+    product = await _seed_product_and_form(mock_db)
+    lead_id = await _create_lead_doc(mock_db, product, mobile="9722220001", full_name="Shabeel Ahamed")
+
+    r = await client.post("/api/v1/leads/{}/customer-account".format(lead_id), json={"password": "CustomerPass1!"}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert data["account_created"] is True
+
+    lead_doc = await mock_db["leads"].find_one({"_id": ObjectId(lead_id)})
+    assert lead_doc["account_created"] is True
+    assert lead_doc["user_id"] is not None
+    assert lead_doc["customer_id"] is not None
+
+    customer_doc = await mock_db["customers"].find_one({"_id": ObjectId(lead_doc["customer_id"])})
+    assert customer_doc["mobile"] == "9722220001"
+    assert customer_doc["converted_from_lead_id"] == lead_id
+    assert customer_doc["full_name"] == "Shabeel Ahamed"
+
+    # The account is real and can actually log in — not just a database row.
+    r = await client.post("/api/v1/auth/login", json={"mobile": "9722220001", "password": "CustomerPass1!"})
+    assert r.status_code == 200, r.text
+
+    # Never creates an Application — that's Phase 3's job (Document Collection via the
+    # existing Generate Link -> secure-link-claim flow), not this endpoint.
+    assert await mock_db["applications"].count_documents({"lead_id": lead_id}) == 0
+
+
+async def test_create_customer_account_rejects_second_creation_for_same_lead(client, mock_db, owner_headers):
+    product = await _seed_product_and_form(mock_db)
+    lead_id = await _create_lead_doc(mock_db, product, mobile="9722220002")
+
+    r = await client.post(f"/api/v1/leads/{lead_id}/customer-account", json={"password": "CustomerPass1!"}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+
+    r = await client.post(f"/api/v1/leads/{lead_id}/customer-account", json={"password": "AnotherPass1!"}, headers=owner_headers)
+    assert r.status_code == 422, r.text
+    assert "already has a customer account" in r.json()["error"]["message"]
+
+
+async def test_create_customer_account_rejects_mobile_already_registered(client, mock_db, owner_headers):
+    product = await _seed_product_and_form(mock_db)
+    lead_a = await _create_lead_doc(mock_db, product, mobile="9722220003", full_name="Lead A")
+    r = await client.post(f"/api/v1/leads/{lead_a}/customer-account", json={"password": "CustomerPass1!"}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+
+    # A second Lead sharing the same mobile (its own account_created is still False) must
+    # still be blocked — the mobile itself already has a real account.
+    lead_b = await _create_lead_doc(mock_db, product, mobile="9722220003", full_name="Lead B")
+    r = await client.post(f"/api/v1/leads/{lead_b}/customer-account", json={"password": "CustomerPass1!"}, headers=owner_headers)
+    assert r.status_code == 422, r.text
+    assert "already exists" in r.json()["error"]["message"]
+
+
+async def test_create_customer_account_rejects_weak_password(client, mock_db, owner_headers):
+    product = await _seed_product_and_form(mock_db)
+    lead_id = await _create_lead_doc(mock_db, product, mobile="9722220004")
+
+    r = await client.post(f"/api/v1/leads/{lead_id}/customer-account", json={"password": "weak"}, headers=owner_headers)
+    assert r.status_code == 422, r.text
+
+
+async def test_create_customer_account_requires_leads_edit_permission(client, mock_db, owner_headers, employee_headers):
+    product = await _seed_product_and_form(mock_db)
+    lead_id = await _create_lead_doc(mock_db, product, mobile="9722220005")
+
+    r = await client.post(f"/api/v1/leads/{lead_id}/customer-account", json={"password": "CustomerPass1!"}, headers=employee_headers)
+    assert r.status_code == 403, r.text

@@ -170,10 +170,16 @@ async def seed_permission_catalog() -> None:
     # today_leads/pending_followups/assigned_leads widgets already reference (decision
     # 032), so those widgets become real and grantable to Employees the moment this
     # entry exists, with zero Dashboard code changes.
+    # REJECT added by decision 125 (Leads workflow redesign, Phase 1) — additive to the
+    # existing action list; no existing RolePermission.granted_actions value changes, an
+    # Owner simply gains a new "Reject" checkbox to grant per role going forward.
     entries.append(
         Permission(
             module="leads", resource="leads",
-            actions=[PermissionAction.VIEW, PermissionAction.CREATE, PermissionAction.EDIT, PermissionAction.ASSIGN, PermissionAction.EXPORT],
+            actions=[
+                PermissionAction.VIEW, PermissionAction.CREATE, PermissionAction.EDIT, PermissionAction.ASSIGN,
+                PermissionAction.EXPORT, PermissionAction.REJECT,
+            ],
             label="Leads",
         )
     )

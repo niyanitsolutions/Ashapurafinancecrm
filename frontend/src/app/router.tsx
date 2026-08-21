@@ -158,15 +158,19 @@ export const router = createBrowserRouter([
           // Not RequireOwner-wrapped — Employees granted `leads:leads` (Access Control)
           // reach these too; the backend enforces the real permission, not this route guard.
           {
-            // New Leads / Assigned Leads tabs — same list component reused per tab via
-            // the `assignedOnly` prop (fixedStatus/reEligible pattern, see Loan/Insurance
-            // Management below). Create/detail routes sit outside the tab layout, same
-            // precedent as Employees' create/detail routes.
+            // Fresh Leads / My Leads / Document Collection / Rejected / Assigned tabs —
+            // same list component reused per tab via the `tab` prop (decision 125,
+            // replacing the prior boolean `assignedOnly`; fixedStatus/reEligible
+            // pattern, see Loan/Insurance Management below). Create/detail routes sit
+            // outside the tab layout, same precedent as Employees' create/detail routes.
             path: "/leads",
             element: <LeadsLayout />,
             children: [
-              { index: true, element: <LeadListPage assignedOnly={false} /> },
-              { path: "assigned", element: <LeadListPage assignedOnly /> },
+              { index: true, element: <LeadListPage tab="fresh" /> },
+              { path: "my", element: <LeadListPage tab="my" /> },
+              { path: "document-collection", element: <LeadListPage tab="document_collection" /> },
+              { path: "rejected", element: <LeadListPage tab="rejected" /> },
+              { path: "assigned", element: <LeadListPage tab="assigned" /> },
             ],
           },
           {

@@ -16,14 +16,17 @@ import {
   addNote,
   assignLead,
   getLead,
+  getLeadLookup,
   getTimeline,
   unassignLead,
   updateLead,
+  SELF_SENTINEL,
   type LeadDetail,
+  type LeadLookupData,
   type TimelineEntry,
 } from "@/features/leads/api";
 import { getErrorMessage } from "@/features/leads/errors";
-import { formatISTDateTime } from "@/shared/dateFormat";
+import { formatISTDate, formatISTDateTime, istDateKey } from "@/shared/dateFormat";
 import { Icon, type IconName } from "@/theme/icons";
 
 function HeaderButton({
@@ -117,10 +120,45 @@ export function LeadDetailsPage() {
   const [isSendMessageOpen, setIsSendMessageOpen] = useState(false);
   const [messagesRefreshKey, setMessagesRefreshKey] = useState(0);
 
+  // Extended Edit Lead fields (spec section 11 / decision 125) — Name, Contact, Source,
+  // Product, Salary, Next Follow Up, Assign To, Comments, alongside the pre-existing
+  // City/Preferred Loan Amount/Remarks above. Deliberately still excludes
+  // form_definition_id/product_form_data — the Product Schema Engine's own dynamic
+  // fields stay untouched here, same as Create Lead.
+  const [editFullName, setEditFullName] = useState("");
+  const [editMobile, setEditMobile] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editSourceId, setEditSourceId] = useState("");
+  const [editProductCategory, setEditProductCategory] = useState<"loan" | "insurance">("loan");
+  const [editProductId, setEditProductId] = useState("");
+  const [editSalaryInHand, setEditSalaryInHand] = useState("");
+  const [editNextFollowUpDate, setEditNextFollowUpDate] = useState("");
+  const [editAssignTo, setEditAssignTo] = useState<"" | "self" | "employee">("");
+  const [editAssigneeId, setEditAssigneeId] = useState("");
+  const [editComment, setEditComment] = useState("");
+  const [lookup, setLookup] = useState<LeadLookupData | null>(null);
+
+  useEffect(() => {
+    getLeadLookup()
+      .then(setLookup)
+      .catch(() => setLookup(null));
+  }, []);
+
   const resetFormFields = (l: LeadDetail) => {
     setRemarks(l.remarks ?? "");
     setCity(l.city ?? "");
     setPreferredAmount(l.preferred_amount != null ? String(l.preferred_amount) : "");
+    setEditFullName(l.full_name);
+    setEditMobile(l.mobile);
+    setEditEmail(l.email ?? "");
+    setEditSourceId(l.source_id);
+    setEditProductCategory(l.product_category as "loan" | "insurance");
+    setEditProductId(l.product_id);
+    setEditSalaryInHand(l.salary_in_hand != null ? String(l.salary_in_hand) : "");
+    setEditNextFollowUpDate(l.next_follow_up_date ? istDateKey(l.next_follow_up_date) : "");
+    setEditAssignTo("");
+    setEditAssigneeId("");
+    setEditComment("");
   };
 
   const load = () => {
@@ -212,9 +250,20 @@ export function LeadDetailsPage() {
                 await runAction(
                   () =>
                     updateLead(leadId, {
+                      full_name: editFullName || undefined,
+                      mobile: editMobile || undefined,
+                      email: editEmail || undefined,
+                      source_id: editSourceId || undefined,
+                      product_category: editProductCategory,
+                      product_id: editProductId || undefined,
                       remarks,
                       city: city || undefined,
                       preferred_amount: preferredAmount ? Number(preferredAmount) : undefined,
+                      salary_in_hand: editSalaryInHand ? Number(editSalaryInHand) : undefined,
+                      next_follow_up_date: editNextFollowUpDate || undefined,
+                      comment: editComment || undefined,
+                      assigned_to:
+                        editAssignTo === "self" ? SELF_SENTINEL : editAssignTo === "employee" ? editAssigneeId || undefined : undefined,
                     }),
                   "Lead updated.",
                 );
@@ -223,10 +272,98 @@ export function LeadDetailsPage() {
               className="space-y-3"
             >
               <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
+                <FormField label="Full Name" value={editFullName} onChange={(e) => setEditFullName(e.target.value)} />
+                <FormField label="Mobile" maxLength={10} value={editMobile} onChange={(e) => setEditMobile(e.target.value)} />
+                <FormField label="Email" type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} />
+                {lookup && (
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-text mb-1.5">Lead Source</label>
+                    <select
+                      value={editSourceId}
+                      onChange={(e) => setEditSourceId(e.target.value)}
+                      className="w-full rounded-xl border border-border px-3.5 py-2.5 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                    >
+                      {lookup.sources.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-text mb-1.5">Product Category</label>
+                  <select
+                    value={editProductCategory}
+                    onChange={(e) => {
+                      setEditProductCategory(e.target.value as "loan" | "insurance");
+                      setEditProductId("");
+                    }}
+                    className="w-full rounded-xl border border-border px-3.5 py-2.5 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                  >
+                    <option value="loan">Loan</option>
+                    <option value="insurance">Insurance</option>
+                  </select>
+                </div>
+                {lookup && (
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-text mb-1.5">Product</label>
+                    <select
+                      value={editProductId}
+                      onChange={(e) => setEditProductId(e.target.value)}
+                      className="w-full rounded-xl border border-border px-3.5 py-2.5 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                    >
+                      <option value="">Select a product</option>
+                      {(editProductCategory === "loan" ? lookup.loan_products : lookup.insurance_products).map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 <FormField label="City" value={city} onChange={(e) => setCity(e.target.value)} />
                 <FormField label="Preferred Loan Amount" type="number" min={1} value={preferredAmount} onChange={(e) => setPreferredAmount(e.target.value)} />
+                <FormField label="Salary In Hand" type="number" min={1} value={editSalaryInHand} onChange={(e) => setEditSalaryInHand(e.target.value)} />
+                <FormField label="Next Follow Up Date" type="date" value={editNextFollowUpDate} onChange={(e) => setEditNextFollowUpDate(e.target.value)} />
               </div>
-              <TextareaField label="Remarks" rows={3} value={remarks} onChange={(e) => setRemarks(e.target.value)} />
+
+              <div>
+                <label className="block text-sm font-medium text-text mb-1.5">Assign To</label>
+                <div className="flex gap-2">
+                  {(["", "self", "employee"] as const).map((option) => (
+                    <button
+                      key={option || "unchanged"}
+                      type="button"
+                      onClick={() => setEditAssignTo(option)}
+                      className={`flex-1 rounded-xl border py-2 text-sm font-semibold transition-colors ${
+                        editAssignTo === option ? "border-primary bg-primary/10 text-primary" : "border-border text-textSecondary hover:bg-background"
+                      }`}
+                    >
+                      {option === "" ? "Leave As-Is" : option === "self" ? "Self" : "Choose Employee"}
+                    </button>
+                  ))}
+                </div>
+                {editAssignTo === "employee" && (
+                  <div className="mt-3">
+                    <EligibleAssigneeSelect
+                      productCategory={editProductCategory}
+                      productId={editProductId}
+                      value={editAssigneeId}
+                      onChange={setEditAssigneeId}
+                    />
+                  </div>
+                )}
+              </div>
+
+              <TextareaField label="Remarks" rows={2} value={remarks} onChange={(e) => setRemarks(e.target.value)} />
+              <TextareaField
+                label="New Comment (optional)"
+                rows={2}
+                value={editComment}
+                onChange={(e) => setEditComment(e.target.value)}
+                placeholder="Adds a new Comment History entry — never overwrites a previous one."
+              />
               <SubmitButton>Save Changes</SubmitButton>
             </form>
           ) : (
@@ -237,8 +374,12 @@ export function LeadDetailsPage() {
               <Field label="Product" value={`${lead.product_name} (${lead.product_category})`} />
               <Field label="City" value={lead.city} />
               <Field label="Preferred Loan Amount" value={lead.preferred_amount != null ? `₹${lead.preferred_amount.toLocaleString("en-IN")}` : null} />
+              <Field label="Salary In Hand" value={lead.salary_in_hand != null ? `₹${lead.salary_in_hand.toLocaleString("en-IN")}` : null} />
+              <Field label="Next Follow Up" value={lead.next_follow_up_date ? formatISTDate(lead.next_follow_up_date) : null} />
+              <Field label="Stage" value={lead.stage.replace(/_/g, " ")} />
               <Field label="Status" value={lead.status} />
               <Field label="Assigned To" value={lead.assigned_to_name} />
+              {lead.stage === "rejected" && <Field label="Rejected Reason" value={lead.rejected_reason} />}
               <div className="col-span-2">
                 <Field label="Remarks" value={lead.remarks} />
               </div>

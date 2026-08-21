@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { EligibleAssigneeSelect } from "@/components/forms/EligibleAssigneeSelect";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
 import { SelectField } from "@/components/forms/SelectField";
 import { SubmitButton } from "@/components/forms/SubmitButton";
 import { TextareaField } from "@/components/forms/TextareaField";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
-import { checkDuplicate, createLead, getLeadLookup } from "@/features/leads/api";
+import { checkDuplicate, createLead, getLeadLookup, SELF_SENTINEL } from "@/features/leads/api";
 import { getErrorMessage } from "@/features/leads/errors";
 import { getFieldErrors } from "@/shared/api/errors";
 import { getCurrentCoordinates } from "@/shared/geolocation";
@@ -42,7 +43,16 @@ export function CreateLeadPage() {
   const [productId, setProductId] = useState("");
   const [city, setCity] = useState("");
   const [preferredAmount, setPreferredAmount] = useState("");
-  const [remarks, setRemarks] = useState("");
+  const [salaryInHand, setSalaryInHand] = useState("");
+  const [nextFollowUpDate, setNextFollowUpDate] = useState("");
+  // Seeds the lead's first Comment History entry (LeadNote) — distinct from the plain
+  // `remarks` field this page never collected. See spec section 8/backend decision 125.
+  const [comment, setComment] = useState("");
+  // "" = leave unassigned (Fresh Leads), "self" = Assign To: Self, "employee" = pick from
+  // EligibleAssigneeSelect — resolved server-side, see backend
+  // LeadService._resolve_assignee (decision 125).
+  const [assignTo, setAssignTo] = useState<"" | "self" | "employee">("");
+  const [assigneeId, setAssigneeId] = useState("");
 
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -97,7 +107,10 @@ export function CreateLeadPage() {
         product_id: productId,
         city: city || undefined,
         preferred_amount: preferredAmount ? Number(preferredAmount) : undefined,
-        remarks: remarks || undefined,
+        salary_in_hand: salaryInHand ? Number(salaryInHand) : undefined,
+        next_follow_up_date: nextFollowUpDate || undefined,
+        comment: comment || undefined,
+        assigned_to: assignTo === "self" ? SELF_SENTINEL : assignTo === "employee" ? assigneeId || undefined : undefined,
         latitude: coords?.latitude,
         longitude: coords?.longitude,
       });
@@ -188,9 +201,47 @@ export function CreateLeadPage() {
             onChange={(e) => setPreferredAmount(e.target.value)}
             error={fieldErrors.preferred_amount}
           />
+          <FormField
+            label="Salary In Hand (optional)"
+            type="number"
+            min={1}
+            value={salaryInHand}
+            onChange={(e) => setSalaryInHand(e.target.value)}
+            error={fieldErrors.salary_in_hand}
+          />
+          <FormField
+            label="Next Follow Up Date (optional)"
+            type="date"
+            value={nextFollowUpDate}
+            onChange={(e) => setNextFollowUpDate(e.target.value)}
+            error={fieldErrors.next_follow_up_date}
+          />
         </div>
 
-        <TextareaField label="Remarks (optional)" rows={3} value={remarks} onChange={(e) => setRemarks(e.target.value)} />
+        <TextareaField label="Comments (optional)" rows={3} value={comment} onChange={(e) => setComment(e.target.value)} />
+
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-text mb-1.5">Assign To (optional)</label>
+          <div className="flex gap-2">
+            {(["", "self", "employee"] as const).map((option) => (
+              <button
+                key={option || "unassigned"}
+                type="button"
+                onClick={() => setAssignTo(option)}
+                className={`flex-1 rounded-xl border py-2.5 text-sm font-semibold transition-colors ${
+                  assignTo === option ? "border-primary bg-primary/10 text-primary" : "border-border text-textSecondary hover:bg-background"
+                }`}
+              >
+                {option === "" ? "Leave Unassigned" : option === "self" ? "Self" : "Choose Employee"}
+              </button>
+            ))}
+          </div>
+          {assignTo === "employee" && (
+            <div className="mt-3">
+              <EligibleAssigneeSelect productCategory={productCategory} productId={productId} value={assigneeId} onChange={setAssigneeId} />
+            </div>
+          )}
+        </div>
 
         <SubmitButton isSubmitting={isSubmitting}>Create Lead</SubmitButton>
       </form>

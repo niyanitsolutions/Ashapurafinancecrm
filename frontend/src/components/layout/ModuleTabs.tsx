@@ -14,6 +14,10 @@ export interface ModuleTab {
    * (e.g. a "directory" tab at the module's bare base path, like Master Settings
    * at /settings sitting alongside /settings/lead-sources). */
   exact?: boolean;
+  /** Live count badge next to the label (e.g. Leads' Fresh/My Leads/Document
+   * Collection/Rejected/Assigned tabs — decision 125). Omit for a tab with no count
+   * concept — every other module's tabs simply don't set this. */
+  count?: number;
 }
 
 // Shared in-page tab strip for modules whose sidebar entry was consolidated
@@ -44,6 +48,15 @@ export function ModuleTabs({ tabs }: { tabs: ModuleTab[] }) {
             }`}
           >
             {tab.label}
+            {tab.count !== undefined && (
+              <span
+                className={`ml-1.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full px-1.5 py-0.5 text-2xs font-semibold ${
+                  active ? "bg-primary/10 text-primary" : "bg-text/10 text-textSecondary"
+                }`}
+              >
+                {tab.count}
+              </span>
+            )}
           </Link>
         );
       })}

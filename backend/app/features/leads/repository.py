@@ -12,6 +12,10 @@ _SEARCH_FIELDS = ("lead_code", "full_name", "mobile", "email")
 # unassign logic.
 UNASSIGNED_SENTINEL = "__unassigned__"
 ASSIGNED_SENTINEL = "__assigned__"
+# "The acting employee themselves" — resolved server-side by LeadService._scope_query,
+# never trusted as a literal employee id from the client. Backs the "My Leads" tab and
+# Create/Edit Lead's "Assign To: Self" option (decision 125) with one shared mechanism.
+SELF_SENTINEL = "__self__"
 # Guaranteed to match zero leads — used by LeadService to force an empty result set for
 # an Employee-role actor with no Employee record (defensive; shouldn't normally happen),
 # rather than silently falling through to an unrestricted query.
@@ -31,7 +35,7 @@ class LeadRepository(BaseRepository[Lead]):
         cursor = self.collection.find(query)
         return [self.model.model_validate(doc) async for doc in cursor]
 
-    async def search_and_filter(
+    def _build_query(
         self,
         *,
         search: str | None,
@@ -39,12 +43,11 @@ class LeadRepository(BaseRepository[Lead]):
         product_category: str | None,
         product_id: str | None,
         assigned_to: str | None,
-        created_by: str | None = None,
+        created_by: str | None,
         status: str | None,
-        skip: int,
-        limit: int,
-        sort: list[tuple[str, int]] | None,
-    ) -> tuple[list[Lead], int]:
+        stage: str | None,
+        exclude_stage: str | None,
+    ) -> dict[str, Any]:
         query: dict[str, Any] = {"is_deleted": False}
         if source_id:
             query["source_id"] = source_id
@@ -66,16 +69,61 @@ class LeadRepository(BaseRepository[Lead]):
             query["assigned_to"] = assigned_to
         if status:
             query["status"] = status
+        # `stage`/`exclude_stage` are mutually exclusive by caller convention (see
+        # LeadService's tab-scoped list/count methods) — never both passed for the same
+        # call, so no precedence rule between them is needed here.
+        if stage:
+            query["stage"] = stage
+        if exclude_stage:
+            query["stage"] = {"$ne": exclude_stage}
         if search:
             pattern = re.compile(re.escape(search), re.IGNORECASE)
             query["$or"] = [{field: pattern} for field in _SEARCH_FIELDS]
+        return query
 
+    async def search_and_filter(
+        self,
+        *,
+        search: str | None,
+        source_id: str | None,
+        product_category: str | None,
+        product_id: str | None,
+        assigned_to: str | None,
+        created_by: str | None = None,
+        status: str | None,
+        stage: str | None = None,
+        exclude_stage: str | None = None,
+        skip: int,
+        limit: int,
+        sort: list[tuple[str, int]] | None,
+    ) -> tuple[list[Lead], int]:
+        query = self._build_query(
+            search=search, source_id=source_id, product_category=product_category, product_id=product_id,
+            assigned_to=assigned_to, created_by=created_by, status=status, stage=stage, exclude_stage=exclude_stage,
+        )
         total = await self.collection.count_documents(query)
         cursor = self.collection.find(query).skip(skip).limit(limit)
         if sort:
             cursor = cursor.sort(sort)
         items = [self.model.model_validate(doc) async for doc in cursor]
         return items, total
+
+    async def count_filtered(
+        self,
+        *,
+        assigned_to: str | None = None,
+        created_by: str | None = None,
+        stage: str | None = None,
+        exclude_stage: str | None = None,
+    ) -> int:
+        """Same query-building as `search_and_filter`, without paginating — backs the
+        tab count badges (`LeadService.get_tab_counts`) so a count can never disagree
+        with what its matching list call actually returns."""
+        query = self._build_query(
+            search=None, source_id=None, product_category=None, product_id=None,
+            assigned_to=assigned_to, created_by=created_by, status=None, stage=stage, exclude_stage=exclude_stage,
+        )
+        return await self.collection.count_documents(query)
 
 
 class LeadNoteRepository(BaseRepository[LeadNote]):

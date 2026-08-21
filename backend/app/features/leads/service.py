@@ -9,30 +9,40 @@ Control (decision 026).
 
 import csv
 import io
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.constants.roles import EMPLOYEE, OWNER
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
+from app.features.access_control.permission_engine import PermissionEngine
 from app.features.access_control.repository import (
     EmployeeRoleRepository,
     PermissionRepository,
     RolePermissionRepository,
 )
 from app.features.auth.models import User
-from app.features.customer.repository import ApplicationFormDefinitionRepository
+from app.features.customer.constants import ApplicationStatus, DocumentVerificationStatus
+from app.features.customer.models import Application
+from app.features.customer.repository import (
+    ApplicationDocumentRepository,
+    ApplicationFormDefinitionRepository,
+    ApplicationRepository,
+)
 from app.features.employee.constants import EmploymentStatus
 from app.features.employee.repository import (
     BranchRepository,
     DesignationRepository,
     EmployeeRepository,
 )
-from app.features.leads.constants import PRODUCT_CATEGORY_MODULE, LeadActivityType
-from app.features.leads.models import Lead, LeadActivity, LeadNote
+from app.features.leads.constants import PRODUCT_CATEGORY_MODULE, LeadActivityType, LeadStage
+from app.features.leads.models import Lead, LeadActivity, LeadFinancialAssessment, LeadNote
 from app.features.leads.repository import (
+    ASSIGNED_SENTINEL,
     NO_MATCH_SENTINEL,
+    SELF_SENTINEL,
     UNASSIGNED_SENTINEL,
     LeadActivityRepository,
     LeadNoteRepository,
@@ -41,6 +51,8 @@ from app.features.leads.repository import (
 from app.features.leads.schemas import (
     CreateLeadRequest,
     EligibleAssigneeResponse,
+    FinancialAssessmentRequest,
+    LeadCountsResponse,
     UpdateLeadRequest,
 )
 from app.features.system_settings.constants import MasterDataStatus
@@ -52,10 +64,25 @@ from app.features.system_settings.repository import (
 from app.features.workflow_engine.constants import TERMINAL_STATUSES_BY_CASE_TYPE
 from app.features.workflow_engine.repository import ApplicationWorkflowRepository
 from app.shared.audit_log import write_audit_log
-from app.utils.datetime import now_ist, start_of_day_ist
+from app.utils.datetime import ist_date_to_utc_midnight, now_ist, start_of_day_ist, utc_now
 from app.utils.id_generator import IdPrefix, generate_id
 
-_EXPORT_HEADER = ["Lead Code", "Name", "Mobile", "Email", "Source", "Product Category", "Product", "Status", "Assigned To", "Created At"]
+_EXPORT_HEADER = ["Lead Code", "Name", "Mobile", "Email", "Source", "Product Category", "Product", "Status", "Stage", "Assigned To", "Created At"]
+
+
+@dataclass
+class DocumentCollectionSummary:
+    """Leads workflow redesign Phase 3 (decision 126) — read-only enrichment surfaced on
+    a Lead's detail response, derived entirely from the existing Application/
+    ApplicationDocument entities (Module 6B). `None`/zero fields mean no Application
+    exists for this lead yet (a legitimate state, not an error — see
+    LeadService.get_document_collection_summary)."""
+
+    application_id: str | None
+    application_status: str | None
+    documents_required: int
+    documents_verified: int
+    all_documents_verified: bool
 
 
 class LeadService:
@@ -69,12 +96,15 @@ class LeadService:
         self._loan_products = LoanProductRepository(db)
         self._insurance_products = InsuranceProductRepository(db)
         self._form_defs = ApplicationFormDefinitionRepository(db)
+        self._applications = ApplicationRepository(db)
+        self._application_documents = ApplicationDocumentRepository(db)
         self._permissions = PermissionRepository(db)
         self._role_permissions = RolePermissionRepository(db)
         self._employee_roles = EmployeeRoleRepository(db)
         self._designations = DesignationRepository(db)
         self._branches = BranchRepository(db)
         self._workflow_cases = ApplicationWorkflowRepository(db)
+        self._permission_engine = PermissionEngine(db)
 
     # ---------------------------------------------------------------- validation helpers
 
@@ -112,6 +142,7 @@ class LeadService:
         form_def = await self._form_defs.find_by_product(payload.product_category, payload.product_id)
 
         lead_code = await generate_id(self._db, IdPrefix.LEAD)
+        next_follow_up = ist_date_to_utc_midnight(payload.next_follow_up_date) if payload.next_follow_up_date else None
         lead = Lead(
             lead_code=lead_code,
             full_name=payload.full_name,
@@ -123,6 +154,8 @@ class LeadService:
             remarks=payload.remarks,
             city=payload.city,
             preferred_amount=payload.preferred_amount,
+            salary_in_hand=payload.salary_in_hand,
+            next_follow_up_date=next_follow_up,
             duplicate_of_lead_ids=duplicate_ids,
             form_definition_id=form_def.require_id() if form_def else None,
             product_form_data=payload.product_form_data,
@@ -133,6 +166,17 @@ class LeadService:
         await self._log_activity(lead_id, LeadActivityType.CREATED, actor, {"lead_code": lead_code})
         if duplicate_ids:
             await self._log_activity(lead_id, LeadActivityType.DUPLICATE_DETECTED, actor, {"matches": duplicate_ids})
+
+        # `add_note`/`_assign` both re-fetch and ownership-check the lead by id — safe and
+        # cheap here since the actor who just created it always passes `get_lead_scoped`
+        # (it's their own, still-unassigned draft) until `_assign` moves it out from under
+        # that check.
+        if payload.comment:
+            await self.add_note(lead_id, payload.comment, actor)
+
+        if payload.assigned_to:
+            employee_id = await self._resolve_assignee(payload.assigned_to, actor)
+            return await self._assign(lead_id, employee_id, actor)
 
         return await self._leads.find_by_id(lead_id) or lead
 
@@ -168,46 +212,169 @@ class LeadService:
                 raise ForbiddenError("This lead isn't assigned to you.")
         return lead
 
-    async def _scope_query(self, actor: User, requested_assigned_to: str | None) -> tuple[str | None, str | None]:
-        """Returns `(assigned_to, created_by)` to hand to `LeadRepository.search_and_filter`.
+    async def _has_broad_visibility(self, actor: User) -> bool:
+        """Owner-level visibility into the shared, company-wide Fresh Leads / Document
+        Collection / Rejected / Assigned pools (decision 125's visibility-gap fix),
+        reusing the existing `leads:leads:assign` permission — an actor already trusted
+        to distribute leads across the team is trusted to see the pool they're
+        distributing from. Deliberately NOT a new permission: an Owner granting "Assign"
+        to a role already means "this role manages lead distribution," and inventing a
+        second, separate visibility permission would be redundant configuration for the
+        same underlying trust decision."""
+        if actor.role == OWNER:
+            return True
+        return await self._permission_engine.has_permission(actor, module="leads", resource="leads", action="assign")
 
-        An Owner sees whatever `assigned_to` was requested — a specific employee, the
-        "unassigned"/"assigned to anyone" sentinels, or unfiltered — completely
-        unrestricted, `created_by` stays unused.
+    async def _scope_query(
+        self, actor: User, requested_assigned_to: str | None, requested_stage: str | None = None
+    ) -> tuple[str | None, str | None]:
+        """Returns `(assigned_to, created_by)` to hand to `LeadRepository.search_and_filter`
+        /`count_filtered`. `requested_stage` only ever affects which SCOPING branch below
+        applies — it's passed straight through to the repository unchanged by the caller,
+        never transformed here.
 
-        A non-Owner (Employee) can NEVER see another employee's leads or the shared
-        "New Leads" pool: any request other than the unassigned sentinel is always
-        overridden to their own employee_id, same as before.
+        `SELF_SENTINEL` ("My Leads") always resolves to the actor's own Employee id,
+        for every role including Owner (an Owner with no Employee record simply has no
+        My Leads — NO_MATCH_SENTINEL yields an empty result, correctly).
 
-        `UNASSIGNED_SENTINEL` from a non-Owner is the one case that changed: it no
-        longer passes through unchanged (that used to expose every genuinely unassigned
-        lead — including every Meta/website-captured one — to any employee holding
-        `leads:leads:view`, before an Owner ever looked at it). It now resolves to "my
-        own not-yet-assigned drafts only" — the repository ANDs `created_by` onto the
-        `assigned_to=None` filter for this case. An unassigned lead a non-Owner did not
-        personally create (including every Owner-authored or Meta-captured one) is
-        Owner-only until explicitly assigned.
+        An Owner otherwise sees whatever `assigned_to` was requested — a specific
+        employee, the "unassigned"/"assigned to anyone" sentinels, or unfiltered —
+        completely unrestricted, `created_by` stays unused.
+
+        A non-Owner (Employee) can NEVER see another employee's leads by default: any
+        request other than the sentinels below is always overridden to their own
+        employee_id.
+
+        `UNASSIGNED_SENTINEL` (Fresh Leads): a broad-visibility actor (see
+        `_has_broad_visibility`) gets the true, company-wide unassigned pool. Anyone else
+        gets "my own not-yet-assigned drafts only" — the repository ANDs `created_by`
+        onto the `assigned_to=None` filter for this case. An unassigned lead a non-broad
+        actor did not personally create is invisible to them until explicitly assigned.
+
+        `ASSIGNED_SENTINEL` (Assigned tab) or `requested_stage` in
+        {document_collection, rejected} (Document Collection / Rejected tabs): a
+        broad-visibility actor sees the company-wide set; anyone else is scoped to their
+        own `assigned_to=<employee_id>` — visible-but-self-scoped rather than hidden,
+        since every role sees all 5 tabs (decision 125).
 
         The `created_by` value returned here is the actor's own User id (`Lead.created_by`
         is always stamped from `actor.require_id()`, BaseDocument's generic convention —
         NOT the Employee document id `assigned_to` uses), not `employee_id`."""
+        if requested_assigned_to == SELF_SENTINEL:
+            employee = await self._employees.find_by_user_id(actor.require_id())
+            return (employee.require_id() if employee is not None else NO_MATCH_SENTINEL), None
+
         if actor.role == OWNER:
             return requested_assigned_to, None
+
         employee = await self._employees.find_by_user_id(actor.require_id())
         employee_id = employee.require_id() if employee is not None else NO_MATCH_SENTINEL
+
         if requested_assigned_to == UNASSIGNED_SENTINEL:
+            if await self._has_broad_visibility(actor):
+                return UNASSIGNED_SENTINEL, None
             return UNASSIGNED_SENTINEL, actor.require_id()
+
+        if requested_assigned_to == ASSIGNED_SENTINEL or requested_stage in (LeadStage.DOCUMENT_COLLECTION, LeadStage.REJECTED):
+            if await self._has_broad_visibility(actor):
+                return requested_assigned_to, None
+            return employee_id, None
+
         return employee_id, None
 
     async def list_leads(
         self, *, search: str | None, source_id: str | None, product_category: str | None, product_id: str | None,
-        assigned_to: str | None, status: str | None, skip: int, limit: int, sort: list[tuple[str, int]] | None, actor: User,
+        assigned_to: str | None, status: str | None, stage: str | None = None, exclude_stage: str | None = None,
+        skip: int, limit: int, sort: list[tuple[str, int]] | None, actor: User,
     ) -> tuple[list[Lead], int]:
-        scoped_assigned_to, scoped_created_by = await self._scope_query(actor, assigned_to)
+        scoped_assigned_to, scoped_created_by = await self._scope_query(actor, assigned_to, stage)
         return await self._leads.search_and_filter(
             search=search, source_id=source_id, product_category=product_category, product_id=product_id,
-            assigned_to=scoped_assigned_to, created_by=scoped_created_by, status=status, skip=skip, limit=limit, sort=sort,
+            assigned_to=scoped_assigned_to, created_by=scoped_created_by, status=status, stage=stage,
+            exclude_stage=exclude_stage, skip=skip, limit=limit, sort=sort,
         )
+
+    async def get_application_info_for_leads(self, leads: list[Lead], stage: str | None) -> dict[str, tuple[str, str]]:
+        """Leads workflow redesign Phase 3 (decision 126) — batched `lead_id ->
+        (application_id, application_status)` lookup for the Document Collection tab's
+        list view, so it can show "Pending"/"Submitted" without one query per row. Only
+        runs when the effective tab filter is `document_collection` — every other tab's
+        list call is completely unaffected, cost-wise or otherwise."""
+        if stage != LeadStage.DOCUMENT_COLLECTION or not leads:
+            return {}
+        lead_ids = [lead.require_id() for lead in leads]
+        applications = await self._applications.find_for_leads(lead_ids)
+        result: dict[str, tuple[str, str]] = {}
+        for application in applications:
+            if application.lead_id and application.lead_id not in result:
+                result[application.lead_id] = (application.require_id(), application.status)
+        return result
+
+    async def _document_completion(self, application: Application) -> tuple[int, int]:
+        """`(documents_required, documents_verified)` for `application`, counting only
+        CURRENT documents — a superseded row from before a re-upload must never count
+        toward verification, matching the exact `is_current` discipline the Application/
+        ApplicationDocument system itself already enforces on every other read (see
+        `customer/service.py`'s `supersede_current`)."""
+        form_def = await self._form_defs.find_by_id(application.form_definition_id)
+        required_ids = set(form_def.required_document_type_ids) if form_def else set()
+        if not required_ids:
+            return 0, 0
+        current_docs = await self._application_documents.find_current_for_application(application.require_id())
+        verified_ids = {
+            d.document_type_id
+            for d in current_docs
+            if d.document_type_id in required_ids and d.verification_status == DocumentVerificationStatus.VERIFIED
+        }
+        return len(required_ids), len(verified_ids)
+
+    async def get_document_collection_summary(self, lead: Lead) -> DocumentCollectionSummary:
+        """Detail-level counterpart of `get_application_info_for_leads` — always computed
+        (cheap at single-lead granularity), backing both `GET /leads/{id}` and every other
+        detail-returning endpoint, and the "N of M documents verified" text in My Leads'
+        Update screen. `application_id=None` means the customer hasn't used Generate Link
+        yet — a legitimate "Pending" state, never an error."""
+        application = await self._applications.find_by_lead_id(lead.require_id())
+        if application is None:
+            return DocumentCollectionSummary(
+                application_id=None, application_status=None, documents_required=0, documents_verified=0, all_documents_verified=False
+            )
+        required, verified = await self._document_completion(application)
+        return DocumentCollectionSummary(
+            application_id=application.require_id(), application_status=application.status,
+            documents_required=required, documents_verified=verified, all_documents_verified=verified >= required,
+        )
+
+    async def get_tab_counts(self, actor: User) -> LeadCountsResponse:
+        """One count per Leads tab, each built from the identical scoping
+        (`_scope_query`) the matching tab's list call uses — counts and list results can
+        never disagree (decision 125's counts requirement)."""
+        fresh_assigned_to, fresh_created_by = await self._scope_query(actor, UNASSIGNED_SENTINEL, LeadStage.FRESH)
+        fresh = await self._leads.count_filtered(assigned_to=fresh_assigned_to, created_by=fresh_created_by, stage=LeadStage.FRESH)
+
+        my_assigned_to, my_created_by = await self._scope_query(actor, SELF_SENTINEL, LeadStage.ASSIGNED)
+        my_leads = await self._leads.count_filtered(assigned_to=my_assigned_to, created_by=my_created_by, stage=LeadStage.ASSIGNED)
+
+        dc_assigned_to, dc_created_by = await self._scope_query(actor, None, LeadStage.DOCUMENT_COLLECTION)
+        document_collection = await self._leads.count_filtered(
+            assigned_to=dc_assigned_to, created_by=dc_created_by, stage=LeadStage.DOCUMENT_COLLECTION
+        )
+
+        rej_assigned_to, rej_created_by = await self._scope_query(actor, None, LeadStage.REJECTED)
+        rejected = await self._leads.count_filtered(assigned_to=rej_assigned_to, created_by=rej_created_by, stage=LeadStage.REJECTED)
+
+        asg_assigned_to, asg_created_by = await self._scope_query(actor, ASSIGNED_SENTINEL, None)
+        assigned = await self._leads.count_filtered(assigned_to=asg_assigned_to, created_by=asg_created_by, exclude_stage=LeadStage.REJECTED)
+
+        return LeadCountsResponse(fresh=fresh, my_leads=my_leads, document_collection=document_collection, rejected=rejected, assigned=assigned)
+
+    async def _resolve_assignee(self, assigned_to: str, actor: User) -> str:
+        if assigned_to == SELF_SENTINEL:
+            employee = await self._employees.find_by_user_id(actor.require_id())
+            if employee is None:
+                raise ValidationError("You have no employee record to assign a lead to.")
+            return employee.require_id()
+        return assigned_to
 
     async def update_lead(self, lead_id: str, payload: UpdateLeadRequest, actor: User, *, skip_ownership_check: bool = False) -> Lead:
         """`skip_ownership_check` is for callers (e.g. Referral Partner Management's own
@@ -230,17 +397,31 @@ class LeadService:
             updates["product_category"] = new_category
             updates["product_id"] = new_product_id
 
-        for field in ("full_name", "mobile", "email", "remarks", "city", "preferred_amount"):
+        for field in ("full_name", "mobile", "email", "remarks", "city", "preferred_amount", "salary_in_hand"):
             value = getattr(payload, field)
             if value is not None:
                 updates[field] = value
 
-        if not updates:
-            return lead
+        if payload.next_follow_up_date is not None:
+            updates["next_follow_up_date"] = ist_date_to_utc_midnight(payload.next_follow_up_date)
 
-        updated = await self._leads.update(lead_id, updates, updated_by=actor.require_id())
-        await self._log_activity(lead_id, LeadActivityType.UPDATED, actor, {"fields": list(updates.keys())})
-        return updated or lead
+        if updates:
+            updated = await self._leads.update(lead_id, updates, updated_by=actor.require_id())
+            await self._log_activity(lead_id, LeadActivityType.UPDATED, actor, {"fields": list(updates.keys())})
+            lead = updated or lead
+
+        # Deliberately still excludes `form_definition_id`/`product_form_data` — the
+        # Product Schema Engine's own dynamic fields stay Lead-edit-untouched, preserving
+        # the original reason those were kept off Create Lead too (see the field's own
+        # comment on CreateLeadRequest).
+        if payload.assigned_to is not None:
+            employee_id = await self._resolve_assignee(payload.assigned_to, actor)
+            lead = await self._assign(lead_id, employee_id, actor)
+
+        if payload.comment:
+            await self.add_note(lead_id, payload.comment, actor)
+
+        return lead
 
     async def check_duplicate(self, mobile: str, actor: User) -> list[Lead]:
         # Unlike the internal creation-time duplicate check (which intentionally scans
@@ -265,14 +446,21 @@ class LeadService:
 
     # ---------------------------------------------------------------- assignment
 
-    async def assign_lead(self, lead_id: str, employee_id: str, actor: User) -> Lead:
-        await self.get_lead(lead_id)
+    async def _assign(self, lead_id: str, employee_id: str, actor: User) -> Lead:
+        """Shared by `assign_lead` (POST /leads/{id}/assign), Create Lead's inline
+        `assigned_to`, and Edit Lead's inline `assigned_to` — one place that stamps
+        `stage=assigned`/`assigned_by`/`assigned_at` alongside `assigned_to`, so every
+        assignment path keeps those fields consistent (decision 125)."""
         employee = await self._employees.find_by_id(employee_id)
         if employee is None:
             raise ValidationError("Unknown employee_id.")
         if employee.status != EmploymentStatus.ACTIVE:
             raise ValidationError("Cannot assign a lead to an inactive employee.")
-        updated = await self._leads.update(lead_id, {"assigned_to": employee_id}, updated_by=actor.require_id())
+        updated = await self._leads.update(
+            lead_id,
+            {"assigned_to": employee_id, "stage": LeadStage.ASSIGNED, "assigned_by": actor.require_id(), "assigned_at": utc_now()},
+            updated_by=actor.require_id(),
+        )
         if updated is None:
             raise NotFoundError("Lead not found.")
         await self._log_activity(lead_id, LeadActivityType.ASSIGNED, actor, {"employee_id": employee_id})
@@ -290,13 +478,128 @@ class LeadService:
         )
         return updated
 
-    async def unassign_lead(self, lead_id: str, actor: User) -> Lead:
+    async def assign_lead(self, lead_id: str, employee_id: str, actor: User) -> Lead:
         await self.get_lead(lead_id)
-        updated = await self._leads.update(lead_id, {"assigned_to": None}, updated_by=actor.require_id())
+        return await self._assign(lead_id, employee_id, actor)
+
+    async def unassign_lead(self, lead_id: str, actor: User) -> Lead:
+        lead = await self.get_lead(lead_id)
+        if lead.stage == LeadStage.REJECTED:
+            raise ValidationError("A rejected lead cannot be unassigned.")
+        updated = await self._leads.update(
+            lead_id, {"assigned_to": None, "stage": LeadStage.FRESH, "assigned_by": None, "assigned_at": None},
+            updated_by=actor.require_id(),
+        )
         if updated is None:
             raise NotFoundError("Lead not found.")
         await self._log_activity(lead_id, LeadActivityType.UNASSIGNED, actor)
         return updated
+
+    # ---------------------------------------------------------------- reject / stage / follow-up (decision 125)
+
+    async def reject_lead(self, lead_id: str, reason: str, actor: User) -> Lead:
+        """Reject is reachable only from an already-assigned lead (My Leads ->
+        Rejected, per the spec) — a still-unassigned Fresh lead has no owner to have
+        made the rejection call, and disallowing it here keeps the Rejected tab's own
+        visibility scoping simple (every rejected lead still has a non-null
+        `assigned_to`, so the same `assigned_to=<employee_id>` scoping `_scope_query`
+        already uses for Document Collection/Assigned applies unchanged to Rejected)."""
+        lead = await self.get_lead_scoped(lead_id, actor)
+        if lead.assigned_to is None:
+            raise ValidationError("Only an assigned lead can be rejected.")
+        if lead.stage == LeadStage.REJECTED:
+            raise ValidationError("This lead has already been rejected.")
+        if lead.stage == LeadStage.LOAN_MANAGEMENT:
+            raise ValidationError("A lead that has moved to Loan Management can no longer be rejected here.")
+        updated = await self._leads.update(
+            lead_id,
+            {"stage": LeadStage.REJECTED, "rejected_reason": reason, "rejected_by": actor.require_id(), "rejected_at": utc_now()},
+            updated_by=actor.require_id(),
+        )
+        if updated is None:
+            raise NotFoundError("Lead not found.")
+        await self._log_activity(lead_id, LeadActivityType.REJECTED, actor, {"reason": reason})
+        return updated
+
+    async def set_stage(self, lead_id: str, stage: str, actor: User) -> Lead:
+        """Phase 1 supports My Leads <-> Document Collection (`SetStageRequest` validated
+        `stage` is one of `assigned`/`document_collection`/`loan_management` — Fresh and
+        Rejected are reached exclusively via `_assign`/`reject_lead`, never this
+        endpoint). Phase 3 (decision 126) adds Document Collection -> Loan Management,
+        gated on the linked Application being submitted and every required document
+        verified — the one new business rule this phase introduces. This method never
+        creates, reads product_category branches of, or otherwise touches a Loan/
+        Insurance case itself: that already happened automatically, correctly routed by
+        `application.product_category`, back when the customer submitted (see
+        `LeadStage.LOAN_MANAGEMENT`'s own docstring and decision #058). This is purely a
+        completion gate in front of an already-existing, already-automatic handoff."""
+        lead = await self.get_lead_scoped(lead_id, actor)
+        if lead.assigned_to is None:
+            raise ValidationError("Only an assigned lead can change stage.")
+        if lead.stage == LeadStage.REJECTED:
+            raise ValidationError("A rejected lead cannot change stage.")
+        if stage == LeadStage.LOAN_MANAGEMENT:
+            if lead.stage != LeadStage.DOCUMENT_COLLECTION:
+                raise ValidationError("Only a lead in Document Collection can move to Loan Management.")
+            application = await self._applications.find_by_lead_id(lead_id)
+            if application is None or application.status != ApplicationStatus.SUBMITTED:
+                raise ValidationError("The customer must submit their application before this lead can move to Loan Management.")
+            required, verified = await self._document_completion(application)
+            if verified < required:
+                raise ValidationError(
+                    f"{verified} of {required} required documents are verified. All required documents must be "
+                    "verified before moving to Loan Management."
+                )
+        updated = await self._leads.update(lead_id, {"stage": stage}, updated_by=actor.require_id())
+        if updated is None:
+            raise NotFoundError("Lead not found.")
+        event_type = LeadActivityType.MOVED_TO_LOAN_MANAGEMENT if stage == LeadStage.LOAN_MANAGEMENT else LeadActivityType.STAGE_CHANGED
+        await self._log_activity(lead_id, event_type, actor, {"from": lead.stage, "to": stage})
+        return updated
+
+    async def set_follow_up(self, lead_id: str, next_follow_up_date: date, comment: str | None, actor: User) -> Lead:
+        await self.get_lead_scoped(lead_id, actor)
+        updated = await self._leads.update(
+            lead_id, {"next_follow_up_date": ist_date_to_utc_midnight(next_follow_up_date)}, updated_by=actor.require_id()
+        )
+        if updated is None:
+            raise NotFoundError("Lead not found.")
+        # Comment History (decision 125): a follow-up comment is a NEW LeadNote, exactly
+        # like `add_note` — never overwrites a prior entry.
+        if comment:
+            await self.add_note(lead_id, comment, actor)
+        await self._log_activity(lead_id, LeadActivityType.FOLLOW_UP_SET, actor, {"next_follow_up_date": next_follow_up_date.isoformat()})
+        return updated
+
+    # ---------------------------------------------------------------- financial assessment (Phase 2, decision 125)
+
+    async def set_financial_assessment(self, lead_id: str, payload: FinancialAssessmentRequest, actor: User) -> Lead:
+        """My Leads' Update screen. A whole-object replace, not a partial-field PATCH —
+        the frontend always submits the full current form state, so there's no ambiguity
+        about what an omitted field means (unlike `update_lead`'s per-field-optional
+        convention). Does not touch `stage`, `status`, `assigned_to`, or counts."""
+        await self.get_lead_scoped(lead_id, actor)
+        data = payload.model_dump()
+        # Mutually exclusive by construction: "Don't Know" always wins over a
+        # stray/previously-entered score, cleanly rather than leaving both set.
+        if data["cibil_unknown"]:
+            data["cibil_score"] = None
+        assessment = LeadFinancialAssessment(**data, updated_at=utc_now(), updated_by=actor.require_id())
+        updated = await self._leads.update(lead_id, {"financial_assessment": assessment.model_dump()}, updated_by=actor.require_id())
+        if updated is None:
+            raise NotFoundError("Lead not found.")
+        await self._log_activity(lead_id, LeadActivityType.FINANCIAL_ASSESSMENT_UPDATED, actor)
+        return updated
+
+    # ---------------------------------------------------------------- public audit-log wrapper
+
+    async def log_activity(self, lead_id: str, event_type: str, actor: User, metadata: dict[str, Any] | None = None) -> None:
+        """Public entry point into `_log_activity` for cross-module callers that act on a
+        Lead from outside this service (e.g. the router composing
+        `CustomerService.create_staff_initiated_account` for Phase 2's Create Customer
+        Account) — keeps the Lead-scoped audit trail owned by Leads even when the action
+        itself is owned by another module."""
+        await self._log_activity(lead_id, event_type, actor, metadata)
 
     async def _employees_with_module_access(self, module: str) -> set[str]:
         """Every employee whose role holds at least one granted action on ANY
@@ -491,22 +794,32 @@ class LeadService:
 
     # ---------------------------------------------------------------- name resolution / export
 
-    async def resolve_names(self, leads: list[Lead]) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    async def resolve_names(self, leads: list[Lead]) -> tuple[dict[str, str], dict[str, str], dict[str, str], dict[str, str]]:
         source_ids = {lead.source_id for lead in leads}
         loan_ids = {lead.product_id for lead in leads if lead.product_category == "loan"}
         insurance_ids = {lead.product_id for lead in leads if lead.product_category == "insurance"}
         employee_ids = {lead.assigned_to for lead in leads if lead.assigned_to}
+        # `assigned_by`/`rejected_by` are the ACTING USER's id (BaseDocument's
+        # created_by/updated_by convention), not an Employee id — resolved below via
+        # Employee.user_id, distinct from `employee_map` (keyed by Employee id, for
+        # `assigned_to`).
+        actor_user_ids = {lead.assigned_by for lead in leads if lead.assigned_by} | {lead.rejected_by for lead in leads if lead.rejected_by}
 
         sources = await self._lead_sources.find_many({}, limit=500)
         loan_products = await self._loan_products.find_many({}, limit=500)
         insurance_products = await self._insurance_products.find_many({}, limit=500)
-        employees = await self._employees.find_many({}, limit=500) if employee_ids else []
+        employees = await self._employees.find_many({}, limit=500) if (employee_ids or actor_user_ids) else []
 
         source_map = {s.require_id(): s.name for s in sources if s.require_id() in source_ids}
         product_map = {p.require_id(): p.name for p in loan_products if p.require_id() in loan_ids}
         product_map.update({p.require_id(): p.name for p in insurance_products if p.require_id() in insurance_ids})
         employee_map = {e.require_id(): e.display_name for e in employees if e.require_id() in employee_ids}
-        return source_map, product_map, employee_map
+        # A `assigned_by`/`rejected_by` user with no matching Employee record performed
+        # the action as an Owner (Owners have no Employee row) — falls back to "Owner"
+        # rather than a blank name.
+        actor_by_user_id = {e.user_id: e.display_name for e in employees if e.user_id in actor_user_ids}
+        actor_name_map = {uid: actor_by_user_id.get(uid, "Owner") for uid in actor_user_ids}
+        return source_map, product_map, employee_map, actor_name_map
 
     async def export_leads_csv(self, actor: User) -> str:
         scoped_assigned_to, scoped_created_by = await self._scope_query(actor, None)
@@ -515,7 +828,7 @@ class LeadService:
             assigned_to=scoped_assigned_to, created_by=scoped_created_by, status=None,
             skip=0, limit=10_000, sort=[("created_at", -1)],
         )
-        source_map, product_map, employee_map = await self.resolve_names(leads)
+        source_map, product_map, employee_map, _actor_name_map = await self.resolve_names(leads)
 
         buffer = io.StringIO()
         writer = csv.writer(buffer)
@@ -523,7 +836,7 @@ class LeadService:
         for lead in leads:
             writer.writerow([
                 lead.lead_code, lead.full_name, lead.mobile, lead.email or "",
-                source_map.get(lead.source_id, ""), lead.product_category, product_map.get(lead.product_id, ""), lead.status,
+                source_map.get(lead.source_id, ""), lead.product_category, product_map.get(lead.product_id, ""), lead.status, lead.stage,
                 employee_map.get(lead.assigned_to, "") if lead.assigned_to else "",
                 lead.created_at.isoformat(),
             ])
