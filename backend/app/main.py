@@ -43,6 +43,8 @@ from app.features.leads.indexes import ensure_lead_indexes
 from app.features.leads.router import router as leads_router
 from app.features.loan_management.indexes import ensure_loan_management_indexes
 from app.features.loan_management.router import router as loan_management_router
+from app.features.messaging.indexes import ensure_messaging_indexes
+from app.features.messaging.router import router as messaging_router
 from app.features.owner.indexes import ensure_owner_indexes
 from app.features.owner.router import router as owner_router
 from app.features.referral_partner_management.indexes import (
@@ -88,6 +90,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await ensure_communication_indexes(get_database())
     await ensure_owner_indexes(get_database())
     await ensure_support_indexes(get_database())
+    await ensure_messaging_indexes(get_database())
     yield
     await close_client()
     await close_redis()
@@ -137,6 +140,7 @@ def create_app() -> FastAPI:
     app.include_router(communication_public_router, prefix=settings.api_v1_prefix)
     app.include_router(communication_router, prefix=settings.api_v1_prefix)
     app.include_router(support_router, prefix=settings.api_v1_prefix)
+    app.include_router(messaging_router, prefix=settings.api_v1_prefix)
 
     return app
 

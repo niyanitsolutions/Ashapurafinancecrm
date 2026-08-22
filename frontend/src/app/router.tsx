@@ -23,6 +23,7 @@ import { LoanOffersPage } from "@/features/customer/pages/LoanOffersPage";
 import { CompleteProfilePage } from "@/features/customer/pages/CompleteProfilePage";
 import { CustomerDetailsPage } from "@/features/customer/pages/CustomerDetailsPage";
 import { CustomerListPage } from "@/features/customer/pages/CustomerListPage";
+import { ConversationPage } from "@/features/customer/pages/ConversationPage";
 import { CustomersLayout } from "@/features/customer/pages/CustomersLayout";
 import { DocumentsPage } from "@/features/customer/pages/DocumentsPage";
 import { MessagesPage } from "@/features/customer/pages/MessagesPage";
@@ -74,6 +75,8 @@ import { ReportCatalogPage } from "@/features/reporting/pages/ReportCatalogPage"
 import { ReportViewerPage } from "@/features/reporting/pages/ReportViewerPage";
 import { ScheduledReportsPage } from "@/features/reporting/pages/ScheduledReportsPage";
 import { CommunicationPage } from "@/features/communication/pages/CommunicationPage";
+import { SupportTicketListPage } from "@/features/support/pages/SupportTicketListPage";
+import { ConversationsPage } from "@/features/messaging/pages/ConversationsPage";
 import { TaskListPage } from "@/features/reminders/pages/TaskListPage";
 import { CreateAccountPage } from "@/features/owner/pages/CreateAccountPage";
 import { RequirePrimaryOwner } from "@/features/owner/components/RequirePrimaryOwner";
@@ -269,6 +272,10 @@ export const router = createBrowserRouter([
           // Module 9C — permission-gated server-side (require_permission("communication",
           // ...)), not require_owner, so no RequireOwner wrapper here either.
           { path: "/communication", element: <CommunicationPage /> },
+          // Production stabilization pass — permission-gated server-side
+          // (require_permission("support"/"messaging", ...)), not require_owner.
+          { path: "/support-tickets", element: <SupportTicketListPage /> },
+          { path: "/conversations", element: <ConversationsPage /> },
           // Administration — /lead-capture is permission-gated (not owner-only): a
           // non-Owner employee granted just `lead_capture:sources` reaches it directly
           // (navConfig's employeeTo points here), so it stays outside RequireOwner.
@@ -387,7 +394,9 @@ export const router = createBrowserRouter([
               { path: "/portal/applications/:id/timeline", element: <ApplicationTimelinePage /> },
               { path: "/portal/applications/:id/loan-offers", element: <LoanOffersPage /> },
               { path: "/portal/documents", element: <DocumentsPage /> },
-              { path: "/portal/messages", element: <MessagesPage /> },
+              // "Message your RM" — a real two-way thread (see backend `messaging`
+              // module), distinct from the one-way Communication History feed below.
+              { path: "/portal/messages", element: <ConversationPage /> },
               { path: "/portal/notifications", element: <MessagesPage /> },
               { path: "/portal/support", element: <SupportPage /> },
             ],

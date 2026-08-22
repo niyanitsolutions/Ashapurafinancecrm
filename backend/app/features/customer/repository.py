@@ -126,6 +126,31 @@ class ApplicationRepository(BaseRepository[Application]):
             return []
         return await self.find_many({"lead_id": {"$in": lead_ids}}, limit=len(lead_ids) * 2, sort=[("created_at", -1)])
 
+    async def find_latest_by_customer_and_product(self, customer_id: str, product_category: str, product_id: str) -> Application | None:
+        """Fallback join for Document Collection when `find_by_lead_id` finds nothing —
+        `Application.lead_id` is only ever set by the secure-link claim flow (Flow 1);
+        every application created via `start_application` (Flow 2, and any Flow-1
+        customer continuing after profile completion) has `lead_id=None` even though
+        `Lead.customer_id`/`Application.customer_id` are reliably linked on both sides
+        (see `CustomerService._link_existing_leads_to_customer`). Scoped to
+        `product_category`/`product_id` too, not `customer_id` alone, so a customer with
+        more than one product's application can't have the wrong one attached to a Lead."""
+        results = await self.find_many(
+            {"customer_id": customer_id, "product_category": product_category, "product_id": product_id},
+            limit=1, sort=[("created_at", -1)],
+        )
+        return results[0] if results else None
+
+    async def find_for_customers_and_products(self, triples: list[tuple[str, str, str]]) -> list[Application]:
+        """Batched counterpart of `find_latest_by_customer_and_product`, for the
+        Document Collection list view's fallback pass."""
+        if not triples:
+            return []
+        return await self.find_many(
+            {"$or": [{"customer_id": c, "product_category": pc, "product_id": p} for c, pc, p in triples]},
+            limit=len(triples) * 2, sort=[("created_at", -1)],
+        )
+
     async def search_and_filter(
         self,
         *,

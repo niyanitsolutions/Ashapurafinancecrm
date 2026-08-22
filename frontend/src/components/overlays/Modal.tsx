@@ -38,12 +38,25 @@ export function Modal({
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
 
+  // Focus is stolen into the dialog exactly once, when it transitions to open — deps on
+  // `[open]` only. Callers routinely pass an inline `onClose` (a fresh function identity
+  // every render), and a parent that re-renders for unrelated reasons (e.g. a polling
+  // list) must never re-steal focus out of whatever field the user is actively typing in.
   useEffect(() => {
     if (!open) return;
-
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     dialogRef.current?.focus();
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [open]);
+
+  // Escape/Tab-trap listener — kept in its own effect since it legitimately needs to
+  // re-subscribe when `onClose` changes identity (so Escape always calls the latest
+  // callback), without that re-subscription touching focus.
+  useEffect(() => {
+    if (!open) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -66,7 +79,6 @@ export function Modal({
     window.addEventListener("keydown", onKeyDown);
 
     return () => {
-      document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [open, onClose]);

@@ -138,6 +138,7 @@ export function LeadListPage({ tab }: { tab: LeadTab }) {
   const { can } = usePermissions();
   const canCreate = can("leads:leads", "create");
   const canEdit = can("leads:leads", "edit");
+  const canReject = can("leads:leads", "reject");
   const canExport = can("leads:leads", "export");
   const { refreshCounts } = useOutletContext<{ refreshCounts: () => void }>();
   const [items, setItems] = useState<LeadListItem[]>([]);
@@ -459,7 +460,7 @@ export function LeadListPage({ tab }: { tab: LeadTab }) {
                           {(tab === "fresh" || tab === "my") && canEdit && (
                             <ActionButton variant="followup" onClick={() => setFollowUpLead(lead)} />
                           )}
-                          {(tab === "my" || tab === "document_collection") && canEdit && (
+                          {(tab === "my" || tab === "document_collection") && (canEdit || canReject) && (
                             <ActionButton variant="update" onClick={() => setUpdateStageLead(lead)} />
                           )}
                           {canEdit && tab !== "rejected" && <ActionButton to={`/leads/${lead.id}`} state={{ startEditing: true }} variant="edit" />}

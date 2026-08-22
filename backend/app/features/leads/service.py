@@ -339,6 +339,21 @@ class LeadService:
         for application in applications:
             if application.lead_id and application.lead_id not in result:
                 result[application.lead_id] = (application.require_id(), application.status)
+
+        # Fallback for leads not resolved via the direct lead_id join — Application.lead_id
+        # is only ever set by the secure-link claim flow (Flow 1); `start_application`
+        # (Flow 2, and any Flow-1 customer continuing after profile completion) always
+        # leaves it null even though Lead.customer_id/Application.customer_id are
+        # reliably linked. See ApplicationRepository.find_for_customers_and_products.
+        unresolved = [lead for lead in leads if lead.require_id() not in result and lead.customer_id]
+        if unresolved:
+            triples = [(lead.customer_id, lead.product_category, lead.product_id) for lead in unresolved if lead.customer_id]
+            fallback_applications = await self._applications.find_for_customers_and_products(triples)
+            by_customer_and_product = {(a.customer_id, a.product_category, a.product_id): a for a in reversed(fallback_applications)}
+            for lead in unresolved:
+                fallback_application = by_customer_and_product.get((lead.customer_id, lead.product_category, lead.product_id))
+                if fallback_application is not None:
+                    result[lead.require_id()] = (fallback_application.require_id(), fallback_application.status)
         return result
 
     async def _document_completion(self, application: Application) -> tuple[int, int]:
@@ -366,6 +381,12 @@ class LeadService:
         Update screen. `application_id=None` means the customer hasn't used Generate Link
         yet — a legitimate "Pending" state, never an error."""
         application = await self._applications.find_by_lead_id(lead.require_id())
+        if application is None and lead.customer_id:
+            # Fallback via the reliable customer_id join — see
+            # ApplicationRepository.find_latest_by_customer_and_product's own docstring.
+            application = await self._applications.find_latest_by_customer_and_product(
+                lead.customer_id, lead.product_category, lead.product_id
+            )
         if application is None:
             return DocumentCollectionSummary(
                 application_id=None, application_status=None, documents_required=0, documents_verified=0, all_documents_verified=False

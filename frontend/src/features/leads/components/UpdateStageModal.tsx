@@ -8,6 +8,7 @@ import { SelectField } from "@/components/forms/SelectField";
 import { TextareaField } from "@/components/forms/TextareaField";
 import { usePermissions } from "@/features/access_control/usePermissions";
 import { RejectLeadModal } from "@/features/leads/components/RejectLeadModal";
+import { ResetCustomerPasswordModal } from "@/features/leads/components/ResetCustomerPasswordModal";
 import {
   createCustomerAccount,
   getLead,
@@ -76,10 +77,12 @@ export function UpdateStageModal({
   onChanged: () => void;
 }) {
   const { can } = usePermissions();
+  const canEdit = can("leads:leads", "edit");
   const canReject = can("leads:leads", "reject");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isRejecting, setIsRejecting] = useState(false);
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
 
   const [detail, setDetail] = useState<LeadDetail | null>(null);
   const [isLoadingDetail, setIsLoadingDetail] = useState(true);
@@ -200,6 +203,16 @@ export function UpdateStageModal({
     );
   }
 
+  if (isResettingPassword) {
+    return (
+      <ResetCustomerPasswordModal
+        leadId={lead.id}
+        onClose={() => setIsResettingPassword(false)}
+        onReset={() => onChanged()}
+      />
+    );
+  }
+
   return (
     <Modal open onClose={onClose} size="lg" title="Update Lead" description={`Lead ${lead.lead_code}`}>
       {error && <p className="mb-3 text-sm text-danger">{error}</p>}
@@ -208,6 +221,7 @@ export function UpdateStageModal({
         <p className="py-6 text-center text-sm text-textSecondary">Loading…</p>
       ) : (
         <div className="space-y-6">
+          {canEdit && (
           <section>
             <h3 className="mb-3 text-sm font-semibold text-text">Financial Assessment</h3>
             {financialError && <p className="mb-3 text-sm text-danger">{financialError}</p>}
@@ -322,11 +336,18 @@ export function UpdateStageModal({
               Save Financial Details
             </Button>
           </section>
+          )}
 
+          {canEdit && (
           <section className="border-t border-border pt-5">
             <h3 className="mb-3 text-sm font-semibold text-text">Create Customer Account</h3>
             {detail?.account_created ? (
-              <p className="text-sm text-success">Customer account already created.</p>
+              <div className="space-y-3">
+                <p className="text-sm text-success">Customer account already created.</p>
+                <Button size="sm" variant="secondary" onClick={() => setIsResettingPassword(true)}>
+                  Reset Customer Password
+                </Button>
+              </div>
             ) : (
               <div className="space-y-3">
                 {accountError && <p className="text-sm text-danger">{accountError}</p>}
@@ -354,6 +375,7 @@ export function UpdateStageModal({
               </div>
             )}
           </section>
+          )}
 
           {stage === "document_collection" && (
             <section className="border-t border-border pt-5">
@@ -388,17 +410,17 @@ export function UpdateStageModal({
             <p className="mb-3 text-sm font-semibold capitalize text-text">{stage.replace(/_/g, " ")}</p>
 
             <div className="space-y-2.5">
-              {stage === "assigned" && (
+              {canEdit && stage === "assigned" && (
                 <Button className="w-full" loading={isSubmitting} onClick={() => moveStage("document_collection")}>
                   Move to Document Collection
                 </Button>
               )}
-              {stage === "document_collection" && (
+              {canEdit && stage === "document_collection" && (
                 <Button className="w-full" loading={isSubmitting} onClick={() => moveStage("assigned")}>
                   Move back to My Leads
                 </Button>
               )}
-              {stage === "document_collection" && (
+              {canEdit && stage === "document_collection" && (
                 <>
                   <Button
                     className="w-full"

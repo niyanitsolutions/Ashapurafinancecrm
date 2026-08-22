@@ -100,6 +100,14 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [{ label: "Message Center", to: "/communication", icon: "communication", matchKey: "communication" }],
   },
   {
+    label: null,
+    items: [{ label: "Customer Messages", to: "/conversations", icon: "chat", matchKey: "messaging" }],
+  },
+  {
+    label: null,
+    items: [{ label: "Support Tickets", to: "/support-tickets", icon: "alert-triangle", matchKey: "support_tickets" }],
+  },
+  {
     label: "API Connections",
     items: [{ label: "Connections", to: "/integrations", icon: "integrations", matchKey: "integrations" }],
   },

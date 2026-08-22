@@ -753,3 +753,92 @@ async def test_create_customer_account_requires_leads_edit_permission(client, mo
 
     r = await client.post(f"/api/v1/leads/{lead_id}/customer-account", json={"password": "CustomerPass1!"}, headers=employee_headers)
     assert r.status_code == 403, r.text
+
+
+# ---------------------------------------------------------------------- staff "Reset Customer Password"
+
+
+async def test_reset_customer_password_happy_path_new_password_works_old_does_not(client, mock_db, owner_headers):
+    product = await _seed_product_and_form(mock_db)
+    lead_id = await _create_lead_doc(mock_db, product, mobile="9722221001")
+    r = await client.post(f"/api/v1/leads/{lead_id}/customer-account", json={"password": "OldPass1!"}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+
+    r = await client.post(
+        f"/api/v1/leads/{lead_id}/customer-account/reset-password",
+        json={"new_password": "NewPass1!", "confirm_password": "NewPass1!"}, headers=owner_headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["success"] is True
+
+    r = await client.post("/api/v1/auth/login", json={"mobile": "9722221001", "password": "NewPass1!"})
+    assert r.status_code == 200, r.text
+
+    r = await client.post("/api/v1/auth/login", json={"mobile": "9722221001", "password": "OldPass1!"})
+    assert r.status_code == 401, r.text
+
+
+async def test_reset_customer_password_revokes_existing_sessions(client, mock_db, owner_headers):
+    product = await _seed_product_and_form(mock_db)
+    lead_id = await _create_lead_doc(mock_db, product, mobile="9722221002")
+    await client.post(f"/api/v1/leads/{lead_id}/customer-account", json={"password": "OldPass1!"}, headers=owner_headers)
+
+    r = await client.post("/api/v1/auth/login", json={"mobile": "9722221002", "password": "OldPass1!"})
+    assert r.status_code == 200, r.text
+    refresh_token = r.json()["data"]["refresh_token"]
+
+    r = await client.post(
+        f"/api/v1/leads/{lead_id}/customer-account/reset-password",
+        json={"new_password": "NewPass1!", "confirm_password": "NewPass1!"}, headers=owner_headers,
+    )
+    assert r.status_code == 200, r.text
+
+    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
+    assert r.status_code == 401, r.text
+
+
+async def test_reset_customer_password_rejects_mismatched_confirmation(client, mock_db, owner_headers):
+    product = await _seed_product_and_form(mock_db)
+    lead_id = await _create_lead_doc(mock_db, product, mobile="9722221003")
+    await client.post(f"/api/v1/leads/{lead_id}/customer-account", json={"password": "OldPass1!"}, headers=owner_headers)
+
+    r = await client.post(
+        f"/api/v1/leads/{lead_id}/customer-account/reset-password",
+        json={"new_password": "NewPass1!", "confirm_password": "Different1!"}, headers=owner_headers,
+    )
+    assert r.status_code == 422, r.text
+
+
+async def test_reset_customer_password_rejects_weak_password(client, mock_db, owner_headers):
+    product = await _seed_product_and_form(mock_db)
+    lead_id = await _create_lead_doc(mock_db, product, mobile="9722221004")
+    await client.post(f"/api/v1/leads/{lead_id}/customer-account", json={"password": "OldPass1!"}, headers=owner_headers)
+
+    r = await client.post(
+        f"/api/v1/leads/{lead_id}/customer-account/reset-password",
+        json={"new_password": "weak", "confirm_password": "weak"}, headers=owner_headers,
+    )
+    assert r.status_code == 422, r.text
+
+
+async def test_reset_customer_password_requires_account_created(client, mock_db, owner_headers):
+    product = await _seed_product_and_form(mock_db)
+    lead_id = await _create_lead_doc(mock_db, product, mobile="9722221005")
+
+    r = await client.post(
+        f"/api/v1/leads/{lead_id}/customer-account/reset-password",
+        json={"new_password": "NewPass1!", "confirm_password": "NewPass1!"}, headers=owner_headers,
+    )
+    assert r.status_code == 404, r.text
+
+
+async def test_reset_customer_password_requires_leads_edit_permission(client, mock_db, owner_headers, employee_headers):
+    product = await _seed_product_and_form(mock_db)
+    lead_id = await _create_lead_doc(mock_db, product, mobile="9722221006")
+    await client.post(f"/api/v1/leads/{lead_id}/customer-account", json={"password": "OldPass1!"}, headers=owner_headers)
+
+    r = await client.post(
+        f"/api/v1/leads/{lead_id}/customer-account/reset-password",
+        json={"new_password": "NewPass1!", "confirm_password": "NewPass1!"}, headers=employee_headers,
+    )
+    assert r.status_code == 403, r.text

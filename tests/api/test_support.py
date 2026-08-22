@@ -5,7 +5,31 @@ Notification side-effect (`raise_support_request`) unchanged alongside the new p
 record.
 """
 
-from test_customer import _signup_via_otp
+from bson import ObjectId
+
+from test_customer import _create_employee, _signup_via_otp
+
+
+async def _grant_support_permission(client, owner_headers, employee_id, actions, role_name="Support Role"):
+    r = await client.post("/api/v1/permissions", json={"module": "support", "resource": "tickets", "actions": ["view", "edit"]}, headers=owner_headers)
+    if r.status_code == 200:
+        permission_id = r.json()["data"]["id"]
+    else:
+        existing = await client.get("/api/v1/permissions", headers=owner_headers)
+        permission_id = next(p["id"] for p in existing.json()["data"] if p["module"] == "support" and p["resource"] == "tickets")
+    role = await client.post("/api/v1/roles", json={"name": role_name}, headers=owner_headers)
+    role_id = role.json()["data"]["id"]
+    await client.put(
+        f"/api/v1/roles/{role_id}/permissions",
+        json={"grants": [{"permission_id": permission_id, "granted_actions": actions}]}, headers=owner_headers,
+    )
+    await client.post(f"/api/v1/roles/{role_id}/assign", json={"employee_id": employee_id}, headers=owner_headers)
+
+
+async def _login(client, mobile, password):
+    r = await client.post("/api/v1/auth/login", json={"mobile": mobile, "password": password})
+    assert r.status_code == 200, r.text
+    return {"Authorization": f"Bearer {r.json()['data']['access_token']}"}
 
 
 async def _register_customer(client, mock_db, *, mobile: str) -> dict:
@@ -102,3 +126,77 @@ async def test_create_ticket_rejects_unknown_issue_type(client, mock_db, owner_h
         "/api/v1/support-tickets", json={"issue_type": "not-a-real-type", "priority": "low", "subject": "x", "message": "y"}, headers=customer_headers
     )
     assert r.status_code == 422, r.text
+
+
+# ---------------------------------------------------------------------- production stabilization: staff resolution workflow
+
+
+async def test_staff_with_permission_lists_and_responds_to_ticket(client, mock_db, owner_headers, master_data):
+    customer_headers = await _register_customer(client, mock_db, mobile="9633333310")
+    r = await client.post(
+        "/api/v1/support-tickets",
+        json={"issue_type": "documents", "priority": "high", "subject": "Upload fails", "message": "Keeps erroring"},
+        headers=customer_headers,
+    )
+    ticket_id = r.json()["data"]["id"]
+
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9511119901", email="supportstaff1@example.com")
+    await _grant_support_permission(client, owner_headers, employee["id"], ["view", "edit"])
+    staff_headers = await _login(client, "9511119901", "InitialPass1!")
+
+    r = await client.get("/api/v1/support-tickets", headers=staff_headers)
+    assert r.status_code == 200, r.text
+    assert any(t["id"] == ticket_id for t in r.json()["data"])
+
+    r = await client.patch(
+        f"/api/v1/support-tickets/{ticket_id}", json={"staff_response": "Please try a smaller file.", "status": "resolved"}, headers=staff_headers
+    )
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert data["staff_response"] == "Please try a smaller file."
+    assert data["status"] == "resolved"
+    assert data["responded_by_name"] == "Staff Member"
+
+    # Customer sees the response and updated status on their next fetch.
+    r = await client.get("/api/v1/support-tickets/me", headers=customer_headers)
+    ticket = r.json()["data"][0]
+    assert ticket["staff_response"] == "Please try a smaller file."
+    assert ticket["status"] == "resolved"
+
+
+async def test_staff_without_permission_denied(client, mock_db, owner_headers, master_data, employee_headers):
+    customer_headers = await _register_customer(client, mock_db, mobile="9633333311")
+    r = await client.post(
+        "/api/v1/support-tickets", json={"issue_type": "other", "priority": "low", "subject": "x", "message": "y"}, headers=customer_headers
+    )
+    ticket_id = r.json()["data"]["id"]
+
+    r = await client.get("/api/v1/support-tickets", headers=employee_headers)
+    assert r.status_code == 403, r.text
+
+    r = await client.patch(f"/api/v1/support-tickets/{ticket_id}", json={"staff_response": "Hi"}, headers=employee_headers)
+    assert r.status_code == 403, r.text
+
+
+async def test_employee_with_view_only_cannot_see_ticket_assigned_to_someone_else(client, mock_db, owner_headers, master_data):
+    """IDOR check: an Employee granted only `view` (not the broad-visibility `edit`) and
+    who is not the ticket's own `assigned_to` must not reach another employee's ticket —
+    they can still see unassigned ones."""
+    customer_headers = await _register_customer(client, mock_db, mobile="9633333312")
+    r = await client.post(
+        "/api/v1/support-tickets", json={"issue_type": "other", "priority": "low", "subject": "x", "message": "y"}, headers=customer_headers
+    )
+    ticket_id = r.json()["data"]["id"]
+
+    responder = await _create_employee(client, owner_headers, master_data, mobile="9511119902", email="responder1@example.com")
+    await _grant_support_permission(client, owner_headers, responder["id"], ["view", "edit"], role_name="Responder Role")
+    responder_headers = await _login(client, "9511119902", "InitialPass1!")
+    await client.patch(f"/api/v1/support-tickets/{ticket_id}", json={"staff_response": "On it"}, headers=responder_headers)
+    await mock_db["support_tickets"].update_one({"_id": ObjectId(ticket_id)}, {"$set": {"assigned_to": responder["id"]}})
+
+    bystander = await _create_employee(client, owner_headers, master_data, mobile="9511119903", email="bystander1@example.com")
+    await _grant_support_permission(client, owner_headers, bystander["id"], ["view"], role_name="Viewer Role")
+    bystander_headers = await _login(client, "9511119903", "InitialPass1!")
+
+    r = await client.get(f"/api/v1/support-tickets/{ticket_id}", headers=bystander_headers)
+    assert r.status_code == 403, r.text

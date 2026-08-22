@@ -10,7 +10,7 @@ another customer's communication history).
 from datetime import UTC, datetime
 
 from app.features.leads.constants import LeadActivityType
-from app.features.leads.models import LeadActivity
+from app.features.leads.models import Lead, LeadActivity
 from app.utils.helpers import to_object_id
 from test_customer import _create_employee, _create_lead_doc, _seed_product_and_form, _seed_workflow_definitions, _signup_via_otp
 
@@ -80,6 +80,51 @@ async def test_dashboard_shows_relationship_manager_once_assigned(client, mock_d
     assert rm is not None
     assert rm["id"] == employee["id"]
     assert rm["email"] == "rm@example.com"
+
+
+# ---------------------------------------------------------------------- production stabilization: RM assignment propagation
+
+
+async def test_dashboard_shows_relationship_manager_seeded_from_pre_assigned_lead(client, mock_db, owner_headers, master_data):
+    """Regression test for the "Relationship Manager: Not yet assigned" report. A Lead
+    staff already assigned before the customer ever creates an Application must seed
+    that Application's own `assigned_to` at creation time — the portal dashboard
+    already resolved RM correctly from `Application.assigned_to`, the bug was that
+    field starting null. Covers the direct-portal (Flow 2) `start_application` path."""
+    product = await _seed_product_and_form(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9511111198", email="preassigned-rm@example.com")
+    mobile = "9611111150"
+    lead = Lead(
+        lead_code="AFS-LEAD-PRE1", full_name="Pre Assigned", mobile=mobile, email="pre@example.com",
+        source_id="000000000000000000000000", product_category=product["product_category"], product_id=product["product_id"],
+        assigned_to=employee["id"],
+    )
+    await mock_db["leads"].insert_one(lead.model_dump(by_alias=True, exclude={"id"}))
+
+    customer_headers = await _register_customer(client, mock_db, mobile=mobile)
+    r = await client.post(
+        "/api/v1/applications", json={"product_category": product["product_category"], "product_id": product["product_id"]}, headers=customer_headers
+    )
+    assert r.status_code == 200, r.text
+
+    r = await client.get("/api/v1/customers/me/dashboard", headers=customer_headers)
+    rm = r.json()["data"]["relationship_manager"]
+    assert rm is not None
+    assert rm["id"] == employee["id"]
+
+
+async def test_dashboard_relationship_manager_not_seeded_when_no_matching_lead(client, mock_db, owner_headers):
+    """No false positive: a customer with no matching pre-assigned Lead still starts
+    unassigned, exactly as before this fix."""
+    product = await _seed_product_and_form(mock_db)
+    customer_headers = await _register_customer(client, mock_db, mobile="9611111151")
+    r = await client.post(
+        "/api/v1/applications", json={"product_category": product["product_category"], "product_id": product["product_id"]}, headers=customer_headers
+    )
+    assert r.status_code == 200, r.text
+
+    r = await client.get("/api/v1/customers/me/dashboard", headers=customer_headers)
+    assert r.json()["data"]["relationship_manager"] is None
 
 
 async def test_application_timeline_reflects_draft_then_submitted(client, mock_db, owner_headers):

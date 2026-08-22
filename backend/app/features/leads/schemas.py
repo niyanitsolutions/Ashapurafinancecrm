@@ -102,6 +102,17 @@ class CreateCustomerAccountRequest(BaseModel):
     password: PasswordStr
 
 
+class ResetCustomerPasswordRequest(BaseModel):
+    """Staff "Reset Customer Password" (see CustomerService.reset_customer_password) —
+    same PasswordStr complexity/length rule as every other password-setting schema in
+    this codebase, plus an explicit confirm field so a typo can't silently lock the
+    customer out (validated in the service, where the mismatch error message can name
+    the field clearly)."""
+
+    new_password: PasswordStr
+    confirm_password: PasswordStr
+
+
 class AddNoteRequest(BaseModel):
     text: str = Field(min_length=1)
 

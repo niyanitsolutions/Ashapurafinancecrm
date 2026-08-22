@@ -240,6 +240,16 @@ export function createCustomerAccount(leadId: string, password: string) {
   return apiRequest<LeadDetail>(`/leads/${leadId}/customer-account`, { method: "POST", body: JSON.stringify({ password }) });
 }
 
+// Staff-initiated password reset for an already-created customer account (see backend
+// CustomerService.reset_customer_password) — reuses the same hashing/session-revocation
+// primitives as every other password-set path, no second auth mechanism.
+export function resetCustomerPassword(leadId: string, newPassword: string, confirmPassword: string) {
+  return apiRequest<{ success: boolean }>(`/leads/${leadId}/customer-account/reset-password`, {
+    method: "POST",
+    body: JSON.stringify({ new_password: newPassword, confirm_password: confirmPassword }),
+  });
+}
+
 export interface EligibleAssignee {
   id: string;
   display_name: string;

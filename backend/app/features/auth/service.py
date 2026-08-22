@@ -222,6 +222,13 @@ class AuthService:
         assert updated is not None
         return updated
 
+    async def revoke_all_sessions_for_user(self, user_id: str) -> None:
+        """Public wrapper around `_revoke_all_sessions` for other services to compose
+        (e.g. `CustomerService.reset_customer_password`'s staff-initiated reset) — same
+        primitive `activate_user_with_password`/`reset_password` already use internally,
+        just exposed for cross-module reuse instead of duplicating the query/update."""
+        await self._revoke_all_sessions(user_id)
+
     async def _revoke_all_sessions(self, user_id: str) -> None:
         sessions = await self._sessions.find_many({"user_id": user_id, "status": SESSION_STATUS_ACTIVE}, limit=200)
         for session in sessions:

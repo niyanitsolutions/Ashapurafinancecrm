@@ -1370,9 +1370,12 @@ async def _seed_document_type(mock_db, name):
     return str(result.inserted_id)
 
 
-async def _seed_application(mock_db, *, lead_id, form_definition_id, product_category, product_id, status="draft", user_id="000000000000000000000099"):
+async def _seed_application(
+    mock_db, *, lead_id, form_definition_id, product_category, product_id, status="draft",
+    user_id="000000000000000000000099", customer_id=None,
+):
     application = Application(
-        application_code="AFS-APP-TEST", user_id=user_id, lead_id=lead_id,
+        application_code="AFS-APP-TEST", user_id=user_id, lead_id=lead_id, customer_id=customer_id,
         product_category=product_category, product_id=product_id, form_definition_id=form_definition_id, status=status,
     )
     result = await mock_db["applications"].insert_one(application.model_dump(by_alias=True, exclude={"id"}))
@@ -1435,6 +1438,65 @@ async def test_document_collection_list_shows_submitted(client, mock_db, owner_h
     row = next(x for x in r.json()["data"] if x["id"] == lead["id"])
     assert row["application_status"] == "submitted"
     assert row["application_id"] == application_id
+
+
+# ---------------------------------------------------------------------- production stabilization: "No application yet" linkage fix
+
+
+async def test_document_collection_falls_back_to_customer_id_when_lead_id_is_null(client, mock_db, owner_headers, master_data):
+    """Regression test for the "Document Collection shows 'No application yet' for a
+    real submitted application" report. `Application.lead_id` is only ever set by the
+    secure-link claim flow (Flow 1) — a Flow-2/direct-portal application (or any Flow-1
+    customer continuing an application via `start_application` after profile
+    completion) has `lead_id=None` even though `Lead.customer_id`/`Application.customer_id`
+    are reliably linked. Both the detail endpoint (`GET /leads/{id}`) and the batched
+    Document Collection list view must resolve the application via that customer_id
+    join rather than reporting "No application yet"."""
+    from app.utils.helpers import to_object_id
+
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880070", email="dcfallback1@example.com")
+    lead = await _lead_in_document_collection(client, owner_headers, lmd, "9611160099", employee["id"])
+
+    customer_id = "000000000000000000000abc"
+    await mock_db["leads"].update_one({"_id": to_object_id(lead["id"])}, {"$set": {"customer_id": customer_id}})
+
+    doc_type_id = await _seed_document_type(mock_db, "PAN")
+    form_def_id = await _seed_form_definition(mock_db, "loan", lmd["loan_product_id"], document_type_ids=[doc_type_id])
+    application_id = await _seed_application(
+        mock_db, lead_id=None, customer_id=customer_id, form_definition_id=form_def_id,
+        product_category="loan", product_id=lmd["loan_product_id"], status="submitted",
+    )
+    await _seed_document(mock_db, application_id=application_id, document_type_id=doc_type_id, verification_status="verified")
+
+    # Detail endpoint
+    r = await client.get(f"/api/v1/leads/{lead['id']}", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    detail = r.json()["data"]
+    assert detail["application_id"] == application_id
+    assert detail["application_status"] == "submitted"
+    assert detail["documents_required"] == 1
+    assert detail["documents_verified"] == 1
+    assert detail["all_documents_verified"] is True
+
+    # Batched Document Collection list view
+    r = await client.get("/api/v1/leads?stage=document_collection", headers=owner_headers)
+    row = next(x for x in r.json()["data"] if x["id"] == lead["id"])
+    assert row["application_id"] == application_id
+    assert row["application_status"] == "submitted"
+
+
+async def test_document_collection_still_reports_pending_with_no_application_and_no_customer_link(client, mock_db, owner_headers, master_data):
+    """The customer_id fallback must not manufacture a false positive: a lead with
+    neither a lead_id-linked nor a customer_id-linked application still correctly shows
+    "Pending" (application_id=None), not an error."""
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880071", email="dcfallback2@example.com")
+    lead = await _lead_in_document_collection(client, owner_headers, lmd, "9611160098", employee["id"])
+
+    r = await client.get(f"/api/v1/leads/{lead['id']}", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["application_id"] is None
 
 
 async def test_lead_detail_document_completion_summary_ignores_superseded_documents(client, mock_db, owner_headers, master_data):
@@ -1799,3 +1861,38 @@ async def test_reject_requires_reject_permission(client, mock_db, owner_headers,
     lead = await _create_lead(client, headers, lmd, mobile="9611170031", assigned_to="__self__")
     r = await client.post(f"/api/v1/leads/{lead['id']}/reject", json={"reason": "Not a fit"}, headers=headers)
     assert r.status_code == 403, r.text
+
+
+# ---------------------------------------------------------------------- production stabilization: Reject Lead visibility
+
+
+async def test_reject_succeeds_with_reject_permission_only_no_edit(client, mock_db, owner_headers, master_data):
+    """Regression test for the "Employee with reject permission can't see Reject Lead"
+    report. Backend enforcement was already correct (gated on `reject`, not `edit`) — the
+    real bug was the frontend's "Update" action requiring `edit` to even open the modal
+    containing the Reject button. This proves the backend side of the fix: an employee
+    granted ONLY `leads:leads:reject` (view+reject, no edit) can reject an assigned lead."""
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880067", email="rejectonly1@example.com")
+    await _grant_leads_actions(client, owner_headers, employee["id"], ["view", "reject"], role_name="Reject Only Role")
+
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611170032")
+    await client.post(f"/api/v1/leads/{lead['id']}/assign", json={"employee_id": employee["id"]}, headers=owner_headers)
+
+    headers = await _login(client, "9788880067")
+    r = await client.post(f"/api/v1/leads/{lead['id']}/reject", json={"reason": "Not qualified"}, headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["stage"] == "rejected"
+
+
+async def test_owner_can_always_reject(client, mock_db, owner_headers, master_data):
+    """Owner bypasses the permission engine entirely (has both edit and reject
+    implicitly) — sanity check this remains true after the frontend gating change."""
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880068", email="ownerreject1@example.com")
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611170033")
+    await client.post(f"/api/v1/leads/{lead['id']}/assign", json={"employee_id": employee["id"]}, headers=owner_headers)
+
+    r = await client.post(f"/api/v1/leads/{lead['id']}/reject", json={"reason": "Owner decision"}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["stage"] == "rejected"

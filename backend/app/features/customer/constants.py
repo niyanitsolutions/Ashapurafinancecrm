@@ -134,6 +134,7 @@ class AuditEvent:
     DOCUMENT_VERIFIED = "document_verified"
     DOCUMENT_REJECTED = "document_rejected"
     DOCUMENT_MARKED_UNAVAILABLE = "document_marked_unavailable"
+    CUSTOMER_PASSWORD_RESET_BY_STAFF = "customer_password_reset_by_staff"
 
     # Product Schema Engine governance — one entry per mutation, read back by
     # `GET /product-schemas/audit` (see CustomerService). `metadata.changes` on

@@ -155,9 +155,16 @@ function RelationshipManagerCard({ dashboard }: { dashboard: PortalDashboard }) 
       ) : (
         <p className="text-sm text-text/40 mb-4">Not yet assigned — we'll let you know once someone is handling your application.</p>
       )}
-      <Link to="/portal/support" className="mt-auto text-sm font-medium text-primary hover:underline">
-        Contact Support →
-      </Link>
+      <div className="mt-auto flex items-center gap-4">
+        {rm && (
+          <Link to="/portal/messages" className="text-sm font-medium text-primary hover:underline">
+            Contact RM →
+          </Link>
+        )}
+        <Link to="/portal/support" className="text-sm font-medium text-primary hover:underline">
+          Contact Support →
+        </Link>
+      </div>
     </div>
   );
 }

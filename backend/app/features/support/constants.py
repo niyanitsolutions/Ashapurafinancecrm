@@ -21,13 +21,18 @@ class Priority:
 
 
 class TicketStatus:
-    # Only one value exists this round — same precedent as Module 6A's Lead.status
-    # (only NEW exists until a real pipeline is scoped); a future resolution workflow
-    # is additive data at that point, not a code change now.
+    # Production stabilization pass — a real, minimal staff-resolution lifecycle,
+    # replacing the "only OPEN exists" placeholder now that a staff-facing view/respond
+    # workflow is actually being built (was previously deferred, see models.py's
+    # original docstring).
     OPEN = "open"
+    IN_PROGRESS = "in_progress"
+    RESOLVED = "resolved"
+    CLOSED = "closed"
 
-    ALL = (OPEN,)
+    ALL = (OPEN, IN_PROGRESS, RESOLVED, CLOSED)
 
 
 class AuditEvent:
     TICKET_CREATED = "support_ticket_created"
+    TICKET_RESPONDED = "support_ticket_responded"

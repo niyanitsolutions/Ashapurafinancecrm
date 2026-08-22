@@ -271,6 +271,16 @@ async def seed_permission_catalog() -> None:
             label="Referral Partners",
         )
     )
+    # Production stabilization pass — staff-side Support Ticket resolution workflow
+    # (list/respond), additive on top of the existing customer create/list-own model.
+    entries.append(
+        Permission(module="support", resource="tickets", actions=[PermissionAction.VIEW, PermissionAction.EDIT], label="Support Tickets")
+    )
+    # Production stabilization pass — the new `messaging` module ("Message your RM"),
+    # a real two-way Customer<->Staff conversation (no prior module built one to reuse).
+    entries.append(
+        Permission(module="messaging", resource="conversations", actions=[PermissionAction.VIEW, PermissionAction.CREATE], label="Customer Messages")
+    )
 
     for entry in entries:
         payload = entry.model_dump(by_alias=True, exclude={"id"})
@@ -995,6 +1005,27 @@ async def seed_ui_navigation_nav_items() -> None:
     print(f"nav items: ensured {len(nav_defs)} previously-unlinked entries")
 
 
+async def seed_support_and_messaging_nav_items() -> None:
+    """Production stabilization pass — staff-facing Support Ticket queue and Customer
+    Messages (the new `messaging` module), same permission-gated NavItem pattern every
+    prior module's own staff nav entry already uses."""
+    db = get_database()
+    nav_defs = [
+        NavItem(
+            key="support_tickets", label="Support Tickets", route="/support-tickets", order=45,
+            required_module="support", required_resource="tickets", required_action=PermissionAction.VIEW,
+        ),
+        NavItem(
+            key="messaging", label="Customer Messages", route="/conversations", order=46,
+            required_module="messaging", required_resource="conversations", required_action=PermissionAction.VIEW,
+        ),
+    ]
+    for nav_item in nav_defs:
+        payload = nav_item.model_dump(by_alias=True, exclude={"id"})
+        await db["nav_items"].update_one({"key": nav_item.key}, {"$setOnInsert": payload}, upsert=True)
+    print(f"nav items: ensured {len(nav_defs)} production stabilization entries")
+
+
 async def main() -> None:
     await seed_counters()
     await seed_permission_catalog()
@@ -1017,6 +1048,7 @@ async def main() -> None:
     await seed_lead_capture_nav_item()
     await seed_communication_nav_item()
     await seed_ui_navigation_nav_items()
+    await seed_support_and_messaging_nav_items()
 
 
 if __name__ == "__main__":

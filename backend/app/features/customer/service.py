@@ -421,6 +421,7 @@ class CustomerService:
             application = await self._create_application(
                 user_id=actor.require_id(), customer_id=customer.require_id() if customer else None, lead_id=lead_id,
                 product_category=lead.product_category, product_id=lead.product_id, form_definition=form_def, actor=actor,
+                initial_assigned_to=lead.assigned_to,
             )
             await self._log_lead_timeline(lead_id, LeadTimelineEvent.CUSTOMER_STARTED_APPLICATION, {"application_id": application.require_id()})
 
@@ -664,6 +665,38 @@ class CustomerService:
         profile = CompleteProfileRequest(full_name=lead.full_name, email=lead.email)
         return await self._create_customer_from_profile(profile, new_user, converted_from_lead_id=lead_id)
 
+    async def reset_customer_password(self, lead_id: str, new_password: str, confirm_password: str, actor: User) -> None:
+        """Staff "Reset Customer Password" — My Leads' Update Lead -> Create Customer
+        Account panel, once an account already exists. Reuses the exact same primitives
+        `create_staff_initiated_account` above and `AuthService.activate_user_with_password`
+        already use (bcrypt hashing via `hash_password`, `PasswordStr` complexity rule at
+        the schema layer) — no second authentication mechanism. Sessions are revoked the
+        same way a self-service password reset already revokes them
+        (`AuthService.revoke_all_sessions_for_user`), so a stolen old session can't
+        outlive this reset."""
+        if new_password != confirm_password:
+            raise ValidationError("New password and confirm password do not match.")
+
+        lead = await self._leads.find_by_id(lead_id)
+        if lead is None:
+            raise NotFoundError("Lead not found.")
+        if not lead.account_created:
+            raise NotFoundError("This lead does not have a customer account yet.")
+
+        user = await self._users.find_by_mobile(lead.mobile)
+        if user is None or user.role != CUSTOMER:
+            raise NotFoundError("Customer account not found.")
+
+        await self._users.update(
+            user.require_id(),
+            {"password_hash": hash_password(new_password), "must_change_password": False},
+        )
+        await self._auth.revoke_all_sessions_for_user(user.require_id())
+        await write_audit_log(
+            self._db, event_type=AuditEvent.CUSTOMER_PASSWORD_RESET_BY_STAFF, user_id=actor.require_id(),
+            metadata={"lead_id": lead_id, "customer_user_id": user.require_id()},
+        )
+
     # ================================================================== applications (customer side)
 
     async def start_application(self, payload: StartApplicationRequest, actor: User) -> Application:
@@ -671,20 +704,38 @@ class CustomerService:
         if customer is None:
             raise ValidationError("Complete your profile before starting an application.")
         form_def = await self._get_or_error_form_definition(payload.product_category, payload.product_id)
+        initial_assigned_to = await self._resolve_initial_assigned_to(actor.mobile, payload.product_category, payload.product_id)
         return await self._create_application(
             user_id=actor.require_id(), customer_id=customer.require_id(), lead_id=None,
             product_category=payload.product_category, product_id=payload.product_id, form_definition=form_def, actor=actor,
+            initial_assigned_to=initial_assigned_to,
         )
+
+    async def _resolve_initial_assigned_to(self, mobile: str, product_category: str, product_id: str) -> str | None:
+        """Seeds a new (Flow 2 / continuing) Application's initial assignment from any
+        pre-existing Lead sharing this customer's mobile and product — same
+        mobile-matching primitive `_link_existing_leads_to_customer` already uses.
+        Without this, a Lead staff already assigned before the customer ever creates an
+        Application would leave that Application unassigned, and the portal's RM display
+        (`get_portal_dashboard`, which already reads `Application.assigned_to` correctly)
+        would incorrectly show "Not yet assigned" until a separate staff re-assignment.
+        Best-effort: a customer with no matching Lead, or none of them assigned, starts
+        unassigned exactly as before this fix — staff can always assign afterward via the
+        existing assign_application/assign_case actions."""
+        for lead in await self._leads.find_by_mobile(mobile):
+            if lead.product_category == product_category and lead.product_id == product_id and lead.assigned_to:
+                return lead.assigned_to
+        return None
 
     async def _create_application(
         self, *, user_id: str, customer_id: str | None, lead_id: str | None, product_category: str, product_id: str,
-        form_definition: ApplicationFormDefinition, actor: User,
+        form_definition: ApplicationFormDefinition, actor: User, initial_assigned_to: str | None = None,
     ) -> Application:
         code = await generate_id(self._db, IdPrefix.APPLICATION)
         application = Application(
             application_code=code, user_id=user_id, customer_id=customer_id, lead_id=lead_id,
             product_category=product_category, product_id=product_id, form_definition_id=form_definition.require_id(),
-            created_by=actor.require_id(),
+            assigned_to=initial_assigned_to, created_by=actor.require_id(),
         )
         application_id = await self._applications.insert(application)
         await write_audit_log(
@@ -1646,6 +1697,27 @@ class CustomerService:
             return "Approved"
         return "Under Review"
 
+    async def _resolve_rm_employee_id_for_application(self, application: Application) -> str | None:
+        """The one place that decides "who is this Application's Relationship Manager" —
+        a Loan/Insurance Case's own assignment once one exists, else the Application's own
+        `assigned_to` (kept as a live mirror of the case's, see `Application.assigned_to`'s
+        docstring). Read-only — never triggers the Workflow Engine's own lazy
+        case-creation (that side effect is deliberately staff-side only, decision 058); a
+        submitted Application with no case yet just means no staff member has opened it
+        yet. Shared by the portal dashboard's own RM card and the `messaging` module's
+        conversation-routing (no second implementation of this lookup)."""
+        case = await self._workflows.find_by_application_id(application.require_id())
+        return case.assigned_to if case is not None else application.assigned_to
+
+    async def get_relationship_manager_employee_id(self, actor: User) -> str | None:
+        """Public entry point for other modules (e.g. `messaging`) that need to resolve
+        the calling Customer's current RM without duplicating `_resolve_primary_application`
+        + `_resolve_rm_employee_id_for_application`."""
+        application = await self._resolve_primary_application(actor)
+        if application is None:
+            return None
+        return await self._resolve_rm_employee_id_for_application(application)
+
     async def _resolve_relationship_manager(self, employee_id: str | None) -> RelationshipManagerResponse | None:
         if not employee_id:
             return None
@@ -1750,10 +1822,10 @@ class CustomerService:
         product_name = await self.resolve_product_name(application.product_category, application.product_id)
 
         # Read-only lookup — never triggers the Workflow Engine's own lazy case-creation
-        # (that side effect is deliberately staff-side only, decision 058); a submitted
-        # Application with no case yet just means no staff member has opened it yet.
+        # (deliberately staff-side only, decision 058); a submitted Application with no
+        # case yet just means no staff member has opened it yet.
         case = await self._workflows.find_by_application_id(application.require_id())
-        rm_employee_id = case.assigned_to if case is not None else application.assigned_to
+        rm_employee_id = await self._resolve_rm_employee_id_for_application(application)
         relationship_manager = await self._resolve_relationship_manager(rm_employee_id)
 
         if case is None:

@@ -145,9 +145,18 @@ export function SupportPage() {
                   {t.ticket_code} · {t.issue_type} · {t.assigned_to_name ?? "Unassigned"}
                 </p>
                 <div className="flex items-center justify-between text-xs text-text/40">
-                  <span className="capitalize">{t.status}</span>
+                  <span className="capitalize">{t.status.replace(/_/g, " ")}</span>
                   <span>{formatISTDateTime(t.created_at)}</span>
                 </div>
+                {t.staff_response && (
+                  <div className="mt-2 rounded-lg bg-background p-2.5 text-xs text-text/70">
+                    <p className="mb-0.5 font-medium text-text/50">
+                      Response from {t.responded_by_name ?? "our team"}
+                      {t.responded_at ? ` · ${formatISTDateTime(t.responded_at)}` : ""}
+                    </p>
+                    <p>{t.staff_response}</p>
+                  </div>
+                )}
               </div>
             ))}
           </div>

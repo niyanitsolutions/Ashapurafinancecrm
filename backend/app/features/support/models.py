@@ -4,11 +4,15 @@ Task/Notification side-effect to the assigned Relationship Manager / Owners) —
 untouched and keeps firing on every ticket creation; this adds a queryable history the
 customer can actually see, which the old flow never provided.
 
-Deliberately Create + List-own only: `assigned_to` is reserved (same "reserve a slot, no
-logic" posture as IntegrationConfig.health_status / ReferralPartner.parent_partner_id) —
-a future staff-side ticket-resolution workflow is additive data, not a redesign, when it's
-actually asked for.
+Production stabilization pass — added the staff-side resolution workflow (list/respond),
+additive on top of the original Create + List-own model: `assigned_to` is now written
+(previously reserved/unused), and `staff_response`/`responded_by`/`responded_at` record a
+single staff reply, matching this codebase's other "one response, not a thread" precedents
+rather than inventing a new conversation model here (see the separate `messaging` module
+for actual two-way conversations).
 """
+
+from datetime import datetime
 
 from pydantic import Field
 
@@ -24,8 +28,12 @@ class SupportTicket(BaseDocument):
     subject: str
     message: str
     attachment_s3_key: str | None = None
-    assigned_to: str | None = None  # ref: employees — reserved, unused this round
+    assigned_to: str | None = None  # ref: employees
+
+    staff_response: str | None = None
+    responded_by: str | None = None  # ref: users (the staff member who responded)
+    responded_at: datetime | None = None
 
     # Overrides BaseDocument.status's generic "active" default with this collection's own
-    # (currently one-value) lifecycle vocabulary — see TicketStatus.
+    # lifecycle vocabulary — see TicketStatus.
     status: str = Field(default=TicketStatus.OPEN, pattern=f"^({'|'.join(TicketStatus.ALL)})$")

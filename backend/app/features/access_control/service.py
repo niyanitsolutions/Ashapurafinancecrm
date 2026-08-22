@@ -82,6 +82,8 @@ _MY_PERMISSIONS_CATALOG: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("communication", "queue", ("view", "edit")),
     ("communication", "send", ("view", "create")),
     ("communication", "bulk", ("view", "create", "edit")),
+    ("support", "tickets", ("view", "edit")),
+    ("messaging", "conversations", ("view", "create")),
 )
 
 

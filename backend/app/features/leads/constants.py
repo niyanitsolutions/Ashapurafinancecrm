@@ -78,12 +78,13 @@ class LeadActivityType:
     FOLLOW_UP_SET = "follow_up_set"
     FINANCIAL_ASSESSMENT_UPDATED = "financial_assessment_updated"
     CUSTOMER_ACCOUNT_CREATED = "customer_account_created"
+    CUSTOMER_PASSWORD_RESET = "customer_password_reset"
     MOVED_TO_LOAN_MANAGEMENT = "moved_to_loan_management"
 
     ALL = (
         CREATED, UPDATED, ASSIGNED, UNASSIGNED, NOTE_ADDED, DUPLICATE_DETECTED,
         STAGE_CHANGED, REJECTED, FOLLOW_UP_SET, FINANCIAL_ASSESSMENT_UPDATED, CUSTOMER_ACCOUNT_CREATED,
-        MOVED_TO_LOAN_MANAGEMENT,
+        CUSTOMER_PASSWORD_RESET, MOVED_TO_LOAN_MANAGEMENT,
     )
 
 

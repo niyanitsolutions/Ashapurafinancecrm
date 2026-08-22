@@ -31,6 +31,7 @@ from app.features.leads.schemas import (
     LookupItem,
     NoteResponse,
     RejectLeadRequest,
+    ResetCustomerPasswordRequest,
     SetStageRequest,
     TimelineEntryResponse,
     UpdateLeadRequest,
@@ -246,6 +247,22 @@ async def create_customer_account(
     lead = await service.get_lead_scoped(lead_id, actor)
     source_map, product_map, employee_map, actor_name_map = await service.resolve_names([lead])
     return ApiResponse[LeadDetailResponse].ok(await _detail(service, lead, source_map, product_map, employee_map, actor_name_map))
+
+
+@router.post("/{lead_id}/customer-account/reset-password")
+async def reset_customer_password(
+    lead_id: str,
+    payload: ResetCustomerPasswordRequest,
+    service: ServiceDep,
+    actor: Annotated[User, _perm("edit")],
+    customer_service: Annotated[CustomerService, Depends(get_customer_service)],
+) -> ApiResponse[dict[str, bool]]:
+    # Same cross-module composition shape as create_customer_account above — Module 6B
+    # (Customer) owns the account/auth primitives, this endpoint only invokes it and
+    # keeps the Lead's own audit trail.
+    await customer_service.reset_customer_password(lead_id, payload.new_password, payload.confirm_password, actor)
+    await service.log_activity(lead_id, LeadActivityType.CUSTOMER_PASSWORD_RESET, actor, {})
+    return ApiResponse[dict[str, bool]].ok({"success": True})
 
 
 @router.get("/{lead_id}/timeline")
