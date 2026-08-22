@@ -41,6 +41,7 @@ from app.features.lead_capture.router import public_router as lead_capture_publi
 from app.features.lead_capture.router import router as lead_capture_router
 from app.features.leads.indexes import ensure_lead_indexes
 from app.features.leads.router import router as leads_router
+from app.features.loan_management.indexes import ensure_loan_management_indexes
 from app.features.loan_management.router import router as loan_management_router
 from app.features.owner.indexes import ensure_owner_indexes
 from app.features.owner.router import router as owner_router
@@ -78,6 +79,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await ensure_lead_indexes(get_database())
     await ensure_customer_indexes(get_database())
     await ensure_workflow_engine_indexes(get_database())
+    await ensure_loan_management_indexes(get_database())
     await ensure_reminders_indexes(get_database())
     await ensure_referral_partner_management_indexes(get_database())
     await ensure_reporting_indexes(get_database())

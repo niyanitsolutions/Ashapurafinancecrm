@@ -1,8 +1,8 @@
 from datetime import datetime
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
-from app.features.workflow_engine.constants import LoanStatus
+from app.features.workflow_engine.constants import BankOfferDecision, LoanStatus
 
 
 class LoanStatusUpdateRequest(BaseModel):
@@ -13,6 +13,7 @@ class LoanStatusUpdateRequest(BaseModel):
     docstring for why only some transitions actually succeed through this endpoint."""
 
     status: str
+    remarks: str | None = None
 
     @field_validator("status")
     @classmethod
@@ -32,16 +33,44 @@ class BankDetailsRequest(BaseModel):
 
 
 class CreditEvaluationRequest(BaseModel):
+    """Case-level credit score/remarks only (decision #129) — data capture, independent
+    of any individual bank/NBFC's own decision (`BankOfferRequest.decision`, below) and
+    never itself moves the case out of Credit Evaluation. The case advances only via a
+    bank-offer selection (`POST .../bank-offers/{offer_id}/select`) or the generic plain
+    status update (Rejected/Re-Eligible)."""
+
     credit_score: int | None = None
     credit_remarks: str | None = None
-    decision: str  # "approved" | "rejected"
-    rejection_reason: str | None = None
 
 
-class OfferRequest(BaseModel):
-    offered_amount: float
-    offered_tenure_months: int
-    offered_interest_rate: float
+class BankOfferRequest(BaseModel):
+    """Add or edit one bank/NBFC's offer on a Loan Case — a case can carry any number of
+    these; adding one never overwrites another (decision #129, superseding the old
+    single-slot `BankDetailsRequest`/`OfferRequest` flow for Credit Evaluation/Offer
+    Acceptance)."""
+
+    bank_name: str
+    bank_application_id: str | None = None
+    reference_number: str | None = None
+    assigned_officer: str | None = None
+    decision: str
+    approved_amount: float | None = None
+    remarks: str | None = None
+
+    @field_validator("decision")
+    @classmethod
+    def _decision_must_be_valid(cls, value: str) -> str:
+        if value not in BankOfferDecision.ALL:
+            raise ValueError(f"'{value}' is not a valid bank offer decision.")
+        return value
+
+    @model_validator(mode="after")
+    def _approved_amount_required_iff_approved(self) -> "BankOfferRequest":
+        if self.decision == BankOfferDecision.APPROVED and self.approved_amount is None:
+            raise ValueError("approved_amount is required when decision is 'approved'.")
+        if self.decision != BankOfferDecision.APPROVED:
+            self.approved_amount = None
+        return self
 
 
 class EsignNachKycRequest(BaseModel):
@@ -95,6 +124,8 @@ class LoanCaseListItem(BaseModel):
     assigned_to_name: str | None
     current_status: str
     rejection_reason: str | None
+    selected_bank_name: str | None = None
+    approved_amount: float | None = None
     created_at: datetime
 
 
@@ -102,3 +133,51 @@ class LoanCaseDetailResponse(LoanCaseListItem):
     pending_document_type_ids: list[str]
     loan_details: LoanCaseDetailsResponse
     updated_at: datetime
+
+
+class BankOfferResponse(BaseModel):
+    """Full, staff-only view of one bank offer."""
+
+    id: str
+    loan_case_id: str
+    bank_name: str
+    bank_application_id: str | None
+    reference_number: str | None
+    assigned_officer: str | None
+    decision: str
+    approved_amount: float | None
+    remarks: str | None
+    is_selected: bool
+    selected_at: datetime | None
+    selected_by: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CustomerBankOfferResponse(BaseModel):
+    """Customer-facing view — approved offers only, trimmed to exactly the fields the
+    spec allows a customer to see. No bank_application_id/reference_number/
+    assigned_officer/remarks/decision — those are staff-only (decision #129)."""
+
+    id: str
+    bank_name: str
+    approved_amount: float
+
+
+class LoanCaseCountsResponse(BaseModel):
+    """Server-computed tab badge counts — one per `LoanStatus.ALL` value, same
+    "never trust the currently-loaded page" principle Leads' `GET /leads/counts`
+    established (decision #125)."""
+
+    new_customer: int
+    credit_evaluation: int
+    offer_acceptance: int
+    additional_documents: int
+    rv_ov_ref: int
+    esign_nach_kyc: int
+    final_evaluation: int
+    send_for_disbursement: int
+    disbursed: int
+    on_hold: int
+    re_eligible: int
+    rejected: int

@@ -47,6 +47,12 @@ const OPTIONAL_COLUMNS: ColumnOption[] = [
 // bits. Each real module wraps it in a ~15-line file (see LoanCaseListPage.tsx /
 // InsuranceCaseListPage.tsx) that only supplies its own API call, status labels, icon,
 // and detail route.
+export interface CaseListExtraColumn<T> {
+  key: string;
+  label: string;
+  render: (item: T) => React.ReactNode;
+}
+
 export function CaseListPage<T extends CaseListItem>({
   icon,
   entityLabel,
@@ -59,6 +65,7 @@ export function CaseListPage<T extends CaseListItem>({
   defaultDescription,
   reEligibleDescription,
   emptyStateDescription,
+  extraColumns,
 }: {
   icon: IconName;
   entityLabel: string;
@@ -73,6 +80,10 @@ export function CaseListPage<T extends CaseListItem>({
   emptyStateDescription: string;
   defaultDescription: string;
   reEligibleDescription: string;
+  /** Extra columns after Assigned To/Status, before Actions — e.g. Loan's Selected
+   * Bank/Approved Amount (spec §26). Omit for a module with nothing extra to show
+   * (Insurance's own wrapper passes none, unaffected by this addition). */
+  extraColumns?: CaseListExtraColumn<T>[];
 }) {
   const { role } = useAuth();
   const [searchParams] = useSearchParams();
@@ -98,7 +109,7 @@ export function CaseListPage<T extends CaseListItem>({
       return next;
     });
   const isVisible = (key: string) => visibleColumns.has(key);
-  const columnCount = 2 + OPTIONAL_COLUMNS.filter((c) => isVisible(c.key)).length;
+  const columnCount = 2 + OPTIONAL_COLUMNS.filter((c) => isVisible(c.key)).length + (extraColumns?.length ?? 0);
 
   const hasCustomFilters = !fixedStatus && !reEligible;
 
@@ -226,6 +237,7 @@ export function CaseListPage<T extends CaseListItem>({
                   {isVisible("product") && <Th>Product</Th>}
                   {isVisible("assigned_to") && <Th>Assigned To</Th>}
                   {isVisible("status") && <Th>Status</Th>}
+                  {extraColumns?.map((col) => <Th key={col.key}>{col.label}</Th>)}
                   <Th>Actions</Th>
                 </TableHeadRow>
               </TableHead>
@@ -280,6 +292,7 @@ export function CaseListPage<T extends CaseListItem>({
                         <StatusBadge status={c.current_status} label={statusLabels[c.current_status]} />
                       </Td>
                     )}
+                    {extraColumns?.map((col) => <Td key={col.key}>{col.render(c)}</Td>)}
                     <Td>
                       <ActionButton to={`${detailBasePath}/${c.id}`} variant="view" />
                     </Td>

@@ -19,6 +19,7 @@ import { RequireCustomer } from "@/features/customer/components/RequireCustomer"
 import { ApplicationListPage } from "@/features/customer/pages/ApplicationListPage";
 import { ApplicationPage } from "@/features/customer/pages/ApplicationPage";
 import { ApplicationTimelinePage } from "@/features/customer/pages/ApplicationTimelinePage";
+import { LoanOffersPage } from "@/features/customer/pages/LoanOffersPage";
 import { CompleteProfilePage } from "@/features/customer/pages/CompleteProfilePage";
 import { CustomerDetailsPage } from "@/features/customer/pages/CustomerDetailsPage";
 import { CustomerListPage } from "@/features/customer/pages/CustomerListPage";
@@ -217,9 +218,17 @@ export const router = createBrowserRouter([
             element: <LoanManagementLayout />,
             children: [
               { index: true, element: <Navigate to="/loan-management/cases" replace /> },
-              { path: "cases", element: <LoanCaseListPage /> },
+              { path: "cases", element: <LoanCaseListPage fixedStatus="new_customer" /> },
+              { path: "credit-evaluation", element: <LoanCaseListPage fixedStatus="credit_evaluation" /> },
+              { path: "offer-acceptance", element: <LoanCaseListPage fixedStatus="offer_acceptance" /> },
+              { path: "additional-documents", element: <LoanCaseListPage fixedStatus="additional_documents" /> },
+              { path: "rv-ov-ref", element: <LoanCaseListPage fixedStatus="rv_ov_ref" /> },
+              { path: "esign-nach-kyc", element: <LoanCaseListPage fixedStatus="esign_nach_kyc" /> },
+              { path: "final-evaluation", element: <LoanCaseListPage fixedStatus="final_evaluation" /> },
+              { path: "send-for-disbursement", element: <LoanCaseListPage fixedStatus="send_for_disbursement" /> },
               { path: "disbursements", element: <LoanCaseListPage fixedStatus="disbursed" /> },
-              { path: "re-eligible", element: <LoanCaseListPage reEligible /> },
+              { path: "on-hold", element: <LoanCaseListPage fixedStatus="on_hold" /> },
+              { path: "re-eligible", element: <LoanCaseListPage fixedStatus="re_eligible" /> },
               { path: "rejected", element: <LoanCaseListPage fixedStatus="rejected" /> },
             ],
           },
@@ -376,6 +385,7 @@ export const router = createBrowserRouter([
               { path: "/portal/applications/new", element: <ProductSelectionPage /> },
               { path: "/portal/applications/:id", element: <ApplicationPage /> },
               { path: "/portal/applications/:id/timeline", element: <ApplicationTimelinePage /> },
+              { path: "/portal/applications/:id/loan-offers", element: <LoanOffersPage /> },
               { path: "/portal/documents", element: <DocumentsPage /> },
               { path: "/portal/messages", element: <MessagesPage /> },
               { path: "/portal/notifications", element: <MessagesPage /> },

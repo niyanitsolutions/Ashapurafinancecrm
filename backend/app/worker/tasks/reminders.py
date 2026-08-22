@@ -15,6 +15,8 @@ from datetime import timedelta
 from typing import Any
 
 from app.config.database import get_database
+from app.constants.roles import OWNER
+from app.features.auth.repository import UserRepository
 from app.features.customer.repository import ApplicationRepository
 from app.features.employee.repository import EmployeeRepository
 from app.features.reminders.constants import (
@@ -45,6 +47,7 @@ async def poll_audit_events(_ctx: dict[Any, Any], *_args: Any, **_kwargs: Any) -
     checkpoints = NotificationCheckpointRepository(db)
     applications = ApplicationRepository(db)
     employees = EmployeeRepository(db)
+    users = UserRepository(db)
     service = RemindersService(db)
 
     for event_type in POLLED_AUDIT_EVENT_TYPES:
@@ -59,15 +62,24 @@ async def poll_audit_events(_ctx: dict[Any, Any], *_args: Any, **_kwargs: Any) -
             latest_seen = doc["created_at"]
 
             if event_type == "lead_assigned":
-                employee_id = metadata.get("employee_id")
+                assignee_id = metadata.get("employee_id")
                 lead_id = metadata.get("lead_id")
-                if not employee_id:
+                if not assignee_id:
                     continue
-                employee = await employees.find_by_id(employee_id)
-                if employee is None:
-                    continue
+                employee = await employees.find_by_id(assignee_id)
+                if employee is not None:
+                    recipient_user_id = employee.user_id
+                else:
+                    # Production bug fix: this audit metadata's "employee_id" can now
+                    # also be an Owner's own User id (Owner self-assignment — see
+                    # LeadService._assign, which never creates an Employee record for
+                    # an Owner).
+                    assignee_user = await users.find_by_id(assignee_id)
+                    if assignee_user is None or assignee_user.role != OWNER:
+                        continue
+                    recipient_user_id = assignee_id
                 await service.notify(
-                    recipient_user_id=employee.user_id, notification_type=NotificationType.LEAD_ASSIGNED,
+                    recipient_user_id=recipient_user_id, notification_type=NotificationType.LEAD_ASSIGNED,
                     default_title="New Lead Assigned", default_message="A new lead has been assigned to you.",
                     entity_type="lead", entity_id=lead_id,
                 )

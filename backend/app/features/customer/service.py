@@ -1859,11 +1859,22 @@ class CustomerService:
         if not assigned:
             return None
         latest = max(assigned, key=lambda a: a.created_at)
-        employee_id = latest.metadata["employee_id"] if latest.metadata else None
-        employee = await self._employees.find_by_id(employee_id) if employee_id else None
-        if employee is None:
+        assignee_id = latest.metadata["employee_id"] if latest.metadata else None
+        if not assignee_id:
             return None
-        return TimelineEntryResponse(label=f"Assigned to {employee.display_name}", state="completed", occurred_at=latest.created_at)
+        employee = await self._employees.find_by_id(assignee_id)
+        if employee is not None:
+            assignee_name = employee.display_name
+        else:
+            # Production bug fix: this activity metadata's "employee_id" can now also be
+            # an Owner's own User id (Owner self-assignment — see
+            # LeadService._assign) — falls back to the generic "Owner" label, same
+            # convention `_resolve_actor_names` would use if it covered this case.
+            assignee_user = await self._users.find_by_id(assignee_id)
+            if assignee_user is None or assignee_user.role != OWNER:
+                return None
+            assignee_name = "Owner"
+        return TimelineEntryResponse(label=f"Assigned to {assignee_name}", state="completed", occurred_at=latest.created_at)
 
     async def _resolve_actor_names(self, user_ids: set[str]) -> dict[str, str]:
         user_ids.discard("")

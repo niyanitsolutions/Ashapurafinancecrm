@@ -16,7 +16,7 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.constants.roles import EMPLOYEE, OWNER
-from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
+from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from app.features.access_control.permission_engine import PermissionEngine
 from app.features.access_control.repository import (
     EmployeeRoleRepository,
@@ -24,6 +24,7 @@ from app.features.access_control.repository import (
     RolePermissionRepository,
 )
 from app.features.auth.models import User
+from app.features.auth.repository import UserRepository
 from app.features.customer.constants import ApplicationStatus, DocumentVerificationStatus
 from app.features.customer.models import Application
 from app.features.customer.repository import (
@@ -55,6 +56,7 @@ from app.features.leads.schemas import (
     LeadCountsResponse,
     UpdateLeadRequest,
 )
+from app.features.owner.repository import OwnerProfileRepository
 from app.features.system_settings.constants import MasterDataStatus
 from app.features.system_settings.repository import (
     InsuranceProductRepository,
@@ -98,6 +100,8 @@ class LeadService:
         self._form_defs = ApplicationFormDefinitionRepository(db)
         self._applications = ApplicationRepository(db)
         self._application_documents = ApplicationDocumentRepository(db)
+        self._owners = OwnerProfileRepository(db)
+        self._users = UserRepository(db)
         self._permissions = PermissionRepository(db)
         self._role_permissions = RolePermissionRepository(db)
         self._employee_roles = EmployeeRoleRepository(db)
@@ -130,7 +134,27 @@ class LeadService:
         await self._validate_source(payload.source_id)
         await self._validate_product(payload.product_category, payload.product_id)
 
+        # Duplicate-lead prevention (production bug fix): `mobile` is already normalized
+        # by CreateLeadRequest's own strict pattern (`^[6-9]\d{9}$`, no separators/
+        # whitespace possible) before this method ever runs — that IS the normalization
+        # step; no separate transform is needed on an already-schema-validated value.
+        # Company-wide, unscoped lookup (matches the existing `find_by_mobile` docstring
+        # precedent below) — a genuine duplicate must be caught regardless of who owns
+        # the existing lead. Only an ACTIVE (non-rejected) duplicate blocks creation — a
+        # previously rejected lead for this mobile doesn't prevent a fresh inquiry later;
+        # that pipeline already concluded. See `LeadRepository`'s new partial unique
+        # index (`rejected_at=None`) for the matching database-level safety net against
+        # a race between two simultaneous creates for the same mobile.
         duplicates = await self._leads.find_by_mobile(payload.mobile)
+        active_duplicate = next((d for d in duplicates if d.stage != LeadStage.REJECTED), None)
+        if active_duplicate is not None:
+            raise ConflictError(
+                f"A lead already exists with this mobile number ({active_duplicate.lead_code}).",
+                details={"existing_lead_id": active_duplicate.require_id(), "existing_lead_code": active_duplicate.lead_code},
+            )
+        # Only rejected leads can remain here — kept as the existing non-blocking
+        # "possible duplicate" flag (spec: duplicate detection flags a rejected-mobile
+        # match, never blocks it).
         duplicate_ids = [d.require_id() for d in duplicates]
 
         # Looked up only to stamp `form_definition_id` for later reference — Create Lead
@@ -233,9 +257,14 @@ class LeadService:
         applies — it's passed straight through to the repository unchanged by the caller,
         never transformed here.
 
-        `SELF_SENTINEL` ("My Leads") always resolves to the actor's own Employee id,
-        for every role including Owner (an Owner with no Employee record simply has no
-        My Leads — NO_MATCH_SENTINEL yields an empty result, correctly).
+        `SELF_SENTINEL` ("My Leads") resolves to the actor's own Employee id for an
+        Employee. Production bug fix: an Owner has no Employee record by design
+        (`OwnerProfile` is its own collection, separate from `employees` — the same
+        "login identity lives in the shared `users` collection, profile data lives in
+        its own collection" split every role already uses) — for an Owner actor this
+        instead resolves to the Owner's own User id (`actor.require_id()`), which is
+        what `_assign` will store directly in `Lead.assigned_to` for an Owner
+        self-assignment. See `_assign`'s own docstring for the full explanation.
 
         An Owner otherwise sees whatever `assigned_to` was requested — a specific
         employee, the "unassigned"/"assigned to anyone" sentinels, or unfiltered —
@@ -261,6 +290,8 @@ class LeadService:
         is always stamped from `actor.require_id()`, BaseDocument's generic convention —
         NOT the Employee document id `assigned_to` uses), not `employee_id`."""
         if requested_assigned_to == SELF_SENTINEL:
+            if actor.role == OWNER:
+                return actor.require_id(), None
             employee = await self._employees.find_by_user_id(actor.require_id())
             return (employee.require_id() if employee is not None else NO_MATCH_SENTINEL), None
 
@@ -369,7 +400,12 @@ class LeadService:
         return LeadCountsResponse(fresh=fresh, my_leads=my_leads, document_collection=document_collection, rejected=rejected, assigned=assigned)
 
     async def _resolve_assignee(self, assigned_to: str, actor: User) -> str:
+        """Production bug fix: "Assign To: Self" now works for an Owner too — an Owner
+        has no Employee record by design, so it resolves to the Owner's own User id
+        instead of raising. See `_assign`'s docstring for how that id is then handled."""
         if assigned_to == SELF_SENTINEL:
+            if actor.role == OWNER:
+                return actor.require_id()
             employee = await self._employees.find_by_user_id(actor.require_id())
             if employee is None:
                 raise ValidationError("You have no employee record to assign a lead to.")
@@ -446,24 +482,47 @@ class LeadService:
 
     # ---------------------------------------------------------------- assignment
 
-    async def _assign(self, lead_id: str, employee_id: str, actor: User) -> Lead:
+    async def _assign(self, lead_id: str, assignee_id: str, actor: User) -> Lead:
         """Shared by `assign_lead` (POST /leads/{id}/assign), Create Lead's inline
         `assigned_to`, and Edit Lead's inline `assigned_to` — one place that stamps
         `stage=assigned`/`assigned_by`/`assigned_at` alongside `assigned_to`, so every
-        assignment path keeps those fields consistent (decision 125)."""
-        employee = await self._employees.find_by_id(employee_id)
-        if employee is None:
-            raise ValidationError("Unknown employee_id.")
-        if employee.status != EmploymentStatus.ACTIVE:
-            raise ValidationError("Cannot assign a lead to an inactive employee.")
+        assignment path keeps those fields consistent (decision 125).
+
+        `assignee_id` is normally an Employee document id. Production bug fix: an Owner
+        assigning a lead to themselves ("Assign To: Self", resolved by
+        `_resolve_assignee`/`_scope_query`) has no Employee record, so for that case
+        `assignee_id` is instead the Owner's own User id. Detected here by looking the
+        id up in `users` and checking `role == OWNER` — deliberately NOT via
+        `OwnerProfileRepository`, since an `OwnerProfile` row is optional profile detail
+        (display name etc.) that a legacy/grandfathered Owner account may not have (see
+        Owner Account Management's grandfather logic), while `User.role` is the one
+        authoritative, always-present source of "is this id an Owner." This also
+        correctly handles an Owner assigning a lead to a DIFFERENT existing Owner
+        account (Secondary Owner) if ever driven through this same path. This never
+        creates an Employee record for an Owner and never introduces a second assignment
+        mechanism — `assigned_to` remains the single field on `Lead`, just correctly
+        able to hold either id space, exactly the same way `Lead.created_by` already
+        holds a User id while `assigned_to` normally holds an Employee id (see
+        `get_lead_scoped`'s docstring)."""
+        assignee_user = await self._users.find_by_id(assignee_id)
+        if assignee_user is not None and assignee_user.role == OWNER:
+            recipient_user_id = assignee_id
+        else:
+            employee = await self._employees.find_by_id(assignee_id)
+            if employee is None:
+                raise ValidationError("Unknown employee_id.")
+            if employee.status != EmploymentStatus.ACTIVE:
+                raise ValidationError("Cannot assign a lead to an inactive employee.")
+            recipient_user_id = employee.user_id
+
         updated = await self._leads.update(
             lead_id,
-            {"assigned_to": employee_id, "stage": LeadStage.ASSIGNED, "assigned_by": actor.require_id(), "assigned_at": utc_now()},
+            {"assigned_to": assignee_id, "stage": LeadStage.ASSIGNED, "assigned_by": actor.require_id(), "assigned_at": utc_now()},
             updated_by=actor.require_id(),
         )
         if updated is None:
             raise NotFoundError("Lead not found.")
-        await self._log_activity(lead_id, LeadActivityType.ASSIGNED, actor, {"employee_id": employee_id})
+        await self._log_activity(lead_id, LeadActivityType.ASSIGNED, actor, {"employee_id": assignee_id})
         # NotificationType.LEAD_ASSIGNED has existed since Module 6D but was never wired
         # up to the one event it names — Reminders' own create_task is the only caller
         # that ever fired a notification. No import cycle: reminders/service.py doesn't
@@ -472,7 +531,7 @@ class LeadService:
         from app.features.reminders.service import RemindersService
 
         await RemindersService(self._db).create_notification(
-            recipient_user_id=employee.user_id, notification_type=NotificationType.LEAD_ASSIGNED,
+            recipient_user_id=recipient_user_id, notification_type=NotificationType.LEAD_ASSIGNED,
             title="New Lead Assigned", message=f'You have been assigned a new lead: "{updated.full_name}".',
             entity_type="lead", entity_id=lead_id,
         )
@@ -814,6 +873,16 @@ class LeadService:
         product_map = {p.require_id(): p.name for p in loan_products if p.require_id() in loan_ids}
         product_map.update({p.require_id(): p.name for p in insurance_products if p.require_id() in insurance_ids})
         employee_map = {e.require_id(): e.display_name for e in employees if e.require_id() in employee_ids}
+        # Production bug fix: `assigned_to` can now also hold an Owner's User id (Owner
+        # self-assignment, see `_assign`'s docstring) — resolve those into names too, so
+        # the frontend never has to special-case rendering a raw id. Falls back to the
+        # generic "Owner" label (same convention as `actor_name_map` below) for a
+        # legacy/grandfathered Owner with no `OwnerProfile` row, rather than a blank name.
+        unresolved_assignee_ids = employee_ids - set(employee_map.keys())
+        if unresolved_assignee_ids:
+            owners = await self._owners.find_many({"user_id": {"$in": list(unresolved_assignee_ids)}}, limit=50)
+            owner_name_by_user_id = {o.user_id: o.full_name for o in owners}
+            employee_map.update({uid: owner_name_by_user_id.get(uid, "Owner") for uid in unresolved_assignee_ids})
         # A `assigned_by`/`rejected_by` user with no matching Employee record performed
         # the action as an Owner (Owners have no Employee row) — falls back to "Owner"
         # rather than a blank name.

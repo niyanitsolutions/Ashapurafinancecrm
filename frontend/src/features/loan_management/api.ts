@@ -35,7 +35,51 @@ export interface LoanCaseListItem {
   assigned_to_name: string | null;
   current_status: string;
   rejection_reason: string | null;
+  selected_bank_name: string | null;
+  approved_amount: number | null;
   created_at: string;
+}
+
+// One bank/NBFC offer on a Loan Case's Credit Evaluation (decision #129) — a case can
+// carry any number of these; adding one never overwrites another.
+export interface BankOffer {
+  id: string;
+  loan_case_id: string;
+  bank_name: string;
+  bank_application_id: string | null;
+  reference_number: string | null;
+  assigned_officer: string | null;
+  decision: "approved" | "rejected_re_eligible";
+  approved_amount: number | null;
+  remarks: string | null;
+  is_selected: boolean;
+  selected_at: string | null;
+  selected_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Customer-facing view — approved offers only, trimmed to exactly bank name + amount
+// (no bank_application_id/assigned_officer/reference_number/remarks/decision).
+export interface CustomerBankOffer {
+  id: string;
+  bank_name: string;
+  approved_amount: number;
+}
+
+export interface LoanCaseCounts {
+  new_customer: number;
+  credit_evaluation: number;
+  offer_acceptance: number;
+  additional_documents: number;
+  rv_ov_ref: number;
+  esign_nach_kyc: number;
+  final_evaluation: number;
+  send_for_disbursement: number;
+  disbursed: number;
+  on_hold: number;
+  re_eligible: number;
+  rejected: number;
 }
 
 export interface LoanCaseDetail extends LoanCaseListItem {
@@ -75,6 +119,16 @@ export function getLoanCase(caseId: string) {
   return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}`);
 }
 
+// Customer self-service ("mine") list/detail — used by the Portal to resolve which
+// Loan Case belongs to the customer's own application before showing bank offers.
+export function listOwnLoanCases() {
+  return apiRequest<LoanCaseListItem[]>("/loan-cases/mine");
+}
+
+export function getOwnLoanCase(caseId: string) {
+  return apiRequest<LoanCaseDetail>(`/loan-cases/mine/${caseId}`);
+}
+
 export function getLoanCaseTimeline(caseId: string) {
   return apiRequest<CaseTimelineEntry[]>(`/loan-cases/${caseId}/timeline`);
 }
@@ -91,8 +145,12 @@ export function assignLoanCase(caseId: string, employeeId: string) {
 // every other write here: the backend re-validates the status value against
 // `LoanStatus.ALL` and the existing Workflow Engine transition graph, so this can never
 // persist an Insurance status or an out-of-order jump even if called directly.
-export function updateLoanCaseStatus(caseId: string, status: string) {
-  return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
+export function updateLoanCaseStatus(caseId: string, status: string, remarks?: string) {
+  return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/status`, { method: "PATCH", body: JSON.stringify({ status, remarks }) });
+}
+
+export function getLoanCaseCounts() {
+  return apiRequest<LoanCaseCounts>("/loan-cases/counts");
 }
 
 export function holdLoanCase(caseId: string, reason: string, remarks?: string) {
@@ -124,15 +182,56 @@ export function recordBankDetails(
   return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/bank-details`, { method: "POST", body: JSON.stringify(payload) });
 }
 
-export function recordCreditEvaluation(
-  caseId: string,
-  payload: { credit_score?: number; credit_remarks?: string; decision: "approved" | "rejected"; rejection_reason?: string }
-) {
+// Case-level credit score/remarks only (decision #129) — pure data capture, independent
+// of any individual bank's own decision (see the bank-offer functions below) and never
+// itself moves the case out of Credit Evaluation.
+export function recordCreditEvaluation(caseId: string, payload: { credit_score?: number; credit_remarks?: string }) {
   return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/credit-evaluation`, { method: "POST", body: JSON.stringify(payload) });
 }
 
-export function recordOffer(caseId: string, payload: { offered_amount: number; offered_tenure_months: number; offered_interest_rate: number }) {
-  return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/offer`, { method: "POST", body: JSON.stringify(payload) });
+export interface BankOfferPayload {
+  bank_name: string;
+  bank_application_id?: string;
+  reference_number?: string;
+  assigned_officer?: string;
+  decision: "approved" | "rejected_re_eligible";
+  approved_amount?: number;
+  remarks?: string;
+}
+
+export function listBankOffers(caseId: string) {
+  return apiRequest<BankOffer[]>(`/loan-cases/${caseId}/bank-offers`);
+}
+
+export function addBankOffer(caseId: string, payload: BankOfferPayload) {
+  return apiRequest<BankOffer>(`/loan-cases/${caseId}/bank-offers`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function updateBankOffer(caseId: string, offerId: string, payload: BankOfferPayload) {
+  return apiRequest<BankOffer>(`/loan-cases/${caseId}/bank-offers/${offerId}`, { method: "PATCH", body: JSON.stringify(payload) });
+}
+
+// Selection only — marks which offer the case proceeds with and moves it to Offer
+// Acceptance. Deliberately does NOT itself confirm acceptance; see confirmOfferAcceptance.
+export function selectBankOffer(caseId: string, offerId: string) {
+  return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/bank-offers/${offerId}/select`, { method: "POST" });
+}
+
+export function confirmOfferAcceptance(caseId: string) {
+  return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/offer-acceptance/confirm`, { method: "POST" });
+}
+
+// Customer self-service ("mine") — approved offers only, trimmed fields.
+export function listOwnBankOffers(caseId: string) {
+  return apiRequest<CustomerBankOffer[]>(`/loan-cases/mine/${caseId}/bank-offers`);
+}
+
+export function selectOwnBankOffer(caseId: string, offerId: string) {
+  return apiRequest<LoanCaseDetail>(`/loan-cases/mine/${caseId}/bank-offers/${offerId}/select`, { method: "POST" });
+}
+
+export function confirmOwnOfferAcceptance(caseId: string) {
+  return apiRequest<LoanCaseDetail>(`/loan-cases/mine/${caseId}/offer-acceptance/confirm`, { method: "POST" });
 }
 
 export function recordEsignNachKyc(caseId: string, payload: { esign_completed: boolean; nach_completed: boolean; kyc_completed: boolean }) {

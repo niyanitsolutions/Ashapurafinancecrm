@@ -209,9 +209,16 @@ function TimelineSummaryWidget({ dashboard }: { dashboard: PortalDashboard }) {
           </div>
         ))}
       </div>
-      <Link to={`/portal/applications/${dashboard.application_id}/timeline`} className="text-sm font-medium text-primary hover:underline">
-        View Full Timeline →
-      </Link>
+      <div className="flex flex-wrap gap-x-4 gap-y-1">
+        <Link to={`/portal/applications/${dashboard.application_id}/timeline`} className="text-sm font-medium text-primary hover:underline">
+          View Full Timeline →
+        </Link>
+        {(dashboard.current_stage_label === "Credit Evaluation" || dashboard.current_stage_label === "Offer Acceptance") && (
+          <Link to={`/portal/applications/${dashboard.application_id}/loan-offers`} className="text-sm font-medium text-primary hover:underline">
+            View Loan Offers →
+          </Link>
+        )}
+      </div>
     </div>
   );
 }

@@ -37,21 +37,24 @@ from app.features.customer.repository import (
     CustomerRepository,
 )
 from app.features.employee.repository import EmployeeRepository
+from app.features.loan_management.models import LoanCaseBankOffer
+from app.features.loan_management.repository import LoanCaseBankOfferRepository
 from app.features.loan_management.schemas import (
     BankDetailsRequest,
+    BankOfferRequest,
     CreditEvaluationRequest,
     DisburseRequest,
     EsignNachKycRequest,
     FinalEvaluationRequest,
-    OfferRequest,
 )
 from app.features.system_settings.repository import DocumentTypeRepository, LoanProductRepository
 from app.features.workflow_engine.constants import (
+    BankOfferDecision,
     CaseType,
     DecisionOutcome,
     DecisionType,
+    LoanAuditEvent,
     LoanStatus,
-    OfferDecision,
     WorkflowAuditEvent,
 )
 from app.features.workflow_engine.engine import WorkflowEngine
@@ -90,6 +93,7 @@ class LoanCaseService:
         self._employees = EmployeeRepository(db)
         self._products = LoanProductRepository(db)
         self._document_types = DocumentTypeRepository(db)
+        self._bank_offers = LoanCaseBankOfferRepository(db)
 
     # ---------------------------------------------------------------- case sync / lookup
 
@@ -168,6 +172,20 @@ class LoanCaseService:
             unassigned_only=unassigned_only, status=status, skip=skip, limit=limit, sort=sort,
         )
 
+    async def get_counts(self, actor: User) -> dict[str, int]:
+        """One count per `LoanStatus.ALL` tab, built from the identical `assigned_to`
+        scoping `list_cases` itself applies — a count can never disagree with what its
+        matching tab's list call returns, same principle Leads' `get_tab_counts`
+        established (decision 125)."""
+        await self._sync_new_cases()
+        assigned_to: str | None = None
+        if actor.role == EMPLOYEE:
+            assigned_to = await self._acting_employee_id(actor)
+        return {
+            status: await self._workflows.count_filtered(case_type=CaseType.LOAN, status=status, assigned_to=assigned_to)
+            for status in LoanStatus.ALL
+        }
+
     async def list_own_cases(self, actor: User) -> list[ApplicationWorkflow]:
         applications = await self._applications.find_for_user(actor.require_id(), status="submitted")
         loan_apps = [a for a in applications if a.product_category == "loan" and a.customer_id]
@@ -222,41 +240,52 @@ class LoanCaseService:
     # (from_status, to_status) pairs the generic Case Status control (detail page dropdown
     # + PATCH /{case_id}/status) is allowed to execute directly — deliberately NOT every
     # edge `WorkflowDefinition.allowed_next_statuses` permits. Every other forward move in
-    # this pipeline already requires mandatory business data a bare `{"status": ...}`
-    # request can't carry (Credit/Final Evaluation's decision+reason, Disbursement's
-    # amount+reference, Hold's reason) or is a Customer-only action (accept/decline
-    # offer) — those keep using their existing dedicated action/form; this control never
-    # bypasses them. The three pairs below need no extra data because they already work
-    # with none: `request_documents` accepts an empty `document_type_ids` list, and
-    # `verify_documents` re-validates its own precondition (all requested documents
-    # uploaded) from existing case state, not from anything the caller supplies.
-    _SIMPLE_STATUS_TRANSITIONS: ClassVar[set[tuple[str, str]]] = {
-        (LoanStatus.NEW_CUSTOMER, LoanStatus.DOCUMENTS_PENDING),
-        (LoanStatus.DOCUMENTS_PENDING, LoanStatus.CREDIT_EVALUATION),
-        (LoanStatus.ADDITIONAL_DOCUMENTS, LoanStatus.ESIGN_NACH_KYC),
+    # this pipeline already requires mandatory business data a bare `{"status": ...,
+    # "remarks": ...}` request can't carry (bank-offer selection, Offer Acceptance's own
+    # confirm step, eSign/NACH/KYC's completion flags, Final Evaluation's decision+reason,
+    # Disbursement's amount+reference, Hold's reason) — those keep using their existing
+    # dedicated action/form; this control never bypasses them. Each pair below is a
+    # genuinely bodiless move — nothing beyond an optional remark is ever required
+    # (decision #129).
+    _PLAIN_TRANSITIONS: ClassVar[set[tuple[str, str]]] = {
+        (LoanStatus.NEW_CUSTOMER, LoanStatus.CREDIT_EVALUATION),
+        (LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED),
+        (LoanStatus.CREDIT_EVALUATION, LoanStatus.RE_ELIGIBLE),
+        (LoanStatus.RE_ELIGIBLE, LoanStatus.CREDIT_EVALUATION),
+        (LoanStatus.RE_ELIGIBLE, LoanStatus.REJECTED),
+        (LoanStatus.OFFER_ACCEPTANCE, LoanStatus.REJECTED),
+        (LoanStatus.ADDITIONAL_DOCUMENTS, LoanStatus.RV_OV_REF),
+        (LoanStatus.RV_OV_REF, LoanStatus.ESIGN_NACH_KYC),
     }
 
-    async def update_status(self, case_id: str, new_status: str, actor: User) -> ApplicationWorkflow:
+    async def update_status(self, case_id: str, new_status: str, actor: User, *, remarks: str | None = None) -> ApplicationWorkflow:
         """The single Case Status control's backend — database status is the only source
         of truth (list/filter/customer portal all read it live, nothing caches a second
         copy). Selecting the case's own current status is a no-op (idempotent, no
         history/audit noise from a double-submit). Any other target must both be a real
         next step per the existing Workflow Engine's transition graph (`WorkflowEngine.
         assert_transition_allowed` — the same check every dedicated action already goes
-        through) AND be one of `_SIMPLE_STATUS_TRANSITIONS`; anything else means the
-        target status has existing mandatory business data this bare control can't
-        collect, so it's rejected with a pointer to the real action instead of silently
-        dropping that requirement.
+        through) AND be one of `_PLAIN_TRANSITIONS`; anything else means the target
+        status has existing mandatory business data this bare control can't collect, so
+        it's rejected with a pointer to the real action instead of silently dropping that
+        requirement.
         """
         case = await self.get_case(case_id, actor)
         if new_status == case.current_status:
             return case
         await self._engine.assert_transition_allowed(CaseType.LOAN, case.current_status, new_status)
         transition_key = (case.current_status, new_status)
-        if transition_key == (LoanStatus.NEW_CUSTOMER, LoanStatus.DOCUMENTS_PENDING):
-            return await self.request_documents(case_id, [], actor)
-        if transition_key in self._SIMPLE_STATUS_TRANSITIONS:
-            return await self.verify_documents(case_id, actor)
+        if transition_key in self._PLAIN_TRANSITIONS:
+            if new_status == LoanStatus.REJECTED and not remarks:
+                # Same "rejection reason is mandatory" rule the dedicated Credit/Final
+                # Evaluation actions already enforce — the plain control must not offer a
+                # quieter way to reject a case with no reason recorded (decision #129).
+                raise ValidationError("A reason is mandatory when rejecting a case.")
+            updated = await self._engine.transition(case, new_status, actor, remarks=remarks)
+            if new_status == LoanStatus.REJECTED:
+                updated = await self._workflows.update(case_id, {"rejection_reason": remarks}, updated_by=actor.require_id())
+                assert updated is not None
+            return updated
         raise ConflictError(
             f"Moving this case to '{new_status}' requires additional information — use the dedicated action for this step instead."
         )
@@ -264,6 +293,13 @@ class LoanCaseService:
     # ---------------------------------------------------------------- documents
 
     async def request_documents(self, case_id: str, document_type_ids: list[str], actor: User) -> ApplicationWorkflow:
+        """Production redesign (decision #129): used to auto-transition
+        `new_customer -> documents_pending` on the first call — that status no longer
+        exists in the mandatory pipeline (a Lead only reaches Loan Management once its
+        required documents are already verified, decision #127). This is now purely an
+        optional, non-pipeline-driving action at either status: it just records which
+        document types staff is waiting on; the case's own status only ever moves via
+        `update_status`'s plain transitions or `verify_documents` below."""
         case = await self.get_case(case_id, actor)
         if case.current_status not in (LoanStatus.NEW_CUSTOMER, LoanStatus.ADDITIONAL_DOCUMENTS):
             raise ConflictError("Documents cannot be requested at this stage.")
@@ -271,16 +307,8 @@ class LoanCaseService:
             if await self._document_types.find_by_id(doc_type_id) is None:
                 raise ValidationError(f"Unknown document_type_id: {doc_type_id}")
         merged = sorted(set(case.pending_document_type_ids) | set(document_type_ids))
-
-        updated: ApplicationWorkflow | None
-        if case.current_status == LoanStatus.NEW_CUSTOMER:
-            # The first document request is what actually begins "Documents Pending" —
-            # there's no separate manual action between case creation and this.
-            updated = await self._engine.transition(case, LoanStatus.DOCUMENTS_PENDING, actor, updates={"pending_document_type_ids": merged})
-        else:
-            updated = await self._workflows.update(case_id, {"pending_document_type_ids": merged}, updated_by=actor.require_id())
-            assert updated is not None
-
+        updated = await self._workflows.update(case_id, {"pending_document_type_ids": merged}, updated_by=actor.require_id())
+        assert updated is not None
         await write_audit_log(
             self._db, event_type=WorkflowAuditEvent.DOCUMENTS_REQUESTED, user_id=actor.require_id(),
             metadata={"application_workflow_id": case_id, "document_type_ids": document_type_ids},
@@ -288,8 +316,15 @@ class LoanCaseService:
         return updated
 
     async def verify_documents(self, case_id: str, actor: User) -> ApplicationWorkflow:
+        """Optional dedicated action for staff who actually called `request_documents` —
+        confirms every requested type is uploaded, then advances the case. Retargeted
+        (decision #129): `new_customer -> credit_evaluation` (previously via
+        `documents_pending`) and `additional_documents -> rv_ov_ref` (previously
+        `esign_nach_kyc`). Not the only way to reach either target — `update_status`'s
+        plain transitions reach the same destinations without a document request ever
+        having been made; this is purely a convenience for when one was."""
         case = await self.get_case(case_id, actor)
-        if case.current_status not in (LoanStatus.DOCUMENTS_PENDING, LoanStatus.ADDITIONAL_DOCUMENTS):
+        if case.current_status not in (LoanStatus.NEW_CUSTOMER, LoanStatus.ADDITIONAL_DOCUMENTS):
             raise ConflictError("This case is not awaiting document verification.")
         # An empty `pending_document_type_ids` (nothing was actually requested — the
         # application's own documents already sufficed) is vacuously satisfied, not an
@@ -299,7 +334,7 @@ class LoanCaseService:
         missing = [t for t in case.pending_document_type_ids if t not in uploaded_type_ids]
         if missing:
             raise ValidationError("Not all requested documents have been uploaded yet.")
-        next_status = LoanStatus.CREDIT_EVALUATION if case.current_status == LoanStatus.DOCUMENTS_PENDING else LoanStatus.ESIGN_NACH_KYC
+        next_status = LoanStatus.CREDIT_EVALUATION if case.current_status == LoanStatus.NEW_CUSTOMER else LoanStatus.RV_OV_REF
         return await self._engine.transition(case, next_status, actor, updates={"pending_document_type_ids": []})
 
     # ---------------------------------------------------------------- bank/NBFC + decisions
@@ -313,63 +348,125 @@ class LoanCaseService:
         return updated
 
     async def credit_evaluation(self, case_id: str, payload: CreditEvaluationRequest, actor: User) -> ApplicationWorkflow:
+        """Records the case-level credit score/remarks only (decision #129) — data
+        capture, independent of any individual bank/NBFC's own decision (see
+        `LoanCaseBankOffer` below) and never itself transitions the case; the case only
+        ever leaves Credit Evaluation via a bank-offer selection or the generic plain
+        status update (Rejected/Re-Eligible)."""
         case = await self.get_case(case_id, actor)
         if case.current_status != LoanStatus.CREDIT_EVALUATION:
-            raise ConflictError("This case is not awaiting credit evaluation.")
+            raise ConflictError("This case is not in credit evaluation.")
         assert case.loan_details is not None
         details = case.loan_details.model_copy(update={"credit_score": payload.credit_score, "credit_remarks": payload.credit_remarks})
-
-        outcome = DecisionOutcome.APPROVED if payload.decision == "approved" else DecisionOutcome.REJECTED
-        await self._decisions.insert(
-            ApplicationDecision(
-                application_workflow_id=case_id, case_type=CaseType.LOAN, decision_type=DecisionType.CREDIT_EVALUATION,
-                outcome=outcome, remarks=payload.credit_remarks, created_by=actor.require_id(),
-            )
-        )
-        if payload.decision == "approved":
-            return await self._engine.transition(case, LoanStatus.OFFER_ACCEPTANCE, actor, updates={"loan_details": details.model_dump()})
-        if not payload.rejection_reason:
-            raise ValidationError("A rejection reason is mandatory when rejecting an application.")
-        return await self._engine.transition(
-            case, LoanStatus.REJECTED, actor,
-            updates={"loan_details": details.model_dump(), "rejection_reason": payload.rejection_reason}, remarks=payload.rejection_reason,
-        )
-
-    async def record_offer(self, case_id: str, payload: OfferRequest, actor: User) -> ApplicationWorkflow:
-        case = await self.get_case(case_id, actor)
-        if case.current_status != LoanStatus.OFFER_ACCEPTANCE:
-            raise ConflictError("This case is not awaiting an offer.")
-        assert case.loan_details is not None
-        details = case.loan_details.model_copy(
-            update={
-                "offered_amount": payload.offered_amount, "offered_tenure_months": payload.offered_tenure_months,
-                "offered_interest_rate": payload.offered_interest_rate, "offer_decision": OfferDecision.PENDING,
-            }
-        )
         updated = await self._workflows.update(case_id, {"loan_details": details.model_dump()}, updated_by=actor.require_id())
         assert updated is not None
         return updated
 
-    async def accept_offer(self, case_id: str, actor: User) -> ApplicationWorkflow:
+    # ---------------------------------------------------------------- bank/NBFC offers
+
+    async def add_bank_offer(self, case_id: str, payload: BankOfferRequest, actor: User) -> LoanCaseBankOffer:
+        case = await self.get_case(case_id, actor)
+        if case.current_status != LoanStatus.CREDIT_EVALUATION:
+            raise ConflictError("Bank offers can only be added while this case is in Credit Evaluation.")
+        offer = LoanCaseBankOffer(
+            loan_case_id=case_id, bank_name=payload.bank_name, bank_application_id=payload.bank_application_id,
+            reference_number=payload.reference_number, assigned_officer=payload.assigned_officer,
+            decision=payload.decision, approved_amount=payload.approved_amount, remarks=payload.remarks,
+            created_by=actor.require_id(),
+        )
+        offer_id = await self._bank_offers.insert(offer)
+        await write_audit_log(
+            self._db, event_type=LoanAuditEvent.BANK_OFFER_ADDED, user_id=actor.require_id(),
+            metadata={"application_workflow_id": case_id, "bank_offer_id": offer_id, "bank_name": payload.bank_name, "decision": payload.decision},
+        )
+        found = await self._bank_offers.find_by_id(offer_id)
+        assert found is not None
+        return found
+
+    async def update_bank_offer(self, case_id: str, offer_id: str, payload: BankOfferRequest, actor: User) -> LoanCaseBankOffer:
+        await self.get_case(case_id, actor)
+        offer = await self._bank_offers.find_by_id(offer_id)
+        if offer is None or offer.loan_case_id != case_id:
+            raise NotFoundError("Bank offer not found.")
+        updates = {
+            "bank_name": payload.bank_name, "bank_application_id": payload.bank_application_id,
+            "reference_number": payload.reference_number, "assigned_officer": payload.assigned_officer,
+            "decision": payload.decision, "approved_amount": payload.approved_amount, "remarks": payload.remarks,
+        }
+        updated = await self._bank_offers.update(offer_id, updates, updated_by=actor.require_id())
+        assert updated is not None
+        return updated
+
+    async def list_bank_offers(self, case_id: str, actor: User) -> list[LoanCaseBankOffer]:
+        await self.get_case(case_id, actor)
+        return await self._bank_offers.find_for_case(case_id)
+
+    async def list_bank_offers_own(self, case_id: str, actor: User) -> list[LoanCaseBankOffer]:
+        """Customer-facing — approved offers only; the trim down to customer-safe fields
+        happens at the mapper layer (never internal fields like bank_application_id/
+        assigned_officer/remarks reach a Customer response)."""
+        await self.get_own_case(case_id, actor)
+        offers = await self._bank_offers.find_for_case(case_id)
+        return [o for o in offers if o.decision == BankOfferDecision.APPROVED]
+
+    async def _select_bank_offer_core(self, case: ApplicationWorkflow, offer_id: str, actor: User) -> ApplicationWorkflow:
+        """Selection only — marks which offer the case is proceeding with and moves the
+        case into `offer_acceptance`. Deliberately does NOT itself complete acceptance;
+        `confirm_offer_acceptance` is the separate, explicit second step required to
+        advance further (confirmed business requirement, decision #129)."""
+        if case.current_status != LoanStatus.CREDIT_EVALUATION:
+            raise ConflictError("This case is not awaiting an offer selection.")
+        offer = await self._bank_offers.find_by_id(offer_id)
+        if offer is None or offer.loan_case_id != case.require_id():
+            raise NotFoundError("Bank offer not found.")
+        if offer.decision != BankOfferDecision.APPROVED:
+            raise ValidationError("Only an Approved offer can be selected.")
+        for existing in await self._bank_offers.find_for_case(case.require_id()):
+            if existing.is_selected and existing.require_id() != offer_id:
+                await self._bank_offers.update(existing.require_id(), {"is_selected": False}, updated_by=actor.require_id())
+        now = utc_now()
+        await self._bank_offers.update(
+            offer_id, {"is_selected": True, "selected_at": now, "selected_by": actor.require_id()}, updated_by=actor.require_id()
+        )
+        assert case.loan_details is not None
+        details = case.loan_details.model_copy(update={"offered_amount": offer.approved_amount, "bank_nbfc_name": offer.bank_name})
+        updated = await self._engine.transition(case, LoanStatus.OFFER_ACCEPTANCE, actor, updates={"loan_details": details.model_dump()})
+        await write_audit_log(
+            self._db, event_type=LoanAuditEvent.BANK_OFFER_SELECTED, user_id=actor.require_id(),
+            metadata={"application_workflow_id": case.require_id(), "bank_offer_id": offer_id, "bank_name": offer.bank_name},
+        )
+        return updated
+
+    async def select_bank_offer(self, case_id: str, offer_id: str, actor: User) -> ApplicationWorkflow:
+        case = await self.get_case(case_id, actor)
+        return await self._select_bank_offer_core(case, offer_id, actor)
+
+    async def select_bank_offer_as_customer(self, case_id: str, offer_id: str, actor: User) -> ApplicationWorkflow:
         case = await self.get_own_case(case_id, actor)
+        return await self._select_bank_offer_core(case, offer_id, actor)
+
+    # ---------------------------------------------------------------- offer acceptance confirmation
+
+    async def _confirm_offer_acceptance_core(self, case: ApplicationWorkflow, actor: User) -> ApplicationWorkflow:
         if case.current_status != LoanStatus.OFFER_ACCEPTANCE:
-            raise ConflictError("This case is not awaiting an offer decision.")
+            raise ConflictError("This case is not awaiting offer acceptance confirmation.")
         assert case.loan_details is not None
         if case.loan_details.offered_amount is None:
-            raise ValidationError("No offer has been issued for this case yet.")
-        details = case.loan_details.model_copy(update={"offer_decision": OfferDecision.ACCEPTED})
-        return await self._engine.transition(case, LoanStatus.ADDITIONAL_DOCUMENTS, actor, updates={"loan_details": details.model_dump()})
-
-    async def decline_offer(self, case_id: str, actor: User) -> ApplicationWorkflow:
-        case = await self.get_own_case(case_id, actor)
-        if case.current_status != LoanStatus.OFFER_ACCEPTANCE:
-            raise ConflictError("This case is not awaiting an offer decision.")
-        assert case.loan_details is not None
-        details = case.loan_details.model_copy(update={"offer_decision": OfferDecision.DECLINED})
-        reason = "Customer declined the loan offer."
-        return await self._engine.transition(
-            case, LoanStatus.REJECTED, actor, updates={"loan_details": details.model_dump(), "rejection_reason": reason}, remarks=reason
+            raise ValidationError("No offer has been selected for this case yet.")
+        updated = await self._engine.transition(case, LoanStatus.ADDITIONAL_DOCUMENTS, actor)
+        await write_audit_log(
+            self._db, event_type=LoanAuditEvent.OFFER_ACCEPTED, user_id=actor.require_id(),
+            metadata={"application_workflow_id": case.require_id()},
         )
+        return updated
+
+    async def confirm_offer_acceptance(self, case_id: str, actor: User) -> ApplicationWorkflow:
+        case = await self.get_case(case_id, actor)
+        return await self._confirm_offer_acceptance_core(case, actor)
+
+    async def confirm_offer_acceptance_as_customer(self, case_id: str, actor: User) -> ApplicationWorkflow:
+        case = await self.get_own_case(case_id, actor)
+        return await self._confirm_offer_acceptance_core(case, actor)
 
     async def record_esign_nach_kyc(self, case_id: str, payload: EsignNachKycRequest, actor: User) -> ApplicationWorkflow:
         case = await self.get_case(case_id, actor)

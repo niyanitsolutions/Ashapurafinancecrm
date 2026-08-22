@@ -29,14 +29,17 @@ from app.features.loan_management.dependencies import (
 )
 from app.features.loan_management.schemas import (
     BankDetailsRequest,
+    BankOfferRequest,
+    BankOfferResponse,
     CreditEvaluationRequest,
+    CustomerBankOfferResponse,
     DisburseRequest,
     EsignNachKycRequest,
     FinalEvaluationRequest,
+    LoanCaseCountsResponse,
     LoanCaseDetailResponse,
     LoanCaseListItem,
     LoanStatusUpdateRequest,
-    OfferRequest,
 )
 from app.features.loan_management.service import LoanCaseService
 from app.features.workflow_engine.schemas import (
@@ -88,15 +91,27 @@ async def get_own_case(case_id: str, service: ServiceDep, current_user: CurrentU
     return await _detail(service, case_id, current_user, own=True)
 
 
-@router.post("/{case_id}/offer/accept")
-async def accept_offer(case_id: str, service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep) -> ApiResponse[LoanCaseDetailResponse]:
-    await service.accept_offer(case_id, current_user)
+@router.get("/mine/{case_id}/bank-offers")
+async def list_own_bank_offers(
+    case_id: str, service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep
+) -> ApiResponse[list[CustomerBankOfferResponse]]:
+    offers = await service.list_bank_offers_own(case_id, current_user)
+    return ApiResponse[list[CustomerBankOfferResponse]].ok([mappers.bank_offer_to_customer_response(o) for o in offers])
+
+
+@router.post("/mine/{case_id}/bank-offers/{offer_id}/select")
+async def select_own_bank_offer(
+    case_id: str, offer_id: str, service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep
+) -> ApiResponse[LoanCaseDetailResponse]:
+    await service.select_bank_offer_as_customer(case_id, offer_id, current_user)
     return await _detail(service, case_id, current_user, own=True)
 
 
-@router.post("/{case_id}/offer/decline")
-async def decline_offer(case_id: str, service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep) -> ApiResponse[LoanCaseDetailResponse]:
-    await service.decline_offer(case_id, current_user)
+@router.post("/mine/{case_id}/offer-acceptance/confirm")
+async def confirm_own_offer_acceptance(
+    case_id: str, service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep
+) -> ApiResponse[LoanCaseDetailResponse]:
+    await service.confirm_offer_acceptance_as_customer(case_id, current_user)
     return await _detail(service, case_id, current_user, own=True)
 
 
@@ -118,6 +133,13 @@ async def list_cases(
         for c in cases
     ]
     return ApiResponse[list[LoanCaseListItem]].ok(items, meta=ResponseMeta(pagination=page.build_meta(total)))
+
+
+@router.get("/counts")
+async def get_counts(service: ServiceDep, actor: Annotated[User, _perm("view")]) -> ApiResponse[LoanCaseCountsResponse]:
+    # Registered before "/{case_id}" so "counts" is never captured as a case_id.
+    counts = await service.get_counts(actor)
+    return ApiResponse[LoanCaseCountsResponse].ok(LoanCaseCountsResponse(**counts))
 
 
 @router.get("/{case_id}")
@@ -149,7 +171,7 @@ async def assign_case(
 async def update_status(
     case_id: str, payload: LoanStatusUpdateRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
 ) -> ApiResponse[LoanCaseDetailResponse]:
-    await service.update_status(case_id, payload.status, actor)
+    await service.update_status(case_id, payload.status, actor, remarks=payload.remarks)
     return await _detail(service, case_id, actor)
 
 
@@ -202,9 +224,41 @@ async def credit_evaluation(
     return await _detail(service, case_id, actor)
 
 
-@router.post("/{case_id}/offer")
-async def record_offer(case_id: str, payload: OfferRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]) -> ApiResponse[LoanCaseDetailResponse]:
-    await service.record_offer(case_id, payload, actor)
+@router.get("/{case_id}/bank-offers")
+async def list_bank_offers(case_id: str, service: ServiceDep, actor: Annotated[User, _perm("view")]) -> ApiResponse[list[BankOfferResponse]]:
+    offers = await service.list_bank_offers(case_id, actor)
+    return ApiResponse[list[BankOfferResponse]].ok([mappers.bank_offer_to_response(o) for o in offers])
+
+
+@router.post("/{case_id}/bank-offers")
+async def add_bank_offer(
+    case_id: str, payload: BankOfferRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[BankOfferResponse]:
+    offer = await service.add_bank_offer(case_id, payload, actor)
+    return ApiResponse[BankOfferResponse].ok(mappers.bank_offer_to_response(offer))
+
+
+@router.patch("/{case_id}/bank-offers/{offer_id}")
+async def update_bank_offer(
+    case_id: str, offer_id: str, payload: BankOfferRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[BankOfferResponse]:
+    offer = await service.update_bank_offer(case_id, offer_id, payload, actor)
+    return ApiResponse[BankOfferResponse].ok(mappers.bank_offer_to_response(offer))
+
+
+@router.post("/{case_id}/bank-offers/{offer_id}/select")
+async def select_bank_offer(
+    case_id: str, offer_id: str, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[LoanCaseDetailResponse]:
+    await service.select_bank_offer(case_id, offer_id, actor)
+    return await _detail(service, case_id, actor)
+
+
+@router.post("/{case_id}/offer-acceptance/confirm")
+async def confirm_offer_acceptance(
+    case_id: str, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[LoanCaseDetailResponse]:
+    await service.confirm_offer_acceptance(case_id, actor)
     return await _detail(service, case_id, actor)
 
 

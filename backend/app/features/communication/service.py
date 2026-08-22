@@ -264,9 +264,18 @@ class CommunicationService:
             if not lead_id or not employee_id:
                 return None
             employee = await self._employees.find_by_id(employee_id)
-            if employee is None:
+            if employee is not None:
+                return "lead", str(lead_id), employee.mobile, employee.email
+            # Production bug fix: this audit metadata's "employee_id" can now also be an
+            # Owner's own User id (Owner self-assignment — see LeadService._assign, which
+            # never creates an Employee record for an Owner). `_resolve_user_contact`
+            # already knows how to resolve any role's contact info directly from a User
+            # id, including Owner's, so it's reused here rather than duplicating that logic.
+            owner_user = await self._users.find_by_id(employee_id)
+            if owner_user is None or owner_user.role != OWNER:
                 return None
-            return "lead", str(lead_id), employee.mobile, employee.email
+            mobile, email = await self._resolve_user_contact(employee_id)
+            return "lead", str(lead_id), mobile, email
 
         if business_event == BusinessEvent.REMINDER_TRIGGERED:
             entity_type = metadata.get("entity_type")

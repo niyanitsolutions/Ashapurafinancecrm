@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { EligibleAssigneeSelect } from "@/components/forms/EligibleAssigneeSelect";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
@@ -9,6 +9,7 @@ import { TextareaField } from "@/components/forms/TextareaField";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { checkDuplicate, createLead, getLeadLookup, SELF_SENTINEL } from "@/features/leads/api";
 import { getErrorMessage } from "@/features/leads/errors";
+import { ApiError } from "@/shared/api/client";
 import { getFieldErrors } from "@/shared/api/errors";
 import { getCurrentCoordinates } from "@/shared/geolocation";
 
@@ -55,6 +56,10 @@ export function CreateLeadPage() {
   const [assigneeId, setAssigneeId] = useState("");
 
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
+  // Set only when the backend actually BLOCKED creation (an active, non-rejected
+  // duplicate already exists) — distinct from `duplicateWarning` above, which is a
+  // non-blocking heads-up shown on blur for a mobile that only matches a REJECTED lead.
+  const [duplicateBlocked, setDuplicateBlocked] = useState<{ leadId: string; leadCode: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -92,6 +97,7 @@ export function CreateLeadPage() {
     e.preventDefault();
     setError(null);
     setFieldErrors({});
+    setDuplicateBlocked(null);
     setIsSubmitting(true);
     try {
       // Best-effort — only checked server-side if a Geo Fence is configured for
@@ -116,8 +122,20 @@ export function CreateLeadPage() {
       });
       navigate(`/leads/${lead.id}`);
     } catch (err) {
-      setError(getErrorMessage(err));
-      setFieldErrors(getFieldErrors(err) ?? {});
+      // Production bug fix: creation is now blocked server-side when an active
+      // (non-rejected) lead already exists for this mobile — surfaced distinctly, with
+      // a direct link to the existing lead, rather than the generic error banner alone.
+      if (err instanceof ApiError && err.code === "conflict") {
+        const details = err.details as { existing_lead_id?: string; existing_lead_code?: string } | undefined;
+        if (details?.existing_lead_id) {
+          setDuplicateBlocked({ leadId: details.existing_lead_id, leadCode: details.existing_lead_code ?? "" });
+        } else {
+          setError(getErrorMessage(err));
+        }
+      } else {
+        setError(getErrorMessage(err));
+        setFieldErrors(getFieldErrors(err) ?? {});
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -129,6 +147,15 @@ export function CreateLeadPage() {
     <SimplePageLayout title="Create Lead" backTo="/leads">
       <ErrorBanner message={loadError} />
       <ErrorBanner message={error} />
+      {duplicateBlocked && (
+        <div className="mb-4 rounded border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+          Duplicate lead: a lead already exists with this mobile number
+          {duplicateBlocked.leadCode ? ` (${duplicateBlocked.leadCode})` : ""}.{" "}
+          <Link to={`/leads/${duplicateBlocked.leadId}`} className="font-semibold underline">
+            Open existing lead
+          </Link>
+        </div>
+      )}
       {duplicateWarning && (
         <div className="mb-4 rounded border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">{duplicateWarning}</div>
       )}

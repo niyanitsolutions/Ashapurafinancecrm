@@ -9,6 +9,10 @@ os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-for-pytest-only-do-not-
 os.environ.setdefault("S3_BUCKET_NAME", "afs-crm-test-bucket")
 os.environ.setdefault("AWS_ACCESS_KEY_ID", "test-access-key-id")
 os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "test-secret-access-key")
+# `otp_mode` defaults to "production" (dev_otp withheld) unless backend/.env sets it —
+# the test suite must not depend on that local, gitignored file existing at all, same
+# reasoning as every other var defaulted above.
+os.environ.setdefault("OTP_MODE", "development")
 
 import fakeredis.aioredis
 import pytest

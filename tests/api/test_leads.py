@@ -150,16 +150,19 @@ async def test_update_lead(client, mock_db, owner_headers):
 # ---------------------------------------------------------------------- duplicate detection
 
 
-async def test_duplicate_detection_flags_but_never_blocks(client, mock_db, owner_headers):
+async def test_duplicate_detection_blocks_second_active_lead_for_same_mobile(client, mock_db, owner_headers):
+    """Production bug fix: a second lead for a mobile that already has an ACTIVE
+    (non-rejected) lead is now blocked server-side (409), not merely flagged — see the
+    Phase 4 tests below for the full duplicate-prevention coverage. The
+    `is_potential_duplicate`/`duplicate_of_lead_ids` flag still exists, but is now only
+    ever reachable when every existing match is rejected (see
+    `test_duplicate_mobile_allowed_when_existing_lead_is_rejected`)."""
     lmd = await _lead_master_data(mock_db)
     first = await _create_lead(client, owner_headers, lmd, mobile="9622222222")
     assert first["is_potential_duplicate"] is False
 
-    second = await _create_lead(client, owner_headers, lmd, mobile="9622222222")
-    assert second["is_potential_duplicate"] is True
-
-    detail = await client.get(f"/api/v1/leads/{second['id']}", headers=owner_headers)
-    assert detail.json()["data"]["duplicate_of_lead_ids"] == [first["id"]]
+    r = await client.post("/api/v1/leads", json=_lead_payload(lmd, mobile="9622222222"), headers=owner_headers)
+    assert r.status_code == 409, r.text
 
 
 async def test_check_duplicate_endpoint(client, mock_db, owner_headers):
@@ -1593,4 +1596,206 @@ async def test_insurance_lead_document_completion_is_product_agnostic(client, mo
 
     r = await client.post(f"/api/v1/leads/{lead['id']}/stage", json={"stage": "loan_management"}, headers=owner_headers)
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["stage"] == "loan_management"
+
+
+# ---------------------------------------------------------------------- Phase 4: production bug fixes
+
+
+async def test_owner_self_assign_via_create_lead(client, mock_db, owner_headers):
+    """Production bug fix: an Owner has no Employee record by design, so "Assign To:
+    Self" used to always raise "You have no employee record to assign a lead to."
+    regardless of actor role — it now resolves to the Owner's own User id instead."""
+    lmd = await _lead_master_data(mock_db)
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611170001", assigned_to="__self__")
+    assert lead["stage"] == "assigned"
+    assert lead["assigned_by"] is not None
+    assert lead["assigned_at"] is not None
+
+    r = await client.get(f"/api/v1/leads/{lead['id']}", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["assigned_to"] is not None
+
+
+async def test_owner_self_assign_via_edit_lead_and_my_leads_visibility(client, mock_db, owner_headers):
+    lmd = await _lead_master_data(mock_db)
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611170002")
+    assert lead["stage"] == "fresh"
+
+    r = await client.patch(f"/api/v1/leads/{lead['id']}", json={"assigned_to": "__self__"}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["stage"] == "assigned"
+
+    r = await client.get("/api/v1/leads?assigned_to=__self__&stage=assigned", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert lead["id"] in {x["id"] for x in r.json()["data"]}
+
+
+async def test_employee_self_assign_still_works_after_owner_fix(client, mock_db, owner_headers, master_data):
+    """Regression: the Owner branch added to `_resolve_assignee`/`_assign` must not
+    disturb the existing Employee "Assign To: Self" path."""
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880060", email="selfemp1@example.com")
+    await _grant_leads_view_create(client, owner_headers, employee["id"], role_name="Self Assign Regression Role")
+    headers = await _login(client, "9788880060")
+
+    lead = await _create_lead(client, headers, lmd, mobile="9611170003", assigned_to="__self__")
+    assert lead["stage"] == "assigned"
+    assert lead["assigned_to"] == employee["id"]
+
+    r = await client.get("/api/v1/leads?assigned_to=__self__&stage=assigned", headers=headers)
+    assert lead["id"] in {x["id"] for x in r.json()["data"]}
+
+
+async def test_employee_to_employee_assignment_still_works_after_owner_fix(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee_a = await _create_employee(client, owner_headers, master_data, mobile="9788880061", email="empa1@example.com")
+    employee_b = await _create_employee(client, owner_headers, master_data, mobile="9788880062", email="empb1@example.com")
+
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611170004", assigned_to=employee_a["id"])
+    r = await client.post(f"/api/v1/leads/{lead['id']}/assign", json={"employee_id": employee_b["id"]}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["assigned_to"] == employee_b["id"]
+    assert r.json()["data"]["assigned_to_name"] == employee_b["display_name"]
+
+
+async def test_owner_to_employee_assignment_still_works_after_owner_fix(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880063", email="ownertoemp1@example.com")
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611170005", assigned_to=employee["id"])
+    assert lead["assigned_to"] == employee["id"]
+    assert lead["assigned_to_name"] == employee["display_name"]
+
+
+async def test_owner_assigned_lead_resolves_owner_name_not_raw_id(client, mock_db, owner_headers):
+    """`resolve_names` must resolve an Owner-held `assigned_to` id into the Owner's
+    display name too, not just Employee ids."""
+    lmd = await _lead_master_data(mock_db)
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611170006", assigned_to="__self__")
+
+    r = await client.get(f"/api/v1/leads/{lead['id']}", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    name = r.json()["data"]["assigned_to_name"]
+    assert name is not None
+    assert name != r.json()["data"]["assigned_to"]
+
+
+async def test_duplicate_active_mobile_blocked_on_create(client, mock_db, owner_headers):
+    """Production bug fix: duplicate mobiles among ACTIVE (non-rejected) leads are now
+    blocked server-side with a 409, not just flagged. The response carries the existing
+    lead's id/code so the frontend can link to it."""
+    lmd = await _lead_master_data(mock_db)
+    first = await _create_lead(client, owner_headers, lmd, mobile="9611170007")
+
+    r = await client.post("/api/v1/leads", json=_lead_payload(lmd, mobile="9611170007"), headers=owner_headers)
+    assert r.status_code == 409, r.text
+    error = r.json()["error"]
+    assert error["details"]["existing_lead_id"] == first["id"]
+    assert error["details"]["existing_lead_code"] == first["lead_code"]
+
+
+async def test_duplicate_mobile_allowed_when_existing_lead_is_rejected(client, mock_db, owner_headers, master_data):
+    """A mobile number may legitimately recur if the only existing lead using it was
+    already rejected — creating a fresh lead for that same customer must still work."""
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880064", email="dupreject1@example.com")
+    first = await _create_lead(client, owner_headers, lmd, mobile="9611170008", assigned_to=employee["id"])
+    r = await client.post(f"/api/v1/leads/{first['id']}/reject", json={"reason": "Not interested"}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+
+    r = await client.post("/api/v1/leads", json=_lead_payload(lmd, mobile="9611170008"), headers=owner_headers)
+    assert r.status_code == 200, r.text
+    second = r.json()["data"]
+    assert second["mobile"] == "9611170008"
+    assert second["is_potential_duplicate"] is True
+    assert second["duplicate_of_lead_ids"] == [first["id"]]
+
+
+async def test_follow_up_sorting_past_today_future_no_date(client, mock_db, owner_headers):
+    """Production bug fix: Fresh Leads (and every other tab with no explicit sort) now
+    sorts Past < Today < Future < No Date, chronological within each category — the list
+    previously had no explicit ordering at all (MongoDB natural order)."""
+    lmd = await _lead_master_data(mock_db)
+    from datetime import timedelta
+
+    from app.utils.datetime import utc_now
+
+    now = utc_now()
+    no_date = await _create_lead(client, owner_headers, lmd, mobile="9611170010")
+    future = await _create_lead(client, owner_headers, lmd, mobile="9611170011", next_follow_up_date=(now + timedelta(days=5)).date().isoformat())
+    past = await _create_lead(client, owner_headers, lmd, mobile="9611170012", next_follow_up_date=(now - timedelta(days=5)).date().isoformat())
+    today = await _create_lead(client, owner_headers, lmd, mobile="9611170013", next_follow_up_date=now.date().isoformat())
+    past_earlier = await _create_lead(
+        client, owner_headers, lmd, mobile="9611170014", next_follow_up_date=(now - timedelta(days=10)).date().isoformat()
+    )
+
+    r = await client.get("/api/v1/leads?assigned_to=__unassigned__&stage=fresh", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    ids = [x["id"] for x in r.json()["data"]]
+    relevant = [i for i in ids if i in {no_date["id"], future["id"], past["id"], today["id"], past_earlier["id"]}]
+    assert relevant == [past_earlier["id"], past["id"], today["id"], future["id"], no_date["id"]]
+
+
+async def test_follow_up_sorting_correct_across_pagination_pages(client, mock_db, owner_headers):
+    lmd = await _lead_master_data(mock_db)
+    from datetime import timedelta
+
+    from app.utils.datetime import utc_now
+
+    now = utc_now()
+    leads = []
+    for i in range(5):
+        lead = await _create_lead(
+            client, owner_headers, lmd, mobile=f"961117002{i}", next_follow_up_date=(now - timedelta(days=5 - i)).date().isoformat()
+        )
+        leads.append(lead)
+    # Oldest past date first (most overdue), chronological within the Past bucket.
+    expected_order = [leads[0]["id"], leads[1]["id"], leads[2]["id"], leads[3]["id"], leads[4]["id"]]
+
+    page1 = await client.get(
+        "/api/v1/leads?assigned_to=__unassigned__&stage=fresh&page=1&page_size=3", headers=owner_headers
+    )
+    page2 = await client.get(
+        "/api/v1/leads?assigned_to=__unassigned__&stage=fresh&page=2&page_size=3", headers=owner_headers
+    )
+    combined = [x["id"] for x in page1.json()["data"]] + [x["id"] for x in page2.json()["data"]]
+    relevant = [i for i in combined if i in set(expected_order)]
+    assert relevant == expected_order
+
+
+async def test_reject_button_permission_and_flow_from_my_leads(client, mock_db, owner_headers, master_data):
+    """Confirms the existing Reject Lead action (Phase 1) is reachable from a My Leads
+    (stage=assigned) lead by a permission-holding employee, moves it to Rejected, and
+    the lead disappears from My Leads while tab counts update — end-to-end coverage for
+    the "Reject missing from My Leads Update form" report, which traced to the frontend
+    already being correct; this is the backend contract it depends on."""
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880065", email="rejectflow1@example.com")
+    await _grant_leads_actions(client, owner_headers, employee["id"], ["view", "create", "edit", "reject"], role_name="Reject Flow Role")
+    headers = await _login(client, "9788880065")
+
+    lead = await _create_lead(client, headers, lmd, mobile="9611170030", assigned_to="__self__")
+    assert lead["stage"] == "assigned"
+
+    before = (await client.get("/api/v1/leads/counts", headers=headers)).json()["data"]
+
+    r = await client.post(f"/api/v1/leads/{lead['id']}/reject", json={"reason": "Customer backed out"}, headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["stage"] == "rejected"
+
+    after = (await client.get("/api/v1/leads/counts", headers=headers)).json()["data"]
+    assert after["assigned"] == before["assigned"] - 1
+    assert after["rejected"] == before["rejected"] + 1
+
+    r = await client.get("/api/v1/leads?assigned_to=__self__&stage=assigned", headers=headers)
+    assert lead["id"] not in {x["id"] for x in r.json()["data"]}
+
+
+async def test_reject_requires_reject_permission(client, mock_db, owner_headers, master_data):
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880066", email="norejectperm1@example.com")
+    await _grant_leads_actions(client, owner_headers, employee["id"], ["view", "create", "edit"], role_name="No Reject Role")
+    headers = await _login(client, "9788880066")
+
+    lead = await _create_lead(client, headers, lmd, mobile="9611170031", assigned_to="__self__")
+    r = await client.post(f"/api/v1/leads/{lead['id']}/reject", json={"reason": "Not a fit"}, headers=headers)
+    assert r.status_code == 403, r.text

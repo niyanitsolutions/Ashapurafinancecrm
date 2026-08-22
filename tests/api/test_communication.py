@@ -144,6 +144,33 @@ async def test_lead_assigned_business_event_enqueues_sends_and_is_idempotent(cli
     assert count == 1
 
 
+async def test_lead_assigned_business_event_resolves_owner_self_assigned_lead(client, mock_db, owner_headers, monkeypatch):
+    """Production bug fix: this audit metadata's "employee_id" can now also be an
+    Owner's own User id (Owner self-assignment, see LeadService._assign) — this poller
+    used to silently drop the event (Employee lookup returns None) rather than resolve
+    the Owner's own mobile/email and send the message."""
+    owner_user = await mock_db["users"].find_one({"mobile": "9000000001"})
+    owner_user_id = str(owner_user["_id"])
+
+    await _seed_template(mock_db, channel=Channel.WHATSAPP, category=TemplateCategory.LEAD_ASSIGNED, body="New lead {{lead_id}} assigned to you.")
+    await _seed_active_config(mock_db, channel=Channel.WHATSAPP)
+    await write_audit_log(mock_db, event_type="lead_assigned", user_id=None, metadata={"employee_id": owner_user_id, "lead_id": "LEAD101"})
+
+    async def _fake_send(*, recipient, subject, body, config, **_kwargs):
+        assert recipient == "9000000001"
+        assert "LEAD101" in body
+        return communication_adapters.DeliveryOutcome(True, "MSGID2", None, is_transient=False)
+
+    monkeypatch.setitem(communication_adapters.ADAPTERS, Channel.WHATSAPP, _fake_send)
+
+    service = CommunicationService(mock_db)
+    await service.poll_business_events()
+
+    queued = await mock_db["communication_queue"].find_one({"business_event": "lead_assigned", "entity_id": "LEAD101"})
+    assert queued is not None
+    assert queued["recipient"] == "9000000001"
+
+
 async def test_transient_failure_schedules_backoff_retry(mock_db, monkeypatch):
     template = await _seed_template(mock_db, channel=Channel.SMS, category=TemplateCategory.WELCOME, body="Hi {{name}}")
     await _seed_active_config(mock_db, channel=Channel.SMS)

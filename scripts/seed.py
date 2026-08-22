@@ -542,17 +542,47 @@ async def seed_workflow_definitions() -> None:
     db = get_database()
     definitions = db["workflow_definitions"]
 
+    # Redesigned pipeline (decision #129) — `documents_pending` is deliberately absent:
+    # a Lead only reaches Loan Management once its required documents are already
+    # verified (decision #127), so New Customer moves straight to Credit Evaluation.
+    # `rv_ov_ref`/`re_eligible` are new. Editing these tuples only affects a FRESH
+    # database (`update_one` below uses `$setOnInsert`) — an already-seeded database
+    # needs `scripts/migrate_redesign_loan_pipeline.py` to actually pick up the changed
+    # `allowed_next_statuses` on pre-existing rows.
     loan_rows = [
-        (LoanStatus.NEW_CUSTOMER, "New Customer", 1, [LoanStatus.DOCUMENTS_PENDING], False, False, LoanAuditEvent.CASE_CREATED, "loan_case.created"),
-        (LoanStatus.DOCUMENTS_PENDING, "Documents Pending", 2, [LoanStatus.CREDIT_EVALUATION], True, True, LoanAuditEvent.DOCUMENTS_REQUESTED, "loan_case.documents_requested"),
-        (LoanStatus.CREDIT_EVALUATION, "Credit Evaluation", 3, [LoanStatus.OFFER_ACCEPTANCE, LoanStatus.REJECTED], False, True, LoanAuditEvent.DOCUMENTS_VERIFIED, "loan_case.documents_verified"),
-        (LoanStatus.OFFER_ACCEPTANCE, "Offer Acceptance", 4, [LoanStatus.ADDITIONAL_DOCUMENTS, LoanStatus.REJECTED], True, True, LoanAuditEvent.CREDIT_EVALUATED, "loan_case.offer_ready"),
-        (LoanStatus.ADDITIONAL_DOCUMENTS, "Upload Additional Documents", 5, [LoanStatus.ESIGN_NACH_KYC], True, True, LoanAuditEvent.OFFER_ACCEPTED, "loan_case.offer_accepted"),
-        (LoanStatus.ESIGN_NACH_KYC, "eSign / NACH / KYC", 6, [LoanStatus.FINAL_EVALUATION], False, True, LoanAuditEvent.ADDITIONAL_DOCS_VERIFIED, "loan_case.additional_docs_verified"),
-        (LoanStatus.FINAL_EVALUATION, "Final Evaluation", 7, [LoanStatus.SEND_FOR_DISBURSEMENT, LoanStatus.REJECTED], False, True, LoanAuditEvent.ESIGN_NACH_KYC_COMPLETED, "loan_case.esign_nach_kyc_completed"),
+        (LoanStatus.NEW_CUSTOMER, "New Customer", 1, [LoanStatus.CREDIT_EVALUATION], False, False, LoanAuditEvent.CASE_CREATED, "loan_case.created"),
+        (
+            LoanStatus.CREDIT_EVALUATION, "Credit Evaluation", 2,
+            [LoanStatus.OFFER_ACCEPTANCE, LoanStatus.REJECTED, LoanStatus.RE_ELIGIBLE],
+            False, True, LoanAuditEvent.CREDIT_EVALUATED, "loan_case.credit_evaluated",
+        ),
+        (
+            LoanStatus.OFFER_ACCEPTANCE, "Offer Acceptance", 3, [LoanStatus.ADDITIONAL_DOCUMENTS, LoanStatus.REJECTED],
+            True, True, LoanAuditEvent.BANK_OFFER_SELECTED, "loan_case.bank_offer_selected",
+        ),
+        (
+            LoanStatus.ADDITIONAL_DOCUMENTS, "Additional Documents", 4, [LoanStatus.RV_OV_REF],
+            True, True, LoanAuditEvent.OFFER_ACCEPTED, "loan_case.offer_accepted",
+        ),
+        (
+            LoanStatus.RV_OV_REF, "RV/OV/Ref", 5, [LoanStatus.ESIGN_NACH_KYC],
+            False, True, LoanAuditEvent.ADDITIONAL_DOCS_VERIFIED, "loan_case.additional_docs_verified",
+        ),
+        (
+            LoanStatus.ESIGN_NACH_KYC, "eSign / NACH / KYC", 6, [LoanStatus.FINAL_EVALUATION],
+            False, True, LoanAuditEvent.RV_OV_REF_COMPLETED, "loan_case.rv_ov_ref_completed",
+        ),
+        (
+            LoanStatus.FINAL_EVALUATION, "Final Evaluation", 7, [LoanStatus.SEND_FOR_DISBURSEMENT, LoanStatus.REJECTED],
+            False, True, LoanAuditEvent.ESIGN_NACH_KYC_COMPLETED, "loan_case.esign_nach_kyc_completed",
+        ),
         (LoanStatus.SEND_FOR_DISBURSEMENT, "Send For Disbursement", 8, [LoanStatus.DISBURSED], False, True, LoanAuditEvent.FINAL_EVALUATED, "loan_case.approved"),
         (LoanStatus.DISBURSED, "Disbursed", 9, [], False, False, LoanAuditEvent.DISBURSED, "loan_case.disbursed"),
-        (LoanStatus.REJECTED, "Application Rejected", 10, [], False, False, LoanAuditEvent.REJECTED, "loan_case.rejected"),
+        (
+            LoanStatus.RE_ELIGIBLE, "Re-Eligible", 10, [LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED],
+            False, True, LoanAuditEvent.MARKED_RE_ELIGIBLE, "loan_case.marked_re_eligible",
+        ),
+        (LoanStatus.REJECTED, "Application Rejected", 11, [], False, False, LoanAuditEvent.REJECTED, "loan_case.rejected"),
     ]
     insurance_rows = [
         (InsuranceStatus.APPLICATION_SUBMITTED, "Application Submitted", 1, [InsuranceStatus.DOCUMENTS_PENDING], False, False, InsuranceAuditEvent.CASE_CREATED, "insurance_case.created"),

@@ -334,6 +334,26 @@ async def test_poll_audit_events_creates_lead_assigned_notification_once(client,
     assert len(matches) == 1
 
 
+async def test_poll_audit_events_notifies_owner_self_assigned_lead(client, mock_db, owner_headers, monkeypatch):
+    """Production bug fix: this audit metadata's "employee_id" can now also be an
+    Owner's own User id (Owner self-assignment, see LeadService._assign) — this poller
+    used to silently skip that case (Employee lookup returns None) rather than notify
+    the Owner."""
+    monkeypatch.setattr("app.worker.tasks.reminders.get_database", lambda: mock_db)
+    owner_user = await mock_db["users"].find_one({"mobile": "9000000001"})
+    owner_user_id = str(owner_user["_id"])
+
+    await mock_db["audit_logs"].insert_one(
+        {"event_type": "lead_assigned", "user_id": None, "metadata": {"lead_id": "000000000000000000000002", "employee_id": owner_user_id}, "created_at": utc_now()}
+    )
+
+    await poll_audit_events({})
+    r = await client.get("/api/v1/notifications", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    matches = [n for n in r.json()["data"] if n["notification_type"] == "lead_assigned"]
+    assert len(matches) == 1
+
+
 async def test_check_re_eligible_cases_notifies_assigned_employee_once(client, mock_db, owner_headers, master_data, monkeypatch):
     monkeypatch.setattr("app.worker.tasks.reminders.get_database", lambda: mock_db)
     employee = await _create_employee(client, owner_headers, master_data, mobile="9700000106", email="reeligible.officer@example.com")

@@ -9,7 +9,10 @@ another customer's communication history).
 
 from datetime import UTC, datetime
 
-from test_customer import _create_employee, _seed_product_and_form, _seed_workflow_definitions, _signup_via_otp
+from app.features.leads.constants import LeadActivityType
+from app.features.leads.models import LeadActivity
+from app.utils.helpers import to_object_id
+from test_customer import _create_employee, _create_lead_doc, _seed_product_and_form, _seed_workflow_definitions, _signup_via_otp
 
 
 async def _register_customer(client, mock_db, *, mobile: str) -> dict:
@@ -116,6 +119,35 @@ async def test_application_timeline_reflects_draft_then_submitted(client, mock_d
     # appears here, and it's the case's current stage — "current", not "completed".
     assert labels == ["Application Started", "Application Submitted", "New Customer"]
     assert [e["state"] for e in entries] == ["completed", "completed", "current"]
+
+
+async def test_application_timeline_shows_owner_self_assigned_lead(client, mock_db, owner_headers):
+    """Production bug fix: `_build_lead_assigned_entry` used to look up the Lead's
+    ASSIGNED activity's `employee_id` only against `employees`, so a lead an Owner
+    self-assigned (see LeadService._assign — an Owner has no Employee record by design)
+    silently disappeared from this timeline entirely instead of showing "Assigned to
+    Owner"."""
+    product = await _seed_product_and_form(mock_db)
+    customer_headers = await _register_customer(client, mock_db, mobile="9611111120")
+
+    r = await client.post(
+        "/api/v1/applications", json={"product_category": product["product_category"], "product_id": product["product_id"]}, headers=customer_headers
+    )
+    assert r.status_code == 200, r.text
+    application_id = r.json()["data"]["id"]
+
+    owner_user = await mock_db["users"].find_one({"mobile": "9000000001"})
+    owner_user_id = str(owner_user["_id"])
+    lead_id = await _create_lead_doc(mock_db, product, mobile="9611111120", full_name="Owner Self Assigned Lead")
+    activity = LeadActivity(lead_id=lead_id, event_type=LeadActivityType.ASSIGNED, metadata={"employee_id": owner_user_id})
+    await mock_db["lead_activities"].insert_one(activity.model_dump(by_alias=True, exclude={"id"}))
+    await mock_db["applications"].update_one({"_id": to_object_id(application_id)}, {"$set": {"lead_id": lead_id}})
+
+    r = await client.get(f"/api/v1/applications/{application_id}/timeline", headers=customer_headers)
+    assert r.status_code == 200, r.text
+    labels = [e["label"] for e in r.json()["data"]]
+    assert "Lead Created" in labels
+    assert "Assigned to Owner" in labels
 
 
 async def test_support_request_creates_task_for_assigned_relationship_manager(client, mock_db, owner_headers, master_data):

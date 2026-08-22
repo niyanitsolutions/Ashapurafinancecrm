@@ -15,15 +15,14 @@ import { getErrorMessage } from "@/features/customer/errors";
 import {
   addLoanCaseNote,
   assignLoanCase,
+  confirmOfferAcceptance,
   disburseLoanCase,
   getLoanCase,
   getLoanCaseTimeline,
   holdLoanCase,
-  recordBankDetails,
   recordCreditEvaluation,
   recordEsignNachKyc,
   recordFinalEvaluation,
-  recordOffer,
   requestLoanCaseDocuments,
   resumeLoanCase,
   updateLoanCaseStatus,
@@ -31,24 +30,13 @@ import {
   type CaseTimelineEntry,
   type LoanCaseDetail,
 } from "@/features/loan_management/api";
-import { getLoanStatusControlInfo, type StatusControlInfo } from "@/features/loan_management/statusControl";
+import { CreditEvaluationBankOffers } from "@/features/loan_management/components/CreditEvaluationBankOffers";
+import { OfferAcceptancePanel } from "@/features/loan_management/components/OfferAcceptancePanel";
+import { LOAN_STATUS_LABELS as STATUS_LABELS } from "@/features/loan_management/constants";
+import { getLoanStatusControlInfo, type StatusControlAction } from "@/features/loan_management/statusControl";
 import { documentTypesApi, type NamedMasterData } from "@/features/system_settings/api";
 import { formatISTDateTime } from "@/shared/dateFormat";
 import { HOLD_REASONS } from "@/features/workflow_engine/holdReasons";
-
-const STATUS_LABELS: Record<string, string> = {
-  new_customer: "New Customer",
-  documents_pending: "Documents Pending",
-  credit_evaluation: "Credit Evaluation",
-  offer_acceptance: "Offer Acceptance",
-  additional_documents: "Upload Additional Documents",
-  esign_nach_kyc: "eSign / NACH / KYC",
-  final_evaluation: "Final Evaluation",
-  send_for_disbursement: "Send For Disbursement",
-  disbursed: "Disbursed",
-  on_hold: "On Hold",
-  rejected: "Rejected",
-};
 
 function Field({ label, value }: { label: string; value: string | number | null | undefined }) {
   return (
@@ -151,28 +139,34 @@ export function LoanCaseDetailsPage() {
           </Section>
 
           {canEdit && (
-            <Section title="Case Status">
+            <Section title="Update Loan Case">
               <p className="text-sm text-text">
                 Current Status: <span className="font-medium">{STATUS_LABELS[status] ?? status}</span>
               </p>
               <StatusUpdateControl
-                info={getLoanStatusControlInfo(status)}
+                actions={getLoanStatusControlInfo(status)}
                 labels={STATUS_LABELS}
-                onUpdate={(nextStatus) => run(() => updateLoanCaseStatus(caseId, nextStatus), "Status updated.")}
+                onUpdate={(nextStatus, remarks) => run(() => updateLoanCaseStatus(caseId, nextStatus, remarks), "Status updated.")}
               />
             </Section>
           )}
 
-          {canEdit && (
+          {canEdit && status === "credit_evaluation" && (
             <Section title="Bank / NBFC Details">
-              <BankDetailsForm
+              <CreditEvaluationBankOffers caseId={caseId} canEdit={canEdit} onOfferSelected={load} />
+            </Section>
+          )}
+
+          {canEdit && status === "credit_evaluation" && (
+            <Section title="Credit Score (optional)">
+              <CreditScoreForm
                 details={details}
-                onSubmit={(payload) => run(() => recordBankDetails(caseId, payload), "Bank details updated.")}
+                onSubmit={(payload) => run(() => recordCreditEvaluation(caseId, payload), "Credit score saved.")}
               />
             </Section>
           )}
 
-          {canEdit && (status === "new_customer" || status === "documents_pending" || status === "additional_documents") && (
+          {canEdit && (status === "new_customer" || status === "additional_documents") && (
             <Section title="Document Verification">
               <p className="text-xs text-text/50">Pending: {loanCase.pending_document_type_ids.length === 0 ? "none requested" : loanCase.pending_document_type_ids.length}</p>
               <RequestDocumentsForm
@@ -187,34 +181,14 @@ export function LoanCaseDetailsPage() {
             </Section>
           )}
 
-          {canEdit && status === "credit_evaluation" && (
-            <Section title="Decision Screen — Credit Evaluation">
-              <DecisionForm
-                onSubmit={(decision, reason, extra) =>
-                  run(() => recordCreditEvaluation(caseId, { credit_score: extra.creditScore, credit_remarks: extra.remarks, decision, rejection_reason: reason }), "Credit evaluation recorded.")
-                }
-                extraFields="credit"
-              />
-            </Section>
-          )}
-
           {status === "offer_acceptance" && (
-            <Section title="Loan Offer">
-              {details.offered_amount == null ? (
-                canEdit ? (
-                  <OfferForm onSubmit={(payload) => run(() => recordOffer(caseId, payload), "Offer issued.")} />
-                ) : (
-                  <p className="text-sm text-text/40">No offer recorded yet.</p>
-                )
-              ) : (
-                <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
-                  <Field label="Offered Amount" value={details.offered_amount} />
-                  <Field label="Tenure (months)" value={details.offered_tenure_months} />
-                  <Field label="Interest Rate" value={details.offered_interest_rate} />
-                  <Field label="Customer Decision" value={details.offer_decision} />
-                </div>
-              )}
-              <p className="text-xs text-text/40">Awaiting the Customer's own accept/decline action.</p>
+            <Section title="Offer Acceptance">
+              <OfferAcceptancePanel
+                bankName={loanCase.selected_bank_name}
+                approvedAmount={loanCase.approved_amount}
+                canConfirm={canEdit}
+                onConfirm={() => run(() => confirmOfferAcceptance(caseId), "Offer acceptance confirmed.")}
+              />
             </Section>
           )}
 
@@ -231,7 +205,6 @@ export function LoanCaseDetailsPage() {
             <Section title="Decision Screen — Final Evaluation">
               <DecisionForm
                 onSubmit={(decision, reason, extra) => run(() => recordFinalEvaluation(caseId, { remarks: extra.remarks, decision, rejection_reason: reason }), "Final evaluation recorded.")}
-                extraFields="remarks"
               />
             </Section>
           )}
@@ -314,43 +287,81 @@ export function LoanCaseDetailsPage() {
 }
 
 // Renders the Case Status control's body based on what the current status actually
-// allows (see statusControl.ts) — never a generic "pick anything" dropdown. `onUpdate`
-// is only ever called with the one valid next status for a "simple" move; the backend
-// (WorkflowEngine + LoanCaseService.update_status) still independently validates and
-// enforces every one of these rules regardless of what this component decides to show.
+// allows (see statusControl.ts) — never a generic "pick anything" dropdown. A status
+// can now offer more than one action at once (decision #129 — e.g. Credit Evaluation's
+// dedicated bank-offer view alongside plain Reject/Mark Re-Eligible moves), so this
+// renders each action in `actions`. `onUpdate` is only ever called with one of the
+// listed valid next statuses; the backend (WorkflowEngine + LoanCaseService.
+// update_status) still independently validates and enforces every one of these rules
+// regardless of what this component decides to show.
 function StatusUpdateControl({
-  info,
+  actions,
   labels,
   onUpdate,
 }: {
-  info: StatusControlInfo;
+  actions: StatusControlAction[];
   labels: Record<string, string>;
-  onUpdate: (nextStatus: string) => void;
+  onUpdate: (nextStatus: string, remarks?: string) => void;
 }) {
-  if (info.kind === "simple") {
-    return (
-      <div className="flex items-center justify-between gap-3 rounded border border-border bg-background/50 px-3 py-2">
-        <span className="text-sm text-text/70">
-          Next: <span className="font-medium text-text">{labels[info.nextStatus] ?? info.nextStatus}</span>
-        </span>
-        <Button size="sm" onClick={() => onUpdate(info.nextStatus)}>
-          Update Status
-        </Button>
-      </div>
-    );
-  }
-  if (info.kind === "dedicated") {
-    return (
-      <p className="text-xs text-text/50">
-        This status requires additional information. Please use the existing{" "}
-        <span className="font-medium text-text">{info.actionLabel}</span> action{info.actionLabel === "Resume" ? "" : " below"}.
-      </p>
-    );
-  }
-  if (info.kind === "customerOnly") {
-    return <p className="text-xs text-text/50">{info.note}</p>;
-  }
-  return <p className="text-xs text-text/50">No direct status update is available from the current status. Please use the appropriate case action.</p>;
+  const [rejectingIndex, setRejectingIndex] = useState<number | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+
+  return (
+    <div className="space-y-2">
+      {actions.map((action, i) => {
+        if (action.kind === "simple") {
+          const isReject = action.nextStatus === "rejected";
+          if (isReject && rejectingIndex === i) {
+            return (
+              <div key={i} className="space-y-2 rounded border border-danger/30 bg-danger/5 px-3 py-2">
+                <TextareaField label="Reason (mandatory)" value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} rows={2} required />
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    disabled={!rejectReason.trim()}
+                    onClick={() => {
+                      onUpdate(action.nextStatus, rejectReason.trim());
+                      setRejectingIndex(null);
+                      setRejectReason("");
+                    }}
+                  >
+                    Confirm Reject
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => setRejectingIndex(null)}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            );
+          }
+          return (
+            <div key={i} className="flex items-center justify-between gap-3 rounded border border-border bg-background/50 px-3 py-2">
+              <span className="text-sm text-text/70">
+                {action.label ? action.label : <>Next: <span className="font-medium text-text">{labels[action.nextStatus] ?? action.nextStatus}</span></>}
+              </span>
+              <Button size="sm" variant={isReject ? "danger" : "primary"} onClick={() => (isReject ? setRejectingIndex(i) : onUpdate(action.nextStatus))}>
+                {isReject ? "Reject" : "Update Status"}
+              </Button>
+            </div>
+          );
+        }
+        if (action.kind === "dedicated") {
+          return (
+            <p key={i} className="text-xs text-text/50">
+              This status requires additional information. Please use the existing{" "}
+              <span className="font-medium text-text">{action.actionLabel}</span> action{action.actionLabel === "Resume" ? "" : " below"}.
+            </p>
+          );
+        }
+        return (
+          <p key={i} className="text-xs text-text/50">
+            No direct status update is available from the current status. Please use the appropriate case action.
+          </p>
+        );
+      })}
+    </div>
+  );
 }
 
 function AssignForm({ currentName, onSubmit }: { currentName: string | null; onSubmit: (employeeId: string) => void }) {
@@ -434,49 +445,36 @@ function RequestDocumentsForm({ documentTypes, onSubmit }: { documentTypes: Name
   );
 }
 
-function BankDetailsForm({ details, onSubmit }: { details: LoanCaseDetail["loan_details"]; onSubmit: (payload: Record<string, string>) => void }) {
-  const [name, setName] = useState(details.bank_nbfc_name ?? "");
-  const [appId, setAppId] = useState(details.bank_application_id ?? "");
-  const [refNo, setRefNo] = useState(details.bank_reference_number ?? "");
-  const [officer, setOfficer] = useState(details.assigned_officer ?? "");
-  const [remarks, setRemarks] = useState(details.bank_remarks ?? "");
+function CreditScoreForm({ details, onSubmit }: { details: LoanCaseDetail["loan_details"]; onSubmit: (payload: { credit_score?: number; credit_remarks?: string }) => void }) {
+  const [creditScore, setCreditScore] = useState(details.credit_score != null ? String(details.credit_score) : "");
+  const [remarks, setRemarks] = useState(details.credit_remarks ?? "");
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        onSubmit({ bank_nbfc_name: name, bank_application_id: appId, bank_reference_number: refNo, assigned_officer: officer, bank_remarks: remarks });
+        onSubmit({ credit_score: creditScore ? Number(creditScore) : undefined, credit_remarks: remarks || undefined });
       }}
+      className="space-y-2"
     >
-      <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
-        <FormField label="Bank / NBFC Name" value={name} onChange={(e) => setName(e.target.value)} />
-        <FormField label="Bank Application ID" value={appId} onChange={(e) => setAppId(e.target.value)} />
-        <FormField label="Reference Number" value={refNo} onChange={(e) => setRefNo(e.target.value)} />
-        <FormField label="Assigned Officer" value={officer} onChange={(e) => setOfficer(e.target.value)} />
-      </div>
+      <FormField label="Credit Score" type="number" value={creditScore} onChange={(e) => setCreditScore(e.target.value)} />
       <TextareaField label="Remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={2} />
-      <SubmitButton>Save Bank / NBFC Details</SubmitButton>
+      <SubmitButton>Save</SubmitButton>
     </form>
   );
 }
 
 function DecisionForm({
   onSubmit,
-  extraFields,
 }: {
-  onSubmit: (decision: "approved" | "rejected", rejectionReason: string | undefined, extra: { creditScore?: number; remarks?: string }) => void;
-  extraFields: "credit" | "remarks";
+  onSubmit: (decision: "approved" | "rejected", rejectionReason: string | undefined, extra: { remarks?: string }) => void;
 }) {
   const [decision, setDecision] = useState<"approved" | "rejected">("approved");
-  const [creditScore, setCreditScore] = useState("");
   const [remarks, setRemarks] = useState("");
   const [rejectionReason, setRejectionReason] = useState("");
   const [confirmReject, setConfirmReject] = useState(false);
 
   const submit = () => {
-    onSubmit(decision, decision === "rejected" ? rejectionReason : undefined, {
-      creditScore: creditScore ? Number(creditScore) : undefined,
-      remarks: remarks || undefined,
-    });
+    onSubmit(decision, decision === "rejected" ? rejectionReason : undefined, { remarks: remarks || undefined });
   };
 
   return (
@@ -491,9 +489,6 @@ function DecisionForm({
       }}
       className="space-y-3"
     >
-      {extraFields === "credit" && (
-        <FormField label="Credit Score" type="number" value={creditScore} onChange={(e) => setCreditScore(e.target.value)} />
-      )}
       <TextareaField label="Remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={2} />
       <div className="flex items-center gap-4 text-sm">
         <label className="flex items-center gap-2">
@@ -520,27 +515,6 @@ function DecisionForm({
         }}
         onClose={() => setConfirmReject(false)}
       />
-    </form>
-  );
-}
-
-function OfferForm({ onSubmit }: { onSubmit: (payload: { offered_amount: number; offered_tenure_months: number; offered_interest_rate: number }) => void }) {
-  const [amount, setAmount] = useState("");
-  const [tenure, setTenure] = useState("");
-  const [rate, setRate] = useState("");
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSubmit({ offered_amount: Number(amount), offered_tenure_months: Number(tenure), offered_interest_rate: Number(rate) });
-      }}
-    >
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <FormField label="Amount" type="number" value={amount} onChange={(e) => setAmount(e.target.value)} required />
-        <FormField label="Tenure (months)" type="number" value={tenure} onChange={(e) => setTenure(e.target.value)} required />
-        <FormField label="Interest Rate %" type="number" step="0.01" value={rate} onChange={(e) => setRate(e.target.value)} required />
-      </div>
-      <SubmitButton>Issue Offer</SubmitButton>
     </form>
   );
 }

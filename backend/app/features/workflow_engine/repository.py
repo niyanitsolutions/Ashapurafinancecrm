@@ -73,6 +73,20 @@ class ApplicationWorkflowRepository(BaseRepository[ApplicationWorkflow]):
     async def find_for_customer(self, customer_id: str, case_type: str) -> list[ApplicationWorkflow]:
         return await self.find_many({"customer_id": customer_id, "case_type": case_type}, limit=200, sort=[("created_at", -1)])
 
+    async def count_filtered(
+        self, *, case_type: str, status: str, assigned_to: str | None = None, unassigned_only: bool = False
+    ) -> int:
+        """Same query-building as `search_and_filter`'s status/assigned_to branch,
+        without paginating — backs a status-tab count badge (e.g.
+        `LoanCaseService.get_counts`) so a count can never disagree with what its
+        matching list call actually returns."""
+        query: dict[str, Any] = {"is_deleted": False, "case_type": case_type, "current_status": status}
+        if unassigned_only:
+            query["assigned_to"] = None
+        elif assigned_to:
+            query["assigned_to"] = assigned_to
+        return await self.collection.count_documents(query)
+
 
 class ApplicationStatusHistoryRepository(BaseRepository[ApplicationStatusHistory]):
     collection_name = "application_status_history"

@@ -23,16 +23,20 @@ from app.features.workflow_engine.constants import (
 from app.features.workflow_engine.models import WorkflowDefinition
 
 _LOAN_ROWS = [
-    (LoanStatus.NEW_CUSTOMER, "New Customer", 1, [LoanStatus.DOCUMENTS_PENDING], LoanAuditEvent.CASE_CREATED),
-    (LoanStatus.DOCUMENTS_PENDING, "Documents Pending", 2, [LoanStatus.CREDIT_EVALUATION], LoanAuditEvent.DOCUMENTS_REQUESTED),
-    (LoanStatus.CREDIT_EVALUATION, "Credit Evaluation", 3, [LoanStatus.OFFER_ACCEPTANCE, LoanStatus.REJECTED], LoanAuditEvent.DOCUMENTS_VERIFIED),
-    (LoanStatus.OFFER_ACCEPTANCE, "Offer Acceptance", 4, [LoanStatus.ADDITIONAL_DOCUMENTS, LoanStatus.REJECTED], LoanAuditEvent.CREDIT_EVALUATED),
-    (LoanStatus.ADDITIONAL_DOCUMENTS, "Upload Additional Documents", 5, [LoanStatus.ESIGN_NACH_KYC], LoanAuditEvent.OFFER_ACCEPTED),
-    (LoanStatus.ESIGN_NACH_KYC, "eSign / NACH / KYC", 6, [LoanStatus.FINAL_EVALUATION], LoanAuditEvent.ADDITIONAL_DOCS_VERIFIED),
+    (LoanStatus.NEW_CUSTOMER, "New Customer", 1, [LoanStatus.CREDIT_EVALUATION], LoanAuditEvent.CASE_CREATED),
+    (
+        LoanStatus.CREDIT_EVALUATION, "Credit Evaluation", 2,
+        [LoanStatus.OFFER_ACCEPTANCE, LoanStatus.REJECTED, LoanStatus.RE_ELIGIBLE], LoanAuditEvent.CREDIT_EVALUATED,
+    ),
+    (LoanStatus.OFFER_ACCEPTANCE, "Offer Acceptance", 3, [LoanStatus.ADDITIONAL_DOCUMENTS, LoanStatus.REJECTED], LoanAuditEvent.BANK_OFFER_SELECTED),
+    (LoanStatus.ADDITIONAL_DOCUMENTS, "Additional Documents", 4, [LoanStatus.RV_OV_REF], LoanAuditEvent.OFFER_ACCEPTED),
+    (LoanStatus.RV_OV_REF, "RV/OV/Ref", 5, [LoanStatus.ESIGN_NACH_KYC], LoanAuditEvent.ADDITIONAL_DOCS_VERIFIED),
+    (LoanStatus.ESIGN_NACH_KYC, "eSign / NACH / KYC", 6, [LoanStatus.FINAL_EVALUATION], LoanAuditEvent.RV_OV_REF_COMPLETED),
     (LoanStatus.FINAL_EVALUATION, "Final Evaluation", 7, [LoanStatus.SEND_FOR_DISBURSEMENT, LoanStatus.REJECTED], LoanAuditEvent.ESIGN_NACH_KYC_COMPLETED),
     (LoanStatus.SEND_FOR_DISBURSEMENT, "Send For Disbursement", 8, [LoanStatus.DISBURSED], LoanAuditEvent.FINAL_EVALUATED),
     (LoanStatus.DISBURSED, "Disbursed", 9, [], LoanAuditEvent.DISBURSED),
-    (LoanStatus.REJECTED, "Application Rejected", 10, [], LoanAuditEvent.REJECTED),
+    (LoanStatus.RE_ELIGIBLE, "Re-Eligible", 10, [LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED], LoanAuditEvent.MARKED_RE_ELIGIBLE),
+    (LoanStatus.REJECTED, "Application Rejected", 11, [], LoanAuditEvent.REJECTED),
 ]
 _INSURANCE_ROWS = [
     (InsuranceStatus.APPLICATION_SUBMITTED, "Application Submitted", 1, [InsuranceStatus.DOCUMENTS_PENDING], InsuranceAuditEvent.CASE_CREATED),
@@ -174,11 +178,14 @@ async def _submitted_application(client, mock_db, product, *, mobile, extra_doc_
 
 
 async def test_loan_pipeline_happy_path_to_disbursed(client, mock_db, owner_headers, master_data):
+    """Decision #129's redesigned pipeline, end to end: New Customer -> Credit Evaluation
+    (plain, no document gate — a Lead only reaches Loan Management once its required
+    documents are already verified, decision #127) -> multiple bank offers, only the
+    selected one carried forward -> Offer Acceptance (select, then a separate explicit
+    confirm) -> Additional Documents -> RV/OV/Ref -> eSign/NACH/KYC -> Final Evaluation ->
+    Send For Disbursement -> Disbursed."""
     await _seed_workflow_definitions(mock_db)
     product = await _seed_product_and_form(mock_db, category="loan", product_name="Personal Loan")
-    bank_doc = DocumentType(name="Bank Statement")
-    bank_doc_id = str((await mock_db["document_types"].insert_one(bank_doc.model_dump(by_alias=True, exclude={"id"}))).inserted_id)
-
     customer_headers, application_id = await _submitted_application(client, mock_db, product, mobile="9600000001")
 
     # Case is lazily synced into existence the first time the Owner looks.
@@ -198,44 +205,50 @@ async def test_loan_pipeline_happy_path_to_disbursed(client, mock_db, owner_head
     assert r.status_code == 200, r.text
     assert r.json()["data"]["current_status"] == "new_customer"
 
-    # New Customer -> Documents Pending (first document request)
-    r = await client.post(f"/api/v1/loan-cases/{case_id}/documents/request", json={"document_type_ids": [bank_doc_id]}, headers=employee_headers)
-    assert r.status_code == 200, r.text
-    assert r.json()["data"]["current_status"] == "documents_pending"
-
-    r = await client.post(f"/api/v1/loan-cases/{case_id}/documents/verify", headers=employee_headers)
-    assert r.status_code == 422, r.text  # not uploaded yet
-
-    upload = await client.post(
-        f"/api/v1/applications/{application_id}/documents/upload-url", json={"document_type_id": bank_doc_id, "file_name": "bank.pdf"}, headers=customer_headers
-    )
-    s3_key = upload.json()["data"]["s3_key"]
-    await client.post(
-        f"/api/v1/applications/{application_id}/documents", json={"document_type_id": bank_doc_id, "file_name": "bank.pdf", "s3_key": s3_key}, headers=customer_headers
-    )
-
-    r = await client.post(f"/api/v1/loan-cases/{case_id}/bank-details", json={"bank_nbfc_name": "ABC Bank", "bank_application_id": "BANK-001"}, headers=employee_headers)
-    assert r.status_code == 200, r.text
-    assert r.json()["data"]["loan_details"]["bank_nbfc_name"] == "ABC Bank"
-
-    # Documents Pending -> Credit Evaluation
-    r = await client.post(f"/api/v1/loan-cases/{case_id}/documents/verify", headers=employee_headers)
+    # New Customer -> Credit Evaluation (plain, generic status control)
+    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=employee_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["current_status"] == "credit_evaluation"
 
-    # Credit Evaluation -> Offer Acceptance
-    r = await client.post(f"/api/v1/loan-cases/{case_id}/credit-evaluation", json={"credit_score": 750, "decision": "approved"}, headers=employee_headers)
-    assert r.status_code == 200, r.text
-    assert r.json()["data"]["current_status"] == "offer_acceptance"
-
+    # Multiple bank offers — adding one never overwrites another.
     r = await client.post(
-        f"/api/v1/loan-cases/{case_id}/offer", json={"offered_amount": 90000, "offered_tenure_months": 24, "offered_interest_rate": 11.5}, headers=employee_headers
+        f"/api/v1/loan-cases/{case_id}/bank-offers",
+        json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 90000}, headers=employee_headers,
     )
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["loan_details"]["offer_decision"] == "pending"
+    hdfc_offer_id = r.json()["data"]["id"]
 
-    # Customer accepts -> Additional Documents
-    r = await client.post(f"/api/v1/loan-cases/{case_id}/offer/accept", headers=customer_headers)
+    r = await client.post(
+        f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "ICICI Bank", "decision": "rejected_re_eligible"}, headers=employee_headers,
+    )
+    assert r.status_code == 200, r.text
+    icici_offer_id = r.json()["data"]["id"]
+
+    r = await client.post(
+        f"/api/v1/loan-cases/{case_id}/bank-offers",
+        json={"bank_name": "Axis Bank", "decision": "approved", "approved_amount": 75000}, headers=employee_headers,
+    )
+    assert r.status_code == 200, r.text
+    axis_offer_id = r.json()["data"]["id"]
+
+    r = await client.get(f"/api/v1/loan-cases/{case_id}/bank-offers", headers=employee_headers)
+    assert r.status_code == 200, r.text
+    offers = r.json()["data"]
+    assert {o["id"] for o in offers} == {hdfc_offer_id, icici_offer_id, axis_offer_id}  # all three retained
+
+    # Credit Evaluation -> Offer Acceptance (select the HDFC offer)
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers/{hdfc_offer_id}/select", headers=employee_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["current_status"] == "offer_acceptance"
+    assert r.json()["data"]["loan_details"]["offered_amount"] == 90000
+    assert r.json()["data"]["selected_bank_name"] == "HDFC Bank"
+
+    # Selecting alone must NOT auto-advance past Offer Acceptance.
+    r = await client.get(f"/api/v1/loan-cases/{case_id}", headers=employee_headers)
+    assert r.json()["data"]["current_status"] == "offer_acceptance"
+
+    # Offer Acceptance -> Additional Documents requires the separate, explicit confirm step.
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/offer-acceptance/confirm", headers=employee_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["current_status"] == "additional_documents"
 
@@ -243,7 +256,7 @@ async def test_loan_pipeline_happy_path_to_disbursed(client, mock_db, owner_head
     salary_doc_id = str((await mock_db["document_types"].insert_one(salary_doc.model_dump(by_alias=True, exclude={"id"}))).inserted_id)
     r = await client.post(f"/api/v1/loan-cases/{case_id}/documents/request", json={"document_type_ids": [salary_doc_id]}, headers=employee_headers)
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["current_status"] == "additional_documents"  # no transition — already in target status
+    assert r.json()["data"]["current_status"] == "additional_documents"  # no transition — optional, non-pipeline-driving
 
     upload = await client.post(
         f"/api/v1/applications/{application_id}/documents/upload-url", json={"document_type_id": salary_doc_id, "file_name": "salary.pdf"}, headers=customer_headers
@@ -253,8 +266,13 @@ async def test_loan_pipeline_happy_path_to_disbursed(client, mock_db, owner_head
         f"/api/v1/applications/{application_id}/documents", json={"document_type_id": salary_doc_id, "file_name": "salary.pdf", "s3_key": s3_key}, headers=customer_headers
     )
 
-    # Additional Documents -> eSign/NACH/KYC
+    # Additional Documents -> RV/OV/Ref
     r = await client.post(f"/api/v1/loan-cases/{case_id}/documents/verify", headers=employee_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["current_status"] == "rv_ov_ref"
+
+    # RV/OV/Ref -> eSign/NACH/KYC (plain, generic status control)
+    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "esign_nach_kyc", "remarks": "Verification completed"}, headers=employee_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["current_status"] == "esign_nach_kyc"
 
@@ -294,6 +312,11 @@ async def test_loan_pipeline_happy_path_to_disbursed(client, mock_db, owner_head
 
 
 async def test_loan_rejected_at_credit_evaluation_requires_reason(client, mock_db, owner_headers):
+    """Production redesign (decision #129): credit_evaluation() no longer carries a
+    decision/rejection_reason (that concept moved to per-bank offers, independent of
+    case status) — rejecting a case in Credit Evaluation now goes through the generic
+    plain status control, which still enforces the same "reason is mandatory" rule the
+    old dedicated action used to."""
     await _seed_workflow_definitions(mock_db)
     product = await _seed_product_and_form(mock_db, category="loan", product_name="Business Loan")
     _customer_headers, application_id = await _submitted_application(client, mock_db, product, mobile="9600000002")
@@ -301,36 +324,41 @@ async def test_loan_rejected_at_credit_evaluation_requires_reason(client, mock_d
     r = await client.get("/api/v1/loan-cases", headers=owner_headers)
     case_id = next(c["id"] for c in r.json()["data"] if c["application_id"] == application_id)
 
-    await client.post(f"/api/v1/loan-cases/{case_id}/documents/request", json={"document_type_ids": []}, headers=owner_headers)
-    await client.post(f"/api/v1/loan-cases/{case_id}/documents/verify", headers=owner_headers)
+    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=owner_headers)
+    assert r.status_code == 200, r.text
 
-    r = await client.post(f"/api/v1/loan-cases/{case_id}/credit-evaluation", json={"credit_score": 480, "decision": "rejected"}, headers=owner_headers)
-    assert r.status_code == 422, r.text  # missing mandatory rejection_reason
+    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "rejected"}, headers=owner_headers)
+    assert r.status_code == 422, r.text  # missing mandatory reason
+    r = await client.get(f"/api/v1/loan-cases/{case_id}", headers=owner_headers)
+    assert r.json()["data"]["current_status"] == "credit_evaluation"  # unchanged
 
-    r = await client.post(
-        f"/api/v1/loan-cases/{case_id}/credit-evaluation", json={"credit_score": 480, "decision": "rejected", "rejection_reason": "Low credit score"}, headers=owner_headers
-    )
+    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "rejected", "remarks": "Low credit score"}, headers=owner_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["current_status"] == "rejected"
     assert r.json()["data"]["rejection_reason"] == "Low credit score"
 
 
-async def test_loan_offer_decline_rejects_case(client, mock_db, owner_headers):
+async def test_loan_all_banks_rejected_moves_case_to_rejected(client, mock_db, owner_headers):
+    """Spec §12: when every bank offer on a case is Rejected/Re-Eligible (no Approved
+    offer exists), staff moves the case to Rejected directly — bank-level decisions and
+    case-level status remain independent concepts, so this is always a deliberate staff
+    action via the generic status control, never automatic."""
     await _seed_workflow_definitions(mock_db)
     product = await _seed_product_and_form(mock_db, category="loan", product_name="Property Loan")
-    customer_headers, application_id = await _submitted_application(client, mock_db, product, mobile="9600000003")
+    _customer_headers, application_id = await _submitted_application(client, mock_db, product, mobile="9600000003")
 
     r = await client.get("/api/v1/loan-cases", headers=owner_headers)
     case_id = next(c["id"] for c in r.json()["data"] if c["application_id"] == application_id)
-    await client.post(f"/api/v1/loan-cases/{case_id}/documents/request", json={"document_type_ids": []}, headers=owner_headers)
-    await client.post(f"/api/v1/loan-cases/{case_id}/documents/verify", headers=owner_headers)
-    await client.post(f"/api/v1/loan-cases/{case_id}/credit-evaluation", json={"decision": "approved"}, headers=owner_headers)
-    await client.post(f"/api/v1/loan-cases/{case_id}/offer", json={"offered_amount": 50000, "offered_tenure_months": 12, "offered_interest_rate": 10}, headers=owner_headers)
+    await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=owner_headers)
 
-    r = await client.post(f"/api/v1/loan-cases/{case_id}/offer/decline", headers=customer_headers)
+    for bank in ("HDFC Bank", "ICICI Bank", "Axis Bank"):
+        r = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": bank, "decision": "rejected_re_eligible"}, headers=owner_headers)
+        assert r.status_code == 200, r.text
+
+    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "rejected", "remarks": "All banks declined"}, headers=owner_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["current_status"] == "rejected"
-    assert r.json()["data"]["rejection_reason"]
+    assert r.json()["data"]["rejection_reason"] == "All banks declined"
 
 
 # ---------------------------------------------------------------------- Insurance: without and with medical
@@ -453,16 +481,15 @@ async def test_loan_case_hold_and_resume(client, mock_db, owner_headers):
 
     r = await client.get("/api/v1/loan-cases", headers=owner_headers)
     case_id = next(c["id"] for c in r.json()["data"] if c["application_id"] == application_id)
-    await client.post(f"/api/v1/loan-cases/{case_id}/documents/request", json={"document_type_ids": []}, headers=owner_headers)
-    await client.post(f"/api/v1/loan-cases/{case_id}/documents/verify", headers=owner_headers)
-    assert (await client.get(f"/api/v1/loan-cases/{case_id}", headers=owner_headers)).json()["data"]["current_status"] == "credit_evaluation"
+    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=owner_headers)
+    assert r.status_code == 200, r.text
 
     r = await client.post(f"/api/v1/loan-cases/{case_id}/hold", json={"reason": "waiting_for_customer", "remarks": "Awaiting income proof"}, headers=owner_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["current_status"] == "on_hold"
 
     # Stage-specific actions are blocked while on hold — the case genuinely paused, not just labeled.
-    r = await client.post(f"/api/v1/loan-cases/{case_id}/credit-evaluation", json={"decision": "approved"}, headers=owner_headers)
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/credit-evaluation", json={"credit_score": 750}, headers=owner_headers)
     assert r.status_code == 409, r.text
 
     r = await client.post(f"/api/v1/loan-cases/{case_id}/hold", json={"reason": "internal_review"}, headers=owner_headers)
@@ -473,7 +500,10 @@ async def test_loan_case_hold_and_resume(client, mock_db, owner_headers):
     assert r.json()["data"]["current_status"] == "credit_evaluation"  # resumed to exactly where it paused
 
     # And the case can now continue normally.
-    r = await client.post(f"/api/v1/loan-cases/{case_id}/credit-evaluation", json={"decision": "approved"}, headers=owner_headers)
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 60000}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    offer_id = r.json()["data"]["id"]
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers/{offer_id}/select", headers=owner_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["current_status"] == "offer_acceptance"
 

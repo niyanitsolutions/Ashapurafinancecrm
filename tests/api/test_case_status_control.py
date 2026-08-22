@@ -27,16 +27,20 @@ from app.features.workflow_engine.models import WorkflowDefinition
 # separate, local copy (same convention every other test module in this suite already
 # follows) rather than a cross-module import.
 _LOAN_ROWS = [
-    (LoanStatus.NEW_CUSTOMER, "New Customer", 1, [LoanStatus.DOCUMENTS_PENDING], LoanAuditEvent.CASE_CREATED),
-    (LoanStatus.DOCUMENTS_PENDING, "Documents Pending", 2, [LoanStatus.CREDIT_EVALUATION], LoanAuditEvent.DOCUMENTS_REQUESTED),
-    (LoanStatus.CREDIT_EVALUATION, "Credit Evaluation", 3, [LoanStatus.OFFER_ACCEPTANCE, LoanStatus.REJECTED], LoanAuditEvent.DOCUMENTS_VERIFIED),
-    (LoanStatus.OFFER_ACCEPTANCE, "Offer Acceptance", 4, [LoanStatus.ADDITIONAL_DOCUMENTS, LoanStatus.REJECTED], LoanAuditEvent.CREDIT_EVALUATED),
-    (LoanStatus.ADDITIONAL_DOCUMENTS, "Upload Additional Documents", 5, [LoanStatus.ESIGN_NACH_KYC], LoanAuditEvent.OFFER_ACCEPTED),
-    (LoanStatus.ESIGN_NACH_KYC, "eSign / NACH / KYC", 6, [LoanStatus.FINAL_EVALUATION], LoanAuditEvent.ADDITIONAL_DOCS_VERIFIED),
+    (LoanStatus.NEW_CUSTOMER, "New Customer", 1, [LoanStatus.CREDIT_EVALUATION], LoanAuditEvent.CASE_CREATED),
+    (
+        LoanStatus.CREDIT_EVALUATION, "Credit Evaluation", 2,
+        [LoanStatus.OFFER_ACCEPTANCE, LoanStatus.REJECTED, LoanStatus.RE_ELIGIBLE], LoanAuditEvent.CREDIT_EVALUATED,
+    ),
+    (LoanStatus.OFFER_ACCEPTANCE, "Offer Acceptance", 3, [LoanStatus.ADDITIONAL_DOCUMENTS, LoanStatus.REJECTED], LoanAuditEvent.BANK_OFFER_SELECTED),
+    (LoanStatus.ADDITIONAL_DOCUMENTS, "Additional Documents", 4, [LoanStatus.RV_OV_REF], LoanAuditEvent.OFFER_ACCEPTED),
+    (LoanStatus.RV_OV_REF, "RV/OV/Ref", 5, [LoanStatus.ESIGN_NACH_KYC], LoanAuditEvent.ADDITIONAL_DOCS_VERIFIED),
+    (LoanStatus.ESIGN_NACH_KYC, "eSign / NACH / KYC", 6, [LoanStatus.FINAL_EVALUATION], LoanAuditEvent.RV_OV_REF_COMPLETED),
     (LoanStatus.FINAL_EVALUATION, "Final Evaluation", 7, [LoanStatus.SEND_FOR_DISBURSEMENT, LoanStatus.REJECTED], LoanAuditEvent.ESIGN_NACH_KYC_COMPLETED),
     (LoanStatus.SEND_FOR_DISBURSEMENT, "Send For Disbursement", 8, [LoanStatus.DISBURSED], LoanAuditEvent.FINAL_EVALUATED),
     (LoanStatus.DISBURSED, "Disbursed", 9, [], LoanAuditEvent.DISBURSED),
-    (LoanStatus.REJECTED, "Application Rejected", 10, [], LoanAuditEvent.REJECTED),
+    (LoanStatus.RE_ELIGIBLE, "Re-Eligible", 10, [LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED], LoanAuditEvent.MARKED_RE_ELIGIBLE),
+    (LoanStatus.REJECTED, "Application Rejected", 11, [], LoanAuditEvent.REJECTED),
 ]
 _INSURANCE_ROWS = [
     (InsuranceStatus.APPLICATION_SUBMITTED, "Application Submitted", 1, [InsuranceStatus.DOCUMENTS_PENDING], "insurance_case_created"),
@@ -197,16 +201,16 @@ async def _insurance_case(client, mock_db, owner_headers, master_data, *, mobile
 async def test_valid_loan_status_update_persists_and_reflects_in_list(client, mock_db, owner_headers, master_data):
     case_id, employee_headers, _customer_headers, _application_id = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000001")
 
-    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "documents_pending"}, headers=employee_headers)
+    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=employee_headers)
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["current_status"] == "documents_pending"
+    assert r.json()["data"]["current_status"] == "credit_evaluation"
 
     # Refetch (simulates a browser refresh) — database is the only source of truth.
     r = await client.get(f"/api/v1/loan-cases/{case_id}", headers=employee_headers)
-    assert r.json()["data"]["current_status"] == "documents_pending"
+    assert r.json()["data"]["current_status"] == "credit_evaluation"
 
     # List reflects it immediately, and the status filter finds it by the exact value.
-    r = await client.get("/api/v1/loan-cases?status=documents_pending", headers=employee_headers)
+    r = await client.get("/api/v1/loan-cases?status=credit_evaluation", headers=employee_headers)
     assert case_id in [c["id"] for c in r.json()["data"]]
     r = await client.get("/api/v1/loan-cases?status=new_customer", headers=employee_headers)
     assert case_id not in [c["id"] for c in r.json()["data"]]
@@ -261,7 +265,7 @@ async def test_unauthorized_employee_cannot_update_loan_status(client, mock_db, 
     case_id, _employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000006")
     await _create_employee(client, owner_headers, master_data, mobile="9711100006", email="bystander-loan@example.com")
     bystander_headers = await _login(client, "9711100006")
-    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "documents_pending"}, headers=bystander_headers)
+    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=bystander_headers)
     assert r.status_code == 403, r.text
 
 
@@ -277,7 +281,7 @@ async def test_unauthorized_employee_cannot_update_insurance_status(client, mock
 
 
 async def test_status_update_on_nonexistent_loan_case_returns_404(client, owner_headers):
-    r = await client.patch("/api/v1/loan-cases/000000000000000000000000/status", json={"status": "documents_pending"}, headers=owner_headers)
+    r = await client.patch("/api/v1/loan-cases/000000000000000000000000/status", json={"status": "credit_evaluation"}, headers=owner_headers)
     assert r.status_code == 404, r.text
 
 
@@ -307,12 +311,12 @@ async def test_same_status_update_is_a_noop_with_no_duplicate_history(client, mo
 async def test_status_history_records_previous_and_new_status(client, mock_db, owner_headers, master_data):
     case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000009")
 
-    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "documents_pending"}, headers=employee_headers)
+    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=employee_headers)
     assert r.status_code == 200, r.text
 
     r = await client.get(f"/api/v1/loan-cases/{case_id}/timeline", headers=employee_headers)
     status_entries = [e for e in r.json()["data"] if e["type"] == "status"]
-    entry = next(e for e in status_entries if e["to_status"] == "documents_pending")
+    entry = next(e for e in status_entries if e["to_status"] == "credit_evaluation")
     assert entry["from_status"] == "new_customer"
     assert entry["created_by"] is not None
     assert entry["created_at"] is not None
@@ -326,7 +330,7 @@ async def test_employee_not_assigned_to_case_is_forbidden(client, mock_db, owner
     other = await _create_employee(client, owner_headers, master_data, mobile="9711100010", email="other-officer@example.com")
     await _grant_case_permission(client, owner_headers, other["id"], module="loan_management", actions=["view", "edit"])
     other_headers = await _login(client, "9711100010")
-    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "documents_pending"}, headers=other_headers)
+    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=other_headers)
     assert r.status_code == 403, r.text  # this case isn't assigned to them
 
 
@@ -339,12 +343,12 @@ async def test_customer_portal_reflects_updated_loan_status(client, mock_db, own
     r = await client.get(f"/api/v1/loan-cases/mine/{case_id}", headers=customer_headers)
     assert r.json()["data"]["current_status"] == "new_customer"
 
-    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "documents_pending"}, headers=employee_headers)
+    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=employee_headers)
     assert r.status_code == 200, r.text
 
     r = await client.get(f"/api/v1/loan-cases/mine/{case_id}", headers=customer_headers)
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["current_status"] == "documents_pending"  # must not still show the old status
+    assert r.json()["data"]["current_status"] == "credit_evaluation"  # must not still show the old status
 
 
 async def test_customer_portal_reflects_updated_insurance_status(client, mock_db, owner_headers, master_data):
@@ -368,49 +372,53 @@ async def test_customer_application_timeline_reflects_updated_loan_status(client
     Application status. This is the concrete customer-facing surface §9 requires."""
     case_id, employee_headers, customer_headers, application_id = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000013")
 
-    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "documents_pending"}, headers=employee_headers)
+    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=employee_headers)
     assert r.status_code == 200, r.text
 
     r = await client.get(f"/api/v1/applications/{application_id}/timeline", headers=customer_headers)
     assert r.status_code == 200, r.text
     current_entries = [e for e in r.json()["data"] if e.get("state") == "current"]
-    assert any(e["label"] == "Documents Pending" for e in current_entries)
+    assert any(e["label"] == "Credit Evaluation" for e in current_entries)
 
 
 # ---------------------------------------------------------------------- existing business rules preserved through the generic control
 
 
-async def test_generic_status_update_still_enforces_document_upload_precondition(client, mock_db, owner_headers, master_data):
-    """documents_pending -> credit_evaluation is a "simple" transition (dispatches into
-    the existing `verify_documents`), but that method's own precondition — every
-    requested document must actually be uploaded — must still apply through this
-    control, exactly as it does through the dedicated `/documents/verify` endpoint."""
+async def test_verify_documents_dedicated_action_still_enforces_upload_precondition(client, mock_db, owner_headers, master_data):
+    """Production redesign (decision #129): `request_documents` at New Customer no
+    longer auto-transitions into a "Documents Pending" status (retired from the
+    mandatory pipeline — a Lead only reaches Loan Management once its required
+    documents are already verified, decision #127) — it just records which document
+    types are outstanding, and the case stays at `new_customer`. The dedicated
+    `/documents/verify` action still enforces its own precondition (every requested
+    document must actually be uploaded) when staff chooses to use it."""
     case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000014")
 
-    # `request_documents` only accepts new requests from New Customer/Additional
-    # Documents — use the dedicated request endpoint (with a real, never-uploaded
-    # document type) to both enter Documents Pending AND leave something outstanding,
-    # so the generic control's dispatch to `verify_documents` has something to reject.
     extra_doc = DocumentType(name="Extra Required Doc")
     extra_doc_id = str((await mock_db["document_types"].insert_one(extra_doc.model_dump(by_alias=True, exclude={"id"}))).inserted_id)
     r = await client.post(f"/api/v1/loan-cases/{case_id}/documents/request", json={"document_type_ids": [extra_doc_id]}, headers=employee_headers)
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["current_status"] == "documents_pending"
+    assert r.json()["data"]["current_status"] == "new_customer"  # no longer auto-transitions
 
-    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=employee_headers)
-    assert r.status_code == 422, r.text  # extra_doc was never uploaded — same rule as the dedicated verify endpoint
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/documents/verify", headers=employee_headers)
+    assert r.status_code == 422, r.text  # extra_doc was never uploaded
     r = await client.get(f"/api/v1/loan-cases/{case_id}", headers=employee_headers)
-    assert r.json()["data"]["current_status"] == "documents_pending"  # unchanged
+    assert r.json()["data"]["current_status"] == "new_customer"  # unchanged
+
+    # The generic plain status control, by contrast, is deliberately NOT gated on any
+    # outstanding document request — it's the one thing that always works, confirmed
+    # business requirement (decision #129).
+    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=employee_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["current_status"] == "credit_evaluation"
 
 
 async def test_generic_status_update_rejects_transition_requiring_dedicated_action(client, mock_db, owner_headers, master_data):
-    """credit_evaluation -> offer_acceptance requires a real credit decision (score,
-    remarks, approve/reject) the generic {"status": ...} body can't carry — must be
-    rejected, not silently executed with no decision recorded."""
+    """credit_evaluation -> offer_acceptance requires selecting an Approved bank offer
+    (decision #129) the generic {"status": ...} body can't carry — must be rejected, not
+    silently executed with no offer selected."""
     case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000015")
-    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "documents_pending"}, headers=employee_headers)
-    assert r.status_code == 200, r.text
-    r = await client.post(f"/api/v1/loan-cases/{case_id}/documents/verify", headers=employee_headers)
+    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=employee_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["current_status"] == "credit_evaluation"
 
@@ -433,6 +441,6 @@ async def test_generic_status_update_rejects_out_of_order_jump(client, mock_db, 
 async def test_owner_can_update_loan_status(client, mock_db, owner_headers, master_data):
     """Owner bypasses the permission engine entirely — unaffected by this new endpoint."""
     case_id, _employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000017")
-    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "documents_pending"}, headers=owner_headers)
+    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=owner_headers)
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["current_status"] == "documents_pending"
+    assert r.json()["data"]["current_status"] == "credit_evaluation"

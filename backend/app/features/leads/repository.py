@@ -3,6 +3,7 @@ from typing import Any
 
 from app.features.leads.models import Lead, LeadActivity, LeadNote
 from app.shared.base_repository import BaseRepository
+from app.utils.datetime import end_of_day_ist, start_of_day_ist
 
 _SEARCH_FIELDS = ("lead_code", "full_name", "mobile", "email")
 
@@ -102,11 +103,49 @@ class LeadRepository(BaseRepository[Lead]):
             assigned_to=assigned_to, created_by=created_by, status=status, stage=stage, exclude_stage=exclude_stage,
         )
         total = await self.collection.count_documents(query)
-        cursor = self.collection.find(query).skip(skip).limit(limit)
         if sort:
-            cursor = cursor.sort(sort)
-        items = [self.model.model_validate(doc) async for doc in cursor]
+            # An explicit sort was requested (e.g. CSV export's created_at desc) — unchanged.
+            cursor = self.collection.find(query).skip(skip).limit(limit).sort(sort)
+            items = [self.model.model_validate(doc) async for doc in cursor]
+        else:
+            items = await self._find_with_follow_up_priority(query, skip=skip, limit=limit)
         return items, total
+
+    async def _find_with_follow_up_priority(self, query: dict[str, Any], *, skip: int, limit: int) -> list[Lead]:
+        """Default ordering for every Leads list view with no explicit sort requested
+        (production bug fix): Past follow-ups, then Today's, then Future, then leads
+        with no follow-up date at all — chronological within each group. Previously the
+        list had no explicit sort at all here, so it fell back to MongoDB's natural
+        (roughly insertion) order, which is neither this priority ordering nor a plain
+        chronological one. Computed once, server-side, entirely BEFORE `$skip`/`$limit`
+        — pagination can never see a partially-sorted page. Bucket boundaries use the
+        same business-timezone (IST) "today" the rest of the app already computes
+        follow-up colors from (`start_of_day_ist`/`end_of_day_ist`), so a lead's bucket
+        here always agrees with the red/blue/green it renders as on the frontend."""
+        today_start = start_of_day_ist()
+        today_end = end_of_day_ist()
+        pipeline: list[dict[str, Any]] = [
+            {"$match": query},
+            {
+                "$addFields": {
+                    "_follow_up_rank": {
+                        "$switch": {
+                            "branches": [
+                                {"case": {"$eq": ["$next_follow_up_date", None]}, "then": 3},
+                                {"case": {"$lt": ["$next_follow_up_date", today_start]}, "then": 0},
+                                {"case": {"$lt": ["$next_follow_up_date", today_end]}, "then": 1},
+                            ],
+                            "default": 2,
+                        }
+                    }
+                }
+            },
+            {"$sort": {"_follow_up_rank": 1, "next_follow_up_date": 1, "created_at": -1}},
+            {"$skip": skip},
+            {"$limit": limit},
+        ]
+        docs = await self.collection.aggregate(pipeline).to_list(length=limit)
+        return [self.model.model_validate(doc) for doc in docs]
 
     async def count_filtered(
         self,
