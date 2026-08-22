@@ -395,7 +395,10 @@ export function UpdateStageModal({
                       {detail.documents_verified} of {detail.documents_required} required documents verified.
                     </p>
                   )}
-                  <Link to={`/applications/${detail.application_id}`} className="inline-block text-sm font-medium text-primary hover:underline">
+                  <Link
+                    to={`/applications/${detail.application_id}?from=document-collection`}
+                    className="inline-block text-sm font-medium text-primary hover:underline"
+                  >
                     View Full Application →
                   </Link>
                 </div>

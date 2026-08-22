@@ -9,12 +9,18 @@ export function SimplePageLayout({
   title,
   subtitle,
   backTo,
+  backLabel,
   actions,
   children,
 }: {
   title: string;
   subtitle?: string;
   backTo?: string;
+  /** Overrides the generic "← Back" text — for a caller whose Back destination isn't
+   * self-evident from context (e.g. an application opened from Leads -> Document
+   * Collection). Every existing call site that only passes `backTo` keeps rendering
+   * the plain "← Back" it always has. */
+  backLabel?: string;
   actions?: ReactNode;
   children: ReactNode;
 }) {
@@ -25,7 +31,7 @@ export function SimplePageLayout({
           <div className="flex items-start gap-3">
             {backTo && (
               <Link to={backTo} className="mt-1 text-sm text-text/60 hover:text-primary shrink-0">
-                ← Back
+                {backLabel ?? "← Back"}
               </Link>
             )}
             <div>

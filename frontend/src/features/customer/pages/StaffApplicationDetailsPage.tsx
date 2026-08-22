@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/buttons/Button";
 import { EmployeeSelect } from "@/components/forms/EmployeeSelect";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
@@ -67,8 +67,20 @@ function RejectDocumentModal({
   );
 }
 
+// Entry points that should route Back to Document Collection instead of the default
+// Customer Applications list — opened from Leads -> Document Collection (the row-level
+// View action and Update Lead's "View Full Application" link both pass this), never
+// from the Customer Applications module or Customer Details page, which keep the
+// original default. A query param (not router state) so the destination survives a
+// page refresh — see the navigation-context fix's own regression tests.
+const DOCUMENT_COLLECTION_SOURCE = "document-collection";
+
 export function StaffApplicationDetailsPage() {
   const { applicationId } = useParams<{ applicationId: string }>();
+  const [searchParams] = useSearchParams();
+  const fromDocumentCollection = searchParams.get("from") === DOCUMENT_COLLECTION_SOURCE;
+  const backTo = fromDocumentCollection ? "/leads/document-collection" : "/applications";
+  const backLabel = fromDocumentCollection ? "← Back to Document Collection" : undefined;
   const { role } = useAuth();
   const [application, setApplication] = useState<ApplicationDetail | null>(null);
   const [documents, setDocuments] = useState<ApplicationDocument[]>([]);
@@ -101,14 +113,14 @@ export function StaffApplicationDetailsPage() {
   if (!applicationId) return null;
   if (error && !application) {
     return (
-      <SimplePageLayout title="Application" backTo="/applications">
+      <SimplePageLayout title="Application" backTo={backTo} backLabel={backLabel}>
         <p className="text-sm text-danger">{error}</p>
       </SimplePageLayout>
     );
   }
   if (!application) {
     return (
-      <SimplePageLayout title="Application" backTo="/applications">
+      <SimplePageLayout title="Application" backTo={backTo} backLabel={backLabel}>
         <p className="text-sm text-text/50">Loading…</p>
       </SimplePageLayout>
     );
@@ -188,7 +200,7 @@ export function StaffApplicationDetailsPage() {
   );
 
   return (
-    <SimplePageLayout title={application.application_code} backTo="/applications">
+    <SimplePageLayout title={application.application_code} backTo={backTo} backLabel={backLabel}>
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
       <ErrorBanner message={error} />
 

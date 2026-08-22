@@ -453,7 +453,11 @@ export function LeadListPage({ tab }: { tab: LeadTab }) {
                               customer hasn't used Generate Link yet — there's nothing
                               else to show. */}
                           <ActionButton
-                            to={tab === "document_collection" && lead.application_id ? `/applications/${lead.application_id}` : `/leads/${lead.id}`}
+                            to={
+                              tab === "document_collection" && lead.application_id
+                                ? `/applications/${lead.application_id}?from=document-collection`
+                                : `/leads/${lead.id}`
+                            }
                             variant="view"
                           />
                           {tab !== "rejected" && <ActionButton variant="link" onClick={() => setLinkModalLead(lead)} />}
