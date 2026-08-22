@@ -271,8 +271,16 @@ async def test_loan_pipeline_happy_path_to_disbursed(client, mock_db, owner_head
     assert r.status_code == 200, r.text
     assert r.json()["data"]["current_status"] == "rv_ov_ref"
 
-    # RV/OV/Ref -> eSign/NACH/KYC (plain, generic status control)
-    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "esign_nach_kyc", "remarks": "Verification completed"}, headers=employee_headers)
+    # RV/OV/Ref -> eSign/NACH/KYC — decision #130's dedicated action (mandatory
+    # verification data, no longer a bodiless plain-control move).
+    r = await client.post(
+        f"/api/v1/loan-cases/{case_id}/rv-ov-ref",
+        json={
+            "rv_ov_ref_type": "Residence Verification", "rv_ov_ref_status": "completed", "rv_ov_ref_date": "2026-08-20T00:00:00Z",
+            "rv_ov_ref_verified_by": "Field Agent", "rv_ov_ref_result": "positive", "rv_ov_ref_remarks": "Verification completed",
+        },
+        headers=employee_headers,
+    )
     assert r.status_code == 200, r.text
     assert r.json()["data"]["current_status"] == "esign_nach_kyc"
 

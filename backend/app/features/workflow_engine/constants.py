@@ -186,6 +186,7 @@ class LoanAuditEvent:
     DISBURSED = "loan_case_disbursed"
     REJECTED = "loan_case_rejected"
     MARKED_RE_ELIGIBLE = "loan_case_marked_re_eligible"
+    MOVED_TO_LOAN_MANAGEMENT = "loan_case_moved_to_loan_management"
 
 
 class InsuranceAuditEvent:

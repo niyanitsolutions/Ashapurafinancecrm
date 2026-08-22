@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Button } from "@/components/buttons/Button";
-import { CheckboxField } from "@/components/forms/CheckboxField";
 import { EmployeeSelect } from "@/components/forms/EmployeeSelect";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
@@ -9,31 +8,20 @@ import { SelectField } from "@/components/forms/SelectField";
 import { SubmitButton } from "@/components/forms/SubmitButton";
 import { TextareaField } from "@/components/forms/TextareaField";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
-import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
 import { usePermissions } from "@/features/access_control/usePermissions";
 import { getErrorMessage } from "@/features/customer/errors";
 import {
   addLoanCaseNote,
   assignLoanCase,
-  confirmOfferAcceptance,
-  disburseLoanCase,
   getLoanCase,
   getLoanCaseTimeline,
   holdLoanCase,
-  recordCreditEvaluation,
-  recordEsignNachKyc,
-  recordFinalEvaluation,
-  requestLoanCaseDocuments,
   resumeLoanCase,
-  updateLoanCaseStatus,
-  verifyLoanCaseDocuments,
   type CaseTimelineEntry,
   type LoanCaseDetail,
 } from "@/features/loan_management/api";
-import { CreditEvaluationBankOffers } from "@/features/loan_management/components/CreditEvaluationBankOffers";
-import { OfferAcceptancePanel } from "@/features/loan_management/components/OfferAcceptancePanel";
+import { UpdateLoanCaseModal } from "@/features/loan_management/components/UpdateLoanCaseModal";
 import { LOAN_STATUS_LABELS as STATUS_LABELS } from "@/features/loan_management/constants";
-import { getLoanStatusControlInfo, type StatusControlAction } from "@/features/loan_management/statusControl";
 import { documentTypesApi, type NamedMasterData } from "@/features/system_settings/api";
 import { formatISTDateTime } from "@/shared/dateFormat";
 import { useDocumentCollectionBackContext } from "@/shared/navigationContext";
@@ -76,7 +64,7 @@ export function LoanCaseDetailsPage() {
   const [documentTypes, setDocumentTypes] = useState<NamedMasterData[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [confirmVerify, setConfirmVerify] = useState(false);
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
 
   const load = () => {
     if (!caseId) return;
@@ -120,9 +108,15 @@ export function LoanCaseDetailsPage() {
 
   const status = loanCase.current_status;
   const details = loanCase.loan_details;
+  const canUpdate = (canEdit || canDisburse) && status !== "disbursed" && status !== "rejected";
 
   return (
-    <SimplePageLayout title={`${loanCase.case_code} — ${STATUS_LABELS[status] ?? status}`} backTo={backTo} backLabel={backLabel}>
+    <SimplePageLayout
+      title={`${loanCase.case_code} — ${STATUS_LABELS[status] ?? status}`}
+      backTo={backTo}
+      backLabel={backLabel}
+      actions={canUpdate && <Button onClick={() => setShowUpdateModal(true)}>Update</Button>}
+    >
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
       <ErrorBanner message={error} />
 
@@ -143,80 +137,50 @@ export function LoanCaseDetailsPage() {
             </div>
           </Section>
 
-          {canEdit && (
-            <Section title="Update Loan Case">
-              <p className="text-sm text-text">
-                Current Status: <span className="font-medium">{STATUS_LABELS[status] ?? status}</span>
-              </p>
-              <StatusUpdateControl
-                actions={getLoanStatusControlInfo(status)}
-                labels={STATUS_LABELS}
-                onUpdate={(nextStatus, remarks) => run(() => updateLoanCaseStatus(caseId, nextStatus, remarks), "Status updated.")}
-              />
+          {(details.credit_score != null || details.credit_remarks) && (
+            <Section title="Credit Evaluation">
+              <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
+                <Field label="Credit Score" value={details.credit_score} />
+                <Field label="Remarks" value={details.credit_remarks} />
+              </div>
             </Section>
           )}
 
-          {canEdit && status === "credit_evaluation" && (
-            <Section title="Bank / NBFC Details">
-              <CreditEvaluationBankOffers caseId={caseId} canEdit={canEdit} onOfferSelected={load} />
+          {(loanCase.selected_bank_name || loanCase.approved_amount != null) && (
+            <Section title="Offer">
+              <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
+                <Field label="Selected Bank / NBFC" value={loanCase.selected_bank_name} />
+                <Field label="Approved Amount" value={loanCase.approved_amount != null ? `₹${loanCase.approved_amount.toLocaleString("en-IN")}` : null} />
+              </div>
             </Section>
           )}
 
-          {canEdit && status === "credit_evaluation" && (
-            <Section title="Credit Score (optional)">
-              <CreditScoreForm
-                details={details}
-                onSubmit={(payload) => run(() => recordCreditEvaluation(caseId, payload), "Credit score saved.")}
-              />
+          {details.rv_ov_ref_type != null && (
+            <Section title="RV / OV / Ref">
+              <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
+                <Field label="Verification Type" value={details.rv_ov_ref_type} />
+                <Field label="Verification Status" value={details.rv_ov_ref_status} />
+                <Field label="Verification Date" value={details.rv_ov_ref_date ? formatISTDateTime(details.rv_ov_ref_date) : null} />
+                <Field label="Verified By" value={details.rv_ov_ref_verified_by} />
+                <Field label="Result" value={details.rv_ov_ref_result} />
+                <Field label="Remarks" value={details.rv_ov_ref_remarks} />
+              </div>
             </Section>
           )}
 
-          {canEdit && (status === "new_customer" || status === "additional_documents") && (
-            <Section title="Document Verification">
-              <p className="text-xs text-text/50">Pending: {loanCase.pending_document_type_ids.length === 0 ? "none requested" : loanCase.pending_document_type_ids.length}</p>
-              <RequestDocumentsForm
-                documentTypes={documentTypes}
-                onSubmit={(ids) => run(() => requestLoanCaseDocuments(caseId, ids), "Documents requested.")}
-              />
-              {status !== "new_customer" && (
-                <Button size="sm" onClick={() => setConfirmVerify(true)}>
-                  Verify Documents
-                </Button>
-              )}
+          {(details.esign_completed || details.nach_completed || details.kyc_completed) && (
+            <Section title="eSign / NACH / KYC">
+              <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-3">
+                <Field label="eSign" value={details.esign_completed ? "Completed" : "Pending"} />
+                <Field label="NACH" value={details.nach_completed ? "Completed" : "Pending"} />
+                <Field label="KYC" value={details.kyc_completed ? "Completed" : "Pending"} />
+              </div>
             </Section>
           )}
 
-          {status === "offer_acceptance" && (
-            <Section title="Offer Acceptance">
-              <OfferAcceptancePanel
-                bankName={loanCase.selected_bank_name}
-                approvedAmount={loanCase.approved_amount}
-                canConfirm={canEdit}
-                onConfirm={() => run(() => confirmOfferAcceptance(caseId), "Offer acceptance confirmed.")}
-              />
-            </Section>
-          )}
-
-          {canEdit && status === "esign_nach_kyc" && (
-            <Section title="eSign / NACH / KYC Checklist">
-              <EsignNachKycForm
-                details={details}
-                onSubmit={(payload) => run(() => recordEsignNachKyc(caseId, payload), "eSign/NACH/KYC updated.")}
-              />
-            </Section>
-          )}
-
-          {canEdit && status === "final_evaluation" && (
-            <Section title="Decision Screen — Final Evaluation">
-              <DecisionForm
-                onSubmit={(decision, reason, extra) => run(() => recordFinalEvaluation(caseId, { remarks: extra.remarks, decision, rejection_reason: reason }), "Final evaluation recorded.")}
-              />
-            </Section>
-          )}
-
-          {canDisburse && status === "send_for_disbursement" && (
-            <Section title="Disbursement">
-              <DisburseForm onSubmit={(payload) => run(() => disburseLoanCase(caseId, payload), "Loan disbursed.")} />
+          {details.final_evaluation_remarks != null && (
+            <Section title="Final Evaluation">
+              <Field label="Remarks" value={details.final_evaluation_remarks} />
             </Section>
           )}
 
@@ -276,96 +240,18 @@ export function LoanCaseDetailsPage() {
         </div>
       </div>
 
-      <ConfirmDialog
-        open={confirmVerify}
-        title="Verify Documents"
-        message="Mark all requested documents as verified for this case? This moves the case to the next stage."
-        confirmLabel="Verify Documents"
-        onConfirm={async () => {
-          await run(() => verifyLoanCaseDocuments(caseId), "Documents verified.");
-          setConfirmVerify(false);
-        }}
-        onClose={() => setConfirmVerify(false)}
-      />
+      {showUpdateModal && (
+        <UpdateLoanCaseModal
+          caseId={caseId}
+          loanCase={loanCase}
+          documentTypes={documentTypes}
+          canEdit={canEdit}
+          canDisburse={canDisburse}
+          onClose={() => setShowUpdateModal(false)}
+          onUpdated={load}
+        />
+      )}
     </SimplePageLayout>
-  );
-}
-
-// Renders the Case Status control's body based on what the current status actually
-// allows (see statusControl.ts) — never a generic "pick anything" dropdown. A status
-// can now offer more than one action at once (decision #129 — e.g. Credit Evaluation's
-// dedicated bank-offer view alongside plain Reject/Mark Re-Eligible moves), so this
-// renders each action in `actions`. `onUpdate` is only ever called with one of the
-// listed valid next statuses; the backend (WorkflowEngine + LoanCaseService.
-// update_status) still independently validates and enforces every one of these rules
-// regardless of what this component decides to show.
-function StatusUpdateControl({
-  actions,
-  labels,
-  onUpdate,
-}: {
-  actions: StatusControlAction[];
-  labels: Record<string, string>;
-  onUpdate: (nextStatus: string, remarks?: string) => void;
-}) {
-  const [rejectingIndex, setRejectingIndex] = useState<number | null>(null);
-  const [rejectReason, setRejectReason] = useState("");
-
-  return (
-    <div className="space-y-2">
-      {actions.map((action, i) => {
-        if (action.kind === "simple") {
-          const isReject = action.nextStatus === "rejected";
-          if (isReject && rejectingIndex === i) {
-            return (
-              <div key={i} className="space-y-2 rounded border border-danger/30 bg-danger/5 px-3 py-2">
-                <TextareaField label="Reason (mandatory)" value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} rows={2} required />
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    variant="danger"
-                    disabled={!rejectReason.trim()}
-                    onClick={() => {
-                      onUpdate(action.nextStatus, rejectReason.trim());
-                      setRejectingIndex(null);
-                      setRejectReason("");
-                    }}
-                  >
-                    Confirm Reject
-                  </Button>
-                  <Button size="sm" variant="secondary" onClick={() => setRejectingIndex(null)}>
-                    Cancel
-                  </Button>
-                </div>
-              </div>
-            );
-          }
-          return (
-            <div key={i} className="flex items-center justify-between gap-3 rounded border border-border bg-background/50 px-3 py-2">
-              <span className="text-sm text-text/70">
-                {action.label ? action.label : <>Next: <span className="font-medium text-text">{labels[action.nextStatus] ?? action.nextStatus}</span></>}
-              </span>
-              <Button size="sm" variant={isReject ? "danger" : "primary"} onClick={() => (isReject ? setRejectingIndex(i) : onUpdate(action.nextStatus))}>
-                {isReject ? "Reject" : "Update Status"}
-              </Button>
-            </div>
-          );
-        }
-        if (action.kind === "dedicated") {
-          return (
-            <p key={i} className="text-xs text-text/50">
-              This status requires additional information. Please use the existing{" "}
-              <span className="font-medium text-text">{action.actionLabel}</span> action{action.actionLabel === "Resume" ? "" : " below"}.
-            </p>
-          );
-        }
-        return (
-          <p key={i} className="text-xs text-text/50">
-            No direct status update is available from the current status. Please use the appropriate case action.
-          </p>
-        );
-      })}
-    </div>
   );
 }
 
@@ -429,150 +315,3 @@ function NoteForm({ onSubmit }: { onSubmit: (text: string) => void }) {
   );
 }
 
-function RequestDocumentsForm({ documentTypes, onSubmit }: { documentTypes: NamedMasterData[]; onSubmit: (ids: string[]) => void }) {
-  const [selected, setSelected] = useState<string[]>([]);
-  return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap gap-3">
-        {documentTypes.map((dt) => (
-          <CheckboxField
-            key={dt.id}
-            label={dt.name}
-            checked={selected.includes(dt.id)}
-            onChange={(e) => setSelected((prev) => (e.target.checked ? [...prev, dt.id] : prev.filter((id) => id !== dt.id)))}
-          />
-        ))}
-      </div>
-      <Button variant="secondary" size="sm" disabled={selected.length === 0} onClick={() => onSubmit(selected)}>
-        Request Selected Documents
-      </Button>
-    </div>
-  );
-}
-
-function CreditScoreForm({ details, onSubmit }: { details: LoanCaseDetail["loan_details"]; onSubmit: (payload: { credit_score?: number; credit_remarks?: string }) => void }) {
-  const [creditScore, setCreditScore] = useState(details.credit_score != null ? String(details.credit_score) : "");
-  const [remarks, setRemarks] = useState(details.credit_remarks ?? "");
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSubmit({ credit_score: creditScore ? Number(creditScore) : undefined, credit_remarks: remarks || undefined });
-      }}
-      className="space-y-2"
-    >
-      <FormField label="Credit Score" type="number" value={creditScore} onChange={(e) => setCreditScore(e.target.value)} />
-      <TextareaField label="Remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={2} />
-      <SubmitButton>Save</SubmitButton>
-    </form>
-  );
-}
-
-function DecisionForm({
-  onSubmit,
-}: {
-  onSubmit: (decision: "approved" | "rejected", rejectionReason: string | undefined, extra: { remarks?: string }) => void;
-}) {
-  const [decision, setDecision] = useState<"approved" | "rejected">("approved");
-  const [remarks, setRemarks] = useState("");
-  const [rejectionReason, setRejectionReason] = useState("");
-  const [confirmReject, setConfirmReject] = useState(false);
-
-  const submit = () => {
-    onSubmit(decision, decision === "rejected" ? rejectionReason : undefined, { remarks: remarks || undefined });
-  };
-
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (decision === "rejected") {
-          setConfirmReject(true);
-          return;
-        }
-        submit();
-      }}
-      className="space-y-3"
-    >
-      <TextareaField label="Remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={2} />
-      <div className="flex items-center gap-4 text-sm">
-        <label className="flex items-center gap-2">
-          <input type="radio" checked={decision === "approved"} onChange={() => setDecision("approved")} /> Approve
-        </label>
-        <label className="flex items-center gap-2">
-          <input type="radio" checked={decision === "rejected"} onChange={() => setDecision("rejected")} /> Reject
-        </label>
-      </div>
-      {decision === "rejected" && (
-        <TextareaField label="Rejection reason (mandatory)" value={rejectionReason} onChange={(e) => setRejectionReason(e.target.value)} rows={2} required />
-      )}
-      <SubmitButton>Submit Decision</SubmitButton>
-
-      <ConfirmDialog
-        open={confirmReject}
-        title="Reject Case"
-        message="Reject this case? This decision is recorded on the case history and cannot be undone here."
-        confirmLabel="Reject Case"
-        confirmVariant="danger"
-        onConfirm={() => {
-          submit();
-          setConfirmReject(false);
-        }}
-        onClose={() => setConfirmReject(false)}
-      />
-    </form>
-  );
-}
-
-function EsignNachKycForm({ details, onSubmit }: { details: LoanCaseDetail["loan_details"]; onSubmit: (payload: { esign_completed: boolean; nach_completed: boolean; kyc_completed: boolean }) => void }) {
-  const [esign, setEsign] = useState(details.esign_completed);
-  const [nach, setNach] = useState(details.nach_completed);
-  const [kyc, setKyc] = useState(details.kyc_completed);
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSubmit({ esign_completed: esign, nach_completed: nach, kyc_completed: kyc });
-      }}
-      className="space-y-2"
-    >
-      <CheckboxField label="eSign completed" checked={esign} onChange={(e) => setEsign(e.target.checked)} />
-      <CheckboxField label="NACH completed" checked={nach} onChange={(e) => setNach(e.target.checked)} />
-      <CheckboxField label="KYC completed" checked={kyc} onChange={(e) => setKyc(e.target.checked)} />
-      <SubmitButton>Save</SubmitButton>
-    </form>
-  );
-}
-
-function DisburseForm({ onSubmit }: { onSubmit: (payload: { disbursed_amount: number; disbursed_reference: string }) => void }) {
-  const [amount, setAmount] = useState("");
-  const [reference, setReference] = useState("");
-  const [confirmOpen, setConfirmOpen] = useState(false);
-
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        setConfirmOpen(true);
-      }}
-    >
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <FormField label="Disbursed Amount" type="number" value={amount} onChange={(e) => setAmount(e.target.value)} required />
-        <FormField label="Reference / UTR" value={reference} onChange={(e) => setReference(e.target.value)} required />
-      </div>
-      <SubmitButton>Mark Disbursed</SubmitButton>
-
-      <ConfirmDialog
-        open={confirmOpen}
-        title="Confirm Disbursement"
-        message={`Mark this case as disbursed for ${amount ? `₹${amount}` : "the entered amount"} (ref: ${reference || "—"})? This cannot be undone here.`}
-        confirmLabel="Confirm Disbursement"
-        onConfirm={() => {
-          onSubmit({ disbursed_amount: Number(amount), disbursed_reference: reference });
-          setConfirmOpen(false);
-        }}
-        onClose={() => setConfirmOpen(false)}
-      />
-    </form>
-  );
-}

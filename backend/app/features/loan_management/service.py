@@ -40,12 +40,12 @@ from app.features.employee.repository import EmployeeRepository
 from app.features.loan_management.models import LoanCaseBankOffer
 from app.features.loan_management.repository import LoanCaseBankOfferRepository
 from app.features.loan_management.schemas import (
-    BankDetailsRequest,
     BankOfferRequest,
     CreditEvaluationRequest,
     DisburseRequest,
     EsignNachKycRequest,
     FinalEvaluationRequest,
+    RvOvRefRequest,
 )
 from app.features.system_settings.repository import DocumentTypeRepository, LoanProductRepository
 from app.features.workflow_engine.constants import (
@@ -71,6 +71,7 @@ from app.features.workflow_engine.repository import (
     ApplicationNoteRepository,
     ApplicationStatusHistoryRepository,
     ApplicationWorkflowRepository,
+    WorkflowDefinitionRepository,
 )
 from app.shared.audit_log import write_audit_log
 from app.utils.datetime import utc_now
@@ -94,16 +95,25 @@ class LoanCaseService:
         self._products = LoanProductRepository(db)
         self._document_types = DocumentTypeRepository(db)
         self._bank_offers = LoanCaseBankOfferRepository(db)
+        self._definitions = WorkflowDefinitionRepository(db)
 
     # ---------------------------------------------------------------- case sync / lookup
 
     async def _create_case_for_application(self, application: Application) -> ApplicationWorkflow:
         case_code = await generate_id(self._db, IdPrefix.LOAN_CASE)
+        # Eligibility gate (decision #130): a lead-less application (Flow 2 — the customer
+        # registered and applied directly, no Lead/Document Collection pipeline ever
+        # existed for it) has no "Move to Loan Management" action to ever fire, so it must
+        # stay immediately visible, exactly as before this fix. A Lead-originated
+        # application (Flow 1) stays gated until `mark_moved_to_loan_management` is called
+        # by `LeadService.set_stage`'s loan_management branch.
+        moved_to_loan_management_at = utc_now() if application.lead_id is None else None
         return await self._engine.create_case(
             case_code=case_code, case_type=CaseType.LOAN, application_id=application.require_id(),
             customer_id=application.customer_id or "", product_id=application.product_id,
             product_category=application.product_category, assigned_to=application.assigned_to,
             actor_id=None, initial_status=LoanStatus.NEW_CUSTOMER, loan_details=LoanCaseDetails(),
+            moved_to_loan_management_at=moved_to_loan_management_at,
         )
 
     async def _sync_new_cases(self) -> None:
@@ -134,6 +144,24 @@ class LoanCaseService:
         safe even if a lazy sync also fires for the same application."""
         return await self._get_or_create_for_application_id(application_id)
 
+    async def mark_moved_to_loan_management(self, application_id: str, actor: User) -> None:
+        """Called only by `LeadService.set_stage`'s loan_management branch, immediately
+        after that method's own eligibility checks (application submitted, every required
+        document verified) already passed. This is the ONE place a Lead-originated case
+        becomes visible in Loan Management (decision #130). Idempotent — a no-op if
+        already set, so calling this twice never clobbers the original timestamp."""
+        case = await self._get_or_create_for_application_id(application_id)
+        if case.moved_to_loan_management_at is not None:
+            return
+        updated = await self._workflows.update(
+            case.require_id(), {"moved_to_loan_management_at": utc_now()}, updated_by=actor.require_id()
+        )
+        assert updated is not None
+        await write_audit_log(
+            self._db, event_type=LoanAuditEvent.MOVED_TO_LOAN_MANAGEMENT, user_id=actor.require_id(),
+            metadata={"application_workflow_id": case.require_id(), "application_id": application_id},
+        )
+
     async def _acting_employee_id(self, actor: User) -> str | None:
         if actor.role != EMPLOYEE:
             return None
@@ -144,6 +172,12 @@ class LoanCaseService:
         case = await self._workflows.find_by_id(case_id)
         if case is None or case.case_type != CaseType.LOAN:
             raise NotFoundError("Loan case not found.")
+        # Eligibility gate (decision #130): a case not yet moved into Loan Management must
+        # not be reachable through this endpoint either, not just the list — but the Owner
+        # is deliberately exempted, for admin/troubleshooting visibility into a case still
+        # sitting in Document Collection.
+        if case.moved_to_loan_management_at is None and actor.role != OWNER:
+            raise NotFoundError("Loan case not found.")
         if actor.role == EMPLOYEE:
             employee_id = await self._acting_employee_id(actor)
             if case.assigned_to != employee_id:
@@ -153,6 +187,8 @@ class LoanCaseService:
     async def get_own_case(self, case_id: str, actor: User) -> ApplicationWorkflow:
         case = await self._workflows.find_by_id(case_id)
         if case is None or case.case_type != CaseType.LOAN:
+            raise NotFoundError("Loan case not found.")
+        if case.moved_to_loan_management_at is None:
             raise NotFoundError("Loan case not found.")
         application = await self._applications.find_by_id(case.application_id)
         if application is None or application.user_id != actor.require_id():
@@ -170,6 +206,7 @@ class LoanCaseService:
         return await self._workflows.search_and_filter(
             case_type=CaseType.LOAN, search=search, customer_id=customer_id, assigned_to=assigned_to,
             unassigned_only=unassigned_only, status=status, skip=skip, limit=limit, sort=sort,
+            extra_filter=self._LOAN_MANAGEMENT_GATE,
         )
 
     async def get_counts(self, actor: User) -> dict[str, int]:
@@ -182,14 +219,22 @@ class LoanCaseService:
         if actor.role == EMPLOYEE:
             assigned_to = await self._acting_employee_id(actor)
         return {
-            status: await self._workflows.count_filtered(case_type=CaseType.LOAN, status=status, assigned_to=assigned_to)
+            status: await self._workflows.count_filtered(
+                case_type=CaseType.LOAN, status=status, assigned_to=assigned_to, extra_filter=self._LOAN_MANAGEMENT_GATE,
+            )
             for status in LoanStatus.ALL
         }
 
     async def list_own_cases(self, actor: User) -> list[ApplicationWorkflow]:
         applications = await self._applications.find_for_user(actor.require_id(), status="submitted")
         loan_apps = [a for a in applications if a.product_category == "loan" and a.customer_id]
-        return [await self._get_or_create_for_application_id(a.require_id()) for a in loan_apps]
+        cases = [await self._get_or_create_for_application_id(a.require_id()) for a in loan_apps]
+        # Decision #130: must stay consistent with `get_own_case`'s gate below — a
+        # Lead-originated case not yet moved into Loan Management must not appear in the
+        # customer's own list either, or "mine" would show an entry that 404s the moment
+        # they click into it. Lead-less (Flow 2) cases are unaffected — always moved at
+        # creation.
+        return [c for c in cases if c.moved_to_loan_management_at is not None]
 
     # ---------------------------------------------------------------- assignment
 
@@ -235,6 +280,11 @@ class LoanCaseService:
         case = await self.get_case(case_id, actor)
         return await engine_resume_case(self._engine, case, actor)
 
+    # Eligibility gate (decision #130) — applied to every Loan Management list/count
+    # query. A case with `moved_to_loan_management_at is None` exists (created lazily at
+    # submission) but has not actually entered Loan Management yet.
+    _LOAN_MANAGEMENT_GATE: ClassVar[dict[str, Any]] = {"moved_to_loan_management_at": {"$ne": None}}
+
     # ---------------------------------------------------------------- generic status control
 
     # (from_status, to_status) pairs the generic Case Status control (detail page dropdown
@@ -255,7 +305,6 @@ class LoanCaseService:
         (LoanStatus.RE_ELIGIBLE, LoanStatus.REJECTED),
         (LoanStatus.OFFER_ACCEPTANCE, LoanStatus.REJECTED),
         (LoanStatus.ADDITIONAL_DOCUMENTS, LoanStatus.RV_OV_REF),
-        (LoanStatus.RV_OV_REF, LoanStatus.ESIGN_NACH_KYC),
     }
 
     async def update_status(self, case_id: str, new_status: str, actor: User, *, remarks: str | None = None) -> ApplicationWorkflow:
@@ -337,15 +386,22 @@ class LoanCaseService:
         next_status = LoanStatus.CREDIT_EVALUATION if case.current_status == LoanStatus.NEW_CUSTOMER else LoanStatus.RV_OV_REF
         return await self._engine.transition(case, next_status, actor, updates={"pending_document_type_ids": []})
 
-    # ---------------------------------------------------------------- bank/NBFC + decisions
+    # ---------------------------------------------------------------- RV / OV / Ref
 
-    async def record_bank_details(self, case_id: str, payload: BankDetailsRequest, actor: User) -> ApplicationWorkflow:
+    async def record_rv_ov_ref(self, case_id: str, payload: RvOvRefRequest, actor: User) -> ApplicationWorkflow:
         case = await self.get_case(case_id, actor)
+        if case.current_status != LoanStatus.RV_OV_REF:
+            raise ConflictError("This case is not awaiting RV/OV/Ref verification.")
         assert case.loan_details is not None
-        details = case.loan_details.model_copy(update=payload.model_dump(exclude_unset=True))
-        updated = await self._workflows.update(case_id, {"loan_details": details.model_dump()}, updated_by=actor.require_id())
-        assert updated is not None
+        details = case.loan_details.model_copy(update=payload.model_dump())
+        updated = await self._engine.transition(case, LoanStatus.ESIGN_NACH_KYC, actor, updates={"loan_details": details.model_dump()})
+        await write_audit_log(
+            self._db, event_type=LoanAuditEvent.RV_OV_REF_COMPLETED, user_id=actor.require_id(),
+            metadata={"application_workflow_id": case_id},
+        )
         return updated
+
+    # ---------------------------------------------------------------- bank/NBFC + decisions
 
     async def credit_evaluation(self, case_id: str, payload: CreditEvaluationRequest, actor: User) -> ApplicationWorkflow:
         """Records the case-level credit score/remarks only (decision #129) — data
@@ -534,6 +590,14 @@ class LoanCaseService:
         combined: list[tuple[str, Any]] = [("status", h) for h in history] + [("note", n) for n in notes]
         combined.sort(key=lambda entry: entry[1].created_at, reverse=True)
         return combined
+
+    async def status_transition_map(self) -> dict[str, list[str]]:
+        """One `{status: allowed_next_statuses}` lookup, batch-fetched once per
+        request (list/detail) rather than per row — lets responses surface the backend's
+        real, configured transition graph instead of only the frontend's hand-maintained
+        UX hint (`statusControl.ts`)."""
+        definitions = await self._definitions.find_for_case_type(CaseType.LOAN)
+        return {d.status: d.allowed_next_statuses for d in definitions}
 
     # ---------------------------------------------------------------- name resolution
 

@@ -40,6 +40,14 @@ const LOAN_STATUS_CONTROL: Record<string, StatusControlAction[]> = {
   rejected: [{ kind: "none" }],
 };
 
-export function getLoanStatusControlInfo(currentStatus: string): StatusControlAction[] {
-  return LOAN_STATUS_CONTROL[currentStatus] ?? [{ kind: "none" }];
+// `allowedNext` — decision #130's `LoanCaseListItem.allowed_next_statuses`, the backend's
+// own real, configured transition graph for `currentStatus`. A "simple" action whose
+// `nextStatus` isn't actually in it is filtered out — defense against this file drifting
+// out of sync with the backend (see header comment); "dedicated" actions are never
+// filtered, since they're tied to the current stage itself, not a specific next status.
+export function getLoanStatusControlInfo(currentStatus: string, allowedNext?: string[]): StatusControlAction[] {
+  const actions = LOAN_STATUS_CONTROL[currentStatus] ?? [{ kind: "none" }];
+  if (!allowedNext) return actions;
+  const filtered = actions.filter((a) => a.kind !== "simple" || allowedNext.includes(a.nextStatus));
+  return filtered.length > 0 ? filtered : [{ kind: "none" }];
 }

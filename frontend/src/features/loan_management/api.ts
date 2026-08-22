@@ -14,6 +14,12 @@ export interface LoanCaseDetails {
   offered_tenure_months: number | null;
   offered_interest_rate: number | null;
   offer_decision: string;
+  rv_ov_ref_type: string | null;
+  rv_ov_ref_status: string | null;
+  rv_ov_ref_date: string | null;
+  rv_ov_ref_verified_by: string | null;
+  rv_ov_ref_result: string | null;
+  rv_ov_ref_remarks: string | null;
   esign_completed: boolean;
   nach_completed: boolean;
   kyc_completed: boolean;
@@ -35,6 +41,11 @@ export interface LoanCaseListItem {
   assigned_to_name: string | null;
   current_status: string;
   rejection_reason: string | null;
+  // Decision #130 — the backend's own, real, configured next-status options for
+  // `current_status` (`WorkflowDefinition.allowed_next_statuses`), so the Update modal's
+  // dropdown reflects the actual transition graph rather than only `statusControl.ts`'s
+  // hand-maintained hint.
+  allowed_next_statuses: string[];
   selected_bank_name: string | null;
   approved_amount: number | null;
   created_at: string;
@@ -175,13 +186,6 @@ export async function verifyLoanCaseDocuments(caseId: string) {
   });
 }
 
-export function recordBankDetails(
-  caseId: string,
-  payload: { bank_nbfc_name?: string; bank_application_id?: string; bank_reference_number?: string; assigned_officer?: string; bank_decision?: string; bank_remarks?: string }
-) {
-  return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/bank-details`, { method: "POST", body: JSON.stringify(payload) });
-}
-
 // Case-level credit score/remarks only (decision #129) — pure data capture, independent
 // of any individual bank's own decision (see the bank-offer functions below) and never
 // itself moves the case out of Credit Evaluation.
@@ -232,6 +236,21 @@ export function selectOwnBankOffer(caseId: string, offerId: string) {
 
 export function confirmOwnOfferAcceptance(caseId: string) {
   return apiRequest<LoanCaseDetail>(`/loan-cases/mine/${caseId}/offer-acceptance/confirm`, { method: "POST" });
+}
+
+// RV/OV/Ref stage data (decision #130) — valid only while the case is at `rv_ov_ref`;
+// recording it advances the case to `esign_nach_kyc`.
+export interface RvOvRefPayload {
+  rv_ov_ref_type: string;
+  rv_ov_ref_status: string;
+  rv_ov_ref_date: string;
+  rv_ov_ref_verified_by: string;
+  rv_ov_ref_result: string;
+  rv_ov_ref_remarks?: string;
+}
+
+export function recordRvOvRef(caseId: string, payload: RvOvRefPayload) {
+  return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/rv-ov-ref`, { method: "POST", body: JSON.stringify(payload) });
 }
 
 export function recordEsignNachKyc(caseId: string, payload: { esign_completed: boolean; nach_completed: boolean; kyc_completed: boolean }) {

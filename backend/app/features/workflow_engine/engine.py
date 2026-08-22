@@ -95,13 +95,13 @@ class WorkflowEngine:
     async def create_case(
         self, *, case_code: str, case_type: str, application_id: str, customer_id: str, product_id: str,
         product_category: str, assigned_to: str | None, actor_id: str | None, initial_status: str,
-        loan_details: Any = None, insurance_details: Any = None,
+        loan_details: Any = None, insurance_details: Any = None, moved_to_loan_management_at: Any = None,
     ) -> ApplicationWorkflow:
         workflow = ApplicationWorkflow(
             case_code=case_code, case_type=case_type, application_id=application_id, customer_id=customer_id,
             product_id=product_id, product_category=product_category, assigned_to=assigned_to,
             current_status=initial_status, loan_details=loan_details, insurance_details=insurance_details,
-            created_by=actor_id,
+            moved_to_loan_management_at=moved_to_loan_management_at, created_by=actor_id,
         )
         workflow_id = await self._workflows.insert(workflow)
         created = await self._workflows.find_by_id(workflow_id)

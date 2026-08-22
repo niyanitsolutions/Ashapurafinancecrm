@@ -69,6 +69,13 @@ class LoanCaseDetails(BaseModel):
     offered_interest_rate: float | None = None
     offer_decision: str = Field(default=OfferDecision.PENDING, pattern=f"^({'|'.join(OfferDecision.ALL)})$")
 
+    rv_ov_ref_type: str | None = None
+    rv_ov_ref_status: str | None = None
+    rv_ov_ref_date: datetime | None = None
+    rv_ov_ref_verified_by: str | None = None
+    rv_ov_ref_result: str | None = None
+    rv_ov_ref_remarks: str | None = None
+
     esign_completed: bool = False
     nach_completed: bool = False
     kyc_completed: bool = False
@@ -116,6 +123,14 @@ class ApplicationWorkflow(BaseDocument):
     assigned_to: str | None = None  # ref: employees — inherited from Application.assigned_to at
     # creation, independently reassignable afterward (confirmed by the user: "Owner can
     # reassign. Every reassignment must be audited.")
+
+    # Loan-only eligibility gate (decision #130): null means "not yet eligible to appear
+    # in Loan Management" for a Lead-originated application (set explicitly by
+    # `LeadService.set_stage`'s loan_management branch, once its own document-verification
+    # checks pass). Set immediately at creation for a lead-less application (no Lead/
+    # Document Collection pipeline exists to gate it through — see LoanCaseService).
+    # Insurance cases never set or read this field.
+    moved_to_loan_management_at: datetime | None = None
 
     current_status: str
     rejection_reason: str | None = None  # mandatory whenever current_status == "rejected"

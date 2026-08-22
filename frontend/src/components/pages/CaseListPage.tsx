@@ -66,6 +66,9 @@ export function CaseListPage<T extends CaseListItem>({
   reEligibleDescription,
   emptyStateDescription,
   extraColumns,
+  onUpdate,
+  canUpdateRow,
+  refreshToken,
 }: {
   icon: IconName;
   entityLabel: string;
@@ -84,6 +87,20 @@ export function CaseListPage<T extends CaseListItem>({
    * Bank/Approved Amount (spec §26). Omit for a module with nothing extra to show
    * (Insurance's own wrapper passes none, unaffected by this addition). */
   extraColumns?: CaseListExtraColumn<T>[];
+  /** Decision #130 — adds a distinct row-level Update action beside View, opening a
+   * stage-aware update flow directly from the list. Only Loan Management passes this;
+   * Insurance's wrapper omits it, so its rendered output (one View button per row) is
+   * completely unaffected. */
+  onUpdate?: (item: T) => void;
+  /** Per-row gate for the Update button (e.g. hide it for a terminal Disbursed/Rejected
+   * row on a mixed "All Statuses" view) — only consulted when `onUpdate` is set. Omit to
+   * show Update on every row whenever `onUpdate` is provided. */
+  canUpdateRow?: (item: T) => boolean;
+  /** Bump this (e.g. a counter) after an out-of-band change — such as a stage update
+   * made via `onUpdate`'s modal — to force a refetch without resetting the user's
+   * current page/search/filter state. Optional; omit if nothing external can change the
+   * list's data (Insurance's read-only-list usage doesn't need it). */
+  refreshToken?: unknown;
 }) {
   const { role } = useAuth();
   const [searchParams] = useSearchParams();
@@ -139,7 +156,7 @@ export function CaseListPage<T extends CaseListItem>({
       })
       .catch((err) => setError(getErrorMessage(err)))
       .finally(() => setIsLoading(false));
-  }, [page, pageSize, search, status, unassignedOnly, reEligible, listFn]);
+  }, [page, pageSize, search, status, unassignedOnly, reEligible, listFn, refreshToken]);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -294,7 +311,10 @@ export function CaseListPage<T extends CaseListItem>({
                     )}
                     {extraColumns?.map((col) => <Td key={col.key}>{col.render(c)}</Td>)}
                     <Td>
-                      <ActionButton to={`${detailBasePath}/${c.id}`} variant="view" />
+                      <div className="flex items-center gap-1.5">
+                        <ActionButton to={`${detailBasePath}/${c.id}`} variant="view" />
+                        {onUpdate && (!canUpdateRow || canUpdateRow(c)) && <ActionButton variant="update" onClick={() => onUpdate(c)} />}
+                      </div>
                     </Td>
                   </TableRow>
                 ))}

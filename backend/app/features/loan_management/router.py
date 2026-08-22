@@ -28,7 +28,6 @@ from app.features.loan_management.dependencies import (
     get_loan_case_service,
 )
 from app.features.loan_management.schemas import (
-    BankDetailsRequest,
     BankOfferRequest,
     BankOfferResponse,
     CreditEvaluationRequest,
@@ -40,6 +39,7 @@ from app.features.loan_management.schemas import (
     LoanCaseDetailResponse,
     LoanCaseListItem,
     LoanStatusUpdateRequest,
+    RvOvRefRequest,
 )
 from app.features.loan_management.service import LoanCaseService
 from app.features.workflow_engine.schemas import (
@@ -67,8 +67,12 @@ def _perm(action: str) -> Any:
 async def _detail(service: LoanCaseService, case_id: str, actor: User, *, own: bool = False) -> ApiResponse[LoanCaseDetailResponse]:
     case = await (service.get_own_case(case_id, actor) if own else service.get_case(case_id, actor))
     customer_map, product_map, employee_map = await service.resolve_names([case])
+    transitions = await service.status_transition_map()
     return ApiResponse[LoanCaseDetailResponse].ok(
-        mappers.to_detail_response(case, customer_map.get(case.customer_id), product_map.get(case.product_id, ""), employee_map.get(case.assigned_to or ""))
+        mappers.to_detail_response(
+            case, customer_map.get(case.customer_id), product_map.get(case.product_id, ""), employee_map.get(case.assigned_to or ""),
+            transitions.get(case.current_status),
+        )
     )
 
 
@@ -79,8 +83,12 @@ async def _detail(service: LoanCaseService, case_id: str, actor: User, *, own: b
 async def list_own_cases(service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep) -> ApiResponse[list[LoanCaseListItem]]:
     cases = await service.list_own_cases(current_user)
     customer_map, product_map, employee_map = await service.resolve_names(cases)
+    transitions = await service.status_transition_map()
     items = [
-        mappers.to_list_item(c, customer_map.get(c.customer_id), product_map.get(c.product_id, ""), employee_map.get(c.assigned_to or ""))
+        mappers.to_list_item(
+            c, customer_map.get(c.customer_id), product_map.get(c.product_id, ""), employee_map.get(c.assigned_to or ""),
+            transitions.get(c.current_status),
+        )
         for c in cases
     ]
     return ApiResponse[list[LoanCaseListItem]].ok(items)
@@ -128,8 +136,12 @@ async def list_cases(
         status=status, skip=page.skip, limit=page.page_size, sort=page.sort,
     )
     customer_map, product_map, employee_map = await service.resolve_names(cases)
+    transitions = await service.status_transition_map()
     items = [
-        mappers.to_list_item(c, customer_map.get(c.customer_id), product_map.get(c.product_id, ""), employee_map.get(c.assigned_to or ""))
+        mappers.to_list_item(
+            c, customer_map.get(c.customer_id), product_map.get(c.product_id, ""), employee_map.get(c.assigned_to or ""),
+            transitions.get(c.current_status),
+        )
         for c in cases
     ]
     return ApiResponse[list[LoanCaseListItem]].ok(items, meta=ResponseMeta(pagination=page.build_meta(total)))
@@ -208,14 +220,6 @@ async def verify_documents(
     return await _detail(service, case_id, actor)
 
 
-@router.post("/{case_id}/bank-details")
-async def record_bank_details(
-    case_id: str, payload: BankDetailsRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
-) -> ApiResponse[LoanCaseDetailResponse]:
-    await service.record_bank_details(case_id, payload, actor)
-    return await _detail(service, case_id, actor)
-
-
 @router.post("/{case_id}/credit-evaluation")
 async def credit_evaluation(
     case_id: str, payload: CreditEvaluationRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
@@ -259,6 +263,14 @@ async def confirm_offer_acceptance(
     case_id: str, service: ServiceDep, actor: Annotated[User, _perm("edit")]
 ) -> ApiResponse[LoanCaseDetailResponse]:
     await service.confirm_offer_acceptance(case_id, actor)
+    return await _detail(service, case_id, actor)
+
+
+@router.post("/{case_id}/rv-ov-ref")
+async def record_rv_ov_ref(
+    case_id: str, payload: RvOvRefRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[LoanCaseDetailResponse]:
+    await service.record_rv_ov_ref(case_id, payload, actor)
     return await _detail(service, case_id, actor)
 
 

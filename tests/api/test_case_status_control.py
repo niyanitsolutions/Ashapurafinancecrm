@@ -444,3 +444,82 @@ async def test_owner_can_update_loan_status(client, mock_db, owner_headers, mast
     r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=owner_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["current_status"] == "credit_evaluation"
+
+
+# ---------------------------------------------------------------------- RV / OV / Ref (decision #130)
+
+
+async def _advance_to_rv_ov_ref(client, case_id, employee_headers):
+    """Drives a fresh case (new_customer) through Credit Evaluation/Offer Acceptance to
+    Additional Documents, then the still-plain `additional_documents -> rv_ov_ref` move —
+    the same sequence `test_loan_bank_offers.py` already exercises."""
+    await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=employee_headers)
+    r = await client.post(
+        f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000},
+        headers=employee_headers,
+    )
+    offer_id = r.json()["data"]["id"]
+    await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers/{offer_id}/select", headers=employee_headers)
+    await client.post(f"/api/v1/loan-cases/{case_id}/offer-acceptance/confirm", headers=employee_headers)
+    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "rv_ov_ref"}, headers=employee_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["current_status"] == "rv_ov_ref"
+
+
+_RV_OV_REF_PAYLOAD = {
+    "rv_ov_ref_type": "Residence Verification",
+    "rv_ov_ref_status": "completed",
+    "rv_ov_ref_date": "2026-08-20T00:00:00Z",
+    "rv_ov_ref_verified_by": "Field Agent Kumar",
+    "rv_ov_ref_result": "positive",
+    "rv_ov_ref_remarks": "Address confirmed, customer present.",
+}
+
+
+async def test_rv_ov_ref_records_data_and_transitions(client, mock_db, owner_headers, master_data):
+    case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000018")
+    await _advance_to_rv_ov_ref(client, case_id, employee_headers)
+
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/rv-ov-ref", json=_RV_OV_REF_PAYLOAD, headers=employee_headers)
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert data["current_status"] == "esign_nach_kyc"
+    assert data["loan_details"]["rv_ov_ref_type"] == "Residence Verification"
+    assert data["loan_details"]["rv_ov_ref_status"] == "completed"
+    assert data["loan_details"]["rv_ov_ref_verified_by"] == "Field Agent Kumar"
+    assert data["loan_details"]["rv_ov_ref_result"] == "positive"
+    assert data["loan_details"]["rv_ov_ref_remarks"] == "Address confirmed, customer present."
+
+    r = await client.get(f"/api/v1/loan-cases/{case_id}", headers=employee_headers)
+    assert r.json()["data"]["loan_details"]["rv_ov_ref_type"] == "Residence Verification"
+
+
+async def test_rv_ov_ref_rejected_via_plain_status_control(client, mock_db, owner_headers, master_data):
+    """`(rv_ov_ref, esign_nach_kyc)` no longer bodiless — it now carries mandatory
+    verification data, so the generic control must reject it, same as every other
+    dedicated-action-only move (decision #130)."""
+    case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000019")
+    await _advance_to_rv_ov_ref(client, case_id, employee_headers)
+
+    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "esign_nach_kyc"}, headers=employee_headers)
+    assert r.status_code == 409, r.text
+    r = await client.get(f"/api/v1/loan-cases/{case_id}", headers=employee_headers)
+    assert r.json()["data"]["current_status"] == "rv_ov_ref"
+
+
+async def test_rv_ov_ref_requires_current_status_rv_ov_ref(client, mock_db, owner_headers, master_data):
+    case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000020")
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/rv-ov-ref", json=_RV_OV_REF_PAYLOAD, headers=employee_headers)
+    assert r.status_code == 409, r.text  # still at new_customer
+
+
+async def test_rv_ov_ref_requires_edit_permission(client, mock_db, owner_headers, master_data):
+    case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000021")
+    await _advance_to_rv_ov_ref(client, case_id, employee_headers)
+
+    bystander = await _create_employee(client, owner_headers, master_data, mobile="9800000021", email="bystander21@example.com")
+    await _grant_case_permission(client, owner_headers, bystander["id"], module="loan_management", actions=["view"])
+    bystander_headers = await _login(client, "9800000021")
+
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/rv-ov-ref", json=_RV_OV_REF_PAYLOAD, headers=bystander_headers)
+    assert r.status_code == 403, r.text

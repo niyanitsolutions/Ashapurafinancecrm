@@ -49,6 +49,7 @@ class ApplicationWorkflowRepository(BaseRepository[ApplicationWorkflow]):
         skip: int,
         limit: int,
         sort: list[tuple[str, int]] | None,
+        extra_filter: dict[str, Any] | None = None,
     ) -> tuple[list[ApplicationWorkflow], int]:
         query: dict[str, Any] = {"is_deleted": False, "case_type": case_type}
         if unassigned_only:
@@ -62,6 +63,8 @@ class ApplicationWorkflowRepository(BaseRepository[ApplicationWorkflow]):
         if search:
             pattern = re.compile(re.escape(search), re.IGNORECASE)
             query["$or"] = [{field: pattern} for field in _SEARCH_FIELDS]
+        if extra_filter:
+            query.update(extra_filter)
 
         total = await self.collection.count_documents(query)
         cursor = self.collection.find(query).skip(skip).limit(limit)
@@ -74,7 +77,8 @@ class ApplicationWorkflowRepository(BaseRepository[ApplicationWorkflow]):
         return await self.find_many({"customer_id": customer_id, "case_type": case_type}, limit=200, sort=[("created_at", -1)])
 
     async def count_filtered(
-        self, *, case_type: str, status: str, assigned_to: str | None = None, unassigned_only: bool = False
+        self, *, case_type: str, status: str, assigned_to: str | None = None, unassigned_only: bool = False,
+        extra_filter: dict[str, Any] | None = None,
     ) -> int:
         """Same query-building as `search_and_filter`'s status/assigned_to branch,
         without paginating — backs a status-tab count badge (e.g.
@@ -85,6 +89,8 @@ class ApplicationWorkflowRepository(BaseRepository[ApplicationWorkflow]):
             query["assigned_to"] = None
         elif assigned_to:
             query["assigned_to"] = assigned_to
+        if extra_filter:
+            query.update(extra_filter)
         return await self.collection.count_documents(query)
 
 

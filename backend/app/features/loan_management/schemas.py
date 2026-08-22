@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.features.workflow_engine.constants import BankOfferDecision, LoanStatus
 
@@ -21,15 +21,6 @@ class LoanStatusUpdateRequest(BaseModel):
         if value not in LoanStatus.ALL:
             raise ValueError(f"'{value}' is not a valid Loan Case status.")
         return value
-
-
-class BankDetailsRequest(BaseModel):
-    bank_nbfc_name: str | None = None
-    bank_application_id: str | None = None
-    bank_reference_number: str | None = None
-    assigned_officer: str | None = None
-    bank_decision: str | None = None
-    bank_remarks: str | None = None
 
 
 class CreditEvaluationRequest(BaseModel):
@@ -73,6 +64,18 @@ class BankOfferRequest(BaseModel):
         return self
 
 
+class RvOvRefRequest(BaseModel):
+    """Residence/Office Verification and Reference-check stage data — captured only while
+    the case is at `rv_ov_ref`; recording it advances the case to `esign_nach_kyc`."""
+
+    rv_ov_ref_type: str
+    rv_ov_ref_status: str
+    rv_ov_ref_date: datetime
+    rv_ov_ref_verified_by: str
+    rv_ov_ref_result: str
+    rv_ov_ref_remarks: str | None = None
+
+
 class EsignNachKycRequest(BaseModel):
     esign_completed: bool = False
     nach_completed: bool = False
@@ -103,6 +106,12 @@ class LoanCaseDetailsResponse(BaseModel):
     offered_tenure_months: int | None
     offered_interest_rate: float | None
     offer_decision: str
+    rv_ov_ref_type: str | None
+    rv_ov_ref_status: str | None
+    rv_ov_ref_date: datetime | None
+    rv_ov_ref_verified_by: str | None
+    rv_ov_ref_result: str | None
+    rv_ov_ref_remarks: str | None
     esign_completed: bool
     nach_completed: bool
     kyc_completed: bool
@@ -124,6 +133,7 @@ class LoanCaseListItem(BaseModel):
     assigned_to_name: str | None
     current_status: str
     rejection_reason: str | None
+    allowed_next_statuses: list[str] = Field(default_factory=list)
     selected_bank_name: str | None = None
     approved_amount: float | None = None
     created_at: datetime

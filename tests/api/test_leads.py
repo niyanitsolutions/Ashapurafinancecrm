@@ -31,7 +31,22 @@ from app.features.customer.models import ApplicationFormDefinition, FormFieldDef
 from app.features.dashboard.constants import WidgetType
 from app.features.dashboard.models import DashboardWidget
 from app.features.system_settings.models import InsuranceProduct, LeadSource, LoanProduct
+from app.features.workflow_engine.constants import CaseType, LoanAuditEvent, LoanStatus
+from app.features.workflow_engine.models import WorkflowDefinition
 from app.utils.datetime import utc_now
+
+
+async def _seed_loan_new_customer_definition(mock_db):
+    """Decision #130: `LeadService.set_stage`'s loan_management branch now get-or-creates
+    the Loan Case it marks moved, which requires a `new_customer` `WorkflowDefinition` row
+    to exist (`WorkflowEngine.create_case`) — this test module never drives a case through
+    any further transition, so only this one row is needed, unlike
+    `test_case_status_control.py`'s fuller `_seed_workflow_definitions`."""
+    definition = WorkflowDefinition(
+        case_type=CaseType.LOAN, status=LoanStatus.NEW_CUSTOMER, label="New Customer", sequence=1,
+        allowed_next_statuses=[LoanStatus.CREDIT_EVALUATION], audit_event=LoanAuditEvent.CASE_CREATED,
+    )
+    await mock_db["workflow_definitions"].insert_one(definition.model_dump(by_alias=True, exclude={"id"}))
 
 
 async def _lead_master_data(mock_db) -> dict:
@@ -1570,26 +1585,32 @@ async def test_move_to_loan_management_blocked_when_documents_incomplete(client,
 
 
 async def test_move_to_loan_management_succeeds_when_all_verified(client, mock_db, owner_headers, master_data):
+    await _seed_loan_new_customer_definition(mock_db)
     lmd = await _lead_master_data(mock_db)
     employee = await _create_employee(client, owner_headers, master_data, mobile="9788880047", email="dc8@example.com")
     lead = await _lead_in_document_collection(client, owner_headers, lmd, "9611160008", employee["id"])
     pan_id = await _seed_document_type(mock_db, "PAN")
     form_def_id = await _seed_form_definition(mock_db, "loan", lmd["loan_product_id"], document_type_ids=[pan_id])
     application_id = await _seed_application(
-        mock_db, lead_id=lead["id"], form_definition_id=form_def_id, product_category="loan", product_id=lmd["loan_product_id"], status="submitted"
+        mock_db, lead_id=lead["id"], customer_id="000000000000000000000077", form_definition_id=form_def_id,
+        product_category="loan", product_id=lmd["loan_product_id"], status="submitted",
     )
     await _seed_document(mock_db, application_id=application_id, document_type_id=pan_id, verification_status="verified")
-
-    cases_before = await mock_db["application_workflows"].count_documents({})
 
     r = await client.post(f"/api/v1/leads/{lead['id']}/stage", json={"stage": "loan_management"}, headers=owner_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["stage"] == "loan_management"
 
-    # No case was created by this endpoint — it's purely a completion gate in front of an
-    # already-existing (or, in this fixture, simply absent) handoff, never a creator of one.
-    cases_after = await mock_db["application_workflows"].count_documents({})
-    assert cases_after == cases_before
+    # Decision #130: this call is the ONE thing that makes the case visible in Loan
+    # Management — get-or-created here (idempotent with the lazy sync paths) and marked
+    # moved in the same step, rather than "purely a completion gate that touches nothing."
+    case = await mock_db["application_workflows"].find_one({"application_id": application_id})
+    assert case is not None
+    assert case["moved_to_loan_management_at"] is not None
+
+    r = await client.get("/api/v1/loan-cases", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert str(case["_id"]) in {c["id"] for c in r.json()["data"]}
 
     r = await client.get("/api/v1/leads?stage=document_collection", headers=owner_headers)
     assert lead["id"] not in {x["id"] for x in r.json()["data"]}
@@ -1610,16 +1631,19 @@ async def test_move_to_loan_management_blocked_from_wrong_stage(client, mock_db,
 
 
 async def test_reject_blocked_once_lead_reached_loan_management(client, mock_db, owner_headers, master_data):
+    await _seed_loan_new_customer_definition(mock_db)
     lmd = await _lead_master_data(mock_db)
     employee = await _create_employee(client, owner_headers, master_data, mobile="9788880049", email="dc10@example.com")
     lead = await _lead_in_document_collection(client, owner_headers, lmd, "9611160010", employee["id"])
     pan_id = await _seed_document_type(mock_db, "PAN")
     form_def_id = await _seed_form_definition(mock_db, "loan", lmd["loan_product_id"], document_type_ids=[pan_id])
     application_id = await _seed_application(
-        mock_db, lead_id=lead["id"], form_definition_id=form_def_id, product_category="loan", product_id=lmd["loan_product_id"], status="submitted"
+        mock_db, lead_id=lead["id"], customer_id="000000000000000000000078", form_definition_id=form_def_id,
+        product_category="loan", product_id=lmd["loan_product_id"], status="submitted",
     )
     await _seed_document(mock_db, application_id=application_id, document_type_id=pan_id, verification_status="verified")
-    await client.post(f"/api/v1/leads/{lead['id']}/stage", json={"stage": "loan_management"}, headers=owner_headers)
+    move = await client.post(f"/api/v1/leads/{lead['id']}/stage", json={"stage": "loan_management"}, headers=owner_headers)
+    assert move.status_code == 200, move.text
 
     r = await client.post(f"/api/v1/leads/{lead['id']}/reject", json={"reason": "Too late"}, headers=owner_headers)
     assert r.status_code == 422, r.text

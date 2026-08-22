@@ -607,17 +607,24 @@ class LeadService:
         Rejected are reached exclusively via `_assign`/`reject_lead`, never this
         endpoint). Phase 3 (decision 126) adds Document Collection -> Loan Management,
         gated on the linked Application being submitted and every required document
-        verified — the one new business rule this phase introduces. This method never
-        creates, reads product_category branches of, or otherwise touches a Loan/
-        Insurance case itself: that already happened automatically, correctly routed by
-        `application.product_category`, back when the customer submitted (see
-        `LeadStage.LOAN_MANAGEMENT`'s own docstring and decision #058). This is purely a
-        completion gate in front of an already-existing, already-automatic handoff."""
+        verified — the one new business rule this phase introduces.
+
+        Decision #130 (amends the note this docstring used to carry): a Loan Case is
+        still created lazily and automatically the moment the customer submits (see
+        `LeadStage.LOAN_MANAGEMENT`'s own docstring and decision #058) — that part is
+        unchanged. But the case stays gated (`moved_to_loan_management_at is None`,
+        invisible to Loan Management's list/counts/detail) until THIS method's checks
+        pass, at which point it explicitly marks the case as moved. This closes the gap
+        where a case was fully visible/actionable in Loan Management from the moment of
+        submission, regardless of whether a Lead ever reached this stage or whether its
+        documents were ever actually verified. Only loan-category applications are
+        marked here — Insurance's own visibility is a separate, untouched concern."""
         lead = await self.get_lead_scoped(lead_id, actor)
         if lead.assigned_to is None:
             raise ValidationError("Only an assigned lead can change stage.")
         if lead.stage == LeadStage.REJECTED:
             raise ValidationError("A rejected lead cannot change stage.")
+        application: Application | None = None
         if stage == LeadStage.LOAN_MANAGEMENT:
             if lead.stage != LeadStage.DOCUMENT_COLLECTION:
                 raise ValidationError("Only a lead in Document Collection can move to Loan Management.")
@@ -635,6 +642,13 @@ class LeadService:
             raise NotFoundError("Lead not found.")
         event_type = LeadActivityType.MOVED_TO_LOAN_MANAGEMENT if stage == LeadStage.LOAN_MANAGEMENT else LeadActivityType.STAGE_CHANGED
         await self._log_activity(lead_id, event_type, actor, {"from": lead.stage, "to": stage})
+        if stage == LeadStage.LOAN_MANAGEMENT and application is not None and application.product_category == "loan":
+            # Deferred import: loan_management imports this module's `Application` model
+            # at module level, so importing it back at module level here would be
+            # circular — same precedent as `CustomerService.submit_application`.
+            from app.features.loan_management.service import LoanCaseService
+
+            await LoanCaseService(self._db).mark_moved_to_loan_management(application.require_id(), actor)
         return updated
 
     async def set_follow_up(self, lead_id: str, next_follow_up_date: date, comment: str | None, actor: User) -> Lead:
