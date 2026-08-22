@@ -219,6 +219,11 @@ class RequiredDocumentResponse(BaseModel):
     preview_enabled: bool = True
     source: str = "custom"
     hidden: bool = False
+    # Bank Statement password support — inherited from this document type's own
+    # DocumentType.supports_password master-data flag (see that field's docstring),
+    # never set per-schema. Drives the optional password field the upload UI shows for
+    # this required document, for every product whose schema references this type.
+    supports_password: bool = False
 
 
 class RepeatableGroupResponse(BaseModel):
@@ -461,6 +466,12 @@ class ConfirmDocumentRequest(BaseModel):
     # instead of persisting whatever a client sends here (see that method's docstring).
     s3_key: str
     content_type: str | None = None
+    # Bank Statement password — OPTIONAL, only meaningful when this document_type's own
+    # DocumentType.supports_password is True (silently ignored otherwise — see
+    # CustomerService.confirm_document). Never logged: RequestLoggingMiddleware only
+    # ever logs method/path/status/duration, never a request body. Encrypted at rest
+    # immediately, never persisted as plaintext; never echoed back in any response.
+    password: str | None = Field(default=None, max_length=256)
 
 
 class ApplicationDocumentResponse(BaseModel):
@@ -481,10 +492,22 @@ class ApplicationDocumentResponse(BaseModel):
     is_current: bool = True
     doc_version: int = 1
     replaces_document_id: str | None = None
+    # Boolean only — the plaintext/ciphertext password is NEVER included in this (or
+    # any list) response. An authorized staff member retrieves the actual value only via
+    # the dedicated GET .../password endpoint, gated the same as Verify/Reject.
+    has_password: bool = False
 
 
 class RejectDocumentRequest(BaseModel):
     reason: str = Field(min_length=1)
+
+
+class DocumentPasswordResponse(BaseModel):
+    """Response for the dedicated, staff-only reveal endpoint — deliberately its own
+    narrow schema, never merged into ApplicationDocumentResponse, so the plaintext
+    password can never accidentally ride along on a list/get call."""
+
+    password: str
 
 
 # ---------------------------------------------------------------------- Phase 5: Portal Home / Dashboard

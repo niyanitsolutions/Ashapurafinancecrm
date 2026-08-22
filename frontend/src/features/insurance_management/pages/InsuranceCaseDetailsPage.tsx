@@ -33,6 +33,7 @@ import {
 import { getInsuranceStatusControlInfo, type StatusControlInfo } from "@/features/insurance_management/statusControl";
 import { documentTypesApi, type NamedMasterData } from "@/features/system_settings/api";
 import { formatISTDateTime } from "@/shared/dateFormat";
+import { useDocumentCollectionBackContext } from "@/shared/navigationContext";
 import { HOLD_REASONS } from "@/features/workflow_engine/holdReasons";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -75,6 +76,10 @@ export function InsuranceCaseDetailsPage() {
   const canAssign = can("insurance_management:applications", "assign");
   const canIssuePolicy = can("insurance_management:applications", "approve");
   const { caseId } = useParams<{ caseId: string }>();
+  // Reached via StaffApplicationDetailsPage's "Manage Status ->" link, which propagates
+  // the Document Collection context forward when present — every normal Insurance
+  // Management -> Insurance Cases -> View entry point keeps the original default.
+  const { backTo, backLabel } = useDocumentCollectionBackContext("/insurance-cases");
   const [insuranceCase, setInsuranceCase] = useState<InsuranceCaseDetail | null>(null);
   const [timeline, setTimeline] = useState<CaseTimelineEntry[]>([]);
   const [documentTypes, setDocumentTypes] = useState<NamedMasterData[]>([]);
@@ -110,14 +115,14 @@ export function InsuranceCaseDetailsPage() {
 
   if (error && !insuranceCase) {
     return (
-      <SimplePageLayout title="Insurance Case" backTo="/insurance-cases">
+      <SimplePageLayout title="Insurance Case" backTo={backTo} backLabel={backLabel}>
         <p className="text-danger text-sm">{error}</p>
       </SimplePageLayout>
     );
   }
   if (!insuranceCase) {
     return (
-      <SimplePageLayout title="Insurance Case" backTo="/insurance-cases">
+      <SimplePageLayout title="Insurance Case" backTo={backTo} backLabel={backLabel}>
         <p className="text-text/50 text-sm">Loading…</p>
       </SimplePageLayout>
     );
@@ -127,7 +132,7 @@ export function InsuranceCaseDetailsPage() {
   const details = insuranceCase.insurance_details;
 
   return (
-    <SimplePageLayout title={`${insuranceCase.case_code} — ${STATUS_LABELS[status] ?? status}`} backTo="/insurance-cases">
+    <SimplePageLayout title={`${insuranceCase.case_code} — ${STATUS_LABELS[status] ?? status}`} backTo={backTo} backLabel={backLabel}>
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
       <ErrorBanner message={error} />
 

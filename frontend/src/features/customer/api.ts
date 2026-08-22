@@ -119,6 +119,10 @@ export interface RequiredDocument {
   preview_enabled?: boolean;
   source?: FieldSource;
   hidden?: boolean;
+  // Bank Statement password support — inherited from this document type's own
+  // DocumentType.supports_password master-data flag (Owner-configured once, e.g. on
+  // "Bank Statement"), never set per product schema. See DocumentChecklist.
+  supports_password?: boolean;
 }
 
 // Phase 3.1 — a repeatable block of fields (Co-Applicants, Partners, Nominees, ...).
@@ -270,6 +274,9 @@ export interface ApplicationDocument {
   is_current: boolean;
   doc_version: number;
   replaces_document_id: string | null;
+  // Boolean only — the actual password is never included here or in any list/get
+  // response. See revealDocumentPassword for the dedicated, staff-only reveal call.
+  has_password?: boolean;
 }
 
 // `link_status` is the only field guaranteed to be present — every other field is
@@ -534,10 +541,12 @@ export function getDocumentUploadUrl(applicationId: string, documentTypeId: stri
   });
 }
 
-export function confirmDocument(applicationId: string, documentTypeId: string, fileName: string, s3Key: string, contentType?: string) {
+export function confirmDocument(
+  applicationId: string, documentTypeId: string, fileName: string, s3Key: string, contentType?: string, password?: string,
+) {
   return apiRequest<ApplicationDocument>(`/applications/${applicationId}/documents`, {
     method: "POST",
-    body: JSON.stringify({ document_type_id: documentTypeId, file_name: fileName, s3_key: s3Key, content_type: contentType }),
+    body: JSON.stringify({ document_type_id: documentTypeId, file_name: fileName, s3_key: s3Key, content_type: contentType, password }),
   });
 }
 
@@ -577,10 +586,12 @@ async function putFileToStorage(uploadUrl: string, file: File): Promise<void> {
 /** The full three-step upload flow (get presigned URL -> PUT to storage -> confirm) —
  * the one place this is implemented, used by every page that lets a customer upload a
  * document (Document Center, the Application form's own checklist). */
-export async function uploadApplicationDocument(applicationId: string, documentTypeId: string, file: File): Promise<ApplicationDocument> {
+export async function uploadApplicationDocument(
+  applicationId: string, documentTypeId: string, file: File, password?: string,
+): Promise<ApplicationDocument> {
   const { upload_url, s3_key } = await getDocumentUploadUrl(applicationId, documentTypeId, file.name, file.type);
   await putFileToStorage(upload_url, file);
-  return confirmDocument(applicationId, documentTypeId, file.name, s3_key, file.type);
+  return confirmDocument(applicationId, documentTypeId, file.name, s3_key, file.type, password);
 }
 
 // ---- document verification (staff) ----
@@ -594,6 +605,14 @@ export function rejectDocument(applicationId: string, documentId: string, reason
     method: "PATCH",
     body: JSON.stringify({ reason }),
   });
+}
+
+// Staff-only, on-demand reveal of a bank statement's password — same authorization
+// boundary as verifyDocument/rejectDocument (CustomerEditDep + assignment-scoped IDOR
+// check server-side). Never call this from a list rendering path; only on an explicit
+// user action, and never persist the result beyond that action's own lifetime.
+export function revealDocumentPassword(applicationId: string, documentId: string) {
+  return apiRequest<{ password: string }>(`/applications/${applicationId}/documents/${documentId}/password`);
 }
 
 // ---- Phase 5: Portal Home / Dashboard ----

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { Button } from "@/components/buttons/Button";
 import { EmployeeSelect } from "@/components/forms/EmployeeSelect";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
@@ -15,12 +15,14 @@ import {
   getDocumentUploadUrl,
   listDocuments,
   rejectDocument,
+  revealDocumentPassword,
   verifyDocument,
   type ApplicationDetail,
   type ApplicationDocument,
 } from "@/features/customer/api";
 import { getErrorMessage } from "@/features/customer/errors";
 import { useProductSchema } from "@/features/customer/useProductSchema";
+import { documentCollectionQuery, useDocumentCollectionBackContext } from "@/shared/navigationContext";
 
 function RejectDocumentModal({
   fileName,
@@ -67,20 +69,12 @@ function RejectDocumentModal({
   );
 }
 
-// Entry points that should route Back to Document Collection instead of the default
-// Customer Applications list — opened from Leads -> Document Collection (the row-level
-// View action and Update Lead's "View Full Application" link both pass this), never
-// from the Customer Applications module or Customer Details page, which keep the
-// original default. A query param (not router state) so the destination survives a
-// page refresh — see the navigation-context fix's own regression tests.
-const DOCUMENT_COLLECTION_SOURCE = "document-collection";
-
 export function StaffApplicationDetailsPage() {
   const { applicationId } = useParams<{ applicationId: string }>();
-  const [searchParams] = useSearchParams();
-  const fromDocumentCollection = searchParams.get("from") === DOCUMENT_COLLECTION_SOURCE;
-  const backTo = fromDocumentCollection ? "/leads/document-collection" : "/applications";
-  const backLabel = fromDocumentCollection ? "← Back to Document Collection" : undefined;
+  // Opened from Leads -> Document Collection (the row-level View action and Update
+  // Lead's "View Full Application" link both pass this) never from the Customer
+  // Applications module or Customer Details page, which keep the original default.
+  const { backTo, backLabel, fromDocumentCollection } = useDocumentCollectionBackContext("/applications");
   const { role } = useAuth();
   const [application, setApplication] = useState<ApplicationDetail | null>(null);
   const [documents, setDocuments] = useState<ApplicationDocument[]>([]);
@@ -163,13 +157,13 @@ export function StaffApplicationDetailsPage() {
     }
   };
 
-  const onUploadDocument = async (documentTypeId: string, file: File) => {
+  const onUploadDocument = async (documentTypeId: string, file: File, password?: string) => {
     setError(null);
     setUploadingFor(documentTypeId);
     try {
       const { upload_url, s3_key } = await getDocumentUploadUrl(applicationId, documentTypeId, file.name, file.type);
       await fetch(upload_url, { method: "PUT", body: file, headers: { "Content-Type": file.type || "application/octet-stream" } });
-      await confirmDocument(applicationId, documentTypeId, file.name, s3_key, file.type);
+      await confirmDocument(applicationId, documentTypeId, file.name, s3_key, file.type, password);
       setMessage("Document uploaded.");
       load();
     } catch (err) {
@@ -179,12 +173,31 @@ export function StaffApplicationDetailsPage() {
     }
   };
 
+  // Bank Statement password — staff-only, on-demand reveal (never included in the
+  // document list itself). Fetched fresh every click, never cached in component state
+  // beyond the alert dialog's own lifetime, so it isn't sitting in memory longer than
+  // necessary and is never written to localStorage/sessionStorage.
+  const onShowPassword = async (documentId: string) => {
+    setError(null);
+    try {
+      const { password } = await revealDocumentPassword(applicationId, documentId);
+      window.alert(`Bank statement password: ${password}`);
+    } catch (err) {
+      setError(getErrorMessage(err));
+    }
+  };
+
   const documentExtraActions = (doc: ApplicationDocument) => (
     <>
       {doc.download_url && (
         <a href={doc.download_url} download={doc.file_name ?? undefined} className="text-primary hover:underline text-xs font-medium">
           Download
         </a>
+      )}
+      {doc.has_password && (
+        <button type="button" onClick={() => onShowPassword(doc.id)} className="text-xs font-medium text-text/60 hover:underline">
+          Show Password
+        </button>
       )}
       {doc.verification_status === "pending" && (
         <>
@@ -215,7 +228,9 @@ export function StaffApplicationDetailsPage() {
               <p className="text-sm text-text/60 mb-2">
                 Case {application.case_code}: <span className="font-medium text-text">{application.case_status_label}</span>{" "}
                 <Link
-                  to={application.case_type === "insurance" ? `/insurance-cases/${application.case_id}` : `/loan-cases/${application.case_id}`}
+                  to={`${application.case_type === "insurance" ? "/insurance-cases" : "/loan-cases"}/${application.case_id}${
+                    fromDocumentCollection ? documentCollectionQuery() : ""
+                  }`}
                   className="text-primary hover:underline"
                 >
                   Manage Status →

@@ -217,11 +217,11 @@ export function ApplicationPage() {
     setSaveState("unsaved");
   };
 
-  const onUploadDocument = async (documentTypeId: string, file: File) => {
+  const onUploadDocument = async (documentTypeId: string, file: File, password?: string) => {
     setError(null);
     setUploadingFor(documentTypeId);
     try {
-      await uploadApplicationDocument(id, documentTypeId, file);
+      await uploadApplicationDocument(id, documentTypeId, file, password);
       const docs = await listDocuments(id);
       setDocuments(docs);
     } catch (err) {

@@ -107,7 +107,7 @@ from app.features.workflow_engine.repository import (
     ApplicationWorkflowRepository,
     WorkflowDefinitionRepository,
 )
-from app.security.encryption import encrypt
+from app.security.encryption import decrypt, encrypt
 from app.security.jwt import create_otp_verified_token
 from app.security.password import hash_password
 from app.services.storage.client import (
@@ -789,6 +789,15 @@ class CustomerService:
         types = await self._document_types.find_many({}, limit=500)
         return self._document_type_name_map_sync(type_ids, types)
 
+    async def resolve_document_type_password_support(self, type_ids: set[str]) -> dict[str, bool]:
+        """`document_type_id -> supports_password`, for `RequiredDocumentResponse` — the
+        one place the upload UI learns which required document (e.g. Bank Statement)
+        should show the optional password field, for any product schema referencing it."""
+        if not type_ids:
+            return {}
+        types = await self._document_types.find_many({}, limit=500)
+        return {t.require_id(): t.supports_password for t in types if t.require_id() in type_ids}
+
     async def list_form_definitions(self) -> list[ApplicationFormDefinition]:
         return await self._form_defs.find_many({}, limit=500, sort=[("product_category", 1)])
 
@@ -1373,7 +1382,8 @@ class CustomerService:
         # mint the presigned PUT, so the only key ever persisted is the one this
         # application's own upload flow actually issued.
         application = await self._resolve_application_for_actor(application_id, actor)
-        if await self._document_types.find_by_id(payload.document_type_id) is None:
+        document_type = await self._document_types.find_by_id(payload.document_type_id)
+        if document_type is None:
             raise ValidationError("Unknown document_type_id.")
         rd = await self._required_document_definition(application, payload.document_type_id)
         self._assert_document_upload_allowed(rd, payload.file_name)
@@ -1391,10 +1401,19 @@ class CustomerService:
         # behavior, same as every schema-known type defaults to.
         multiple_upload = rd.multiple_upload if rd is not None else False
         doc_version, replaces_id = (1, None) if multiple_upload else await self._next_doc_version(application_id, payload.document_type_id)
+        # Bank Statement password — OPTIONAL, and only ever persisted when this
+        # document's own DocumentType is flagged `supports_password` (Owner-configured
+        # once on the master-data row, e.g. "Bank Statement"). A password submitted for
+        # any other document type is silently dropped, not an error — defense in depth
+        # on top of the frontend only ever showing/sending the field for a
+        # password-eligible type. Encrypted immediately with the project's existing
+        # Fernet utility; the plaintext is never assigned to a variable again after this.
+        password_encrypted = encrypt(payload.password) if (document_type.supports_password and payload.password) else None
         document = ApplicationDocument(
             application_id=application_id, document_type_id=payload.document_type_id, file_name=payload.file_name,
             s3_key=s3_key, content_type=payload.content_type, created_by=actor.require_id(),
             file_size_bytes=size, doc_version=doc_version, replaces_document_id=replaces_id,
+            password_encrypted=password_encrypted,
         )
         document_id = await self._documents.insert(document)
         if not multiple_upload:
@@ -1462,6 +1481,24 @@ class CustomerService:
         if document is None or document.application_id != application_id:
             raise NotFoundError("Document not found.")
         return document
+
+    async def reveal_document_password(self, application_id: str, document_id: str, actor: User) -> str:
+        """Staff-only, on-demand decrypt of a bank statement's password — reuses the
+        exact same `_get_document_for_staff` IDOR check (Owner unrestricted, an
+        Employee only for an application assigned to them) `verify_document`/
+        `reject_document` already enforce, and is gated the same way at the router
+        (`CustomerEditDep`). Never returned from any list/get endpoint — this is the
+        only code path that ever decrypts `password_encrypted` back to plaintext, and
+        every call is audited (who/when/which document — never the password value
+        itself)."""
+        document = await self._get_document_for_staff(application_id, document_id, actor)
+        if document.password_encrypted is None:
+            raise NotFoundError("This document has no password on file.")
+        await write_audit_log(
+            self._db, event_type=AuditEvent.DOCUMENT_PASSWORD_ACCESSED, user_id=actor.require_id(),
+            metadata={"application_id": application_id, "document_id": document_id},
+        )
+        return decrypt(document.password_encrypted)
 
     async def verify_document(self, application_id: str, document_id: str, actor: User) -> ApplicationDocument:
         await self._get_document_for_staff(application_id, document_id, actor)

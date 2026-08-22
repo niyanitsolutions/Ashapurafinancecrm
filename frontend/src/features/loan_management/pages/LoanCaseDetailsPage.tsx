@@ -36,6 +36,7 @@ import { LOAN_STATUS_LABELS as STATUS_LABELS } from "@/features/loan_management/
 import { getLoanStatusControlInfo, type StatusControlAction } from "@/features/loan_management/statusControl";
 import { documentTypesApi, type NamedMasterData } from "@/features/system_settings/api";
 import { formatISTDateTime } from "@/shared/dateFormat";
+import { useDocumentCollectionBackContext } from "@/shared/navigationContext";
 import { HOLD_REASONS } from "@/features/workflow_engine/holdReasons";
 
 function Field({ label, value }: { label: string; value: string | number | null | undefined }) {
@@ -66,6 +67,10 @@ export function LoanCaseDetailsPage() {
   const canAssign = can("loan_management:applications", "assign");
   const canDisburse = can("loan_management:applications", "approve");
   const { caseId } = useParams<{ caseId: string }>();
+  // Reached via StaffApplicationDetailsPage's "Manage Status ->" link, which propagates
+  // the Document Collection context forward when present — every normal Loan
+  // Management -> Loan Cases -> View entry point keeps the original default.
+  const { backTo, backLabel } = useDocumentCollectionBackContext("/loan-cases");
   const [loanCase, setLoanCase] = useState<LoanCaseDetail | null>(null);
   const [timeline, setTimeline] = useState<CaseTimelineEntry[]>([]);
   const [documentTypes, setDocumentTypes] = useState<NamedMasterData[]>([]);
@@ -100,14 +105,14 @@ export function LoanCaseDetailsPage() {
 
   if (error && !loanCase) {
     return (
-      <SimplePageLayout title="Loan Case" backTo="/loan-cases">
+      <SimplePageLayout title="Loan Case" backTo={backTo} backLabel={backLabel}>
         <p className="text-danger text-sm">{error}</p>
       </SimplePageLayout>
     );
   }
   if (!loanCase) {
     return (
-      <SimplePageLayout title="Loan Case" backTo="/loan-cases">
+      <SimplePageLayout title="Loan Case" backTo={backTo} backLabel={backLabel}>
         <p className="text-text/50 text-sm">Loading…</p>
       </SimplePageLayout>
     );
@@ -117,7 +122,7 @@ export function LoanCaseDetailsPage() {
   const details = loanCase.loan_details;
 
   return (
-    <SimplePageLayout title={`${loanCase.case_code} — ${STATUS_LABELS[status] ?? status}`} backTo="/loan-cases">
+    <SimplePageLayout title={`${loanCase.case_code} — ${STATUS_LABELS[status] ?? status}`} backTo={backTo} backLabel={backLabel}>
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
       <ErrorBanner message={error} />
 

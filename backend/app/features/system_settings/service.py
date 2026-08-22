@@ -100,7 +100,9 @@ class SystemSettingsService:
     async def _create_named(self, repo: Any, payload: NamedMasterDataCreateRequest, actor: User, *, resource: str) -> NamedMasterData:
         if await repo.find_by_name(payload.name):
             raise ConflictError(f"'{payload.name}' already exists.")
-        doc = repo.model(name=payload.name, description=payload.description, created_by=actor.require_id())
+        doc = repo.model(
+            name=payload.name, description=payload.description, supports_password=payload.supports_password, created_by=actor.require_id()
+        )
         doc_id = await repo.insert(doc)
         await write_audit_log(
             self._db, event_type=AuditEvent.master_data(resource, "created"), user_id=actor.require_id(), metadata={"id": doc_id, "name": payload.name}
@@ -116,6 +118,8 @@ class SystemSettingsService:
             updates["name"] = payload.name
         if payload.description is not None:
             updates["description"] = payload.description
+        if payload.supports_password is not None:
+            updates["supports_password"] = payload.supports_password
         if not updates:
             return doc
         updated = await repo.update(doc_id, updates, updated_by=actor.require_id())

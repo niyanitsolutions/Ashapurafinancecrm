@@ -22,8 +22,8 @@ from app.security.encryption import decrypt
 
 def named_master_data_to_response(doc: NamedMasterData) -> NamedMasterDataResponse:
     return NamedMasterDataResponse(
-        id=doc.require_id(), name=doc.name, description=doc.description,
-        status=doc.status, created_at=doc.created_at, updated_at=doc.updated_at,
+        id=doc.require_id(), name=doc.name, description=doc.description, status=doc.status,
+        supports_password=doc.supports_password, created_at=doc.created_at, updated_at=doc.updated_at,
     )
 
 

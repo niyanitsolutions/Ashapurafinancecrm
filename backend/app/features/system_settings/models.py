@@ -23,6 +23,15 @@ from app.shared.base_document import BaseDocument
 class NamedMasterData(BaseDocument):
     name: str
     description: str | None = None
+    # Bank Statement password support — only meaningful for DocumentType (Owner marks
+    # e.g. "Bank Statement" / "Salary Account Statement" / "Passbook" as
+    # `supports_password=True` once, on the master-data row itself), but kept on the
+    # shared base class rather than a DocumentType-only schema so the existing single
+    # generic CRUD path (this module's own docstring) still serves all four resources —
+    # LeadSource/LoanProduct/InsuranceProduct simply never set it. Every product schema's
+    # `RequiredDocumentDefinition` that references that same `document_type_id` inherits
+    # the flag automatically, so no loan product form has to declare it separately.
+    supports_password: bool = False
 
 
 class LeadSource(NamedMasterData):

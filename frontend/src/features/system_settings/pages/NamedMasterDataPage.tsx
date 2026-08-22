@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/buttons/Button";
+import { CheckboxField } from "@/components/forms/CheckboxField";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
 import { SubmitButton } from "@/components/forms/SubmitButton";
@@ -15,12 +16,13 @@ interface Item {
   name: string;
   description?: string | null;
   status: string;
+  supports_password?: boolean;
 }
 
 interface NamedMasterDataApi<T extends Item> {
   list: () => Promise<T[]>;
-  create: (name: string, description?: string) => Promise<T>;
-  update: (id: string, payload: { name?: string; description?: string }) => Promise<T>;
+  create: (name: string, description?: string, supportsPassword?: boolean) => Promise<T>;
+  update: (id: string, payload: { name?: string; description?: string; supports_password?: boolean }) => Promise<T>;
   activate: (id: string) => Promise<T>;
   deactivate: (id: string) => Promise<T>;
 }
@@ -33,17 +35,24 @@ export function NamedMasterDataPage<T extends Item>({
   title,
   createPlaceholder,
   api,
+  showPasswordSupport = false,
 }: {
   title: string;
   createPlaceholder: string;
   api: NamedMasterDataApi<T>;
+  // Document Types only — "Bank Statement" etc. See DocumentType.supports_password's
+  // own docstring for why this lives on the shared model/page rather than a
+  // DocumentType-only fork of this component.
+  showPasswordSupport?: boolean;
 }) {
   const [items, setItems] = useState<T[]>([]);
   const [newName, setNewName] = useState("");
   const [newDescription, setNewDescription] = useState("");
+  const [newSupportsPassword, setNewSupportsPassword] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
+  const [editSupportsPassword, setEditSupportsPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -62,9 +71,10 @@ export function NamedMasterDataPage<T extends Item>({
     setError(null);
     setIsSubmitting(true);
     try {
-      await api.create(newName.trim(), newDescription.trim() || undefined);
+      await api.create(newName.trim(), newDescription.trim() || undefined, showPasswordSupport ? newSupportsPassword : undefined);
       setNewName("");
       setNewDescription("");
+      setNewSupportsPassword(false);
       load();
     } catch (err) {
       setError(getErrorMessage(err));
@@ -77,12 +87,17 @@ export function NamedMasterDataPage<T extends Item>({
     setEditingId(item.id);
     setEditName(item.name);
     setEditDescription(item.description ?? "");
+    setEditSupportsPassword(item.supports_password ?? false);
   };
 
   const onSaveEdit = async (id: string) => {
     setError(null);
     try {
-      await api.update(id, { name: editName.trim(), description: editDescription.trim() || undefined });
+      await api.update(id, {
+        name: editName.trim(),
+        description: editDescription.trim() || undefined,
+        supports_password: showPasswordSupport ? editSupportsPassword : undefined,
+      });
       setEditingId(null);
       load();
     } catch (err) {
@@ -115,6 +130,15 @@ export function NamedMasterDataPage<T extends Item>({
         <div className="flex-1 min-w-[200px]">
           <FormField label="Description (optional)" value={newDescription} onChange={(e) => setNewDescription(e.target.value)} />
         </div>
+        {showPasswordSupport && (
+          <div className="mb-4">
+            <CheckboxField
+              label="Supports password-protected files"
+              checked={newSupportsPassword}
+              onChange={(e) => setNewSupportsPassword(e.target.checked)}
+            />
+          </div>
+        )}
         <div className="mb-4">
           <SubmitButton isSubmitting={isSubmitting}>Add</SubmitButton>
         </div>
@@ -127,13 +151,14 @@ export function NamedMasterDataPage<T extends Item>({
               <th className="px-4 py-3">Name</th>
               <th className="px-4 py-3">Description</th>
               <th className="px-4 py-3">Status</th>
+              {showPasswordSupport && <th className="px-4 py-3">Password Support</th>}
               <th className="px-4 py-3" />
             </tr>
           </thead>
           <tbody>
             {items.length === 0 && (
               <tr>
-                <td colSpan={4}>
+                <td colSpan={showPasswordSupport ? 5 : 4}>
                   <EmptyState icon="departments" title="Nothing here yet" description="Add the first entry using the form above." />
                 </td>
               </tr>
@@ -158,6 +183,15 @@ export function NamedMasterDataPage<T extends Item>({
                     />
                   </td>
                   <td className="px-4 py-2 capitalize">{item.status}</td>
+                  {showPasswordSupport && (
+                    <td className="px-4 py-2">
+                      <CheckboxField
+                        label="Supports password"
+                        checked={editSupportsPassword}
+                        onChange={(e) => setEditSupportsPassword(e.target.checked)}
+                      />
+                    </td>
+                  )}
                   <td className="px-4 py-2 text-right space-x-2 whitespace-nowrap">
                     <Button variant="ghost" size="sm" onClick={() => onSaveEdit(item.id)}>
                       Save
@@ -172,6 +206,7 @@ export function NamedMasterDataPage<T extends Item>({
                   <td className="px-4 py-3">{item.name}</td>
                   <td className="px-4 py-3">{item.description || "—"}</td>
                   <td className="px-4 py-3 capitalize">{item.status}</td>
+                  {showPasswordSupport && <td className="px-4 py-3">{item.supports_password ? "Yes" : "No"}</td>}
                   <td className="px-4 py-3 text-right space-x-3 whitespace-nowrap">
                     <Button variant="ghost" size="sm" onClick={() => startEdit(item)}>
                       Edit

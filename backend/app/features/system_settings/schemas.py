@@ -14,11 +14,15 @@ from app.features.system_settings.constants import Weekday
 class NamedMasterDataCreateRequest(BaseModel):
     name: str
     description: str | None = None
+    # DocumentType-specific (e.g. "Bank Statement") — see NamedMasterData's own
+    # docstring. Ignored in practice for Lead Sources/Loan Products/Insurance Products.
+    supports_password: bool = False
 
 
 class NamedMasterDataUpdateRequest(BaseModel):
     name: str | None = None
     description: str | None = None
+    supports_password: bool | None = None
 
 
 class NamedMasterDataResponse(BaseModel):
@@ -26,6 +30,7 @@ class NamedMasterDataResponse(BaseModel):
     name: str
     description: str | None = None
     status: str
+    supports_password: bool = False
     created_at: datetime
     updated_at: datetime
 

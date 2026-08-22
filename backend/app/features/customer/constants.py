@@ -135,6 +135,9 @@ class AuditEvent:
     DOCUMENT_REJECTED = "document_rejected"
     DOCUMENT_MARKED_UNAVAILABLE = "document_marked_unavailable"
     CUSTOMER_PASSWORD_RESET_BY_STAFF = "customer_password_reset_by_staff"
+    # Audits WHO accessed a bank statement's password and WHEN — never the password
+    # value itself (see CustomerService.reveal_document_password).
+    DOCUMENT_PASSWORD_ACCESSED = "document_password_accessed"
 
     # Product Schema Engine governance — one entry per mutation, read back by
     # `GET /product-schemas/audit` (see CustomerService). `metadata.changes` on

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { groupBySection } from "@/components/forms/ProductSchemaForm";
 import { FileDropZone } from "@/components/uploads/FileDropZone";
 import type { ApplicationDocument, RequiredDocument } from "@/features/customer/api";
@@ -80,13 +80,21 @@ function DocumentRow({
 }: {
   doc: RequiredDocument;
   current: ApplicationDocument[];
-  onUpload: (documentTypeId: string, file: File) => void;
+  onUpload: (documentTypeId: string, file: File, password?: string) => void;
   onMarkNotAvailable?: (documentTypeId: string) => void;
   uploadingFor: string | null;
   disabled: boolean;
   canMarkNotAvailable: boolean;
   extraActions?: (doc: ApplicationDocument) => ReactNode;
 }) {
+  // Bank Statement password — local, component-only state (never lifted to a parent
+  // store, never persisted to localStorage/sessionStorage): the value is read once at
+  // upload time and handed straight to `onUpload`, which forwards it to the confirm
+  // API call and clears it from this component the moment the field re-renders empty
+  // after a successful upload (React remounts a fresh empty input; nothing to clear
+  // manually). Only rendered at all when `doc.supports_password` — see
+  // RequiredDocument's own docstring on where that flag comes from.
+  const [password, setPassword] = useState("");
   const typeId = doc.document_type_id;
   const isRequired = doc.required !== false;
   const isMultiple = doc.multiple_upload === true;
@@ -97,6 +105,10 @@ function DocumentRow({
   const hasUploads = uploadedDocs.length > 0;
   const displayName = current[0]?.document_type_name || doc.name_override || doc.document_type_name || "Document";
   const canAddMore = !disabled && (isMultiple || !hasUploads);
+  const handleFile = (file: File) => {
+    onUpload(typeId, file, doc.supports_password ? password || undefined : undefined);
+    setPassword("");
+  };
 
   return (
     <li className="text-sm rounded-lg border border-border p-3">
@@ -125,20 +137,44 @@ function DocumentRow({
         <div className="mt-2">
           {isUploading ? (
             <p className="text-xs text-text/50">Uploading…</p>
-          ) : hasUploads || notAvailable ? (
-            <FileDropZone
-              accept={doc.allowed_types}
-              maxSizeBytes={doc.max_size_mb ? doc.max_size_mb * 1024 * 1024 : null}
-              onFile={(file) => onUpload(typeId, file)}
-              compact
-              compactLabel={isMultiple ? "Add Document" : "Re-upload"}
-            />
           ) : (
-            <FileDropZone
-              accept={doc.allowed_types}
-              maxSizeBytes={doc.max_size_mb ? doc.max_size_mb * 1024 * 1024 : null}
-              onFile={(file) => onUpload(typeId, file)}
-            />
+            <>
+              {doc.supports_password && (
+                <div className="mb-2">
+                  <label className="mb-1 block text-xs font-medium text-text/60" htmlFor={`doc-password-${typeId}`}>
+                    Bank Statement Password (if applicable)
+                  </label>
+                  <input
+                    id={`doc-password-${typeId}`}
+                    type="password"
+                    autoComplete="off"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Enter statement password"
+                    className="w-full rounded-lg border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  />
+                  <p className="mt-1 text-2xs text-text/40">
+                    Enter the password only if your bank statement is password protected. Leave this blank if the statement is not password
+                    protected.
+                  </p>
+                </div>
+              )}
+              {hasUploads || notAvailable ? (
+                <FileDropZone
+                  accept={doc.allowed_types}
+                  maxSizeBytes={doc.max_size_mb ? doc.max_size_mb * 1024 * 1024 : null}
+                  onFile={handleFile}
+                  compact
+                  compactLabel={isMultiple ? "Add Document" : "Re-upload"}
+                />
+              ) : (
+                <FileDropZone
+                  accept={doc.allowed_types}
+                  maxSizeBytes={doc.max_size_mb ? doc.max_size_mb * 1024 * 1024 : null}
+                  onFile={handleFile}
+                />
+              )}
+            </>
           )}
           {!isRequired && !hasUploads && !notAvailable && canMarkNotAvailable && onMarkNotAvailable && !isUploading && (
             <button
@@ -176,7 +212,7 @@ export function DocumentChecklist({
 }: {
   requiredDocuments: RequiredDocument[];
   uploadedDocuments: ApplicationDocument[];
-  onUpload: (documentTypeId: string, file: File) => void;
+  onUpload: (documentTypeId: string, file: File, password?: string) => void;
   onMarkNotAvailable?: (documentTypeId: string) => void;
   uploadingFor: string | null;
   disabled?: boolean;

@@ -77,17 +77,22 @@ def field_to_response(f: FormFieldDefinition) -> FormFieldResponse:
     )
 
 
-def required_document_to_response(d: RequiredDocumentDefinition, document_type_names: dict[str, str] | None = None) -> RequiredDocumentResponse:
+def required_document_to_response(
+    d: RequiredDocumentDefinition, document_type_names: dict[str, str] | None = None, document_type_password_support: dict[str, bool] | None = None
+) -> RequiredDocumentResponse:
     names = document_type_names or {}
+    password_support = document_type_password_support or {}
     return RequiredDocumentResponse(
         document_type_id=d.document_type_id, document_type_name=names.get(d.document_type_id, ""), section=d.section, note=d.note,
         name_override=d.name_override, required=d.required, allowed_types=d.allowed_types, max_size_mb=d.max_size_mb,
         multiple_upload=d.multiple_upload, preview_enabled=d.preview_enabled, source=d.source, hidden=d.hidden,
+        supports_password=password_support.get(d.document_type_id, False),
     )
 
 
 def form_definition_to_response(
-    form_def: ApplicationFormDefinition, document_type_names: dict[str, str] | None = None, product_name: str = ""
+    form_def: ApplicationFormDefinition, document_type_names: dict[str, str] | None = None, product_name: str = "",
+    document_type_password_support: dict[str, bool] | None = None,
 ) -> FormDefinitionResponse:
     names = document_type_names or {}
     return FormDefinitionResponse(
@@ -96,7 +101,7 @@ def form_definition_to_response(
         product_id=form_def.product_id,
         product_name=product_name,
         fields=[field_to_response(f) for f in form_def.fields],
-        required_documents=[required_document_to_response(d, names) for d in form_def.required_documents],
+        required_documents=[required_document_to_response(d, names, document_type_password_support) for d in form_def.required_documents],
         repeatable_groups=[
             RepeatableGroupResponse(
                 key=g.key, label=g.label, add_button_label=g.add_button_label, min_count=g.min_count, max_count=g.max_count,
@@ -194,4 +199,5 @@ def document_to_response(
         is_current=document.is_current,
         doc_version=document.doc_version,
         replaces_document_id=document.replaces_document_id,
+        has_password=document.password_encrypted is not None,
     )

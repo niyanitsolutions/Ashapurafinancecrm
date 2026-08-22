@@ -103,6 +103,16 @@ class ApplicationDocument(BaseDocument):
     doc_version: int = 1
     replaces_document_id: str | None = None  # ref: application_documents — the row this superseded, if any
 
+    # Bank Statement password support — optional, only ever set when the uploaded
+    # document's own DocumentType has `supports_password=True` (see
+    # CustomerService.confirm_document). Encrypted at rest with the project's existing
+    # `app.security.encryption` Fernet utility (same mechanism as Customer PAN/Aadhaar),
+    # never the plaintext. Deliberately excluded from `ApplicationDocumentResponse` —
+    # only `has_password` (a boolean) is ever returned from normal document GET/list
+    # endpoints; the plaintext is readable only via the dedicated, permission-gated
+    # `reveal_document_password` endpoint.
+    password_encrypted: str | None = None
+
 
 class FieldCondition(BaseModel):
     """Phase 3.1 — `FormFieldDefinition.visible_when`: this field only renders (and is

@@ -26,6 +26,7 @@ from app.features.customer.schemas import (
     ConfirmDocumentRequest,
     CustomerListItem,
     CustomerResponse,
+    DocumentPasswordResponse,
     DocumentUploadUrlRequest,
     DocumentUploadUrlResponse,
     FormDefinitionCreateRequest,
@@ -82,9 +83,11 @@ CustomerEditDep = Annotated[User, _customer_perm("edit")]
 
 
 async def _resolve_form_definition_response(service: CustomerService, form_def: Any) -> FormDefinitionResponse:
-    name_map = await service.resolve_document_type_name_map({d.document_type_id for d in form_def.required_documents})
+    type_ids = {d.document_type_id for d in form_def.required_documents}
+    name_map = await service.resolve_document_type_name_map(type_ids)
+    password_support_map = await service.resolve_document_type_password_support(type_ids)
     product_name = await service.resolve_product_name(form_def.product_category, form_def.product_id)
-    return mappers.form_definition_to_response(form_def, name_map, product_name)
+    return mappers.form_definition_to_response(form_def, name_map, product_name, password_support_map)
 
 
 async def _resolve_application_response(service: CustomerService, application: Application) -> ApplicationDetailResponse:
@@ -534,6 +537,17 @@ async def reject_document(
             document, type_names.get(document.document_type_id, ""), None, verifier_names.get(document.verified_by or "")
         )
     )
+
+
+@router.get("/applications/{application_id}/documents/{document_id}/password")
+async def reveal_document_password(
+    application_id: str, document_id: str, service: ServiceDep, actor: CustomerEditDep
+) -> ApiResponse[DocumentPasswordResponse]:
+    # Same authorization boundary as Verify/Reject (CustomerEditDep + the assignment-
+    # scoped IDOR check inside the service) — an authorized staff member only, never a
+    # list/get response, never logged.
+    password = await service.reveal_document_password(application_id, document_id, actor)
+    return ApiResponse[DocumentPasswordResponse].ok(DocumentPasswordResponse(password=password))
 
 
 # ---------------------------------------------------------------------- staff views (Owner + assigned Employee)

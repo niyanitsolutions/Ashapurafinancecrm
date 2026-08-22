@@ -6,6 +6,9 @@ export interface NamedMasterData {
   name: string;
   description: string | null;
   status: string;
+  // Bank Statement password support — only meaningful for Document Types (e.g. "Bank
+  // Statement"); see backend NamedMasterData's own docstring for why it's shared here.
+  supports_password?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -91,9 +94,9 @@ export const WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as con
 function namedMasterDataApi(basePath: string) {
   return {
     list: () => apiRequest<NamedMasterData[]>(basePath),
-    create: (name: string, description?: string) =>
-      apiRequest<NamedMasterData>(basePath, { method: "POST", body: JSON.stringify({ name, description }) }),
-    update: (id: string, payload: { name?: string; description?: string }) =>
+    create: (name: string, description?: string, supports_password?: boolean) =>
+      apiRequest<NamedMasterData>(basePath, { method: "POST", body: JSON.stringify({ name, description, supports_password }) }),
+    update: (id: string, payload: { name?: string; description?: string; supports_password?: boolean }) =>
       apiRequest<NamedMasterData>(`${basePath}/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
     activate: (id: string) => apiRequest<NamedMasterData>(`${basePath}/${id}/activate`, { method: "PATCH" }),
     deactivate: (id: string) => apiRequest<NamedMasterData>(`${basePath}/${id}/deactivate`, { method: "PATCH" }),

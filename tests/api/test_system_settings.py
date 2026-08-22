@@ -87,6 +87,28 @@ async def test_loan_product_and_insurance_product_and_document_type_create(clien
 
     r = await client.post("/api/v1/document-types", json={"name": "PAN"}, headers=owner_headers)
     assert r.status_code == 200, r.text
+    assert r.json()["data"]["supports_password"] is False
+
+
+async def test_document_type_supports_password_flag_create_and_update(client, owner_headers):
+    """Bank Statement password support (Part 1A) — the Owner marks a document type as
+    password-capable once, on the master-data row itself; every product schema
+    referencing it inherits the flag automatically."""
+    r = await client.post("/api/v1/document-types", json={"name": "Bank Statement", "supports_password": True}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    doc_type = r.json()["data"]
+    assert doc_type["supports_password"] is True
+
+    r = await client.patch(f"/api/v1/document-types/{doc_type['id']}", json={"supports_password": False}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["supports_password"] is False
+
+    # Updating name/description alone must not accidentally clear an already-set flag.
+    r = await client.post("/api/v1/document-types", json={"name": "Passbook", "supports_password": True}, headers=owner_headers)
+    doc_type_id = r.json()["data"]["id"]
+    r = await client.patch(f"/api/v1/document-types/{doc_type_id}", json={"description": "Bank passbook"}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["supports_password"] is True
 
 
 # ---------------------------------------------------------------------- status masters
