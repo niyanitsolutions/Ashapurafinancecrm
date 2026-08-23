@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/buttons/Button";
 import { CheckboxField } from "@/components/forms/CheckboxField";
 import { FormField } from "@/components/forms/FormField";
@@ -7,6 +7,7 @@ import { SubmitButton } from "@/components/forms/SubmitButton";
 import { TextareaField } from "@/components/forms/TextareaField";
 import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
 import { Modal } from "@/components/overlays/Modal";
+import { getFormDefinition, type RequiredDocument } from "@/features/customer/api";
 import { getErrorMessage } from "@/features/customer/errors";
 import {
   confirmOfferAcceptance,
@@ -14,6 +15,7 @@ import {
   recordCreditEvaluation,
   recordEsignNachKyc,
   recordFinalEvaluation,
+  recordNewCustomerDetails,
   recordRvOvRef,
   requestLoanCaseDocuments,
   updateLoanCaseStatus,
@@ -24,7 +26,6 @@ import { CreditEvaluationBankOffers } from "@/features/loan_management/component
 import { OfferAcceptancePanel } from "@/features/loan_management/components/OfferAcceptancePanel";
 import { LOAN_STATUS_LABELS as STATUS_LABELS } from "@/features/loan_management/constants";
 import { getLoanStatusControlInfo, type StatusControlAction } from "@/features/loan_management/statusControl";
-import type { NamedMasterData } from "@/features/system_settings/api";
 
 // Decision #130: the ONE canonical stage-update flow. Opened from either the Loan
 // Management list row (Update button) or the case detail page's own Update button —
@@ -40,7 +41,6 @@ import type { NamedMasterData } from "@/features/system_settings/api";
 export function UpdateLoanCaseModal({
   caseId,
   loanCase,
-  documentTypes,
   canEdit,
   canDisburse,
   onClose,
@@ -48,7 +48,6 @@ export function UpdateLoanCaseModal({
 }: {
   caseId: string;
   loanCase: LoanCaseDetail;
-  documentTypes: NamedMasterData[];
   canEdit: boolean;
   canDisburse: boolean;
   onClose: () => void;
@@ -57,8 +56,17 @@ export function UpdateLoanCaseModal({
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmVerify, setConfirmVerify] = useState(false);
+  // Decision #132: the loan case's OWN product's required documents — not the full
+  // system-wide document-type catalog `documentTypesApi.list()` used to pull in.
+  const [requiredDocuments, setRequiredDocuments] = useState<RequiredDocument[]>([]);
   const status = loanCase.current_status;
   const details = loanCase.loan_details;
+
+  useEffect(() => {
+    getFormDefinition("loan", loanCase.product_id)
+      .then((def) => setRequiredDocuments(def.required_documents))
+      .catch(() => setRequiredDocuments([]));
+  }, [loanCase.product_id]);
 
   const run = async (action: () => Promise<LoanCaseDetail>, successMessage: string) => {
     setError(null);
@@ -93,6 +101,13 @@ export function UpdateLoanCaseModal({
           </div>
         )}
 
+        {canEdit && status === "new_customer" && (
+          <div>
+            <h3 className="mb-2 text-sm font-semibold text-text/70">New Customer Details</h3>
+            <NewCustomerDetailsForm onSubmit={(payload) => run(() => recordNewCustomerDetails(caseId, payload), "New Customer details saved.")} />
+          </div>
+        )}
+
         {canEdit && status === "credit_evaluation" && (
           <div>
             <h3 className="mb-2 text-sm font-semibold text-text/70">Bank / NBFC Offers</h3>
@@ -114,7 +129,7 @@ export function UpdateLoanCaseModal({
               Pending: {loanCase.pending_document_type_ids.length === 0 ? "none requested" : loanCase.pending_document_type_ids.length}
             </p>
             <RequestDocumentsForm
-              documentTypes={documentTypes}
+              requiredDocuments={requiredDocuments}
               onSubmit={(ids) => run(() => requestLoanCaseDocuments(caseId, ids), "Documents requested.")}
             />
             {status !== "new_customer" && (
@@ -201,32 +216,50 @@ function StatusUpdateControl({
   labels: Record<string, string>;
   onUpdate: (nextStatus: string, remarks?: string) => void;
 }) {
-  const [rejectingIndex, setRejectingIndex] = useState<number | null>(null);
-  const [rejectReason, setRejectReason] = useState("");
+  // Decision #132: EVERY simple action requires this same explicit confirm step before
+  // calling the backend — not just Reject. Clicking a row's button only reveals the
+  // panel; nothing is called until "Confirm"/"Confirm Reject" is clicked, and "Cancel"
+  // (or closing the modal) leaves the case completely untouched. This is what closes the
+  // "one click, no data, instant transition" bug for every plain move, not only Reject.
+  const [confirmingIndex, setConfirmingIndex] = useState<number | null>(null);
+  const [confirmRemarks, setConfirmRemarks] = useState("");
 
   return (
     <div className="space-y-2">
       {actions.map((action, i) => {
         if (action.kind === "simple") {
           const isReject = action.nextStatus === "rejected";
-          if (isReject && rejectingIndex === i) {
+          if (confirmingIndex === i) {
             return (
-              <div key={i} className="space-y-2 rounded border border-danger/30 bg-danger/5 px-3 py-2">
-                <TextareaField label="Reason (mandatory)" value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} rows={2} required />
+              <div key={i} className={`space-y-2 rounded border px-3 py-2 ${isReject ? "border-danger/30 bg-danger/5" : "border-border bg-background/50"}`}>
+                <TextareaField
+                  label={isReject ? "Reason (mandatory)" : "Remarks (optional)"}
+                  value={confirmRemarks}
+                  onChange={(e) => setConfirmRemarks(e.target.value)}
+                  rows={2}
+                  required={isReject}
+                />
                 <div className="flex gap-2">
                   <Button
                     size="sm"
-                    variant="danger"
-                    disabled={!rejectReason.trim()}
+                    variant={isReject ? "danger" : "primary"}
+                    disabled={isReject && !confirmRemarks.trim()}
                     onClick={() => {
-                      onUpdate(action.nextStatus, rejectReason.trim());
-                      setRejectingIndex(null);
-                      setRejectReason("");
+                      onUpdate(action.nextStatus, confirmRemarks.trim() || undefined);
+                      setConfirmingIndex(null);
+                      setConfirmRemarks("");
                     }}
                   >
-                    Confirm Reject
+                    {isReject ? "Confirm Reject" : "Confirm"}
                   </Button>
-                  <Button size="sm" variant="secondary" onClick={() => setRejectingIndex(null)}>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => {
+                      setConfirmingIndex(null);
+                      setConfirmRemarks("");
+                    }}
+                  >
                     Cancel
                   </Button>
                 </div>
@@ -238,7 +271,7 @@ function StatusUpdateControl({
               <span className="text-sm text-text/70">
                 {action.label ? action.label : <>Next: <span className="font-medium text-text">{labels[action.nextStatus] ?? action.nextStatus}</span></>}
               </span>
-              <Button size="sm" variant={isReject ? "danger" : "primary"} onClick={() => (isReject ? setRejectingIndex(i) : onUpdate(action.nextStatus))}>
+              <Button size="sm" variant={isReject ? "danger" : "primary"} onClick={() => setConfirmingIndex(i)}>
                 {isReject ? "Reject" : "Update Status"}
               </Button>
             </div>
@@ -262,17 +295,22 @@ function StatusUpdateControl({
   );
 }
 
-function RequestDocumentsForm({ documentTypes, onSubmit }: { documentTypes: NamedMasterData[]; onSubmit: (ids: string[]) => void }) {
+function RequestDocumentsForm({ requiredDocuments, onSubmit }: { requiredDocuments: RequiredDocument[]; onSubmit: (ids: string[]) => void }) {
   const [selected, setSelected] = useState<string[]>([]);
+  // Decision #132: scoped to this case's own product — never the full system-wide
+  // document-type catalog (that belongs to Document Collection/Document Verification,
+  // not Loan Management's Update flow).
+  const options = requiredDocuments.filter((d) => !d.hidden && d.required !== false);
   return (
     <div className="space-y-2">
+      {options.length === 0 && <p className="text-xs text-text/40">No additional documents configured for this product.</p>}
       <div className="flex flex-wrap gap-3">
-        {documentTypes.map((dt) => (
+        {options.map((d) => (
           <CheckboxField
-            key={dt.id}
-            label={dt.name}
-            checked={selected.includes(dt.id)}
-            onChange={(e) => setSelected((prev) => (e.target.checked ? [...prev, dt.id] : prev.filter((id) => id !== dt.id)))}
+            key={d.document_type_id}
+            label={d.name_override || d.document_type_name}
+            checked={selected.includes(d.document_type_id)}
+            onChange={(e) => setSelected((prev) => (e.target.checked ? [...prev, d.document_type_id] : prev.filter((id) => id !== d.document_type_id)))}
           />
         ))}
       </div>
@@ -280,6 +318,41 @@ function RequestDocumentsForm({ documentTypes, onSubmit }: { documentTypes: Name
         Request Selected Documents
       </Button>
     </div>
+  );
+}
+
+function NewCustomerDetailsForm({
+  onSubmit,
+}: {
+  onSubmit: (payload: { preferred_bank_name?: string; preferred_branch?: string; loan_type?: string; requested_amount?: number; preferred_remarks?: string }) => void;
+}) {
+  const [bankName, setBankName] = useState("");
+  const [branch, setBranch] = useState("");
+  const [loanType, setLoanType] = useState("");
+  const [amount, setAmount] = useState("");
+  const [remarks, setRemarks] = useState("");
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSubmit({
+          preferred_bank_name: bankName || undefined, preferred_branch: branch || undefined,
+          loan_type: loanType || undefined, requested_amount: amount ? Number(amount) : undefined,
+          preferred_remarks: remarks || undefined,
+        });
+      }}
+      className="space-y-2"
+    >
+      <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
+        <FormField label="Bank / NBFC Name" name="preferred_bank_name" value={bankName} onChange={(e) => setBankName(e.target.value)} />
+        <FormField label="Branch" name="preferred_branch" value={branch} onChange={(e) => setBranch(e.target.value)} />
+        <FormField label="Loan Type" name="loan_type" value={loanType} onChange={(e) => setLoanType(e.target.value)} />
+        <FormField label="Requested Amount" name="requested_amount" type="number" value={amount} onChange={(e) => setAmount(e.target.value)} />
+      </div>
+      <TextareaField label="Remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={2} />
+      <SubmitButton>Save &amp; Continue</SubmitButton>
+    </form>
   );
 }
 

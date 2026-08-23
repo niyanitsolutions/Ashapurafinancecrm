@@ -228,7 +228,7 @@ export function StaffApplicationDetailsPage() {
               <p className="text-sm text-text/60 mb-2">
                 Case {application.case_code}: <span className="font-medium text-text">{application.case_status_label}</span>{" "}
                 <Link
-                  to={`${application.case_type === "insurance" ? "/insurance-cases" : "/loan-cases"}/${application.case_id}${
+                  to={`${application.case_type === "insurance" ? "/insurance-cases" : "/loan-management/cases"}/${application.case_id}${
                     fromDocumentCollection ? documentCollectionQuery() : ""
                   }`}
                   className="text-primary hover:underline"

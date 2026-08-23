@@ -54,6 +54,19 @@ class LoanCaseDetails(BaseModel):
     bureau, e-sign, or NACH provider integration exists in this project yet; see
     docs/KNOWN_LIMITATIONS.md."""
 
+    # New Customer stage preferences (decision #132) — captured by
+    # `LoanCaseService.record_new_customer_details` when transitioning out of
+    # `new_customer`. Deliberately NOT reusing bank_nbfc_name/bank_application_id/etc.
+    # below — those are exclusively written by `_select_bank_offer_core`'s bank-offer
+    # selection at Credit Evaluation (decision #129), a different concept at a different
+    # stage; writing both to the same field would create ambiguity about which stage's
+    # data is currently present.
+    preferred_bank_name: str | None = None
+    preferred_branch: str | None = None
+    loan_type: str | None = None
+    requested_amount: float | None = None
+    preferred_remarks: str | None = None
+
     credit_score: int | None = None
     credit_remarks: str | None = None
 

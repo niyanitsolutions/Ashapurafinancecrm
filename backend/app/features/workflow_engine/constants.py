@@ -173,6 +173,7 @@ class LoanAuditEvent:
     what happened to enter that status (see docs/MODULE_6C_WORKFLOW_PROPOSAL.md)."""
 
     CASE_CREATED = "loan_case_created"
+    NEW_CUSTOMER_DETAILS_RECORDED = "loan_case_new_customer_details_recorded"
     DOCUMENTS_REQUESTED = "loan_case_documents_requested"
     DOCUMENTS_VERIFIED = "loan_case_documents_verified"
     CREDIT_EVALUATED = "loan_case_credit_evaluated"

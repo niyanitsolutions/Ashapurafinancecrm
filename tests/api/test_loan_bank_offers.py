@@ -137,7 +137,7 @@ async def _loan_case_in_credit_evaluation(client, mock_db, owner_headers, master
     r = await client.post(f"/api/v1/loan-cases/{case_id}/assign", json={"employee_id": employee["id"]}, headers=owner_headers)
     assert r.status_code == 200, r.text
     employee_headers = await _login(client, f"97{mobile_suffix}")
-    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=employee_headers)
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/new-customer-details", json={}, headers=employee_headers)
     assert r.status_code == 200, r.text
     return case_id, employee_headers, customer_headers, application_id
 

@@ -13,13 +13,19 @@
 // re-eligible moves) — this file's shape is an array per status for exactly that reason,
 // per the note this file itself used to carry about needing a matching update if the
 // pipeline ever branched like this.
+//
+// Decision #132: `new_customer` is now `"dedicated"`, not `"simple"` — the old bodiless
+// one-click `new_customer -> credit_evaluation` move let staff transition the case with
+// zero data and zero confirmation step; it now requires the New Customer Details
+// dedicated form/action (`POST .../new-customer-details`), matching every other
+// business-data-carrying transition.
 export type StatusControlAction =
   | { kind: "simple"; nextStatus: string; label?: string }
   | { kind: "dedicated"; actionLabel: string }
   | { kind: "none" };
 
 const LOAN_STATUS_CONTROL: Record<string, StatusControlAction[]> = {
-  new_customer: [{ kind: "simple", nextStatus: "credit_evaluation" }],
+  new_customer: [{ kind: "dedicated", actionLabel: "New Customer Details" }],
   credit_evaluation: [
     { kind: "dedicated", actionLabel: "Bank / NBFC Offers" },
     { kind: "simple", nextStatus: "rejected", label: "Reject" },

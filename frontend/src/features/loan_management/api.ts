@@ -2,6 +2,11 @@ import { apiRequest, apiRequestRaw, type PaginationMeta } from "@/shared/api/cli
 import { getCurrentCoordinates } from "@/shared/geolocation";
 
 export interface LoanCaseDetails {
+  preferred_bank_name: string | null;
+  preferred_branch: string | null;
+  loan_type: string | null;
+  requested_amount: number | null;
+  preferred_remarks: string | null;
   credit_score: number | null;
   credit_remarks: string | null;
   bank_nbfc_name: string | null;
@@ -62,6 +67,9 @@ export interface BankOffer {
   assigned_officer: string | null;
   decision: "approved" | "rejected_re_eligible";
   approved_amount: number | null;
+  interest_rate: number | null;
+  tenure_months: number | null;
+  processing_fee: number | null;
   remarks: string | null;
   is_selected: boolean;
   selected_at: string | null;
@@ -186,6 +194,15 @@ export async function verifyLoanCaseDocuments(caseId: string) {
   });
 }
 
+// New Customer's bank/branch/loan-type/amount preferences (decision #132) — recording
+// this always advances the case to Credit Evaluation; all fields optional.
+export function recordNewCustomerDetails(
+  caseId: string,
+  payload: { preferred_bank_name?: string; preferred_branch?: string; loan_type?: string; requested_amount?: number; preferred_remarks?: string },
+) {
+  return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/new-customer-details`, { method: "POST", body: JSON.stringify(payload) });
+}
+
 // Case-level credit score/remarks only (decision #129) — pure data capture, independent
 // of any individual bank's own decision (see the bank-offer functions below) and never
 // itself moves the case out of Credit Evaluation.
@@ -200,6 +217,9 @@ export interface BankOfferPayload {
   assigned_officer?: string;
   decision: "approved" | "rejected_re_eligible";
   approved_amount?: number;
+  interest_rate?: number;
+  tenure_months?: number;
+  processing_fee?: number;
   remarks?: string;
 }
 

@@ -22,7 +22,6 @@ import {
 } from "@/features/loan_management/api";
 import { UpdateLoanCaseModal } from "@/features/loan_management/components/UpdateLoanCaseModal";
 import { LOAN_STATUS_LABELS as STATUS_LABELS } from "@/features/loan_management/constants";
-import { documentTypesApi, type NamedMasterData } from "@/features/system_settings/api";
 import { formatISTDateTime } from "@/shared/dateFormat";
 import { useDocumentCollectionBackContext } from "@/shared/navigationContext";
 import { HOLD_REASONS } from "@/features/workflow_engine/holdReasons";
@@ -57,11 +56,11 @@ export function LoanCaseDetailsPage() {
   const { caseId } = useParams<{ caseId: string }>();
   // Reached via StaffApplicationDetailsPage's "Manage Status ->" link, which propagates
   // the Document Collection context forward when present — every normal Loan
-  // Management -> Loan Cases -> View entry point keeps the original default.
-  const { backTo, backLabel } = useDocumentCollectionBackContext("/loan-cases");
+  // Management -> Loan Cases -> View entry point keeps the original default, now the
+  // canonical /loan-management/cases route (decision #132).
+  const { backTo, backLabel } = useDocumentCollectionBackContext("/loan-management/cases");
   const [loanCase, setLoanCase] = useState<LoanCaseDetail | null>(null);
   const [timeline, setTimeline] = useState<CaseTimelineEntry[]>([]);
-  const [documentTypes, setDocumentTypes] = useState<NamedMasterData[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
@@ -73,9 +72,6 @@ export function LoanCaseDetailsPage() {
   };
 
   useEffect(load, [caseId]);
-  useEffect(() => {
-    documentTypesApi.list().then(setDocumentTypes).catch(() => setDocumentTypes([]));
-  }, []);
 
   if (!caseId) return null;
 
@@ -136,6 +132,18 @@ export function LoanCaseDetailsPage() {
               <Field label="Status" value={STATUS_LABELS[status] ?? status} />
             </div>
           </Section>
+
+          {(details.preferred_bank_name || details.preferred_branch || details.loan_type || details.requested_amount != null) && (
+            <Section title="New Customer Preferences">
+              <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
+                <Field label="Preferred Bank / NBFC" value={details.preferred_bank_name} />
+                <Field label="Preferred Branch" value={details.preferred_branch} />
+                <Field label="Loan Type" value={details.loan_type} />
+                <Field label="Requested Amount" value={details.requested_amount != null ? `₹${details.requested_amount.toLocaleString("en-IN")}` : null} />
+                <Field label="Remarks" value={details.preferred_remarks} />
+              </div>
+            </Section>
+          )}
 
           {(details.credit_score != null || details.credit_remarks) && (
             <Section title="Credit Evaluation">
@@ -244,7 +252,6 @@ export function LoanCaseDetailsPage() {
         <UpdateLoanCaseModal
           caseId={caseId}
           loanCase={loanCase}
-          documentTypes={documentTypes}
           canEdit={canEdit}
           canDisburse={canDisburse}
           onClose={() => setShowUpdateModal(false)}

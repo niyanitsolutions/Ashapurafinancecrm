@@ -73,4 +73,13 @@ describe("CaseListPage row actions", () => {
     expect(screen.getAllByRole("button", { name: /update/i })).toHaveLength(1);
     expect(screen.getAllByRole("link", { name: /view/i })).toHaveLength(2);
   });
+
+  it("View targets whatever detailBasePath the caller passes — Loan Management's real usage points at the canonical /loan-management/cases route, not the legacy /loan-cases alias (decision #132)", async () => {
+    renderList({ detailBasePath: "/loan-management/cases" });
+    await screen.findByText("AFS-LOAN-000001");
+
+    const viewLinks = screen.getAllByRole("link", { name: /view/i });
+    expect(viewLinks[0]).toHaveAttribute("href", "/loan-management/cases/case-1");
+    expect(viewLinks[0]).not.toHaveAttribute("href", expect.stringContaining("/loan-cases/"));
+  });
 });

@@ -28,7 +28,7 @@ describe("useDocumentCollectionBackContext", () => {
   });
 
   it("routes to Document Collection when opened with the context param", () => {
-    const { result } = renderAt(`/x${documentCollectionQuery()}`, "/loan-cases");
+    const { result } = renderAt(`/x${documentCollectionQuery()}`, "/loan-management/cases");
     expect(result.current.backTo).toBe("/leads/document-collection");
     expect(result.current.backLabel).toBe("← Back to Document Collection");
     expect(result.current.fromDocumentCollection).toBe(true);
@@ -43,7 +43,9 @@ describe("useDocumentCollectionBackContext", () => {
 
   it("respects each caller's own default destination", () => {
     expect(renderAt("/x", "/applications").result.current.backTo).toBe("/applications");
-    expect(renderAt("/x", "/loan-cases").result.current.backTo).toBe("/loan-cases");
+    // Decision #132: LoanCaseDetailsPage's real default is now the canonical
+    // /loan-management/cases route, not the legacy /loan-cases back-compat alias.
+    expect(renderAt("/x", "/loan-management/cases").result.current.backTo).toBe("/loan-management/cases");
     expect(renderAt("/x", "/insurance-cases").result.current.backTo).toBe("/insurance-cases");
   });
 });

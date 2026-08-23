@@ -1,10 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { CaseListPage, type CaseListExtraColumn } from "@/components/pages/CaseListPage";
 import { usePermissions } from "@/features/access_control/usePermissions";
 import { getLoanCase, listLoanCases, type LoanCaseDetail, type LoanCaseListItem } from "@/features/loan_management/api";
 import { UpdateLoanCaseModal } from "@/features/loan_management/components/UpdateLoanCaseModal";
 import { LOAN_STATUS_LABELS } from "@/features/loan_management/constants";
-import { documentTypesApi, type NamedMasterData } from "@/features/system_settings/api";
 
 const TERMINAL_STATUSES = new Set(["disbursed", "rejected"]);
 
@@ -13,20 +12,17 @@ const EXTRA_COLUMNS: CaseListExtraColumn<LoanCaseListItem>[] = [
   { key: "approved_amount", label: "Approved Amount", render: (c) => (c.approved_amount != null ? `₹${c.approved_amount.toLocaleString("en-IN")}` : "—") },
 ];
 
-// Decision #130: View opens the canonical read-only detail page (`/loan-cases/:id`);
-// Update opens the same stage-aware modal used from the detail page, directly from the
-// list row — no separate update route/page.
+// Decision #132: View opens the canonical read-only detail page at
+// `/loan-management/cases/:id` — NOT the legacy `/loan-cases/:id` back-compat alias, so
+// Loan Management's own UI never round-trips through the old route. Update opens the
+// same stage-aware modal used from the detail page, directly from the list row — no
+// separate update route/page.
 export function LoanCaseListPage({ fixedStatus }: { fixedStatus?: string } = {}) {
   const { can } = usePermissions();
   const canEdit = can("loan_management:applications", "edit");
   const canDisburse = can("loan_management:applications", "approve");
   const [updatingCase, setUpdatingCase] = useState<LoanCaseDetail | null>(null);
-  const [documentTypes, setDocumentTypes] = useState<NamedMasterData[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
-
-  useEffect(() => {
-    documentTypesApi.list().then(setDocumentTypes).catch(() => setDocumentTypes([]));
-  }, []);
 
   const openUpdate = (row: LoanCaseListItem) => {
     getLoanCase(row.id).then(setUpdatingCase);
@@ -39,7 +35,7 @@ export function LoanCaseListPage({ fixedStatus }: { fixedStatus?: string } = {})
         icon="loan"
         entityLabel="Loan"
         itemLabel="loan case"
-        detailBasePath="/loan-cases"
+        detailBasePath="/loan-management/cases"
         statusLabels={LOAN_STATUS_LABELS}
         fixedStatus={fixedStatus}
         listFn={listLoanCases}
@@ -54,7 +50,6 @@ export function LoanCaseListPage({ fixedStatus }: { fixedStatus?: string } = {})
         <UpdateLoanCaseModal
           caseId={updatingCase.id}
           loanCase={updatingCase}
-          documentTypes={documentTypes}
           canEdit={canEdit}
           canDisburse={canDisburse}
           onClose={() => setUpdatingCase(null)}

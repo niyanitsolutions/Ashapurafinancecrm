@@ -208,9 +208,14 @@ export const router = createBrowserRouter([
           // "insurance_management", "applications", ...), not require_owner), so no
           // RequireOwner wrapper here either. Left exactly as-is for back-compat
           // (bookmarks, dashboard widgets, ?status= deep links); the sidebar now points
-          // into /loan-management and /insurance-management below instead.
+          // into /loan-management and /insurance-management below instead. Loan
+          // Management's own View action, however, now targets the canonical
+          // /loan-management/cases/:caseId route below (decision #132) — the same
+          // LoanCaseDetailsPage component either way, just no longer the URL Loan
+          // Management's own UI ever links to.
           { path: "/loan-cases", element: <LoanCaseListPage /> },
           { path: "/loan-cases/:caseId", element: <LoanCaseDetailsPage /> },
+          { path: "/loan-management/cases/:caseId", element: <LoanCaseDetailsPage /> },
           { path: "/insurance-cases", element: <InsuranceCaseListPage /> },
           { path: "/insurance-cases/:caseId", element: <InsuranceCaseDetailsPage /> },
           // Tabbed Loan/Insurance Management — same list pages as above, reused verbatim

@@ -179,11 +179,11 @@ async def _submitted_application(client, mock_db, product, *, mobile, extra_doc_
 
 async def test_loan_pipeline_happy_path_to_disbursed(client, mock_db, owner_headers, master_data):
     """Decision #129's redesigned pipeline, end to end: New Customer -> Credit Evaluation
-    (plain, no document gate — a Lead only reaches Loan Management once its required
-    documents are already verified, decision #127) -> multiple bank offers, only the
-    selected one carried forward -> Offer Acceptance (select, then a separate explicit
-    confirm) -> Additional Documents -> RV/OV/Ref -> eSign/NACH/KYC -> Final Evaluation ->
-    Send For Disbursement -> Disbursed."""
+    (dedicated New Customer Details action, decision #132 — no document gate, since a
+    Lead only reaches Loan Management once its required documents are already verified,
+    decision #127) -> multiple bank offers, only the selected one carried forward ->
+    Offer Acceptance (select, then a separate explicit confirm) -> Additional Documents ->
+    RV/OV/Ref -> eSign/NACH/KYC -> Final Evaluation -> Send For Disbursement -> Disbursed."""
     await _seed_workflow_definitions(mock_db)
     product = await _seed_product_and_form(mock_db, category="loan", product_name="Personal Loan")
     customer_headers, application_id = await _submitted_application(client, mock_db, product, mobile="9600000001")
@@ -205,8 +205,8 @@ async def test_loan_pipeline_happy_path_to_disbursed(client, mock_db, owner_head
     assert r.status_code == 200, r.text
     assert r.json()["data"]["current_status"] == "new_customer"
 
-    # New Customer -> Credit Evaluation (plain, generic status control)
-    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=employee_headers)
+    # New Customer -> Credit Evaluation (dedicated New Customer Details action, decision #132)
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/new-customer-details", json={}, headers=employee_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["current_status"] == "credit_evaluation"
 
@@ -332,7 +332,7 @@ async def test_loan_rejected_at_credit_evaluation_requires_reason(client, mock_d
     r = await client.get("/api/v1/loan-cases", headers=owner_headers)
     case_id = next(c["id"] for c in r.json()["data"] if c["application_id"] == application_id)
 
-    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=owner_headers)
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/new-customer-details", json={}, headers=owner_headers)
     assert r.status_code == 200, r.text
 
     r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "rejected"}, headers=owner_headers)
@@ -357,7 +357,7 @@ async def test_loan_all_banks_rejected_moves_case_to_rejected(client, mock_db, o
 
     r = await client.get("/api/v1/loan-cases", headers=owner_headers)
     case_id = next(c["id"] for c in r.json()["data"] if c["application_id"] == application_id)
-    await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=owner_headers)
+    await client.post(f"/api/v1/loan-cases/{case_id}/new-customer-details", json={}, headers=owner_headers)
 
     for bank in ("HDFC Bank", "ICICI Bank", "Axis Bank"):
         r = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": bank, "decision": "rejected_re_eligible"}, headers=owner_headers)
@@ -489,7 +489,7 @@ async def test_loan_case_hold_and_resume(client, mock_db, owner_headers):
 
     r = await client.get("/api/v1/loan-cases", headers=owner_headers)
     case_id = next(c["id"] for c in r.json()["data"] if c["application_id"] == application_id)
-    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=owner_headers)
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/new-customer-details", json={}, headers=owner_headers)
     assert r.status_code == 200, r.text
 
     r = await client.post(f"/api/v1/loan-cases/{case_id}/hold", json={"reason": "waiting_for_customer", "remarks": "Awaiting income proof"}, headers=owner_headers)

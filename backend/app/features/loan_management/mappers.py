@@ -47,6 +47,7 @@ def bank_offer_to_response(offer: LoanCaseBankOffer) -> BankOfferResponse:
         id=offer.require_id(), loan_case_id=offer.loan_case_id, bank_name=offer.bank_name,
         bank_application_id=offer.bank_application_id, reference_number=offer.reference_number,
         assigned_officer=offer.assigned_officer, decision=offer.decision, approved_amount=offer.approved_amount,
+        interest_rate=offer.interest_rate, tenure_months=offer.tenure_months, processing_fee=offer.processing_fee,
         remarks=offer.remarks, is_selected=offer.is_selected, selected_at=offer.selected_at, selected_by=offer.selected_by,
         created_at=offer.created_at, updated_at=offer.updated_at,
     )

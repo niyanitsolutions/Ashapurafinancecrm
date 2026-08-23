@@ -30,6 +30,9 @@ class LoanCaseBankOffer(BaseDocument):
     # Required (enforced at the schema/service layer, not here) iff decision == APPROVED;
     # always None otherwise.
     approved_amount: float | None = None
+    interest_rate: float | None = None
+    tenure_months: int | None = None
+    processing_fee: float | None = None
     remarks: str | None = None
 
     is_selected: bool = False

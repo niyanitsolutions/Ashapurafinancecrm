@@ -39,6 +39,7 @@ from app.features.loan_management.schemas import (
     LoanCaseDetailResponse,
     LoanCaseListItem,
     LoanStatusUpdateRequest,
+    NewCustomerDetailsRequest,
     RvOvRefRequest,
 )
 from app.features.loan_management.service import LoanCaseService
@@ -217,6 +218,14 @@ async def verify_documents(
     coords = payload or GeoCoordinatesRequest()
     await enforce_geo_fence(db, actor=actor, activity=GeoActivity.DOCUMENT_COLLECTION, latitude=coords.latitude, longitude=coords.longitude)
     await service.verify_documents(case_id, actor)
+    return await _detail(service, case_id, actor)
+
+
+@router.post("/{case_id}/new-customer-details")
+async def record_new_customer_details(
+    case_id: str, payload: NewCustomerDetailsRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[LoanCaseDetailResponse]:
+    await service.record_new_customer_details(case_id, payload, actor)
     return await _detail(service, case_id, actor)
 
 

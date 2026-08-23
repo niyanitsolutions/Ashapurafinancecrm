@@ -201,18 +201,25 @@ async def _insurance_case(client, mock_db, owner_headers, master_data, *, mobile
 async def test_valid_loan_status_update_persists_and_reflects_in_list(client, mock_db, owner_headers, master_data):
     case_id, employee_headers, _customer_headers, _application_id = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000001")
 
-    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=employee_headers)
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/new-customer-details", json={}, headers=employee_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["current_status"] == "credit_evaluation"
 
+    # The remaining plain-control pair `credit_evaluation -> re_eligible` is the one
+    # actually under test here (decision #132 made `new_customer -> credit_evaluation` a
+    # dedicated action, not a plain-control move).
+    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "re_eligible"}, headers=employee_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["current_status"] == "re_eligible"
+
     # Refetch (simulates a browser refresh) — database is the only source of truth.
     r = await client.get(f"/api/v1/loan-cases/{case_id}", headers=employee_headers)
-    assert r.json()["data"]["current_status"] == "credit_evaluation"
+    assert r.json()["data"]["current_status"] == "re_eligible"
 
     # List reflects it immediately, and the status filter finds it by the exact value.
-    r = await client.get("/api/v1/loan-cases?status=credit_evaluation", headers=employee_headers)
+    r = await client.get("/api/v1/loan-cases?status=re_eligible", headers=employee_headers)
     assert case_id in [c["id"] for c in r.json()["data"]]
-    r = await client.get("/api/v1/loan-cases?status=new_customer", headers=employee_headers)
+    r = await client.get("/api/v1/loan-cases?status=credit_evaluation", headers=employee_headers)
     assert case_id not in [c["id"] for c in r.json()["data"]]
 
 
@@ -311,7 +318,7 @@ async def test_same_status_update_is_a_noop_with_no_duplicate_history(client, mo
 async def test_status_history_records_previous_and_new_status(client, mock_db, owner_headers, master_data):
     case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000009")
 
-    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=employee_headers)
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/new-customer-details", json={}, headers=employee_headers)
     assert r.status_code == 200, r.text
 
     r = await client.get(f"/api/v1/loan-cases/{case_id}/timeline", headers=employee_headers)
@@ -343,7 +350,7 @@ async def test_customer_portal_reflects_updated_loan_status(client, mock_db, own
     r = await client.get(f"/api/v1/loan-cases/mine/{case_id}", headers=customer_headers)
     assert r.json()["data"]["current_status"] == "new_customer"
 
-    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=employee_headers)
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/new-customer-details", json={}, headers=employee_headers)
     assert r.status_code == 200, r.text
 
     r = await client.get(f"/api/v1/loan-cases/mine/{case_id}", headers=customer_headers)
@@ -372,7 +379,7 @@ async def test_customer_application_timeline_reflects_updated_loan_status(client
     Application status. This is the concrete customer-facing surface §9 requires."""
     case_id, employee_headers, customer_headers, application_id = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000013")
 
-    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=employee_headers)
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/new-customer-details", json={}, headers=employee_headers)
     assert r.status_code == 200, r.text
 
     r = await client.get(f"/api/v1/applications/{application_id}/timeline", headers=customer_headers)
@@ -405,12 +412,16 @@ async def test_verify_documents_dedicated_action_still_enforces_upload_precondit
     r = await client.get(f"/api/v1/loan-cases/{case_id}", headers=employee_headers)
     assert r.json()["data"]["current_status"] == "new_customer"  # unchanged
 
-    # The generic plain status control, by contrast, is deliberately NOT gated on any
-    # outstanding document request — it's the one thing that always works, confirmed
-    # business requirement (decision #129).
-    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=employee_headers)
+    # Neither the New Customer dedicated action (decision #132) nor the generic plain
+    # status control are gated on any outstanding document request — both remain usable
+    # regardless, confirmed business requirement (decision #129).
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/new-customer-details", json={}, headers=employee_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["current_status"] == "credit_evaluation"
+
+    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "re_eligible"}, headers=employee_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["current_status"] == "re_eligible"
 
 
 async def test_generic_status_update_rejects_transition_requiring_dedicated_action(client, mock_db, owner_headers, master_data):
@@ -418,7 +429,7 @@ async def test_generic_status_update_rejects_transition_requiring_dedicated_acti
     (decision #129) the generic {"status": ...} body can't carry — must be rejected, not
     silently executed with no offer selected."""
     case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000015")
-    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=employee_headers)
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/new-customer-details", json={}, headers=employee_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["current_status"] == "credit_evaluation"
 
@@ -441,9 +452,13 @@ async def test_generic_status_update_rejects_out_of_order_jump(client, mock_db, 
 async def test_owner_can_update_loan_status(client, mock_db, owner_headers, master_data):
     """Owner bypasses the permission engine entirely — unaffected by this new endpoint."""
     case_id, _employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000017")
-    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=owner_headers)
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/new-customer-details", json={}, headers=owner_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["current_status"] == "credit_evaluation"
+
+    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "re_eligible"}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["current_status"] == "re_eligible"
 
 
 # ---------------------------------------------------------------------- RV / OV / Ref (decision #130)
@@ -453,7 +468,7 @@ async def _advance_to_rv_ov_ref(client, case_id, employee_headers):
     """Drives a fresh case (new_customer) through Credit Evaluation/Offer Acceptance to
     Additional Documents, then the still-plain `additional_documents -> rv_ov_ref` move —
     the same sequence `test_loan_bank_offers.py` already exercises."""
-    await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=employee_headers)
+    await client.post(f"/api/v1/loan-cases/{case_id}/new-customer-details", json={}, headers=employee_headers)
     r = await client.post(
         f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000},
         headers=employee_headers,
@@ -523,3 +538,146 @@ async def test_rv_ov_ref_requires_edit_permission(client, mock_db, owner_headers
 
     r = await client.post(f"/api/v1/loan-cases/{case_id}/rv-ov-ref", json=_RV_OV_REF_PAYLOAD, headers=bystander_headers)
     assert r.status_code == 403, r.text
+
+
+# ---------------------------------------------------------------------- New Customer (decision #132)
+
+
+async def test_new_customer_details_saves_fields_and_transitions(client, mock_db, owner_headers, master_data):
+    case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000022")
+
+    payload = {
+        "preferred_bank_name": "HDFC Bank", "preferred_branch": "MG Road", "loan_type": "Personal Loan",
+        "requested_amount": 500000, "preferred_remarks": "Customer prefers HDFC due to existing relationship.",
+    }
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/new-customer-details", json=payload, headers=employee_headers)
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert data["current_status"] == "credit_evaluation"
+    assert data["loan_details"]["preferred_bank_name"] == "HDFC Bank"
+    assert data["loan_details"]["preferred_branch"] == "MG Road"
+    assert data["loan_details"]["loan_type"] == "Personal Loan"
+    assert data["loan_details"]["requested_amount"] == 500000
+    assert data["loan_details"]["preferred_remarks"] == "Customer prefers HDFC due to existing relationship."
+
+    r = await client.get(f"/api/v1/loan-cases/{case_id}", headers=employee_headers)
+    assert r.json()["data"]["loan_details"]["preferred_bank_name"] == "HDFC Bank"
+
+
+async def test_new_customer_details_all_fields_optional(client, mock_db, owner_headers, master_data):
+    case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000023")
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/new-customer-details", json={}, headers=employee_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["current_status"] == "credit_evaluation"
+
+
+async def test_new_customer_details_rejected_at_wrong_status(client, mock_db, owner_headers, master_data):
+    case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000024")
+    await client.post(f"/api/v1/loan-cases/{case_id}/new-customer-details", json={}, headers=employee_headers)
+
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/new-customer-details", json={}, headers=employee_headers)
+    assert r.status_code == 409, r.text  # already at credit_evaluation
+
+
+async def test_new_customer_details_requires_edit_permission(client, mock_db, owner_headers, master_data):
+    case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000025")
+
+    bystander = await _create_employee(client, owner_headers, master_data, mobile="9800000025", email="bystander25@example.com")
+    await _grant_case_permission(client, owner_headers, bystander["id"], module="loan_management", actions=["view"])
+    bystander_headers = await _login(client, "9800000025")
+
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/new-customer-details", json={}, headers=bystander_headers)
+    assert r.status_code == 403, r.text
+
+
+async def test_new_customer_to_credit_evaluation_plain_transition_now_rejected(client, mock_db, owner_headers, master_data):
+    """Regression guard for decision #132's core fix: the old one-click,
+    zero-data-required bug (`new_customer -> credit_evaluation` as a bodiless
+    `_PLAIN_TRANSITIONS` move) must stay closed — this pair now requires the dedicated
+    `new-customer-details` action."""
+    case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000026")
+    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=employee_headers)
+    assert r.status_code == 409, r.text
+    r = await client.get(f"/api/v1/loan-cases/{case_id}", headers=employee_headers)
+    assert r.json()["data"]["current_status"] == "new_customer"  # unchanged
+
+
+# ---------------------------------------------------------------------- bank offer additive fields
+
+
+async def test_bank_offer_additive_fields_round_trip(client, mock_db, owner_headers, master_data):
+    case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000027")
+    await client.post(f"/api/v1/loan-cases/{case_id}/new-customer-details", json={}, headers=employee_headers)
+
+    r = await client.post(
+        f"/api/v1/loan-cases/{case_id}/bank-offers",
+        json={
+            "bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000,
+            "interest_rate": 11.5, "tenure_months": 60, "processing_fee": 5000,
+        },
+        headers=employee_headers,
+    )
+    assert r.status_code == 200, r.text
+    offer_id = r.json()["data"]["id"]
+    assert r.json()["data"]["interest_rate"] == 11.5
+    assert r.json()["data"]["tenure_months"] == 60
+    assert r.json()["data"]["processing_fee"] == 5000
+
+    r = await client.get(f"/api/v1/loan-cases/{case_id}/bank-offers", headers=employee_headers)
+    offer = next(o for o in r.json()["data"] if o["id"] == offer_id)
+    assert offer["interest_rate"] == 11.5
+    assert offer["tenure_months"] == 60
+    assert offer["processing_fee"] == 5000
+
+    r = await client.patch(
+        f"/api/v1/loan-cases/{case_id}/bank-offers/{offer_id}",
+        json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000, "interest_rate": 10.75, "tenure_months": 48, "processing_fee": 4500},
+        headers=employee_headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["interest_rate"] == 10.75
+    assert r.json()["data"]["tenure_months"] == 48
+    assert r.json()["data"]["processing_fee"] == 4500
+
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers/{offer_id}/select", headers=employee_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["loan_details"]["offered_interest_rate"] == 10.75
+    assert r.json()["data"]["loan_details"]["offered_tenure_months"] == 48
+
+
+# ---------------------------------------------------------------------- tab-count / list consistency (spec §23)
+
+
+async def test_counts_match_list_totals_for_owner(client, mock_db, owner_headers, master_data):
+    """Base case (no search/unassigned_only narrowing): the counts endpoint and the
+    matching status-filtered list must always agree, for every status a case can reach."""
+    case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000028")
+
+    counts = (await client.get("/api/v1/loan-cases/counts", headers=owner_headers)).json()["data"]
+    assert counts["new_customer"] == 1
+    listed = (await client.get("/api/v1/loan-cases?status=new_customer&page_size=100", headers=owner_headers)).json()["data"]
+    assert len(listed) == counts["new_customer"]
+    assert case_id in {c["id"] for c in listed}
+
+    await client.post(f"/api/v1/loan-cases/{case_id}/new-customer-details", json={}, headers=employee_headers)
+
+    counts = (await client.get("/api/v1/loan-cases/counts", headers=owner_headers)).json()["data"]
+    assert counts["new_customer"] == 0
+    assert counts["credit_evaluation"] == 1
+    listed_new_customer = (await client.get("/api/v1/loan-cases?status=new_customer&page_size=100", headers=owner_headers)).json()["data"]
+    assert len(listed_new_customer) == counts["new_customer"] == 0
+    listed_credit_eval = (await client.get("/api/v1/loan-cases?status=credit_evaluation&page_size=100", headers=owner_headers)).json()["data"]
+    assert len(listed_credit_eval) == counts["credit_evaluation"] == 1
+    assert case_id in {c["id"] for c in listed_credit_eval}
+
+
+async def test_counts_match_list_totals_for_assigned_employee(client, mock_db, owner_headers, master_data):
+    """Same consistency guarantee scoped to an Employee actor (assigned_to-filtered)."""
+    case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000029")
+    await client.post(f"/api/v1/loan-cases/{case_id}/new-customer-details", json={}, headers=employee_headers)
+
+    counts = (await client.get("/api/v1/loan-cases/counts", headers=employee_headers)).json()["data"]
+    assert counts["credit_evaluation"] == 1
+    listed = (await client.get("/api/v1/loan-cases?status=credit_evaluation&page_size=100", headers=employee_headers)).json()["data"]
+    assert len(listed) == counts["credit_evaluation"] == 1
+    assert case_id in {c["id"] for c in listed}

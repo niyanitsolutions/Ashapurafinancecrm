@@ -45,6 +45,7 @@ from app.features.loan_management.schemas import (
     DisburseRequest,
     EsignNachKycRequest,
     FinalEvaluationRequest,
+    NewCustomerDetailsRequest,
     RvOvRefRequest,
 )
 from app.features.system_settings.repository import DocumentTypeRepository, LoanProductRepository
@@ -298,7 +299,6 @@ class LoanCaseService:
     # genuinely bodiless move — nothing beyond an optional remark is ever required
     # (decision #129).
     _PLAIN_TRANSITIONS: ClassVar[set[tuple[str, str]]] = {
-        (LoanStatus.NEW_CUSTOMER, LoanStatus.CREDIT_EVALUATION),
         (LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED),
         (LoanStatus.CREDIT_EVALUATION, LoanStatus.RE_ELIGIBLE),
         (LoanStatus.RE_ELIGIBLE, LoanStatus.CREDIT_EVALUATION),
@@ -401,6 +401,28 @@ class LoanCaseService:
         )
         return updated
 
+    # ---------------------------------------------------------------- New Customer
+
+    async def record_new_customer_details(self, case_id: str, payload: NewCustomerDetailsRequest, actor: User) -> ApplicationWorkflow:
+        """New Customer's own bank/branch/loan-type/amount preferences (decision #132) —
+        deliberately NOT written onto `bank_nbfc_name`/`bank_application_id`/etc. (those
+        are owned exclusively by `_select_bank_offer_core`'s bank-offer-selection flow,
+        decision #129) — distinctly-named fields avoid two different concepts writing the
+        same field at two different stages. Recording this always advances the case to
+        `credit_evaluation`; `new_customer -> credit_evaluation` is no longer a bodiless
+        `_PLAIN_TRANSITIONS` move, closing the one-click-no-data-instant-transition bug."""
+        case = await self.get_case(case_id, actor)
+        if case.current_status != LoanStatus.NEW_CUSTOMER:
+            raise ConflictError("New Customer details can only be recorded while this case is at New Customer.")
+        assert case.loan_details is not None
+        details = case.loan_details.model_copy(update=payload.model_dump())
+        updated = await self._engine.transition(case, LoanStatus.CREDIT_EVALUATION, actor, updates={"loan_details": details.model_dump()})
+        await write_audit_log(
+            self._db, event_type=LoanAuditEvent.NEW_CUSTOMER_DETAILS_RECORDED, user_id=actor.require_id(),
+            metadata={"application_workflow_id": case_id},
+        )
+        return updated
+
     # ---------------------------------------------------------------- bank/NBFC + decisions
 
     async def credit_evaluation(self, case_id: str, payload: CreditEvaluationRequest, actor: User) -> ApplicationWorkflow:
@@ -427,7 +449,8 @@ class LoanCaseService:
         offer = LoanCaseBankOffer(
             loan_case_id=case_id, bank_name=payload.bank_name, bank_application_id=payload.bank_application_id,
             reference_number=payload.reference_number, assigned_officer=payload.assigned_officer,
-            decision=payload.decision, approved_amount=payload.approved_amount, remarks=payload.remarks,
+            decision=payload.decision, approved_amount=payload.approved_amount, interest_rate=payload.interest_rate,
+            tenure_months=payload.tenure_months, processing_fee=payload.processing_fee, remarks=payload.remarks,
             created_by=actor.require_id(),
         )
         offer_id = await self._bank_offers.insert(offer)
@@ -447,7 +470,8 @@ class LoanCaseService:
         updates = {
             "bank_name": payload.bank_name, "bank_application_id": payload.bank_application_id,
             "reference_number": payload.reference_number, "assigned_officer": payload.assigned_officer,
-            "decision": payload.decision, "approved_amount": payload.approved_amount, "remarks": payload.remarks,
+            "decision": payload.decision, "approved_amount": payload.approved_amount, "interest_rate": payload.interest_rate,
+            "tenure_months": payload.tenure_months, "processing_fee": payload.processing_fee, "remarks": payload.remarks,
         }
         updated = await self._bank_offers.update(offer_id, updates, updated_by=actor.require_id())
         assert updated is not None
@@ -485,7 +509,12 @@ class LoanCaseService:
             offer_id, {"is_selected": True, "selected_at": now, "selected_by": actor.require_id()}, updated_by=actor.require_id()
         )
         assert case.loan_details is not None
-        details = case.loan_details.model_copy(update={"offered_amount": offer.approved_amount, "bank_nbfc_name": offer.bank_name})
+        details = case.loan_details.model_copy(
+            update={
+                "offered_amount": offer.approved_amount, "bank_nbfc_name": offer.bank_name,
+                "offered_interest_rate": offer.interest_rate, "offered_tenure_months": offer.tenure_months,
+            }
+        )
         updated = await self._engine.transition(case, LoanStatus.OFFER_ACCEPTANCE, actor, updates={"loan_details": details.model_dump()})
         await write_audit_log(
             self._db, event_type=LoanAuditEvent.BANK_OFFER_SELECTED, user_id=actor.require_id(),

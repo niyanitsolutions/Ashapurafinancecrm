@@ -58,7 +58,7 @@ function ApplicationRow({ app, canReassign, onReassigned }: { app: ApplicationLi
     }
   };
 
-  const caseHref = app.case_id ? (app.case_type === "insurance" ? `/insurance-cases/${app.case_id}` : `/loan-cases/${app.case_id}`) : null;
+  const caseHref = app.case_id ? (app.case_type === "insurance" ? `/insurance-cases/${app.case_id}` : `/loan-management/cases/${app.case_id}`) : null;
 
   return (
     <div className="border border-border rounded-lg p-4">

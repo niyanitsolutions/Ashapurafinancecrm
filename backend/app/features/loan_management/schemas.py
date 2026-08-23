@@ -23,6 +23,20 @@ class LoanStatusUpdateRequest(BaseModel):
         return value
 
 
+class NewCustomerDetailsRequest(BaseModel):
+    """New Customer's bank/branch/loan-type/amount preferences — captured only while the
+    case is at `new_customer`; recording it always advances the case to
+    `credit_evaluation` (decision #132, superseding the old bodiless
+    `_PLAIN_TRANSITIONS` move for this pair). All fields optional — this is an initial
+    intake preference, not a hard gate."""
+
+    preferred_bank_name: str | None = None
+    preferred_branch: str | None = None
+    loan_type: str | None = None
+    requested_amount: float | None = None
+    preferred_remarks: str | None = None
+
+
 class CreditEvaluationRequest(BaseModel):
     """Case-level credit score/remarks only (decision #129) — data capture, independent
     of any individual bank/NBFC's own decision (`BankOfferRequest.decision`, below) and
@@ -46,6 +60,9 @@ class BankOfferRequest(BaseModel):
     assigned_officer: str | None = None
     decision: str
     approved_amount: float | None = None
+    interest_rate: float | None = None
+    tenure_months: int | None = None
+    processing_fee: float | None = None
     remarks: str | None = None
 
     @field_validator("decision")
@@ -94,6 +111,11 @@ class DisburseRequest(BaseModel):
 
 
 class LoanCaseDetailsResponse(BaseModel):
+    preferred_bank_name: str | None
+    preferred_branch: str | None
+    loan_type: str | None
+    requested_amount: float | None
+    preferred_remarks: str | None
     credit_score: int | None
     credit_remarks: str | None
     bank_nbfc_name: str | None
@@ -156,6 +178,9 @@ class BankOfferResponse(BaseModel):
     assigned_officer: str | None
     decision: str
     approved_amount: float | None
+    interest_rate: float | None
+    tenure_months: int | None
+    processing_fee: float | None
     remarks: str | None
     is_selected: bool
     selected_at: datetime | None

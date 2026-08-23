@@ -90,6 +90,13 @@ export function CreditEvaluationBankOffers({ caseId, canEdit, onOfferSelected }:
                 <span> — Approved Amount: ₹{offer.approved_amount.toLocaleString("en-IN")}</span>
               )}
             </div>
+            {offer.decision === "approved" && (offer.interest_rate != null || offer.tenure_months != null || offer.processing_fee != null) && (
+              <div className="text-xs text-text/50">
+                {offer.interest_rate != null && <span>Interest Rate: {offer.interest_rate}% </span>}
+                {offer.tenure_months != null && <span>Tenure: {offer.tenure_months} months </span>}
+                {offer.processing_fee != null && <span>Processing Fee: ₹{offer.processing_fee.toLocaleString("en-IN")}</span>}
+              </div>
+            )}
             {canEdit && (
               <div className="flex gap-2 pt-1">
                 <Button size="sm" variant="secondary" onClick={() => setEditingOffer(offer)}>
@@ -142,6 +149,9 @@ function BankOfferForm({
   const [assignedOfficer, setAssignedOfficer] = useState(initial?.assigned_officer ?? "");
   const [decision, setDecision] = useState<"approved" | "rejected_re_eligible">((initial?.decision as "approved" | "rejected_re_eligible") ?? "approved");
   const [approvedAmount, setApprovedAmount] = useState(initial?.approved_amount != null ? String(initial.approved_amount) : "");
+  const [interestRate, setInterestRate] = useState(initial?.interest_rate != null ? String(initial.interest_rate) : "");
+  const [tenureMonths, setTenureMonths] = useState(initial?.tenure_months != null ? String(initial.tenure_months) : "");
+  const [processingFee, setProcessingFee] = useState(initial?.processing_fee != null ? String(initial.processing_fee) : "");
   const [remarks, setRemarks] = useState(initial?.remarks ?? "");
 
   return (
@@ -155,6 +165,9 @@ function BankOfferForm({
           assigned_officer: assignedOfficer || undefined,
           decision,
           approved_amount: decision === "approved" ? Number(approvedAmount) : undefined,
+          interest_rate: decision === "approved" && interestRate ? Number(interestRate) : undefined,
+          tenure_months: decision === "approved" && tenureMonths ? Number(tenureMonths) : undefined,
+          processing_fee: decision === "approved" && processingFee ? Number(processingFee) : undefined,
           remarks: remarks || undefined,
         });
       }}
@@ -177,7 +190,12 @@ function BankOfferForm({
         ]}
       />
       {decision === "approved" && (
-        <FormField label="Approved Amount" type="number" value={approvedAmount} onChange={(e) => setApprovedAmount(e.target.value)} required />
+        <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
+          <FormField label="Approved Amount" type="number" value={approvedAmount} onChange={(e) => setApprovedAmount(e.target.value)} required />
+          <FormField label="Interest Rate (%)" type="number" value={interestRate} onChange={(e) => setInterestRate(e.target.value)} />
+          <FormField label="Tenure (months)" type="number" value={tenureMonths} onChange={(e) => setTenureMonths(e.target.value)} />
+          <FormField label="Processing Fee" type="number" value={processingFee} onChange={(e) => setProcessingFee(e.target.value)} />
+        </div>
       )}
       <div className="flex gap-2">
         <SubmitButton>Save Bank</SubmitButton>
