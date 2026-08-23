@@ -31,13 +31,16 @@ def generate_presigned_upload_url(key: str, *, expires_in: int = 300, content_ty
     return str(url)
 
 
-def generate_presigned_download_url(key: str, *, expires_in: int = 300) -> str:
+def generate_presigned_download_url(key: str, *, expires_in: int = 300, response_content_disposition: str | None = None) -> str:
     config = get_storage_config()
-    url = get_s3_client().generate_presigned_url(
-        "get_object",
-        Params={"Bucket": config.bucket_name, "Key": key},
-        ExpiresIn=expires_in,
-    )
+    params: dict[str, str] = {"Bucket": config.bucket_name, "Key": key}
+    # Omitted by every existing caller — inline/viewable, the current "Preview" behavior.
+    # Passed by CustomerService.document_attachment_url with an "attachment; filename=..."
+    # value so the browser actually saves the file instead of rendering it, for a real
+    # "Download" action.
+    if response_content_disposition:
+        params["ResponseContentDisposition"] = response_content_disposition
+    url = get_s3_client().generate_presigned_url("get_object", Params=params, ExpiresIn=expires_in)
     return str(url)
 
 

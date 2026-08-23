@@ -219,10 +219,13 @@ class RequiredDocumentResponse(BaseModel):
     preview_enabled: bool = True
     source: str = "custom"
     hidden: bool = False
-    # Bank Statement password support — inherited from this document type's own
-    # DocumentType.supports_password master-data flag (see that field's docstring),
-    # never set per-schema. Drives the optional password field the upload UI shows for
-    # this required document, for every product whose schema references this type.
+    # Front & Back upload — generic, config-driven: when True, the upload UI collects
+    # two independent files ("front"/"back") for this document instead of one.
+    front_back_upload: bool = False
+    # Effective password-eligibility — this product schema's own `password_protected`
+    # override if explicitly set, otherwise inherited from this document type's global
+    # DocumentType.supports_password master-data flag. Drives the optional password
+    # field the upload UI shows for this required document.
     supports_password: bool = False
 
 
@@ -316,6 +319,8 @@ class RequiredDocumentInput(BaseModel):
     multiple_upload: bool = False
     preview_enabled: bool = True
     hidden: bool = False
+    front_back_upload: bool = False
+    password_protected: bool | None = None
 
 
 class RepeatableGroupInput(BaseModel):
@@ -472,6 +477,10 @@ class ConfirmDocumentRequest(BaseModel):
     # ever logs method/path/status/duration, never a request body. Encrypted at rest
     # immediately, never persisted as plaintext; never echoed back in any response.
     password: str | None = Field(default=None, max_length=256)
+    # Front & Back upload — required (and validated against the document's own
+    # front_back_upload configuration server-side) only for a document configured that
+    # way; must be omitted for every ordinary document.
+    side: str | None = Field(default=None, pattern=r"^(front|back)$")
 
 
 class ApplicationDocumentResponse(BaseModel):
@@ -482,6 +491,10 @@ class ApplicationDocumentResponse(BaseModel):
     file_name: str | None
     content_type: str | None
     download_url: str | None
+    # A second, distinct presigned URL for the same object with
+    # `Content-Disposition: attachment` set — actually downloads the file instead of
+    # rendering it inline, unlike `download_url` above (kept as the inline/Preview URL).
+    attachment_url: str | None = None
     created_at: datetime
     verification_status: str
     verified_by_name: str | None = None
@@ -496,6 +509,9 @@ class ApplicationDocumentResponse(BaseModel):
     # any list) response. An authorized staff member retrieves the actual value only via
     # the dedicated GET .../password endpoint, gated the same as Verify/Reject.
     has_password: bool = False
+    # Front & Back upload — which side this specific row represents; `None` for every
+    # ordinary (non-front-back) document.
+    side: str | None = None
 
 
 class RejectDocumentRequest(BaseModel):

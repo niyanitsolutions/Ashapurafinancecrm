@@ -25,7 +25,7 @@ from app.features.access_control.repository import (
 )
 from app.features.auth.models import User
 from app.features.auth.repository import UserRepository
-from app.features.customer.constants import ApplicationStatus, DocumentVerificationStatus
+from app.features.customer.constants import ApplicationStatus, DocumentSide, DocumentVerificationStatus
 from app.features.customer.models import Application
 from app.features.customer.repository import (
     ApplicationDocumentRepository,
@@ -361,18 +361,28 @@ class LeadService:
         CURRENT documents — a superseded row from before a re-upload must never count
         toward verification, matching the exact `is_current` discipline the Application/
         ApplicationDocument system itself already enforces on every other read (see
-        `customer/service.py`'s `supersede_current`)."""
+        `customer/service.py`'s `supersede_current`). A Front & Back requirement (see
+        `RequiredDocumentDefinition.front_back_upload`) counts as verified only once BOTH
+        sides are current and verified — one verified side alone is not "verified" for
+        this logical, single requirement."""
         form_def = await self._form_defs.find_by_id(application.form_definition_id)
-        required_ids = set(form_def.required_document_type_ids) if form_def else set()
-        if not required_ids:
+        required_docs = [d for d in form_def.required_documents if d.required and not d.hidden] if form_def else []
+        if not required_docs:
             return 0, 0
         current_docs = await self._application_documents.find_current_for_application(application.require_id())
-        verified_ids = {
-            d.document_type_id
-            for d in current_docs
-            if d.document_type_id in required_ids and d.verification_status == DocumentVerificationStatus.VERIFIED
-        }
-        return len(required_ids), len(verified_ids)
+        verified_count = 0
+        for rd in required_docs:
+            matching = [d for d in current_docs if d.document_type_id == rd.document_type_id]
+            if rd.front_back_upload:
+                sides = {d.side: d.verification_status for d in matching}
+                if (
+                    sides.get(DocumentSide.FRONT) == DocumentVerificationStatus.VERIFIED
+                    and sides.get(DocumentSide.BACK) == DocumentVerificationStatus.VERIFIED
+                ):
+                    verified_count += 1
+            elif any(d.verification_status == DocumentVerificationStatus.VERIFIED for d in matching):
+                verified_count += 1
+        return len(required_docs), verified_count
 
     async def get_document_collection_summary(self, lead: Lead) -> DocumentCollectionSummary:
         """Detail-level counterpart of `get_application_info_for_leads` — always computed

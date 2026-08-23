@@ -53,11 +53,11 @@ export function DocumentsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const onUpload = async (applicationId: string, documentTypeId: string, file: File) => {
+  const onUpload = async (applicationId: string, documentTypeId: string, file: File, password?: string, side?: string) => {
     setError(null);
     setUploadingFor(documentTypeId);
     try {
-      await uploadApplicationDocument(applicationId, documentTypeId, file);
+      await uploadApplicationDocument(applicationId, documentTypeId, file, password, side);
       await load();
     } catch (err) {
       setError(getErrorMessage(err));
@@ -112,7 +112,7 @@ export function DocumentsPage() {
           <DocumentChecklist
             requiredDocuments={formDef.required_documents}
             uploadedDocuments={documents}
-            onUpload={(documentTypeId, file) => onUpload(application.id, documentTypeId, file)}
+            onUpload={(documentTypeId, file, password, side) => onUpload(application.id, documentTypeId, file, password, side)}
             onMarkNotAvailable={(documentTypeId) => onMarkNotAvailable(application.id, documentTypeId)}
             canMarkNotAvailable={application.status !== "submitted"}
             uploadingFor={uploadingFor}

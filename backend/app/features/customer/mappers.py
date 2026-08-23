@@ -82,11 +82,16 @@ def required_document_to_response(
 ) -> RequiredDocumentResponse:
     names = document_type_names or {}
     password_support = document_type_password_support or {}
+    # Effective password-eligibility: this product schema's own `password_protected`
+    # override wins when explicitly set; otherwise falls back to the document type's
+    # global `supports_password` flag — today's exact behavior for every schema that
+    # never sets an override, so this is backward compatible by construction.
+    effective_password = d.password_protected if d.password_protected is not None else password_support.get(d.document_type_id, False)
     return RequiredDocumentResponse(
         document_type_id=d.document_type_id, document_type_name=names.get(d.document_type_id, ""), section=d.section, note=d.note,
         name_override=d.name_override, required=d.required, allowed_types=d.allowed_types, max_size_mb=d.max_size_mb,
         multiple_upload=d.multiple_upload, preview_enabled=d.preview_enabled, source=d.source, hidden=d.hidden,
-        supports_password=password_support.get(d.document_type_id, False),
+        front_back_upload=d.front_back_upload, supports_password=effective_password,
     )
 
 
@@ -179,7 +184,8 @@ def secure_link_to_response(link: SecureLink, link_url: str, created_by_name: st
 
 
 def document_to_response(
-    document: ApplicationDocument, document_type_name: str, download_url: str | None, verified_by_name: str | None = None
+    document: ApplicationDocument, document_type_name: str, download_url: str | None, verified_by_name: str | None = None,
+    attachment_url: str | None = None,
 ) -> ApplicationDocumentResponse:
     return ApplicationDocumentResponse(
         id=document.require_id(),
@@ -189,6 +195,7 @@ def document_to_response(
         file_name=document.file_name,
         content_type=document.content_type,
         download_url=download_url,
+        attachment_url=attachment_url,
         created_at=document.created_at,
         verification_status=document.verification_status,
         verified_by_name=verified_by_name,
@@ -200,4 +207,5 @@ def document_to_response(
         doc_version=document.doc_version,
         replaces_document_id=document.replaces_document_id,
         has_password=document.password_encrypted is not None,
+        side=document.side,
     )

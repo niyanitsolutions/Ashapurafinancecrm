@@ -97,6 +97,17 @@ class DocumentAvailabilityStatus:
     ALL = (UPLOADED, NOT_AVAILABLE)
 
 
+class DocumentSide:
+    """Front & Back upload (generic, config-driven — see `RequiredDocumentDefinition.
+    front_back_upload`). `None` (not a member of this class) is the normal, single-file
+    case — every document type/row that predates this concept."""
+
+    FRONT = "front"
+    BACK = "back"
+
+    ALL = (FRONT, BACK)
+
+
 class SecureLinkStatus:
     ACTIVE = "active"
     USED = "used"

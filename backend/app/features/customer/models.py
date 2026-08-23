@@ -113,6 +113,14 @@ class ApplicationDocument(BaseDocument):
     # `reveal_document_password` endpoint.
     password_encrypted: str | None = None
 
+    # Front & Back upload — set only when this document's own RequiredDocumentDefinition
+    # has front_back_upload=True; `None` for every ordinary (single-file) document,
+    # which is every row written before this existed — no migration needed. Versioning/
+    # supersede (see CustomerService.confirm_document/_next_doc_version) keys on
+    # (application_id, document_type_id, side), so a new "front" never supersedes the
+    # current "back" and vice versa.
+    side: str | None = None  # DocumentSide: "front" | "back" | None
+
 
 class FieldCondition(BaseModel):
     """Phase 3.1 — `FormFieldDefinition.visible_when`: this field only renders (and is
@@ -191,6 +199,19 @@ class RequiredDocumentDefinition(BaseModel):
     preview_enabled: bool = True
     source: str = "custom"  # "master" | "custom"
     hidden: bool = False
+    # Front & Back upload (generic — driven by this flag, never by document name/type
+    # matching): when True, the upload UI collects two independent files ("front"/
+    # "back") for this one logical document instead of one. Mutually exclusive with
+    # multiple_upload (enforced in CustomerService._validate_required_documents) — no
+    # realistic use case needs both, and allowing both would multiply the versioning/
+    # completion-counting complexity for no benefit.
+    front_back_upload: bool = False
+    # Per-product-schema override of DocumentType.supports_password (Settings > Document
+    # Types). `None` = inherit the global flag — today's exact behavior, zero regression
+    # for every existing schema. An explicit True/False overrides it for this product's
+    # use of this document type only. See CustomerService's supports_password
+    # resolution for the effective-value computation.
+    password_protected: bool | None = None
 
 
 class RepeatableGroupDefinition(BaseModel):

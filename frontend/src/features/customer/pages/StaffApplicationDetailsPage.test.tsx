@@ -41,12 +41,37 @@ const mockApplication: ApplicationDetail = {
 
 const mockDocuments: ApplicationDocument[] = [];
 
+const uploadedDocument: ApplicationDocument = {
+  id: "doc-1",
+  application_id: "app-1",
+  document_type_id: "dt-pan",
+  document_type_name: "PAN Card",
+  file_name: "pan.jpg",
+  content_type: "image/jpeg",
+  download_url: "https://example-signed-url.test/pan.jpg",
+  attachment_url: "https://example-signed-url.test/pan.jpg?disposition=attachment",
+  created_at: "2026-01-01T00:00:00Z",
+  verification_status: "pending",
+  verified_by_name: null,
+  verified_at: null,
+  rejection_reason: null,
+  document_status: "uploaded",
+  file_size_bytes: 1024,
+  is_current: true,
+  doc_version: 1,
+  replaces_document_id: null,
+  has_password: true,
+  side: null,
+};
+
+let documentsToReturn: ApplicationDocument[] = mockDocuments;
+
 vi.mock("@/features/customer/api", async () => {
   const actual = await vi.importActual<typeof import("@/features/customer/api")>("@/features/customer/api");
   return {
     ...actual,
     getApplication: vi.fn(() => Promise.resolve(mockApplication)),
-    listDocuments: vi.fn(() => Promise.resolve(mockDocuments)),
+    listDocuments: vi.fn(() => Promise.resolve(documentsToReturn)),
   };
 });
 
@@ -58,7 +83,9 @@ vi.mock("@/features/customer/useProductSchema", () => ({
   useProductSchema: () => ({
     data: {
       id: "form-1", product_category: "loan", product_id: "prod-1", product_name: "Personal Loan",
-      fields: [], required_documents: [], repeatable_groups: [], status: "active", version: 1,
+      fields: [],
+      required_documents: [{ document_type_id: "dt-pan", document_type_name: "PAN Card", section: null, note: null, supports_password: true }],
+      repeatable_groups: [], status: "active", version: 1,
       created_by: null, created_at: "", updated_at: "",
     },
   }),
@@ -90,6 +117,7 @@ function renderWithDocumentCollectionDestination(path: string) {
 describe("StaffApplicationDetailsPage navigation context", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    documentsToReturn = mockDocuments;
   });
 
   it("opened from Document Collection: Back returns to /leads/document-collection with context-aware label", async () => {
@@ -138,5 +166,30 @@ describe("StaffApplicationDetailsPage navigation context", () => {
       "href",
       "/leads/document-collection",
     );
+  });
+});
+
+describe("StaffApplicationDetailsPage document actions", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    documentsToReturn = [uploadedDocument];
+  });
+
+  it("renders exactly one Download link (from the shared UploadedDocumentCard), not a second staff-only one", async () => {
+    renderAt("/applications/app-1");
+    await screen.findByText("pan.jpg");
+
+    const downloadLinks = screen.getAllByRole("link", { name: "Download" });
+    expect(downloadLinks).toHaveLength(1);
+    expect(downloadLinks[0]).toHaveAttribute("href", uploadedDocument.attachment_url as string);
+  });
+
+  it("still renders the staff-only Show Password / Verify / Reject actions alongside it", async () => {
+    renderAt("/applications/app-1");
+    await screen.findByText("pan.jpg");
+
+    expect(screen.getByRole("button", { name: "Show Password" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Verify" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeInTheDocument();
   });
 });

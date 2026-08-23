@@ -208,17 +208,22 @@ class ApplicationDocumentRepository(BaseRepository[ApplicationDocument]):
         return await self.find_many({"application_id": application_id, "document_type_id": document_type_id}, limit=50)
 
     async def supersede_current(
-        self, application_id: str, document_type_id: str, *, keep_document_id: str, updated_by: str | None
+        self, application_id: str, document_type_id: str, *, keep_document_id: str, updated_by: str | None, side: str | None = None,
     ) -> None:
         # Insert-then-sweep: the caller inserts the new row first and passes its id here,
         # so this demotes every OTHER current row for the same (application, document
-        # type) — including one demoted by a concurrent re-upload that raced this one.
-        # Whichever sweep runs last always converges on exactly one current row, unlike a
-        # naive find-current-then-demote-then-insert sequence, which can leave two.
+        # type, side) — including one demoted by a concurrent re-upload that raced this
+        # one. Whichever sweep runs last always converges on exactly one current row,
+        # unlike a naive find-current-then-demote-then-insert sequence, which can leave
+        # two. `side` scopes this to Front & Back uploads (a new "front" must never
+        # supersede the current "back") — Mongo's `{"side": None}` filter matches both a
+        # missing key and an explicit null, so every pre-existing (non-front-back) row,
+        # and every call site that never passes `side`, supersedes exactly as before.
         await self.collection.update_many(
             {
                 "application_id": application_id,
                 "document_type_id": document_type_id,
+                "side": side,
                 "is_current": True,
                 "_id": {"$ne": to_object_id(keep_document_id)},
             },

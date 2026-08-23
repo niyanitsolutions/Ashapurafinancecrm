@@ -456,7 +456,9 @@ async def get_document_history(
     documents = await service.get_document_history(application_id, document_type_id, current_user)
     type_names = await service.resolve_document_type_names(documents)
     items = [
-        mappers.document_to_response(d, type_names.get(d.document_type_id, ""), service.document_download_url(d))
+        mappers.document_to_response(
+            d, type_names.get(d.document_type_id, ""), service.document_download_url(d), attachment_url=service.document_attachment_url(d),
+        )
         for d in documents
     ]
     return ApiResponse[list[ApplicationDocumentResponse]].ok(items)
@@ -504,7 +506,8 @@ async def list_documents(application_id: str, service: ServiceDep, current_user:
     verifier_names = await service.resolve_verifier_names(documents)
     items = [
         mappers.document_to_response(
-            d, type_names.get(d.document_type_id, ""), service.document_download_url(d), verifier_names.get(d.verified_by or "")
+            d, type_names.get(d.document_type_id, ""), service.document_download_url(d), verifier_names.get(d.verified_by or ""),
+            attachment_url=service.document_attachment_url(d),
         )
         for d in documents
     ]

@@ -194,7 +194,9 @@ From here, both flows use Auth's own existing, unmodified public endpoints direc
 - `GET /applications/me?status=` — own applications (draft + submitted).
 - `PATCH /applications/{id}` — update `form_data`/`pending_profile` while still `draft`. 409 once submitted.
 - `POST /applications/{id}/submit` — validates every required field/document is present (422 otherwise); if `customer_id` is still null (Flow 1), requires `{ profile: CompleteProfileRequest }` in the body and creates the Customer (the Lead "conversion") as part of submitting.
-- `POST /applications/{id}/documents/upload-url` + `POST /applications/{id}/documents` — presigned-upload-then-confirm, same pattern as Module 2's employee photo/document flow.
+- `POST /applications/{id}/documents/upload-url` + `POST /applications/{id}/documents` — presigned-upload-then-confirm, same pattern as Module 2's employee photo/document flow. `confirm` body accepts an optional `side` (`"front"`/`"back"`), required if-and-only-if the resolved schema requirement has `front_back_upload: true` (422 otherwise either way) — versioning/supersede-on-reupload is scoped per side, so uploading a new front never touches the current back (decision 133).
+- Every `ApplicationDocumentResponse` carries both `download_url` (inline Preview) and `attachment_url` (real `Content-Disposition: attachment` Download) as two distinct presigned URLs for the same S3 object (decision 133).
+- Product Schema `RequiredDocumentInput`/`RequiredDocumentResponse` gained `front_back_upload: bool` (mutually exclusive with `multiple_upload`, 422 on schema save if both set) and `password_protected: bool | null` (`null` inherits the document type's global `supports_password` flag; an explicit `true`/`false` overrides it for that product only) — see decision 133.
 
 ### Shared (Customer-self OR Owner/Employee-staff — `GET /applications/{id}`, `GET /applications/{id}/documents`)
 

@@ -30,6 +30,7 @@ from app.features.customer.constants import (
     ApplicationStatus,
     AuditEvent,
     DocumentAvailabilityStatus,
+    DocumentSide,
     DocumentVerificationStatus,
     LeadTimelineEvent,
     LinkResolution,
@@ -836,6 +837,7 @@ class CustomerService:
                 document_type_id=d.document_type_id, section=d.section, note=d.note, name_override=d.name_override,
                 required=d.required, allowed_types=d.allowed_types, max_size_mb=d.max_size_mb,
                 multiple_upload=d.multiple_upload, preview_enabled=d.preview_enabled, hidden=d.hidden,
+                front_back_upload=d.front_back_upload, password_protected=d.password_protected,
             )
             for d in required_documents
         ]
@@ -902,12 +904,22 @@ class CustomerService:
                     preview_enabled=d.preview_enabled,
                     source="master" if is_master else "custom",
                     hidden=d.hidden,
+                    front_back_upload=d.front_back_upload,
+                    password_protected=d.password_protected,
                 )
             )
         missing_master = existing_master_ids - seen_ids
         if missing_master:
             raise ValidationError("Master-required document(s) cannot be removed. Hide them instead.")
         return merged
+
+    def _validate_required_documents(self, docs: list[RequiredDocumentDefinition]) -> None:
+        """front_back_upload and multiple_upload are mutually exclusive — no realistic
+        use case needs both, and allowing both would multiply the versioning/
+        completion-counting complexity for no benefit."""
+        conflicts = [d.document_type_id for d in docs if d.front_back_upload and d.multiple_upload]
+        if conflicts:
+            raise ValidationError("Front & Back Upload and Multiple Upload cannot both be enabled for the same document.")
 
     def _repeatable_groups_from_payload(self, groups: list[Any]) -> list[RepeatableGroupDefinition]:
         return [
@@ -927,11 +939,13 @@ class CustomerService:
         self._validate_schema_status(payload.status)
         if await self._form_defs.find_any_by_product(payload.product_category, payload.product_id) is not None:
             raise ConflictError("A product schema already exists for this product — edit it instead of creating another.")
+        required_documents = self._required_documents_from_payload(payload.required_documents)
+        self._validate_required_documents(required_documents)
         form_def = ApplicationFormDefinition(
             product_category=payload.product_category,
             product_id=payload.product_id,
             fields=self._fields_from_payload(payload.fields),
-            required_documents=self._required_documents_from_payload(payload.required_documents),
+            required_documents=required_documents,
             repeatable_groups=self._repeatable_groups_from_payload(payload.repeatable_groups),
             status=payload.status,
             created_by=actor.require_id(),
@@ -984,6 +998,7 @@ class CustomerService:
             updates["fields"] = [f.model_dump() for f in merged_fields]
         if payload.required_documents is not None:
             merged_documents = self._merge_documents(payload.required_documents, form_def.required_documents)
+            self._validate_required_documents(merged_documents)
             document_diff = self._diff_documents(form_def.required_documents, merged_documents)
             updates["required_documents"] = [d.model_dump() for d in merged_documents]
         if payload.repeatable_groups is not None:
@@ -1269,8 +1284,21 @@ class CustomerService:
             raise ValidationError(" ".join(errors))
 
         documents = await self._documents.find_current_for_application(application_id)
-        uploaded_type_ids = {d.document_type_id for d in documents if d.document_status == DocumentAvailabilityStatus.UPLOADED}
-        missing_docs = [t for t in form_def.required_document_type_ids if t not in uploaded_type_ids]
+        uploaded = [d for d in documents if d.document_status == DocumentAvailabilityStatus.UPLOADED]
+        uploaded_type_ids = {d.document_type_id for d in uploaded}
+        # Front & Back requirements need BOTH sides uploaded, not just any current
+        # document of that type — a side-blind check (the only kind possible before this
+        # concept existed) would let a submission through with only one side present.
+        missing_docs = []
+        for rd in form_def.required_documents:
+            if not rd.required or rd.hidden:
+                continue
+            if rd.front_back_upload:
+                sides = {d.side for d in uploaded if d.document_type_id == rd.document_type_id}
+                if not {DocumentSide.FRONT, DocumentSide.BACK}.issubset(sides):
+                    missing_docs.append(rd.document_type_id)
+            elif rd.document_type_id not in uploaded_type_ids:
+                missing_docs.append(rd.document_type_id)
         if missing_docs:
             raise ValidationError("Please upload all required documents before submitting.")
 
@@ -1356,9 +1384,9 @@ class CustomerService:
             if extension not in allowed:
                 raise ValidationError(f"File type not allowed. Allowed types: {', '.join(sorted(allowed))}.")
 
-    async def _next_doc_version(self, application_id: str, document_type_id: str) -> tuple[int, str | None]:
+    async def _next_doc_version(self, application_id: str, document_type_id: str, side: str | None = None) -> tuple[int, str | None]:
         current = await self._documents.find_current_for_application(application_id)
-        existing = next((d for d in current if d.document_type_id == document_type_id), None)
+        existing = next((d for d in current if d.document_type_id == document_type_id and d.side == side), None)
         if existing is None:
             return 1, None
         return existing.doc_version + 1, existing.require_id()
@@ -1388,6 +1416,14 @@ class CustomerService:
         rd = await self._required_document_definition(application, payload.document_type_id)
         self._assert_document_upload_allowed(rd, payload.file_name)
 
+        # Front & Back upload — generic: gated purely by this requirement's own
+        # front_back_upload flag, never by document name/type matching.
+        front_back = rd.front_back_upload if rd is not None else False
+        if front_back and payload.side not in DocumentSide.ALL:
+            raise ValidationError("This document requires a 'side' of 'front' or 'back'.")
+        if not front_back and payload.side is not None:
+            raise ValidationError("This document does not support front/back upload.")
+
         s3_key = f"application-documents/{application.application_code}/{payload.document_type_id}/{payload.file_name}"
         size = get_object_size(s3_key)
         if size is None:
@@ -1400,28 +1436,39 @@ class CustomerService:
         # has no `multiple_upload` setting to consult; default to the single-current-slot
         # behavior, same as every schema-known type defaults to.
         multiple_upload = rd.multiple_upload if rd is not None else False
-        doc_version, replaces_id = (1, None) if multiple_upload else await self._next_doc_version(application_id, payload.document_type_id)
+        doc_version, replaces_id = (
+            (1, None) if multiple_upload else await self._next_doc_version(application_id, payload.document_type_id, side=payload.side)
+        )
         # Bank Statement password — OPTIONAL, and only ever persisted when this
-        # document's own DocumentType is flagged `supports_password` (Owner-configured
-        # once on the master-data row, e.g. "Bank Statement"). A password submitted for
-        # any other document type is silently dropped, not an error — defense in depth
-        # on top of the frontend only ever showing/sending the field for a
-        # password-eligible type. Encrypted immediately with the project's existing
-        # Fernet utility; the plaintext is never assigned to a variable again after this.
-        password_encrypted = encrypt(payload.password) if (document_type.supports_password and payload.password) else None
+        # document is password-eligible: a per-product-schema `password_protected`
+        # override on the RequiredDocumentDefinition if explicitly set, otherwise the
+        # DocumentType's own global `supports_password` flag (Owner-configured once on
+        # the master-data row, e.g. "Bank Statement") — the exact same effective value
+        # `RequiredDocumentResponse.supports_password` already exposes to the frontend,
+        # so the UI and the backend can never disagree about whether to expect one. A
+        # password submitted for a non-eligible document is silently dropped, not an
+        # error — defense in depth on top of the frontend only ever showing/sending the
+        # field for a password-eligible type. Encrypted immediately with the project's
+        # existing Fernet utility; the plaintext is never assigned to a variable again.
+        effective_supports_password = (
+            rd.password_protected if (rd is not None and rd.password_protected is not None) else document_type.supports_password
+        )
+        password_encrypted = encrypt(payload.password) if (effective_supports_password and payload.password) else None
         document = ApplicationDocument(
             application_id=application_id, document_type_id=payload.document_type_id, file_name=payload.file_name,
             s3_key=s3_key, content_type=payload.content_type, created_by=actor.require_id(),
             file_size_bytes=size, doc_version=doc_version, replaces_document_id=replaces_id,
-            password_encrypted=password_encrypted,
+            password_encrypted=password_encrypted, side=payload.side,
         )
         document_id = await self._documents.insert(document)
         if not multiple_upload:
             # Insert-then-sweep, not find-then-demote-then-insert: this always converges
-            # on exactly one current row per (application, document type) even if two
-            # re-uploads race each other, because each sweep demotes every OTHER current
-            # row, including one just inserted by a concurrent call.
-            await self._documents.supersede_current(application_id, payload.document_type_id, keep_document_id=document_id, updated_by=actor.require_id())
+            # on exactly one current row per (application, document type, side) even if
+            # two re-uploads race each other, because each sweep demotes every OTHER
+            # current row, including one just inserted by a concurrent call.
+            await self._documents.supersede_current(
+                application_id, payload.document_type_id, keep_document_id=document_id, updated_by=actor.require_id(), side=payload.side,
+            )
         await write_audit_log(self._db, event_type=AuditEvent.DOCUMENT_UPLOADED, user_id=actor.require_id(), metadata={"application_id": application_id})
         return await self._documents.find_by_id(document_id) or document
 
@@ -1439,6 +1486,8 @@ class CustomerService:
             raise ForbiddenError("This document is required and cannot be marked unavailable.")
         if rd.hidden:
             raise ValidationError("This document type is not available for upload.")
+        if rd.front_back_upload:
+            raise ValidationError("Front/Back documents cannot be marked as not available.")
 
         doc_version, replaces_id = await self._next_doc_version(application_id, document_type_id)
         document = ApplicationDocument(
@@ -1474,6 +1523,18 @@ class CustomerService:
         if document.s3_key is None:
             return None
         return generate_presigned_download_url(document.s3_key, expires_in=_DOWNLOAD_URL_EXPIRE_SECONDS)
+
+    def document_attachment_url(self, document: ApplicationDocument) -> str | None:
+        """A second, distinct presigned URL for the SAME object, with
+        `Content-Disposition: attachment` set so the browser actually saves the file
+        instead of rendering it inline — `document_download_url` above stays the
+        inline/Preview URL; this is the real "Download" one."""
+        if document.s3_key is None:
+            return None
+        disposition = f'attachment; filename="{document.file_name or "document"}"'
+        return generate_presigned_download_url(
+            document.s3_key, expires_in=_DOWNLOAD_URL_EXPIRE_SECONDS, response_content_disposition=disposition
+        )
 
     async def _get_document_for_staff(self, application_id: str, document_id: str, actor: User) -> ApplicationDocument:
         await self.get_application_for_staff(application_id, actor)

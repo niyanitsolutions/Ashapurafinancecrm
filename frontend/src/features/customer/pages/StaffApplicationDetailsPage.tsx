@@ -157,13 +157,13 @@ export function StaffApplicationDetailsPage() {
     }
   };
 
-  const onUploadDocument = async (documentTypeId: string, file: File, password?: string) => {
+  const onUploadDocument = async (documentTypeId: string, file: File, password?: string, side?: string) => {
     setError(null);
     setUploadingFor(documentTypeId);
     try {
       const { upload_url, s3_key } = await getDocumentUploadUrl(applicationId, documentTypeId, file.name, file.type);
       await fetch(upload_url, { method: "PUT", body: file, headers: { "Content-Type": file.type || "application/octet-stream" } });
-      await confirmDocument(applicationId, documentTypeId, file.name, s3_key, file.type, password);
+      await confirmDocument(applicationId, documentTypeId, file.name, s3_key, file.type, password, side);
       setMessage("Document uploaded.");
       load();
     } catch (err) {
@@ -189,11 +189,8 @@ export function StaffApplicationDetailsPage() {
 
   const documentExtraActions = (doc: ApplicationDocument) => (
     <>
-      {doc.download_url && (
-        <a href={doc.download_url} download={doc.file_name ?? undefined} className="text-primary hover:underline text-xs font-medium">
-          Download
-        </a>
-      )}
+      {/* Preview/Download are already rendered by the shared UploadedDocumentCard
+          (DocumentChecklist.tsx) — only staff-only actions belong here. */}
       {doc.has_password && (
         <button type="button" onClick={() => onShowPassword(doc.id)} className="text-xs font-medium text-text/60 hover:underline">
           Show Password

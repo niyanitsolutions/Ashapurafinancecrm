@@ -119,10 +119,17 @@ export interface RequiredDocument {
   preview_enabled?: boolean;
   source?: FieldSource;
   hidden?: boolean;
-  // Bank Statement password support — inherited from this document type's own
-  // DocumentType.supports_password master-data flag (Owner-configured once, e.g. on
-  // "Bank Statement"), never set per product schema. See DocumentChecklist.
+  // Front & Back upload — generic, config-driven: when true, the upload UI collects two
+  // independent files ("front"/"back") for this document instead of one.
+  front_back_upload?: boolean;
+  // Effective password-eligibility — this product schema's own override if explicitly
+  // set, otherwise inherited from the document type's global DocumentType.
+  // supports_password master-data flag. See DocumentChecklist.
   supports_password?: boolean;
+  // Local-editor-only field (Schema Editor) — the backend never populates this on a
+  // read; it exists purely so a same-session toggle of the "Password Protected"
+  // override survives before Save. See SchemaEditorPage's DocumentsTab.
+  password_protected?: boolean | null;
 }
 
 // Phase 3.1 — a repeatable block of fields (Co-Applicants, Partners, Nominees, ...).
@@ -195,6 +202,8 @@ export interface RequiredDocumentInput {
   multiple_upload?: boolean;
   preview_enabled?: boolean;
   hidden?: boolean;
+  front_back_upload?: boolean;
+  password_protected?: boolean | null;
 }
 
 export interface RepeatableGroupInput {
@@ -264,6 +273,9 @@ export interface ApplicationDocument {
   file_name: string | null;
   content_type: string | null;
   download_url: string | null;
+  // A second, distinct URL for the same file that actually downloads it (real
+  // Content-Disposition: attachment) — download_url above stays the inline/Preview URL.
+  attachment_url: string | null;
   created_at: string;
   verification_status: "pending" | "verified" | "rejected";
   verified_by_name: string | null;
@@ -277,6 +289,9 @@ export interface ApplicationDocument {
   // Boolean only — the actual password is never included here or in any list/get
   // response. See revealDocumentPassword for the dedicated, staff-only reveal call.
   has_password?: boolean;
+  // Front & Back upload — which side this row represents; null for every ordinary
+  // (non-front-back) document.
+  side?: "front" | "back" | null;
 }
 
 // `link_status` is the only field guaranteed to be present — every other field is
@@ -542,11 +557,11 @@ export function getDocumentUploadUrl(applicationId: string, documentTypeId: stri
 }
 
 export function confirmDocument(
-  applicationId: string, documentTypeId: string, fileName: string, s3Key: string, contentType?: string, password?: string,
+  applicationId: string, documentTypeId: string, fileName: string, s3Key: string, contentType?: string, password?: string, side?: string,
 ) {
   return apiRequest<ApplicationDocument>(`/applications/${applicationId}/documents`, {
     method: "POST",
-    body: JSON.stringify({ document_type_id: documentTypeId, file_name: fileName, s3_key: s3Key, content_type: contentType, password }),
+    body: JSON.stringify({ document_type_id: documentTypeId, file_name: fileName, s3_key: s3Key, content_type: contentType, password, side }),
   });
 }
 
@@ -587,11 +602,11 @@ async function putFileToStorage(uploadUrl: string, file: File): Promise<void> {
  * the one place this is implemented, used by every page that lets a customer upload a
  * document (Document Center, the Application form's own checklist). */
 export async function uploadApplicationDocument(
-  applicationId: string, documentTypeId: string, file: File, password?: string,
+  applicationId: string, documentTypeId: string, file: File, password?: string, side?: string,
 ): Promise<ApplicationDocument> {
   const { upload_url, s3_key } = await getDocumentUploadUrl(applicationId, documentTypeId, file.name, file.type);
   await putFileToStorage(upload_url, file);
-  return confirmDocument(applicationId, documentTypeId, file.name, s3_key, file.type, password);
+  return confirmDocument(applicationId, documentTypeId, file.name, s3_key, file.type, password, side);
 }
 
 // ---- document verification (staff) ----

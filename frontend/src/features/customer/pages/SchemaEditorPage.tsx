@@ -50,7 +50,7 @@ function emptyField(): FormField {
 }
 
 function emptyDocument(): RequiredDocument {
-  return { document_type_id: "", document_type_name: "New Document", section: null, note: null, required: true };
+  return { document_type_id: "", document_type_name: "New Document", section: null, note: null, required: true, front_back_upload: false };
 }
 
 function toInputField(f: FormField) {
@@ -65,7 +65,12 @@ function toInputDocument(d: RequiredDocument) {
   return {
     document_type_id: d.document_type_id, section: d.section, note: d.note, name_override: d.name_override,
     required: d.required, allowed_types: d.allowed_types, max_size_mb: d.max_size_mb, multiple_upload: d.multiple_upload,
-    preview_enabled: d.preview_enabled, hidden: d.hidden,
+    preview_enabled: d.preview_enabled, hidden: d.hidden, front_back_upload: d.front_back_upload,
+    // Always write an explicit boolean — seeded from the EFFECTIVE current value
+    // (`password_protected` if a same-session edit already set an override, otherwise
+    // the resolved `supports_password` this schema is already reading) — so saving an
+    // existing schema without touching this checkbox never silently changes behavior.
+    password_protected: d.password_protected ?? d.supports_password ?? false,
   };
 }
 
@@ -686,13 +691,18 @@ function DocumentsTab({
                 />
               </label>
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-4 flex-wrap">
               <label className="flex items-center gap-1.5 text-xs text-text/70">
                 <input type="checkbox" checked={doc.required ?? true} disabled={disabled} onChange={(e) => update(index, { required: e.target.checked })} />
                 Required
               </label>
               <label className="flex items-center gap-1.5 text-xs text-text/70">
-                <input type="checkbox" checked={doc.multiple_upload ?? false} disabled={disabled} onChange={(e) => update(index, { multiple_upload: e.target.checked })} />
+                <input
+                  type="checkbox"
+                  checked={doc.multiple_upload ?? false}
+                  disabled={disabled || doc.front_back_upload === true}
+                  onChange={(e) => update(index, { multiple_upload: e.target.checked })}
+                />
                 Multiple Upload
               </label>
               <label className="flex items-center gap-1.5 text-xs text-text/70">
@@ -703,6 +713,31 @@ function DocumentsTab({
                 <input type="checkbox" checked={doc.hidden ?? false} disabled={disabled} onChange={(e) => update(index, { hidden: e.target.checked })} />
                 Hidden
               </label>
+            </div>
+            <div className="mt-3 border-t border-border pt-3">
+              <p className="mb-1.5 text-2xs font-semibold uppercase tracking-wide text-text/40">Upload Configuration</p>
+              <div className="flex items-center gap-4 flex-wrap">
+                <label className="flex items-center gap-1.5 text-xs text-text/70">
+                  <input
+                    type="checkbox"
+                    checked={doc.front_back_upload ?? false}
+                    disabled={disabled}
+                    onChange={(e) =>
+                      update(index, { front_back_upload: e.target.checked, multiple_upload: e.target.checked ? false : doc.multiple_upload })
+                    }
+                  />
+                  Front &amp; Back Upload
+                </label>
+                <label className="flex items-center gap-1.5 text-xs text-text/70">
+                  <input
+                    type="checkbox"
+                    checked={doc.password_protected ?? doc.supports_password ?? false}
+                    disabled={disabled}
+                    onChange={(e) => update(index, { password_protected: e.target.checked })}
+                  />
+                  Password Protected
+                </label>
+              </div>
             </div>
           </div>
         );

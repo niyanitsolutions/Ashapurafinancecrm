@@ -58,12 +58,115 @@ function UploadedDocumentCard({
               Preview
             </a>
           )}
+          {doc.attachment_url && (
+            <a href={doc.attachment_url} className="text-primary hover:underline text-xs font-medium">
+              Download
+            </a>
+          )}
           {extraActions?.(doc)}
         </div>
         {doc.verification_status === "rejected" && doc.rejection_reason && (
           <p className="mt-1 text-xs text-danger">Rejected — {doc.rejection_reason}. Please re-upload this document.</p>
         )}
       </div>
+    </div>
+  );
+}
+
+// One upload/status slot — the entire single-document experience, parameterized on an
+// optional `side` so a Front & Back document (see RequiredDocument.front_back_upload)
+// renders two of these instead of forking any of this logic. `side === undefined` is
+// the ordinary, single-file case — byte-for-byte the same behavior every document type
+// had before Front & Back existed.
+function DocumentSlot({
+  typeId,
+  side,
+  sideLabel,
+  current,
+  onUpload,
+  onMarkNotAvailable,
+  isUploading,
+  disabled,
+  canMarkNotAvailable,
+  isRequired,
+  isMultiple,
+  allowedTypes,
+  maxSizeMb,
+  previewEnabled,
+  extraActions,
+}: {
+  typeId: string;
+  side?: "front" | "back";
+  sideLabel?: string;
+  current: ApplicationDocument[];
+  onUpload: (file: File) => void;
+  onMarkNotAvailable?: (documentTypeId: string) => void;
+  isUploading: boolean;
+  disabled: boolean;
+  canMarkNotAvailable: boolean;
+  isRequired: boolean;
+  isMultiple: boolean;
+  allowedTypes?: string[] | null;
+  maxSizeMb?: number | null;
+  previewEnabled: boolean;
+  extraActions?: (doc: ApplicationDocument) => ReactNode;
+}) {
+  const uploadedDocs = current.filter((d) => d.document_status === "uploaded");
+  const notAvailable = uploadedDocs.length === 0 && current.some((d) => d.document_status === "not_available");
+  const hasUploads = uploadedDocs.length > 0;
+  const canAddMore = !disabled && (isMultiple || !hasUploads);
+
+  return (
+    <div className={side ? "mt-2 rounded-md border border-border/60 p-2.5" : undefined}>
+      {sideLabel && (
+        <div className="mb-1 flex items-center justify-between gap-2">
+          <span className="text-xs font-semibold text-text/60">
+            {sideLabel}
+            {isRequired && <span className="text-danger"> *</span>}
+          </span>
+          {!hasUploads && !notAvailable && <span className="text-xs font-medium text-danger">Required</span>}
+        </div>
+      )}
+
+      {uploadedDocs.map((d) => (
+        <UploadedDocumentCard key={d.id} doc={d} previewEnabled={previewEnabled} extraActions={extraActions} />
+      ))}
+
+      {notAvailable && (
+        <div className="mt-2 flex items-center gap-1.5 rounded-md bg-text/5 px-3 py-2 text-xs text-text/50">
+          <Icon name="x-circle" className="h-3.5 w-3.5" /> Not Available
+        </div>
+      )}
+
+      {canAddMore && (
+        <div className="mt-2">
+          {isUploading ? (
+            <p className="text-xs text-text/50">Uploading…</p>
+          ) : hasUploads || notAvailable ? (
+            <FileDropZone
+              accept={allowedTypes}
+              maxSizeBytes={maxSizeMb ? maxSizeMb * 1024 * 1024 : null}
+              onFile={onUpload}
+              compact
+              compactLabel={isMultiple ? "Add Document" : "Re-upload"}
+            />
+          ) : (
+            <FileDropZone accept={allowedTypes} maxSizeBytes={maxSizeMb ? maxSizeMb * 1024 * 1024 : null} onFile={onUpload} />
+          )}
+          {!isRequired && !hasUploads && !notAvailable && canMarkNotAvailable && onMarkNotAvailable && !isUploading && (
+            <button
+              type="button"
+              onClick={() => onMarkNotAvailable(typeId)}
+              className="mt-1.5 block text-xs text-text/50 hover:text-text hover:underline"
+            >
+              I don't have this document
+            </button>
+          )}
+        </div>
+      )}
+      {notAvailable && !disabled && (
+        <p className="mt-1 text-xs text-text/40">Upload it any time before submitting — it will replace this "not available" marker.</p>
+      )}
     </div>
   );
 }
@@ -80,7 +183,7 @@ function DocumentRow({
 }: {
   doc: RequiredDocument;
   current: ApplicationDocument[];
-  onUpload: (documentTypeId: string, file: File, password?: string) => void;
+  onUpload: (documentTypeId: string, file: File, password?: string, side?: string) => void;
   onMarkNotAvailable?: (documentTypeId: string) => void;
   uploadingFor: string | null;
   disabled: boolean;
@@ -93,22 +196,45 @@ function DocumentRow({
   // API call and clears it from this component the moment the field re-renders empty
   // after a successful upload (React remounts a fresh empty input; nothing to clear
   // manually). Only rendered at all when `doc.supports_password` — see
-  // RequiredDocument's own docstring on where that flag comes from.
+  // RequiredDocument's own docstring on where that flag comes from. Shown once per row
+  // (not per Front/Back side) — a password protects the document as a whole.
   const [password, setPassword] = useState("");
   const typeId = doc.document_type_id;
   const isRequired = doc.required !== false;
   const isMultiple = doc.multiple_upload === true;
   const previewEnabled = doc.preview_enabled !== false;
   const isUploading = uploadingFor === typeId;
-  const uploadedDocs = current.filter((d) => d.document_status === "uploaded");
-  const notAvailable = uploadedDocs.length === 0 && current.some((d) => d.document_status === "not_available");
-  const hasUploads = uploadedDocs.length > 0;
+  const isFrontBack = doc.front_back_upload === true;
   const displayName = current[0]?.document_type_name || doc.name_override || doc.document_type_name || "Document";
-  const canAddMore = !disabled && (isMultiple || !hasUploads);
-  const handleFile = (file: File) => {
-    onUpload(typeId, file, doc.supports_password ? password || undefined : undefined);
+  // Front & Back has no "not available" concept server-side (see CustomerService.
+  // mark_document_not_available's own rejection of this combination) — the two-sided
+  // UI never offers the action.
+  const effectiveCanMarkNotAvailable = canMarkNotAvailable && !isFrontBack;
+
+  const makeUpload = (side?: "front" | "back") => (file: File) => {
+    onUpload(typeId, file, doc.supports_password ? password || undefined : undefined, side);
     setPassword("");
   };
+
+  const passwordField = doc.supports_password && (
+    <div className="mb-2">
+      <label className="mb-1 block text-xs font-medium text-text/60" htmlFor={`doc-password-${typeId}`}>
+        Bank Statement Password (if applicable)
+      </label>
+      <input
+        id={`doc-password-${typeId}`}
+        type="password"
+        autoComplete="off"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        placeholder="Enter statement password"
+        className="w-full rounded-lg border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
+      />
+      <p className="mt-1 text-2xs text-text/40">
+        Enter the password only if your bank statement is password protected. Leave this blank if the statement is not password protected.
+      </p>
+    </div>
+  );
 
   return (
     <li className="text-sm rounded-lg border border-border p-3">
@@ -118,77 +244,61 @@ function DocumentRow({
           {isRequired ? <span className="text-danger"> *</span> : <span className="font-normal text-text/40"> (Optional)</span>}
           {doc.note && <span className="font-normal text-text/40"> — {doc.note}</span>}
         </span>
-        {!hasUploads && !notAvailable && (
-          <span className={`text-xs font-medium ${isRequired ? "text-danger" : "text-text/40"}`}>{isRequired ? "Required" : "Not Uploaded"}</span>
-        )}
       </div>
 
-      {uploadedDocs.map((d) => (
-        <UploadedDocumentCard key={d.id} doc={d} previewEnabled={previewEnabled} extraActions={extraActions} />
-      ))}
+      {passwordField}
 
-      {notAvailable && (
-        <div className="mt-2 flex items-center gap-1.5 rounded-md bg-text/5 px-3 py-2 text-xs text-text/50">
-          <Icon name="x-circle" className="h-3.5 w-3.5" /> Not Available
-        </div>
-      )}
-
-      {canAddMore && (
-        <div className="mt-2">
-          {isUploading ? (
-            <p className="text-xs text-text/50">Uploading…</p>
-          ) : (
-            <>
-              {doc.supports_password && (
-                <div className="mb-2">
-                  <label className="mb-1 block text-xs font-medium text-text/60" htmlFor={`doc-password-${typeId}`}>
-                    Bank Statement Password (if applicable)
-                  </label>
-                  <input
-                    id={`doc-password-${typeId}`}
-                    type="password"
-                    autoComplete="off"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Enter statement password"
-                    className="w-full rounded-lg border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
-                  />
-                  <p className="mt-1 text-2xs text-text/40">
-                    Enter the password only if your bank statement is password protected. Leave this blank if the statement is not password
-                    protected.
-                  </p>
-                </div>
-              )}
-              {hasUploads || notAvailable ? (
-                <FileDropZone
-                  accept={doc.allowed_types}
-                  maxSizeBytes={doc.max_size_mb ? doc.max_size_mb * 1024 * 1024 : null}
-                  onFile={handleFile}
-                  compact
-                  compactLabel={isMultiple ? "Add Document" : "Re-upload"}
-                />
-              ) : (
-                <FileDropZone
-                  accept={doc.allowed_types}
-                  maxSizeBytes={doc.max_size_mb ? doc.max_size_mb * 1024 * 1024 : null}
-                  onFile={handleFile}
-                />
-              )}
-            </>
-          )}
-          {!isRequired && !hasUploads && !notAvailable && canMarkNotAvailable && onMarkNotAvailable && !isUploading && (
-            <button
-              type="button"
-              onClick={() => onMarkNotAvailable(typeId)}
-              className="mt-1.5 block text-xs text-text/50 hover:text-text hover:underline"
-            >
-              I don't have this document
-            </button>
-          )}
-        </div>
-      )}
-      {notAvailable && !disabled && (
-        <p className="mt-1 text-xs text-text/40">Upload it any time before submitting — it will replace this "not available" marker.</p>
+      {isFrontBack ? (
+        <>
+          <DocumentSlot
+            typeId={typeId}
+            side="front"
+            sideLabel="Front Side"
+            current={current.filter((d) => d.side === "front")}
+            onUpload={makeUpload("front")}
+            isUploading={isUploading}
+            disabled={disabled}
+            canMarkNotAvailable={false}
+            isRequired={isRequired}
+            isMultiple={false}
+            allowedTypes={doc.allowed_types}
+            maxSizeMb={doc.max_size_mb}
+            previewEnabled={previewEnabled}
+            extraActions={extraActions}
+          />
+          <DocumentSlot
+            typeId={typeId}
+            side="back"
+            sideLabel="Back Side"
+            current={current.filter((d) => d.side === "back")}
+            onUpload={makeUpload("back")}
+            isUploading={isUploading}
+            disabled={disabled}
+            canMarkNotAvailable={false}
+            isRequired={isRequired}
+            isMultiple={false}
+            allowedTypes={doc.allowed_types}
+            maxSizeMb={doc.max_size_mb}
+            previewEnabled={previewEnabled}
+            extraActions={extraActions}
+          />
+        </>
+      ) : (
+        <DocumentSlot
+          typeId={typeId}
+          current={current}
+          onUpload={makeUpload(undefined)}
+          onMarkNotAvailable={onMarkNotAvailable}
+          isUploading={isUploading}
+          disabled={disabled}
+          canMarkNotAvailable={effectiveCanMarkNotAvailable}
+          isRequired={isRequired}
+          isMultiple={isMultiple}
+          allowedTypes={doc.allowed_types}
+          maxSizeMb={doc.max_size_mb}
+          previewEnabled={previewEnabled}
+          extraActions={extraActions}
+        />
       )}
     </li>
   );
@@ -212,7 +322,7 @@ export function DocumentChecklist({
 }: {
   requiredDocuments: RequiredDocument[];
   uploadedDocuments: ApplicationDocument[];
-  onUpload: (documentTypeId: string, file: File, password?: string) => void;
+  onUpload: (documentTypeId: string, file: File, password?: string, side?: string) => void;
   onMarkNotAvailable?: (documentTypeId: string) => void;
   uploadingFor: string | null;
   disabled?: boolean;
@@ -256,10 +366,18 @@ export function DocumentChecklist({
 
 /** "3 / 5 required documents completed" + the list of what's still missing — spec §7/§8.
  * Derived purely from schema + current documents already in scope at every call site, no
- * extra API call. */
+ * extra API call. A Front & Back requirement (RequiredDocument.front_back_upload) only
+ * counts as completed once BOTH sides have a current upload. */
 export function documentCompletionSummary(requiredDocuments: RequiredDocument[], uploadedDocuments: ApplicationDocument[]) {
   const required = requiredDocuments.filter((d) => !d.hidden && d.required !== false);
-  const uploadedTypeIds = new Set(uploadedDocuments.filter((d) => d.is_current && d.document_status === "uploaded").map((d) => d.document_type_id));
-  const missing = required.filter((d) => !uploadedTypeIds.has(d.document_type_id));
+  const current = uploadedDocuments.filter((d) => d.is_current && d.document_status === "uploaded");
+  const isSatisfied = (d: RequiredDocument) => {
+    const docs = current.filter((u) => u.document_type_id === d.document_type_id);
+    if (d.front_back_upload) {
+      return docs.some((u) => u.side === "front") && docs.some((u) => u.side === "back");
+    }
+    return docs.length > 0;
+  };
+  const missing = required.filter((d) => !isSatisfied(d));
   return { total: required.length, completed: required.length - missing.length, missing };
 }

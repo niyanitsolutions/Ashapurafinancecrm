@@ -681,3 +681,71 @@ async def test_counts_match_list_totals_for_assigned_employee(client, mock_db, o
     listed = (await client.get("/api/v1/loan-cases?status=credit_evaluation&page_size=100", headers=employee_headers)).json()["data"]
     assert len(listed) == counts["credit_evaluation"] == 1
     assert case_id in {c["id"] for c in listed}
+
+
+async def test_search_narrows_list_below_tab_badge_without_changing_the_badge(client, mock_db, owner_headers, master_data):
+    """A search box narrowing the visible list is legitimate (identical in kind to the
+    already-accepted "Unassigned Cases only" narrowing) — but the tab badge itself must
+    keep reporting the stage's real total, and the list's own returned total (meta,
+    not the badge) must reflect only what actually matches the search, never the
+    global tab count."""
+    case_id_1, _e1, _c1, _a1 = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000030")
+    case_id_2, _e2, _c2, _a2 = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000031")
+
+    counts = (await client.get("/api/v1/loan-cases/counts", headers=owner_headers)).json()["data"]
+    assert counts["new_customer"] == 2
+
+    all_new_customer = (await client.get("/api/v1/loan-cases?status=new_customer&page_size=100", headers=owner_headers)).json()
+    assert len(all_new_customer["data"]) == 2
+    assert all_new_customer["meta"]["pagination"]["total"] == 2
+    code_1 = next(c["case_code"] for c in all_new_customer["data"] if c["id"] == case_id_1)
+
+    r = await client.get(f"/api/v1/loan-cases?status=new_customer&page_size=100&search={code_1}", headers=owner_headers)
+    body = r.json()
+    assert len(body["data"]) == 1
+    assert body["data"][0]["id"] == case_id_1
+    # The search-scoped list's own total must equal its own filtered result count -
+    # never the unfiltered tab badge (still 2).
+    assert body["meta"]["pagination"]["total"] == 1
+    assert body["meta"]["pagination"]["total"] != counts["new_customer"]
+
+    # The badge itself is untouched by the search — it still reports the real stage total.
+    counts_after_search = (await client.get("/api/v1/loan-cases/counts", headers=owner_headers)).json()["data"]
+    assert counts_after_search["new_customer"] == 2
+
+
+async def test_pagination_total_matches_filtered_query_not_the_tab_badge(client, mock_db, owner_headers, master_data):
+    """Pagination must run against the exact same filtered query the count was built
+    from - `meta.pagination.total` on a status-filtered page is the count of that
+    filtered query, and stays correct (and distinct from the global badge) once an
+    `assigned_to` filter is layered on top of the status filter."""
+    case_id_1, employee_headers, _c1, _a1 = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000032")
+    case_id_2, _e2, _c2, _a2 = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000033")
+    await client.post(f"/api/v1/loan-cases/{case_id_1}/new-customer-details", json={}, headers=employee_headers)
+
+    counts = (await client.get("/api/v1/loan-cases/counts", headers=owner_headers)).json()["data"]
+    assert counts["new_customer"] == 1  # only case 2 remains at New Customer
+    assert counts["credit_evaluation"] == 1
+
+    r = await client.get("/api/v1/loan-cases?status=new_customer&page_size=1&page=1", headers=owner_headers)
+    body = r.json()
+    assert len(body["data"]) == 1
+    assert body["data"][0]["id"] == case_id_2
+    assert body["meta"]["pagination"]["total"] == 1
+    assert body["meta"]["pagination"]["total_pages"] == 1
+
+    r = await client.get("/api/v1/loan-cases?status=new_customer&page_size=1&page=2", headers=owner_headers)
+    body = r.json()
+    assert len(body["data"]) == 0
+    assert body["meta"]["pagination"]["total"] == 1  # unchanged by an out-of-range page
+
+    # Layering assigned_to on top of status must scope the total to the intersection,
+    # not silently fall back to either filter alone.
+    employee_1_id = (await client.get(f"/api/v1/loan-cases/{case_id_1}", headers=owner_headers)).json()["data"]["assigned_to"]
+    r = await client.get(
+        f"/api/v1/loan-cases?status=credit_evaluation&assigned_to={employee_1_id}&page_size=100", headers=owner_headers
+    )
+    body = r.json()
+    assert len(body["data"]) == 1
+    assert body["data"][0]["id"] == case_id_1
+    assert body["meta"]["pagination"]["total"] == 1
