@@ -1579,7 +1579,15 @@ class CustomerService:
         return updated
 
     async def reject_document(self, application_id: str, document_id: str, reason: str, actor: User) -> ApplicationDocument:
-        await self._get_document_for_staff(application_id, document_id, actor)
+        document = await self._get_document_for_staff(application_id, document_id, actor)
+        # Notify only on a genuinely NEW rejection event, not on every API call — an
+        # accidental double-submit/retried request against a document that's already
+        # rejected must not spam a second notification for the same event. A document
+        # rejected again after a fresh re-upload is a brand-new row (its own fresh
+        # `pending` verification_status, per CustomerService.confirm_document's
+        # supersede-on-reupload), so it always correctly produces its own new,
+        # actionable notification.
+        already_rejected = document.verification_status == DocumentVerificationStatus.REJECTED
         updated = await self._documents.update(
             document_id,
             {
@@ -1593,6 +1601,25 @@ class CustomerService:
             self._db, event_type=AuditEvent.DOCUMENT_REJECTED, user_id=actor.require_id(),
             metadata={"application_id": application_id, "document_id": document_id, "reason": reason},
         )
+        # Customer-facing notification — reuses the existing Reminders/Notification
+        # engine (RemindersService.notify, Owner-template-aware) verbatim, the same
+        # mechanism every other in-app notification in this codebase already goes
+        # through (Lead Assigned, Task Assigned, Support Request). Fired only after both
+        # the mutation and its audit log write have succeeded above, so a failed
+        # rejection never produces a false notification. Internal-only staff/verifier
+        # identity is never exposed to the customer — only the document name and the
+        # rejection reason staff themselves wrote.
+        if not already_rejected:
+            application = await self._applications.find_by_id(application_id)
+            document_type = await self._document_types.find_by_id(document.document_type_id)
+            document_name = document_type.name if document_type else "your document"
+            if application is not None:
+                await self._reminders.notify(
+                    recipient_user_id=application.user_id, notification_type=NotificationType.DOCUMENT_REJECTED,
+                    default_title="Document Rejected", default_message=f"Your {document_name} was rejected. {reason}",
+                    variables={"document_name": document_name, "reason": reason},
+                    entity_type="application", entity_id=application_id,
+                )
         return updated
 
     # ================================================================== Owner/Employee views

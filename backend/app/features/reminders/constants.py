@@ -65,10 +65,15 @@ class NotificationType:
     # Relationship Manager assigned yet. Falls into the already-reserved `SYSTEM`
     # category (see NotificationCategory's own docstring anticipating exactly this).
     SUPPORT_REQUEST_RAISED = "support_request_raised"
+    # Customer-facing: staff rejected one of the customer's uploaded documents (see
+    # CustomerService.reject_document). Falls into the existing DOCUMENT category
+    # DOCUMENT_UPLOADED already established — this is the reverse-direction sibling of
+    # that notification, not a new category concept.
+    DOCUMENT_REJECTED = "document_rejected"
 
     ALL = (
         LEAD_ASSIGNED, DOCUMENT_UPLOADED, TASK_ASSIGNED, TASK_DUE, TASK_ESCALATION, TASK_OWNER_ESCALATION,
-        REMINDER_TRIGGERED, SUPPORT_REQUEST_RAISED,
+        REMINDER_TRIGGERED, SUPPORT_REQUEST_RAISED, DOCUMENT_REJECTED,
     )
 
 
@@ -104,6 +109,7 @@ CATEGORY_BY_NOTIFICATION_TYPE: dict[str, str] = {
     NotificationType.TASK_OWNER_ESCALATION: NotificationCategory.TASK,
     NotificationType.REMINDER_TRIGGERED: NotificationCategory.REMINDER,
     NotificationType.SUPPORT_REQUEST_RAISED: NotificationCategory.SYSTEM,
+    NotificationType.DOCUMENT_REJECTED: NotificationCategory.DOCUMENT,
 }
 
 

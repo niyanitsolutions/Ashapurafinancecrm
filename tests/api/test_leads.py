@@ -1501,6 +1501,56 @@ async def test_document_collection_falls_back_to_customer_id_when_lead_id_is_nul
     assert row["application_status"] == "submitted"
 
 
+async def test_move_to_loan_management_succeeds_when_application_lead_id_is_null_but_customer_linked(client, mock_db, owner_headers, master_data):
+    """Reproduces the exact reported production contradiction: Update Lead's own
+    Application & Documents section shows "Submitted" / "5 of 5 verified" (via
+    `get_document_collection_summary`'s customer_id fallback join), yet clicking Move
+    to Loan Management failed with "The customer must submit their application before
+    this lead can move to Loan Management." Root cause: `set_stage`'s own application
+    lookup used ONLY `ApplicationRepository.find_by_lead_id` — no fallback — even
+    though the identical customer_id+product fallback already exists and is used by
+    both the detail summary and the Document Collection list view for this exact
+    scenario. Uses the same lead_id=None + customer_id-linked application fixture as
+    `test_document_collection_falls_back_to_customer_id_when_lead_id_is_null` above."""
+    from app.utils.helpers import to_object_id
+
+    await _seed_loan_new_customer_definition(mock_db)
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880071", email="movefallback1@example.com")
+    lead = await _lead_in_document_collection(client, owner_headers, lmd, "9611160097", employee["id"])
+
+    customer_id = "000000000000000000000abd"
+    await mock_db["leads"].update_one({"_id": to_object_id(lead["id"])}, {"$set": {"customer_id": customer_id}})
+
+    doc_type_id = await _seed_document_type(mock_db, "PAN Move")
+    form_def_id = await _seed_form_definition(mock_db, "loan", lmd["loan_product_id"], document_type_ids=[doc_type_id])
+    application_id = await _seed_application(
+        mock_db, lead_id=None, customer_id=customer_id, form_definition_id=form_def_id,
+        product_category="loan", product_id=lmd["loan_product_id"], status="submitted",
+    )
+    await _seed_document(mock_db, application_id=application_id, document_type_id=doc_type_id, verification_status="verified")
+
+    # The Update Lead screen's own detail view already (correctly) shows this as ready
+    # to move — this must not regress as part of fixing the move action itself.
+    r = await client.get(f"/api/v1/leads/{lead['id']}", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    detail = r.json()["data"]
+    assert detail["application_id"] == application_id
+    assert detail["application_status"] == "submitted"
+    assert detail["all_documents_verified"] is True
+
+    r = await client.post(f"/api/v1/leads/{lead['id']}/stage", json={"stage": "loan_management"}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["stage"] == "loan_management"
+
+    # And the Loan Case actually becomes visible in Loan Management as a result (decision
+    # #130's eligibility gate) — not just the Lead's own stage flag flipping in isolation.
+    r = await client.get("/api/v1/loan-cases?status=new_customer&page_size=100", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    matching = [c for c in r.json()["data"] if c["application_id"] == application_id]
+    assert len(matching) == 1
+
+
 async def test_document_collection_still_reports_pending_with_no_application_and_no_customer_link(client, mock_db, owner_headers, master_data):
     """The customer_id fallback must not manufacture a false positive: a lead with
     neither a lead_id-linked nor a customer_id-linked application still correctly shows
@@ -1647,6 +1697,34 @@ async def test_reject_blocked_once_lead_reached_loan_management(client, mock_db,
 
     r = await client.post(f"/api/v1/leads/{lead['id']}/reject", json={"reason": "Too late"}, headers=owner_headers)
     assert r.status_code == 422, r.text
+
+
+async def test_repeated_move_to_loan_management_is_safe_and_never_duplicates_the_case(client, mock_db, owner_headers, master_data):
+    """A retried/double-clicked Move to Loan Management request must not corrupt state
+    or create a second Loan Case for the same application — the second call cleanly
+    fails validation (the lead is no longer in Document Collection) rather than
+    crashing or silently duplicating anything."""
+    await _seed_loan_new_customer_definition(mock_db)
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880072", email="dc12@example.com")
+    lead = await _lead_in_document_collection(client, owner_headers, lmd, "9611160098", employee["id"])
+    pan_id = await _seed_document_type(mock_db, "PAN Repeat")
+    form_def_id = await _seed_form_definition(mock_db, "loan", lmd["loan_product_id"], document_type_ids=[pan_id])
+    application_id = await _seed_application(
+        mock_db, lead_id=lead["id"], customer_id="000000000000000000000079", form_definition_id=form_def_id,
+        product_category="loan", product_id=lmd["loan_product_id"], status="submitted",
+    )
+    await _seed_document(mock_db, application_id=application_id, document_type_id=pan_id, verification_status="verified")
+
+    first = await client.post(f"/api/v1/leads/{lead['id']}/stage", json={"stage": "loan_management"}, headers=owner_headers)
+    assert first.status_code == 200, first.text
+
+    second = await client.post(f"/api/v1/leads/{lead['id']}/stage", json={"stage": "loan_management"}, headers=owner_headers)
+    assert second.status_code == 422, second.text  # clean rejection, not a crash
+
+    r = await client.get("/api/v1/loan-cases?status=new_customer&page_size=100", headers=owner_headers)
+    matching = [c for c in r.json()["data"] if c["application_id"] == application_id]
+    assert len(matching) == 1  # never duplicated
 
 
 async def test_move_to_loan_management_requires_leads_edit_permission(client, mock_db, owner_headers, employee_headers, master_data):

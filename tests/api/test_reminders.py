@@ -310,6 +310,42 @@ async def test_notification_inbox_read_archive_dismiss_and_ownership(client, moc
     assert any(n["id"] == notification["id"] for n in r.json()["data"])
 
 
+async def _signup_customer(client, mobile):
+    r = await client.post("/api/v1/customer-registration/start", json={"mobile": mobile})
+    assert r.status_code == 200, r.text
+    dev_otp = r.json()["data"]["dev_otp"]
+    r = await client.post("/api/v1/auth/verify-otp", json={"mobile": mobile, "otp": dev_otp, "purpose": "signup"})
+    assert r.status_code == 200, r.text
+    ticket = r.json()["data"]["otp_verified_token"]
+    r = await client.post("/api/v1/auth/reset-password", json={"otp_verified_token": ticket, "new_password": "CustomerPass1!"})
+    assert r.status_code == 200, r.text
+    r = await client.post("/api/v1/auth/login", json={"mobile": mobile, "password": "CustomerPass1!"})
+    assert r.status_code == 200, r.text
+    return {"Authorization": f"Bearer {r.json()['data']['access_token']}"}
+
+
+async def test_notifications_widened_to_customer_self_service_without_weakening_staff_only_endpoints(client, mock_db, owner_headers):
+    """Decision #135: a Customer must be able to read/mark-read their OWN notifications
+    (e.g. Document Rejected) — the self-service notification endpoints were widened
+    from staff-only to any authenticated user. Confirms both halves of that change: the
+    widening actually works for a Customer, AND a genuinely staff-only action
+    (completing an internal Task) is completely unaffected — still 403 for the same
+    Customer."""
+    customer_headers = await _signup_customer(client, "9600000001")
+
+    r = await client.get("/api/v1/notifications", headers=customer_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"] == []
+
+    r = await client.get("/api/v1/notifications/unread-count", headers=customer_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["unread_count"] == 0
+
+    # Staff-only Task completion must remain exactly as restricted as before.
+    r = await client.post("/api/v1/tasks/000000000000000000000000/complete", headers=customer_headers)
+    assert r.status_code == 403, r.text
+
+
 # ---------------------------------------------------------------------- Scheduler jobs (called directly)
 
 

@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { Link, NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "@/features/auth/useAuth";
+import { CustomerNotificationBell } from "@/features/customer/components/CustomerNotificationBell";
+import { DocumentRejectionAlert } from "@/features/customer/components/DocumentRejectionAlert";
 import { Icon, type IconName } from "@/theme/icons";
 
 const NAV_ITEMS: { to: string; label: string; icon: IconName; end?: boolean }[] = [
@@ -46,6 +48,7 @@ export function CustomerPortalLayout({ children }: { children?: ReactNode }) {
               {item.label}
             </NavLink>
           ))}
+          <CustomerNotificationBell />
           <button
             type="button"
             onClick={onLogout}
@@ -57,6 +60,7 @@ export function CustomerPortalLayout({ children }: { children?: ReactNode }) {
         </nav>
       </header>
       <main className="p-6">{children ?? <Outlet />}</main>
+      <DocumentRejectionAlert />
     </div>
   );
 }

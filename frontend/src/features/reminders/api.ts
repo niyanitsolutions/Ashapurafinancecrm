@@ -116,6 +116,11 @@ export async function listNotifications(params: { page?: number; page_size?: num
   return { data: envelope.data ?? [], pagination: envelope.meta?.pagination ?? null };
 }
 
+export async function getUnreadNotificationCount(): Promise<number> {
+  const result = await apiRequest<{ unread_count: number }>("/notifications/unread-count");
+  return result.unread_count;
+}
+
 export function markNotificationRead(notificationId: string) {
   return apiRequest<AppNotification>(`/notifications/${notificationId}/read`, { method: "POST" });
 }

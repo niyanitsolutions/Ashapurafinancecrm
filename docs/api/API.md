@@ -265,11 +265,12 @@ Internal database notifications only — no WhatsApp/SMS/Email/push/external API
 - `GET /reminder-rules`, `GET /reminder-rules/{id}` — `view`.
 - `PATCH /reminder-rules/{id}` — `edit`. `PATCH /reminder-rules/{id}/activate`, `/deactivate` — `edit`; toggles `status` active/inactive without deleting the rule.
 
-### Notifications (`/notifications` — self-service, `require_staff` only, no permission catalog entry)
+### Notifications (`/notifications` — self-service, any authenticated user, no permission catalog entry)
 
 - `GET /notifications` — the caller's own inbox only. Query params: `page`, `page_size`, `status` (`unread`|`read`|`archived`|`dismissed`), `category` (`assignment`|`reminder`|`task`|`workflow`|`document`|`system`|`security` — decision 073). Every notification carries a `category`, derived automatically from its `notification_type` at creation time (never caller-supplied), so classification can never drift from the type that produced it.
 - `GET /notifications/unread-count` — `{ unread_count }`, for a frontend badge.
 - `POST /notifications/{id}/read`, `/archive`, `/dismiss` — 404 if the notification isn't the caller's own (ownership check, not just a 403 — mirrors the "not found, not forbidden" pattern used for cross-tenant-style isolation elsewhere in this project).
+- Widened from `require_staff` to any authenticated user (decision 135) — a Customer must be able to read/mark-read their own notifications too (e.g. `document_rejected`, fired by `CustomerService.reject_document`), not only Owner/Employee. Safe because every method above already scopes strictly to the caller's own id; `POST /tasks/{id}/complete` above intentionally keeps its own staff-only gate, unaffected by this widening. Customer Portal reaches this at `/portal/alerts` (reusing the exact same `NotificationListPage`) plus a header bell — separate from the pre-existing `/portal/notifications` route, which is the outbound WhatsApp/SMS/Email Communication History feed, not this Notification model.
 
 ## Module 7 — Referral Partner Portal
 

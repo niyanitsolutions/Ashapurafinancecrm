@@ -418,7 +418,17 @@ export const router = createBrowserRouter([
               // "Message your RM" — a real two-way thread (see backend `messaging`
               // module), distinct from the one-way Communication History feed below.
               { path: "/portal/messages", element: <ConversationPage /> },
+              // "Notifications" here is the pre-existing, deliberately-kept outbound
+              // Communication History feed (WhatsApp/SMS/Email delivery log) — see
+              // MessagesPage's own docstring on why it was built as a feed with no
+              // read-tracking. In-app Notification rows (e.g. Document Rejected) are a
+              // SEPARATE, newer concept — reachable via CustomerNotificationBell in the
+              // header and its own dedicated inbox below, not this route. Not merged
+              // into one page in this round to avoid redesigning an already-shipped,
+              // working feature; both surfaces read from the same backend Notification
+              // model this route's sibling below does.
               { path: "/portal/notifications", element: <MessagesPage /> },
+              { path: "/portal/alerts", element: <NotificationListPage /> },
               { path: "/portal/support", element: <SupportPage /> },
             ],
           },

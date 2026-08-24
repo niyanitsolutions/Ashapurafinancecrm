@@ -384,19 +384,37 @@ class LeadService:
                 verified_count += 1
         return len(required_docs), verified_count
 
+    async def _resolve_application_for_lead(self, lead: Lead) -> Application | None:
+        """THE single authoritative lookup for "which Application (if any) belongs to
+        this Lead" — every caller that needs this answer (the detail summary below, the
+        batched list view in `get_application_info_for_leads`, and `set_stage`'s own
+        Move-to-Loan-Management eligibility check) must go through this one method, not
+        re-implement the lookup. `Application.lead_id` is only ever set by the
+        secure-link claim flow (Flow 1); every application created via
+        `start_application` (Flow 2, and any Flow-1 customer continuing after profile
+        completion) leaves it null even though `Lead.customer_id`/`Application.
+        customer_id` are reliably linked on both sides — see
+        `ApplicationRepository.find_latest_by_customer_and_product`'s own docstring.
+        Before this method existed, `set_stage` used only the direct `find_by_lead_id`
+        lookup with no such fallback, so a Lead whose linked application took this path
+        showed "Submitted" / "N of N verified" in the Update Lead screen (which already
+        used this fallback) while Move to Loan Management failed with "The customer
+        must submit their application" — the exact same application, read two
+        inconsistent ways."""
+        application = await self._applications.find_by_lead_id(lead.require_id())
+        if application is None and lead.customer_id:
+            application = await self._applications.find_latest_by_customer_and_product(
+                lead.customer_id, lead.product_category, lead.product_id
+            )
+        return application
+
     async def get_document_collection_summary(self, lead: Lead) -> DocumentCollectionSummary:
         """Detail-level counterpart of `get_application_info_for_leads` — always computed
         (cheap at single-lead granularity), backing both `GET /leads/{id}` and every other
         detail-returning endpoint, and the "N of M documents verified" text in My Leads'
         Update screen. `application_id=None` means the customer hasn't used Generate Link
         yet — a legitimate "Pending" state, never an error."""
-        application = await self._applications.find_by_lead_id(lead.require_id())
-        if application is None and lead.customer_id:
-            # Fallback via the reliable customer_id join — see
-            # ApplicationRepository.find_latest_by_customer_and_product's own docstring.
-            application = await self._applications.find_latest_by_customer_and_product(
-                lead.customer_id, lead.product_category, lead.product_id
-            )
+        application = await self._resolve_application_for_lead(lead)
         if application is None:
             return DocumentCollectionSummary(
                 application_id=None, application_status=None, documents_required=0, documents_verified=0, all_documents_verified=False
@@ -628,7 +646,16 @@ class LeadService:
         where a case was fully visible/actionable in Loan Management from the moment of
         submission, regardless of whether a Lead ever reached this stage or whether its
         documents were ever actually verified. Only loan-category applications are
-        marked here — Insurance's own visibility is a separate, untouched concern."""
+        marked here — Insurance's own visibility is a separate, untouched concern.
+
+        Decision #135: the application lookup below goes through
+        `_resolve_application_for_lead` (the same customer_id-fallback-aware resolver
+        `get_document_collection_summary` already used) — it used to call
+        `find_by_lead_id` directly with no fallback, so a Lead whose application had a
+        null `lead_id` (Flow 2, or Flow 1 continued post-profile-completion) could show
+        "Submitted"/"all verified" in the Update Lead screen while this exact check
+        still rejected the move as "not submitted," reading the same underlying
+        application two different, disagreeing ways."""
         lead = await self.get_lead_scoped(lead_id, actor)
         if lead.assigned_to is None:
             raise ValidationError("Only an assigned lead can change stage.")
@@ -638,7 +665,7 @@ class LeadService:
         if stage == LeadStage.LOAN_MANAGEMENT:
             if lead.stage != LeadStage.DOCUMENT_COLLECTION:
                 raise ValidationError("Only a lead in Document Collection can move to Loan Management.")
-            application = await self._applications.find_by_lead_id(lead_id)
+            application = await self._resolve_application_for_lead(lead)
             if application is None or application.status != ApplicationStatus.SUBMITTED:
                 raise ValidationError("The customer must submit their application before this lead can move to Loan Management.")
             required, verified = await self._document_completion(application)

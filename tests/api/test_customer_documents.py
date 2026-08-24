@@ -901,3 +901,171 @@ async def test_legacy_rejected_document_missing_the_side_field_entirely_can_stil
     current_pan = [d for d in r.json()["data"] if d["document_type_id"] == product["pan_doc_id"]]
     assert len(current_pan) == 1
     assert current_pan[0]["file_name"] == "pan_legacy_v2.jpg"
+
+
+# ---------------------------------------------------------------------- customer notification on rejection (decision #135)
+
+
+async def test_rejecting_a_document_creates_a_customer_notification(client, mock_db, owner_headers):
+    """Reuses the existing Reminders/Notification engine (RemindersService.notify) —
+    the customer must be able to read their own notification via the same self-service
+    /notifications endpoints staff already use (widened from staff-only to any
+    authenticated user, since the underlying service already scopes strictly to the
+    caller's own id)."""
+    product = await _seed_rich_product_and_form(mock_db, product_name="Business Loan Notify A")
+    headers, application_id = await _start_application(client, product, mobile="9800000216")
+    upload = await _upload(client, application_id, product["pan_doc_id"], headers, file_name="pan.jpg")
+    document_id = upload.json()["data"]["id"]
+
+    r = await client.get("/api/v1/notifications/unread-count", headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["unread_count"] == 0
+
+    r = await client.patch(
+        f"/api/v1/applications/{application_id}/documents/{document_id}/reject",
+        json={"reason": "PAN image is not clear. Please upload a clearer copy."}, headers=owner_headers,
+    )
+    assert r.status_code == 200, r.text
+
+    r = await client.get("/api/v1/notifications/unread-count", headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["unread_count"] == 1
+
+    r = await client.get("/api/v1/notifications", headers=headers)
+    assert r.status_code == 200, r.text
+    notifications = r.json()["data"]
+    assert len(notifications) == 1
+    notification = notifications[0]
+    assert notification["notification_type"] == "document_rejected"
+    assert notification["category"] == "document"
+    assert notification["status"] == "unread"
+    assert notification["entity_type"] == "application"
+    assert notification["entity_id"] == application_id
+    assert "PAN Card" in notification["message"]
+    assert "PAN image is not clear. Please upload a clearer copy." in notification["message"]
+    # No internal-only staff/verifier identity leaks into the customer-facing payload.
+    assert "verified_by" not in notification
+    assert "employee" not in str(notification).lower()
+
+
+async def test_customer_can_mark_the_rejection_notification_read_using_existing_mechanism(client, mock_db, owner_headers):
+    product = await _seed_rich_product_and_form(mock_db, product_name="Business Loan Notify B")
+    headers, application_id = await _start_application(client, product, mobile="9800000217")
+    upload = await _upload(client, application_id, product["pan_doc_id"], headers, file_name="pan.jpg")
+    document_id = upload.json()["data"]["id"]
+    await client.patch(
+        f"/api/v1/applications/{application_id}/documents/{document_id}/reject", json={"reason": "Blurry."}, headers=owner_headers,
+    )
+
+    r = await client.get("/api/v1/notifications", headers=headers)
+    notification_id = r.json()["data"][0]["id"]
+    assert r.json()["data"][0]["status"] == "unread"
+
+    r = await client.post(f"/api/v1/notifications/{notification_id}/read", headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["status"] == "read"
+    assert r.json()["data"]["read_at"] is not None
+
+    r = await client.get("/api/v1/notifications/unread-count", headers=headers)
+    assert r.json()["data"]["unread_count"] == 0
+
+    # Reading the notification never hides the rejection itself from the application's
+    # own document view — it must remain visible there independent of notification state.
+    r = await client.get(f"/api/v1/applications/{application_id}/documents", headers=headers)
+    doc = next(d for d in r.json()["data"] if d["id"] == document_id)
+    assert doc["verification_status"] == "rejected"
+    assert doc["rejection_reason"] == "Blurry."
+
+
+async def test_repeated_reject_on_the_same_document_does_not_spam_a_duplicate_notification(client, mock_db, owner_headers):
+    """The exact "accidental double-submit" scenario: rejecting the SAME (already-
+    rejected) document row again must not create a second notification for what is
+    still, functionally, the same rejection event."""
+    product = await _seed_rich_product_and_form(mock_db, product_name="Business Loan Notify C")
+    headers, application_id = await _start_application(client, product, mobile="9800000218")
+    upload = await _upload(client, application_id, product["pan_doc_id"], headers, file_name="pan.jpg")
+    document_id = upload.json()["data"]["id"]
+
+    r1 = await client.patch(
+        f"/api/v1/applications/{application_id}/documents/{document_id}/reject", json={"reason": "Blurry."}, headers=owner_headers,
+    )
+    assert r1.status_code == 200, r1.text
+    r2 = await client.patch(
+        f"/api/v1/applications/{application_id}/documents/{document_id}/reject", json={"reason": "Blurry — retry."}, headers=owner_headers,
+    )
+    assert r2.status_code == 200, r2.text
+
+    r = await client.get("/api/v1/notifications/unread-count", headers=headers)
+    assert r.json()["data"]["unread_count"] == 1
+
+
+async def test_a_new_rejection_after_reupload_creates_a_new_actionable_notification(client, mock_db, owner_headers):
+    """A genuinely NEW rejection (on the freshly re-uploaded replacement document, not
+    the same row) must fire its own new notification — this is not the same event as
+    the first rejection."""
+    product = await _seed_rich_product_and_form(mock_db, product_name="Business Loan Notify D")
+    headers, application_id = await _start_application(client, product, mobile="9800000219")
+    first = await _upload(client, application_id, product["pan_doc_id"], headers, file_name="pan_v1.jpg")
+    first_id = first.json()["data"]["id"]
+    await client.patch(
+        f"/api/v1/applications/{application_id}/documents/{first_id}/reject", json={"reason": "Blurry v1."}, headers=owner_headers,
+    )
+
+    second = await _upload(client, application_id, product["pan_doc_id"], headers, file_name="pan_v2.jpg")
+    second_id = second.json()["data"]["id"]
+    r = await client.patch(
+        f"/api/v1/applications/{application_id}/documents/{second_id}/reject", json={"reason": "Blurry v2 too."}, headers=owner_headers,
+    )
+    assert r.status_code == 200, r.text
+
+    r = await client.get("/api/v1/notifications/unread-count", headers=headers)
+    assert r.json()["data"]["unread_count"] == 2
+    r = await client.get("/api/v1/notifications?page_size=100", headers=headers)
+    messages = [n["message"] for n in r.json()["data"]]
+    assert any("Blurry v1." in m for m in messages)
+    assert any("Blurry v2 too." in m for m in messages)
+
+
+async def test_customer_cannot_see_another_customers_rejection_notification(client, mock_db, owner_headers):
+    product = await _seed_rich_product_and_form(mock_db, product_name="Business Loan Notify E")
+    headers_a, application_id = await _start_application(client, product, mobile="9800000220")
+    upload = await _upload(client, application_id, product["pan_doc_id"], headers_a, file_name="pan.jpg")
+    document_id = upload.json()["data"]["id"]
+    await client.patch(
+        f"/api/v1/applications/{application_id}/documents/{document_id}/reject", json={"reason": "Blurry."}, headers=owner_headers,
+    )
+
+    headers_b, _ = await _start_application(client, product, mobile="9800000221")
+    r = await client.get("/api/v1/notifications", headers=headers_b)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"] == []
+    r = await client.get("/api/v1/notifications/unread-count", headers=headers_b)
+    assert r.json()["data"]["unread_count"] == 0
+
+    # And customer B cannot mark customer A's notification read via a guessed/known id.
+    r = await client.get("/api/v1/notifications", headers=headers_a)
+    notification_id = r.json()["data"][0]["id"]
+    r = await client.post(f"/api/v1/notifications/{notification_id}/read", headers=headers_b)
+    assert r.status_code == 404, r.text
+
+
+async def test_failed_rejection_creates_no_notification(client, mock_db, owner_headers, master_data):
+    """A rejection that fails authorization (an unassigned Employee, no permission on
+    this application) must never produce a notification — the notification is only
+    ever fired after the mutation and its audit log write have both already
+    succeeded."""
+    product = await _seed_rich_product_and_form(mock_db, product_name="Business Loan Notify F")
+    headers, application_id = await _start_application(client, product, mobile="9800000222")
+    upload = await _upload(client, application_id, product["pan_doc_id"], headers, file_name="pan.jpg")
+    document_id = upload.json()["data"]["id"]
+
+    bystander = await _create_employee(client, owner_headers, master_data, mobile="9500000222", email="bystander-notify@example.com")
+    bystander_headers = await _login(client, "9500000222", "InitialPass1!")
+    r = await client.patch(
+        f"/api/v1/applications/{application_id}/documents/{document_id}/reject", json={"reason": "Blurry."}, headers=bystander_headers,
+    )
+    assert r.status_code == 403, r.text
+
+    r = await client.get("/api/v1/notifications/unread-count", headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["unread_count"] == 0

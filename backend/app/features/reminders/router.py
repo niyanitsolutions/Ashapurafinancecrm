@@ -128,11 +128,22 @@ async def deactivate_reminder_rule(rule_id: str, service: ServiceDep, actor: Ann
 
 
 # ---------------------------------------------------------------------- notifications (self-service)
+#
+# Decision #135: widened from staff-only (`require_staff`) to any authenticated user
+# (`CurrentUserDep` alone) — a Customer must be able to read/mark-read their own
+# notifications too (e.g. Document Rejected), not just Owner/Employee. Safe to widen
+# because every method below (`RemindersService.list_notifications`/`get_unread_count`/
+# `mark_notification_read`/`archive_notification`/`dismiss_notification`) already scopes
+# strictly to `current_user.require_id()` — `_get_own_notification` 404s on any
+# notification belonging to someone else, staff or customer alike — so this was purely a
+# role check sitting in front of an already-correctly-scoped, already-IDOR-safe read/
+# write, not new authorization logic. `complete_task` above intentionally keeps its own
+# `StaffDep` — completing an internal staff Task is not a self-service action.
 
 
 @router.get("/notifications")
 async def list_notifications(
-    service: ServiceDep, current_user: CurrentUserDep, _staff: StaffDep, page: PageParamsDep, status: str | None = None, category: str | None = None
+    service: ServiceDep, current_user: CurrentUserDep, page: PageParamsDep, status: str | None = None, category: str | None = None
 ) -> ApiResponse[list[NotificationResponse]]:
     notifications, total = await service.list_notifications(current_user, status=status, category=category, skip=page.skip, limit=page.page_size, sort=page.sort)
     items = [mappers.notification_to_response(n) for n in notifications]
@@ -140,24 +151,24 @@ async def list_notifications(
 
 
 @router.get("/notifications/unread-count")
-async def get_unread_count(service: ServiceDep, current_user: CurrentUserDep, _staff: StaffDep) -> ApiResponse[dict[str, int]]:
+async def get_unread_count(service: ServiceDep, current_user: CurrentUserDep) -> ApiResponse[dict[str, int]]:
     count = await service.get_unread_count(current_user)
     return ApiResponse[dict[str, int]].ok({"unread_count": count})
 
 
 @router.post("/notifications/{notification_id}/read")
-async def mark_notification_read(notification_id: str, service: ServiceDep, current_user: CurrentUserDep, _staff: StaffDep) -> ApiResponse[NotificationResponse]:
+async def mark_notification_read(notification_id: str, service: ServiceDep, current_user: CurrentUserDep) -> ApiResponse[NotificationResponse]:
     notification = await service.mark_notification_read(notification_id, current_user)
     return ApiResponse[NotificationResponse].ok(mappers.notification_to_response(notification))
 
 
 @router.post("/notifications/{notification_id}/archive")
-async def archive_notification(notification_id: str, service: ServiceDep, current_user: CurrentUserDep, _staff: StaffDep) -> ApiResponse[NotificationResponse]:
+async def archive_notification(notification_id: str, service: ServiceDep, current_user: CurrentUserDep) -> ApiResponse[NotificationResponse]:
     notification = await service.archive_notification(notification_id, current_user)
     return ApiResponse[NotificationResponse].ok(mappers.notification_to_response(notification))
 
 
 @router.post("/notifications/{notification_id}/dismiss")
-async def dismiss_notification(notification_id: str, service: ServiceDep, current_user: CurrentUserDep, _staff: StaffDep) -> ApiResponse[NotificationResponse]:
+async def dismiss_notification(notification_id: str, service: ServiceDep, current_user: CurrentUserDep) -> ApiResponse[NotificationResponse]:
     notification = await service.dismiss_notification(notification_id, current_user)
     return ApiResponse[NotificationResponse].ok(mappers.notification_to_response(notification))

@@ -116,7 +116,18 @@ export function DocumentsPage() {
             onMarkNotAvailable={(documentTypeId) => onMarkNotAvailable(application.id, documentTypeId)}
             canMarkNotAvailable={application.status !== "submitted"}
             uploadingFor={uploadingFor}
-            disabled={application.status === "submitted"}
+            // Deliberately NOT disabled once submitted: `confirm_document` (the actual
+            // backend upload endpoint) has no submission-status gate at all — re-upload
+            // after submission is exactly how the reject/re-upload lifecycle is meant to
+            // work, since staff review (and therefore rejection) only ever happens AFTER
+            // submission. Blanket-disabling here used to make a rejected document's
+            // "Re-upload" control unreachable from this page — the Staff Portal's own
+            // equivalent page never disabled DocumentChecklist at all, so this was a
+            // real Customer-Portal-only regression, not a deliberate restriction.
+            // `DocumentSlot`'s own per-document gate (`canAddMore`) already correctly
+            // blocks touching a document that's pending/verified and not eligible for
+            // re-upload; only a genuinely rejected (or not-yet-uploaded, or
+            // multiple-upload) document ever exposes an upload control here.
           />
         </div>
       ))}

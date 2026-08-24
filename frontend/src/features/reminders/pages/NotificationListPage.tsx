@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { EmptyState } from "@/components/layout/EmptyState";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { Pagination } from "@/components/tables/Pagination";
+import { useAuth } from "@/features/auth/useAuth";
 import { getErrorMessage } from "@/features/customer/errors";
 import {
   archiveNotification,
@@ -11,6 +13,19 @@ import {
   type AppNotification,
 } from "@/features/reminders/api";
 import { formatISTDateTime } from "@/shared/dateFormat";
+
+// A "View" destination derived purely from `entity_type`/`entity_id` — role-aware since
+// this same list is shared by the Staff Notifications page and the Customer Portal's
+// own alerts inbox. Today only `document_rejected` ever produces an "application"
+// entity_type notification, but this stays generic rather than special-cased to that
+// one type, so any future application-related notification gets the same "View"
+// affordance for free.
+function entityLink(n: AppNotification, role: string | null): string | null {
+  if (n.entity_type === "application" && n.entity_id) {
+    return role === "owner" || role === "employee" ? `/applications/${n.entity_id}` : "/portal/documents";
+  }
+  return null;
+}
 
 const PAGE_SIZE = 20;
 // Same rationale as LeadListPage's poll — no push transport exists in this project yet,
@@ -29,6 +44,7 @@ const CATEGORIES = [
 ];
 
 export function NotificationListPage() {
+  const { role } = useAuth();
   const [items, setItems] = useState<AppNotification[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -108,6 +124,15 @@ export function NotificationListPage() {
                 <div className="text-xs text-text/40 mt-1">{formatISTDateTime(n.created_at)}</div>
               </div>
               <div className="flex gap-2 shrink-0">
+                {entityLink(n, role) && (
+                  <Link
+                    to={entityLink(n, role) as string}
+                    onClick={() => n.status === "unread" && run(() => markNotificationRead(n.id))}
+                    className="text-xs font-medium text-primary hover:underline"
+                  >
+                    View
+                  </Link>
+                )}
                 {n.status === "unread" && (
                   <button type="button" onClick={() => run(() => markNotificationRead(n.id))} className="text-xs text-primary hover:underline">Mark Read</button>
                 )}
