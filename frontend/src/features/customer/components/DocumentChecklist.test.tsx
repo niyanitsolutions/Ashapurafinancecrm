@@ -242,3 +242,100 @@ describe("documentCompletionSummary — Front & Back counts as one requirement, 
     expect(summary.completed).toBe(1);
   });
 });
+
+// Production bug: once a non-multiple-upload document had ANY current upload, the
+// "Re-upload" drop-zone was hidden permanently — including for a REJECTED document,
+// which made re-uploading impossible from the UI even though the backend already
+// supported it. Root cause was in `DocumentSlot`'s `canAddMore` gate, shared by both
+// portals (Staff and Customer render this exact same component).
+
+describe("DocumentChecklist — Re-upload control after rejection (real production bug)", () => {
+  it("shows a Re-upload control for a rejected, single-upload document", () => {
+    const rejected = makeUploadedDoc({
+      id: "doc-1", document_type_id: "dt-pan", document_type_name: "PAN Card",
+      verification_status: "rejected", rejection_reason: "Blurry scan.", side: null,
+    });
+    render(<DocumentChecklist requiredDocuments={[PAN_DOC]} uploadedDocuments={[rejected]} onUpload={vi.fn()} uploadingFor={null} />);
+
+    expect(screen.getByText(/Rejected — Blurry scan\./i)).toBeInTheDocument();
+    expect(screen.getByText("Re-upload")).toBeInTheDocument();
+  });
+
+  it("does not show a Re-upload control for a pending (not yet reviewed) single-upload document", () => {
+    const pending = makeUploadedDoc({ id: "doc-1", document_type_id: "dt-pan", verification_status: "pending", side: null });
+    render(<DocumentChecklist requiredDocuments={[PAN_DOC]} uploadedDocuments={[pending]} onUpload={vi.fn()} uploadingFor={null} />);
+
+    expect(screen.queryByText("Re-upload")).not.toBeInTheDocument();
+  });
+
+  it("does not show a Re-upload control for a verified single-upload document", () => {
+    const verified = makeUploadedDoc({ id: "doc-1", document_type_id: "dt-pan", verification_status: "verified", side: null });
+    render(<DocumentChecklist requiredDocuments={[PAN_DOC]} uploadedDocuments={[verified]} onUpload={vi.fn()} uploadingFor={null} />);
+
+    expect(screen.queryByText("Re-upload")).not.toBeInTheDocument();
+  });
+
+  it("re-uploading a rejected document forwards the new file through onUpload, superseding the old one", async () => {
+    const onUpload = vi.fn();
+    const rejected = makeUploadedDoc({ id: "doc-1", document_type_id: "dt-pan", verification_status: "rejected", rejection_reason: "Blurry.", side: null });
+    const { container } = render(
+      <DocumentChecklist requiredDocuments={[PAN_DOC]} uploadedDocuments={[rejected]} onUpload={onUpload} uploadingFor={null} />,
+    );
+    const user = userEvent.setup();
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(fileInput, makeFile("pan_v2.pdf"));
+
+    expect(onUpload).toHaveBeenCalledWith("dt-pan", expect.any(File), undefined, undefined);
+  });
+
+  it("Front/Back: rejecting only one side shows Re-upload for that side only, not the verified side", () => {
+    const rejectedFront = makeUploadedDoc({ id: "doc-front", side: "front", verification_status: "rejected", rejection_reason: "Blurry front." });
+    const verifiedBack = makeUploadedDoc({ id: "doc-back", side: "back", verification_status: "verified" });
+    render(
+      <DocumentChecklist
+        requiredDocuments={[DRIVING_LICENCE_DOC]}
+        uploadedDocuments={[rejectedFront, verifiedBack]}
+        onUpload={vi.fn()}
+        uploadingFor={null}
+      />,
+    );
+
+    expect(screen.getByText("Re-upload Front")).toBeInTheDocument();
+    expect(screen.queryByText("Re-upload Back")).not.toBeInTheDocument();
+  });
+
+  it("re-uploading a rejected password-protected document forwards the freshly typed password, not the old one", async () => {
+    const onUpload = vi.fn();
+    const rejected = makeUploadedDoc({
+      id: "doc-1", document_type_id: "dt-bank", document_type_name: "Bank Statement",
+      verification_status: "rejected", rejection_reason: "Wrong statement.", side: null, has_password: true,
+    });
+    const { container } = render(
+      <DocumentChecklist requiredDocuments={[BANK_STATEMENT_DOC]} uploadedDocuments={[rejected]} onUpload={onUpload} uploadingFor={null} />,
+    );
+    expect(screen.getByText("Re-upload")).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText(/Bank Statement Password/i), "NewPassword123");
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(fileInput, makeFile("statement_v2.pdf"));
+
+    expect(onUpload).toHaveBeenCalledWith("dt-bank", expect.any(File), "NewPassword123", undefined);
+  });
+
+  it("Front/Back: rejecting only the back side shows Re-upload for the back only", () => {
+    const verifiedFront = makeUploadedDoc({ id: "doc-front", side: "front", verification_status: "verified" });
+    const rejectedBack = makeUploadedDoc({ id: "doc-back", side: "back", verification_status: "rejected", rejection_reason: "Blurry back." });
+    render(
+      <DocumentChecklist
+        requiredDocuments={[DRIVING_LICENCE_DOC]}
+        uploadedDocuments={[verifiedFront, rejectedBack]}
+        onUpload={vi.fn()}
+        uploadingFor={null}
+      />,
+    );
+
+    expect(screen.getByText("Re-upload Back")).toBeInTheDocument();
+    expect(screen.queryByText("Re-upload Front")).not.toBeInTheDocument();
+  });
+});

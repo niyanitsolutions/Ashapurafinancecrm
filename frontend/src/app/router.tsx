@@ -226,18 +226,31 @@ export const router = createBrowserRouter([
             element: <LoanManagementLayout />,
             children: [
               { index: true, element: <Navigate to="/loan-management/cases" replace /> },
-              { path: "cases", element: <LoanCaseListPage fixedStatus="new_customer" /> },
-              { path: "credit-evaluation", element: <LoanCaseListPage fixedStatus="credit_evaluation" /> },
-              { path: "offer-acceptance", element: <LoanCaseListPage fixedStatus="offer_acceptance" /> },
-              { path: "additional-documents", element: <LoanCaseListPage fixedStatus="additional_documents" /> },
-              { path: "rv-ov-ref", element: <LoanCaseListPage fixedStatus="rv_ov_ref" /> },
-              { path: "esign-nach-kyc", element: <LoanCaseListPage fixedStatus="esign_nach_kyc" /> },
-              { path: "final-evaluation", element: <LoanCaseListPage fixedStatus="final_evaluation" /> },
-              { path: "send-for-disbursement", element: <LoanCaseListPage fixedStatus="send_for_disbursement" /> },
-              { path: "disbursements", element: <LoanCaseListPage fixedStatus="disbursed" /> },
-              { path: "on-hold", element: <LoanCaseListPage fixedStatus="on_hold" /> },
-              { path: "re-eligible", element: <LoanCaseListPage fixedStatus="re_eligible" /> },
-              { path: "rejected", element: <LoanCaseListPage fixedStatus="rejected" /> },
+              // Production bug: every tab below renders the SAME <LoanCaseListPage>
+              // component type at the SAME position under this layout's <Outlet/>, just
+              // with a different `fixedStatus`. React Router does not remount a
+              // component across sibling routes like this on its own — it reuses the
+              // instance and only updates props — so `CaseListPage`'s internal `status`/
+              // `page`/`search`/`unassignedOnly` state (seeded once via a `useState`
+              // lazy initializer) stayed frozen at whichever tab was opened first, no
+              // matter which tab the badges said should be showing. Every subsequent tab
+              // click kept querying that first tab's status, which is exactly why the
+              // list looked "stuck empty" while its own badge correctly showed a nonzero
+              // count. An explicit `key` per tab forces a genuine remount on tab change,
+              // resetting every bit of that state correctly with zero changes needed
+              // inside CaseListPage.tsx itself.
+              { path: "cases", element: <LoanCaseListPage key="new_customer" fixedStatus="new_customer" /> },
+              { path: "credit-evaluation", element: <LoanCaseListPage key="credit_evaluation" fixedStatus="credit_evaluation" /> },
+              { path: "offer-acceptance", element: <LoanCaseListPage key="offer_acceptance" fixedStatus="offer_acceptance" /> },
+              { path: "additional-documents", element: <LoanCaseListPage key="additional_documents" fixedStatus="additional_documents" /> },
+              { path: "rv-ov-ref", element: <LoanCaseListPage key="rv_ov_ref" fixedStatus="rv_ov_ref" /> },
+              { path: "esign-nach-kyc", element: <LoanCaseListPage key="esign_nach_kyc" fixedStatus="esign_nach_kyc" /> },
+              { path: "final-evaluation", element: <LoanCaseListPage key="final_evaluation" fixedStatus="final_evaluation" /> },
+              { path: "send-for-disbursement", element: <LoanCaseListPage key="send_for_disbursement" fixedStatus="send_for_disbursement" /> },
+              { path: "disbursements", element: <LoanCaseListPage key="disbursed" fixedStatus="disbursed" /> },
+              { path: "on-hold", element: <LoanCaseListPage key="on_hold" fixedStatus="on_hold" /> },
+              { path: "re-eligible", element: <LoanCaseListPage key="re_eligible" fixedStatus="re_eligible" /> },
+              { path: "rejected", element: <LoanCaseListPage key="rejected" fixedStatus="rejected" /> },
             ],
           },
           {
@@ -245,10 +258,13 @@ export const router = createBrowserRouter([
             element: <InsuranceManagementLayout />,
             children: [
               { index: true, element: <Navigate to="/insurance-management/cases" replace /> },
-              { path: "cases", element: <InsuranceCaseListPage /> },
-              { path: "policies-issued", element: <InsuranceCaseListPage fixedStatus="policy_issued" /> },
-              { path: "re-eligible", element: <InsuranceCaseListPage reEligible /> },
-              { path: "rejected", element: <InsuranceCaseListPage fixedStatus="rejected" /> },
+              // Same shared <CaseListPage> component/bug as Loan Management above — see
+              // the comment there. Keyed identically so tab-to-tab navigation here also
+              // forces a real remount instead of reusing stale filter state.
+              { path: "cases", element: <InsuranceCaseListPage key="cases" /> },
+              { path: "policies-issued", element: <InsuranceCaseListPage key="policy_issued" fixedStatus="policy_issued" /> },
+              { path: "re-eligible", element: <InsuranceCaseListPage key="re_eligible" reEligible /> },
+              { path: "rejected", element: <InsuranceCaseListPage key="rejected" fixedStatus="rejected" /> },
             ],
           },
           // Module 6D — Tasks permission-gated server-side (require_permission

@@ -114,7 +114,15 @@ function DocumentSlot({
   const uploadedDocs = current.filter((d) => d.document_status === "uploaded");
   const notAvailable = uploadedDocs.length === 0 && current.some((d) => d.document_status === "not_available");
   const hasUploads = uploadedDocs.length > 0;
-  const canAddMore = !disabled && (isMultiple || !hasUploads);
+  // A rejected single-slot upload must stay replaceable — the reviewer already said no,
+  // so the applicant/staff needs a way to supply a new file without deleting anything
+  // manually. The backend's insert-then-sweep supersede (CustomerService.confirm_document)
+  // already handles this correctly regardless of the current document's status; this was
+  // purely a frontend gap — `canAddMore` used to go permanently false the instant ANY
+  // upload existed for a non-multiple document, rejected or not, hiding the "Re-upload"
+  // control exactly when it was needed most.
+  const hasReplaceableRejection = uploadedDocs.some((d) => d.verification_status === "rejected");
+  const canAddMore = !disabled && (isMultiple || !hasUploads || hasReplaceableRejection);
 
   return (
     <div className={side ? "mt-2 rounded-md border border-border/60 p-2.5" : undefined}>
@@ -148,7 +156,7 @@ function DocumentSlot({
               maxSizeBytes={maxSizeMb ? maxSizeMb * 1024 * 1024 : null}
               onFile={onUpload}
               compact
-              compactLabel={isMultiple ? "Add Document" : "Re-upload"}
+              compactLabel={isMultiple ? "Add Document" : side ? `Re-upload ${side.charAt(0).toUpperCase()}${side.slice(1)}` : "Re-upload"}
             />
           ) : (
             <FileDropZone accept={allowedTypes} maxSizeBytes={maxSizeMb ? maxSizeMb * 1024 * 1024 : null} onFile={onUpload} />

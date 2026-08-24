@@ -859,3 +859,45 @@ async def test_existing_schema_without_new_fields_behaves_exactly_as_before(clie
     r = await _upload(client, application_id, product["pan_doc_id"], headers, file_name="pan.jpg")
     assert r.status_code == 200, r.text
     assert r.json()["data"]["side"] is None
+
+
+async def test_legacy_rejected_document_missing_the_side_field_entirely_can_still_be_reuploaded(client, mock_db, owner_headers):
+    """Real production data predates `side`/`front_back_upload`/`password_protected` —
+    a raw Mongo row from before this round has no `side` key in its document AT ALL
+    (not even `null`), since it was inserted by code that never knew the field existed.
+    Confirms the read path (`ApplicationDocument.model_validate`, defaulting the
+    missing key) and the reject-then-reupload flow both work unchanged against that
+    exact shape, not just against freshly-written rows that happen to include the new
+    fields explicitly."""
+    from bson import ObjectId
+
+    product = await _seed_rich_product_and_form(mock_db, product_name="Business Loan Legacy")
+    headers, application_id = await _start_application(client, product, mobile="9800000215")
+    first = await _upload(client, application_id, product["pan_doc_id"], headers, file_name="pan_legacy.jpg")
+    assert first.status_code == 200, first.text
+    document_id = first.json()["data"]["id"]
+
+    # Simulate genuinely pre-existing production data: strip the new field from the raw
+    # Mongo document entirely, then reject it exactly as staff would today.
+    await mock_db["application_documents"].update_one({"_id": ObjectId(document_id)}, {"$unset": {"side": ""}})
+    raw = await mock_db["application_documents"].find_one({"_id": ObjectId(document_id)})
+    assert "side" not in raw
+
+    r = await client.patch(
+        f"/api/v1/applications/{application_id}/documents/{document_id}/reject", json={"reason": "Illegible scan."}, headers=owner_headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["verification_status"] == "rejected"
+    assert r.json()["data"]["side"] is None  # reads back with the field defaulted, not an error
+
+    second = await _upload(client, application_id, product["pan_doc_id"], headers, file_name="pan_legacy_v2.jpg")
+    assert second.status_code == 200, second.text
+    new_data = second.json()["data"]
+    assert new_data["is_current"] is True
+    assert new_data["verification_status"] == "pending"
+    assert new_data["replaces_document_id"] == document_id
+
+    r = await client.get(f"/api/v1/applications/{application_id}/documents", headers=headers)
+    current_pan = [d for d in r.json()["data"] if d["document_type_id"] == product["pan_doc_id"]]
+    assert len(current_pan) == 1
+    assert current_pan[0]["file_name"] == "pan_legacy_v2.jpg"

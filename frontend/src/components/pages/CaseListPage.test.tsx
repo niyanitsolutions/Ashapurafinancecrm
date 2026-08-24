@@ -1,8 +1,8 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { Link, MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
-import { CaseListPage, type CaseListItem, type CaseListResponse } from "./CaseListPage";
+import { CaseListPage, type CaseListItem, type CaseListParams, type CaseListResponse } from "./CaseListPage";
 
 // Decision #130: `onUpdate` is an additive, opt-in prop — Insurance Management's own
 // wrapper never passes it, so its rendered list must show exactly the pre-existing
@@ -82,4 +82,74 @@ describe("CaseListPage row actions", () => {
     expect(viewLinks[0]).toHaveAttribute("href", "/loan-management/cases/case-1");
     expect(viewLinks[0]).not.toHaveAttribute("href", expect.stringContaining("/loan-cases/"));
   });
+});
+
+// Production bug: Loan Management's tab badges (Credit Evaluation, Offer Acceptance,
+// ...) showed real counts, but clicking a tab rendered "No cases match your filters" /
+// 0 of 0 — for every tab except whichever one was opened first. Root cause: every tab
+// route (/loan-management/cases, /loan-management/credit-evaluation, ...) renders the
+// SAME <CaseListPage> component type at the SAME position under the shared layout's
+// <Outlet/>, just with a different `fixedStatus` prop. React Router does not remount a
+// component across sibling routes like this — it reuses the instance and only updates
+// props — but `status` was seeded from `fixedStatus` via a `useState` LAZY INITIALIZER,
+// which only runs on the very first mount. Clicking from tab A to tab B (client-side
+// <Link> navigation, exactly what ModuleTabs uses) left the internal `status` state
+// frozen at tab A's value forever, so every subsequent tab's list query silently kept
+// filtering on the FIRST tab ever visited — while the tab badges (a separate component,
+// LoanManagementLayout, fetched independently via GET /loan-cases/counts) correctly
+// showed each tab's real count. This reproduces the exact symptom with the real
+// react-router-dom nested-route/Outlet mechanics, not a simplified mock — and locks in
+// the fix: an explicit, distinct `key` per tab route (applied in app/router.tsx), which
+// forces React to remount rather than reuse the instance across a tab switch.
+
+function TabbedLayout({ tabsTo }: { tabsTo: string[] }) {
+  return (
+    <div>
+      {tabsTo.map((to) => (
+        <Link key={to} to={to}>
+          {to}
+        </Link>
+      ))}
+      <Outlet />
+    </div>
+  );
+}
+
+describe("CaseListPage tab-to-tab navigation (shared Outlet position, no remount)", () => {
+  it("re-queries with the NEWLY navigated tab's fixedStatus, not the first tab ever mounted", async () => {
+    const calls: CaseListParams[] = [];
+    const spyListFn = (params: CaseListParams): Promise<CaseListResponse<CaseListItem>> => {
+      calls.push(params);
+      return Promise.resolve({ data: [], pagination: { total: 0 } });
+    };
+
+    render(
+      <MemoryRouter initialEntries={["/loan-management/cases"]}>
+        <Routes>
+          <Route element={<TabbedLayout tabsTo={["/loan-management/cases", "/loan-management/credit-evaluation"]} />}>
+            <Route
+              path="/loan-management/cases"
+              element={<CaseListPage key="new_customer" {...baseProps} listFn={spyListFn} fixedStatus="new_customer" />}
+            />
+            <Route
+              path="/loan-management/credit-evaluation"
+              element={<CaseListPage key="credit_evaluation" {...baseProps} listFn={spyListFn} fixedStatus="credit_evaluation" />}
+            />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(calls.length).toBeGreaterThan(0));
+    expect(calls.at(-1)?.status).toBe("new_customer");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("link", { name: "/loan-management/credit-evaluation" }));
+
+    await waitFor(() => expect(calls.at(-1)?.status).toBe("credit_evaluation"));
+    // Page must also reset — a stale page number left over from a previous tab (e.g.
+    // page 3 of a long New Customer list) must not silently produce an out-of-range,
+    // artificially-empty result on a tab with real data on page 1.
+    expect(calls.at(-1)?.page).toBe(1);
+  }, 10000);
 });

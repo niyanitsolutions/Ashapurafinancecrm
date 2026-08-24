@@ -3,6 +3,7 @@ on the owning document (e.g. a document_management record).
 """
 
 from functools import lru_cache
+from typing import Any
 
 import boto3
 from botocore.client import BaseClient
@@ -14,12 +15,25 @@ from app.config.storage import get_storage_config
 @lru_cache
 def get_s3_client() -> BaseClient:
     config = get_storage_config()
-    return boto3.client(
-        "s3",
-        aws_access_key_id=config.aws_access_key_id,
-        aws_secret_access_key=config.aws_secret_access_key,
-        region_name=config.aws_region,
-    )
+    # Root cause of the production "AuthorizationQueryParametersError ... non-empty
+    # Access Key (AKID) must be provided" error: this used to pass
+    # aws_access_key_id/aws_secret_access_key to boto3.client(...) unconditionally, even
+    # when they were empty strings (Settings' own default when AWS_ACCESS_KEY_ID/
+    # AWS_SECRET_ACCESS_KEY aren't set in the environment). Explicitly passing empty
+    # credentials forces boto3 into a "static creds" provider with a blank AKID/secret,
+    # signing every presigned URL with nothing — it never falls through to boto3's
+    # normal credential chain (env vars, shared config file, or — the production EC2
+    # deployment's actual setup — the instance's IAM role via the metadata service).
+    # Only pass explicit credentials when both are genuinely configured (e.g. local/
+    # staging using access keys directly); otherwise omit the kwargs entirely so
+    # boto3/botocore resolves credentials itself, including from an EC2 instance
+    # profile. Region is always passed — it's required for SigV4 presigning regardless
+    # of where the credentials come from.
+    client_kwargs: dict[str, Any] = {"region_name": config.aws_region}
+    if config.aws_access_key_id and config.aws_secret_access_key:
+        client_kwargs["aws_access_key_id"] = config.aws_access_key_id
+        client_kwargs["aws_secret_access_key"] = config.aws_secret_access_key
+    return boto3.client("s3", **client_kwargs)
 
 
 def generate_presigned_upload_url(key: str, *, expires_in: int = 300, content_type: str | None = None) -> str:

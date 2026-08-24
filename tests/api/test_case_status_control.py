@@ -749,3 +749,57 @@ async def test_pagination_total_matches_filtered_query_not_the_tab_badge(client,
     assert len(body["data"]) == 1
     assert body["data"][0]["id"] == case_id_1
     assert body["meta"]["pagination"]["total"] == 1
+
+
+async def test_credit_evaluation_badge_matches_list_exactly(client, mock_db, owner_headers, master_data):
+    """The literal production report: 'Credit Evaluation (4)' badge, but clicking the
+    tab showed 0 results. Confirms this specific stage (reached via the real
+    new-customer-details action, not a synthetic status write) has no backend
+    count/list divergence — the actual production root cause was a frontend
+    tab-navigation bug (see CaseListPage.test.tsx), not this query."""
+    case_ids = []
+    for i in range(4):
+        case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix=f"0000010{i}")
+        await client.post(f"/api/v1/loan-cases/{case_id}/new-customer-details", json={}, headers=employee_headers)
+        case_ids.append(case_id)
+
+    counts = (await client.get("/api/v1/loan-cases/counts", headers=owner_headers)).json()["data"]
+    assert counts["credit_evaluation"] == 4
+
+    r = await client.get("/api/v1/loan-cases?status=credit_evaluation&page_size=100", headers=owner_headers)
+    body = r.json()
+    assert len(body["data"]) == 4
+    assert body["meta"]["pagination"]["total"] == 4
+    assert {c["id"] for c in body["data"]} == set(case_ids)
+
+
+async def test_offer_acceptance_badge_matches_list_exactly(client, mock_db, owner_headers, master_data):
+    """Same literal report for the 'Offer Acceptance (1)' badge — reached via the real
+    bank-offer-selection action."""
+    case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000105")
+    await client.post(f"/api/v1/loan-cases/{case_id}/new-customer-details", json={}, headers=employee_headers)
+    r = await client.post(
+        f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000},
+        headers=employee_headers,
+    )
+    offer_id = r.json()["data"]["id"]
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers/{offer_id}/select", headers=employee_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["current_status"] == "offer_acceptance"
+
+    counts = (await client.get("/api/v1/loan-cases/counts", headers=owner_headers)).json()["data"]
+    assert counts["offer_acceptance"] == 1
+    assert counts["credit_evaluation"] == 0
+
+    r = await client.get("/api/v1/loan-cases?status=offer_acceptance&page_size=100", headers=owner_headers)
+    body = r.json()
+    assert len(body["data"]) == 1
+    assert body["meta"]["pagination"]["total"] == 1
+    assert body["data"][0]["id"] == case_id
+
+    # And the now-empty Credit Evaluation tab genuinely has zero matching cases (not a
+    # hidden non-zero list contradicting its own zero badge).
+    r = await client.get("/api/v1/loan-cases?status=credit_evaluation&page_size=100", headers=owner_headers)
+    body = r.json()
+    assert len(body["data"]) == 0
+    assert body["meta"]["pagination"]["total"] == 0
