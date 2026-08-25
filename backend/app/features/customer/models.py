@@ -22,9 +22,11 @@ the Owner; `source="custom"` fields are Owner-authored and fully free. See
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.features.customer.constants import (
+    CANONICAL_GENDER_FIELD_KEY,
+    CANONICAL_GENDER_OPTIONS,
     ApplicationStatus,
     ConditionOperator,
     FieldFormat,
@@ -184,6 +186,25 @@ class FormFieldDefinition(BaseModel):
     master_key: str | None = None  # the FormTemplateMaster field this was cloned from
     placeholder: str | None = None  # real, Owner-editable — falls back to a label-derived one client-side
     hidden: bool = False  # the only way to "remove" a master field from the live form
+
+    @model_validator(mode="after")
+    def _enforce_canonical_gender_field(self) -> "FormFieldDefinition":
+        """Production fix — "Gender must be a dropdown in ALL Product Schemas." The
+        standardized Gender field (`key == "gender"`) is ALWAYS coerced to a static
+        Male/Female/Other Select here, at the one place every `FormFieldDefinition` in
+        this codebase is constructed — a fresh Mongo read (`model_validate`), a schema
+        create/update payload (`CustomerService._fields_from_payload`/`_merge_fields`),
+        or a `FormTemplateMaster` seed (`scripts/apply_product_schema.py`). This is what
+        makes every existing AND future product schema get the dropdown automatically,
+        with no per-product or per-caller code, and self-heals any already-stored
+        free-text "gender" field the moment it's next read or saved — no destructive
+        migration needed, since "Male"/"Female"/"Other" is also exactly the value
+        already stored on every legacy application."""
+        if self.key == CANONICAL_GENDER_FIELD_KEY:
+            self.field_type = FieldType.SELECT
+            self.options = list(CANONICAL_GENDER_OPTIONS)
+            self.options_source = OptionsSource.STATIC
+        return self
 
 
 class RequiredDocumentDefinition(BaseModel):

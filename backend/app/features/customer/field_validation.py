@@ -8,7 +8,7 @@ and Lead entry points — mirrored (not re-derived) on the frontend in
 import re
 from typing import Any
 
-from app.features.customer.constants import ConditionOperator, FieldFormat, FieldType
+from app.features.customer.constants import ConditionOperator, FieldFormat, FieldType, OptionsSource
 from app.features.customer.models import FormFieldDefinition
 
 # One regex per FieldFormat value — the engine-code half of the "engine is code, catalog
@@ -82,11 +82,23 @@ def validate_field_value(field: FormFieldDefinition, value: Any) -> str | None:
     if is_empty:
         return f"{field.label} is required." if field.required else None
 
+    text = str(value)
+    # Production fix — the frontend dropdown alone isn't sufficient: a static-options
+    # Select (the standardized Gender field included, since `FormFieldDefinition`'s own
+    # model_validator always gives it exactly Male/Female/Other) must reject any value
+    # outside its declared options. Scoped to `options_source == "static"` only — an
+    # "api"-sourced Select's real valid values live server-side elsewhere, not in this
+    # (possibly empty) `options` list, so this never breaks a dynamic-options custom
+    # field. Deliberately checked BEFORE the `field.validation is None` early-return
+    # below — a select field's options constraint doesn't depend on a `FieldValidation`
+    # block being configured at all.
+    if field.field_type == FieldType.SELECT and field.options_source == OptionsSource.STATIC and field.options and text not in field.options:
+        return f"{field.label} must be one of: {', '.join(field.options)}."
+
     validation = field.validation
     if validation is None:
         return None
 
-    text = str(value)
     if validation.min_length is not None and len(text) < validation.min_length:
         return f"{field.label} must be at least {validation.min_length} characters."
     if validation.max_length is not None and len(text) > validation.max_length:

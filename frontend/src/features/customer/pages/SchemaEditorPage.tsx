@@ -328,6 +328,11 @@ function FieldsTab({
     <div className="space-y-3 max-w-4xl">
       {fields.map((field, index) => {
         const isMaster = field.source === "master";
+        // Production fix — the standardized Gender field is always a Male/Female/Other
+        // Select, enforced server-side (see FormFieldDefinition's own model_validator)
+        // regardless of what's edited here; locking Type + Options avoids an Owner
+        // typing a change that's silently overridden on save.
+        const isGenderField = field.key === "gender";
         return (
           <div key={index} className="bg-card border border-border rounded-card shadow-card p-4">
             <div className="flex items-start justify-between gap-3 mb-3">
@@ -381,10 +386,15 @@ function FieldsTab({
                 />
               </label>
               <label className="text-xs text-text/60">
-                Type {isMaster && <span className="text-text/30">(locked — master field)</span>}
+                Type{" "}
+                {isGenderField ? (
+                  <span className="text-text/30">(locked — standard Gender field)</span>
+                ) : (
+                  isMaster && <span className="text-text/30">(locked — master field)</span>
+                )}
                 <select
                   value={field.field_type}
-                  disabled={disabled || isMaster}
+                  disabled={disabled || isMaster || isGenderField}
                   onChange={(e) => update(index, { field_type: e.target.value as FormField["field_type"] })}
                   className="mt-1 w-full rounded border border-border px-2.5 py-1.5 text-sm bg-card disabled:bg-background disabled:text-text/40"
                 >
@@ -406,10 +416,10 @@ function FieldsTab({
               </label>
               {field.field_type === "select" && (
                 <label className="text-xs text-text/60">
-                  Options (comma-separated)
+                  Options (comma-separated) {isGenderField && <span className="text-text/30">(always Male, Female, Other)</span>}
                   <input
                     value={(field.options ?? []).join(", ")}
-                    disabled={disabled}
+                    disabled={disabled || isGenderField}
                     onChange={(e) => update(index, { options: e.target.value.split(",").map((o) => o.trim()).filter(Boolean) })}
                     className="mt-1 w-full rounded border border-border px-2.5 py-1.5 text-sm disabled:bg-background"
                   />

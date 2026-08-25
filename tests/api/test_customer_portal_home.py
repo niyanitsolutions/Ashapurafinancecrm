@@ -127,6 +127,122 @@ async def test_dashboard_relationship_manager_not_seeded_when_no_matching_lead(c
     assert r.json()["data"]["relationship_manager"] is None
 
 
+async def test_dashboard_reflects_reassignment_to_a_different_employee_not_the_stale_one(client, mock_db, owner_headers, master_data):
+    """Scenario B/D of the RM-display report: staff reassigns to a different employee —
+    the portal must show the NEW employee, never the previous one. `_resolve_
+    rm_employee_id_for_application` always reads the live `Application`/Case
+    `assigned_to` field fresh on every dashboard call (no cached/duplicated copy), so
+    this is a regression guard on that "never stale" property, not a new code path."""
+    product = await _seed_product_and_form(mock_db)
+    customer_headers = await _register_customer(client, mock_db, mobile="9611111152")
+    r = await client.post(
+        "/api/v1/applications", json={"product_category": product["product_category"], "product_id": product["product_id"]}, headers=customer_headers
+    )
+    application_id = r.json()["data"]["id"]
+
+    first_employee = await _create_employee(client, owner_headers, master_data, mobile="9511111197", email="first-rm@example.com")
+    r = await client.post(f"/api/v1/applications/{application_id}/assign", json={"employee_id": first_employee["id"]}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    r = await client.get("/api/v1/customers/me/dashboard", headers=customer_headers)
+    assert r.json()["data"]["relationship_manager"]["id"] == first_employee["id"]
+
+    second_employee = await _create_employee(client, owner_headers, master_data, mobile="9511111196", email="second-rm@example.com")
+    r = await client.post(f"/api/v1/applications/{application_id}/assign", json={"employee_id": second_employee["id"]}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+
+    r = await client.get("/api/v1/customers/me/dashboard", headers=customer_headers)
+    rm = r.json()["data"]["relationship_manager"]
+    assert rm["id"] == second_employee["id"]
+    assert rm["id"] != first_employee["id"]
+    assert rm["email"] == "second-rm@example.com"
+
+
+async def test_dashboard_reflects_loan_case_reassignment(client, mock_db, owner_headers, master_data):
+    """Same "never stale" property, but through the Loan Case's own `assign_case` action
+    (the actual Staff Portal "Assigned To" screen for an in-pipeline case) rather than
+    the plain Application-level assign — `_resolve_rm_employee_id_for_application`
+    prefers the Case's `assigned_to` once a case exists, so this is the path a real
+    post-submission reassignment actually takes."""
+    await _seed_workflow_definitions(mock_db)
+    product = await _seed_product_and_form(mock_db)
+    customer_headers = await _register_customer(client, mock_db, mobile="9611111153")
+    r = await client.post(
+        "/api/v1/applications", json={"product_category": product["product_category"], "product_id": product["product_id"]}, headers=customer_headers
+    )
+    application_id = r.json()["data"]["id"]
+    await client.patch(f"/api/v1/applications/{application_id}", json={"form_data": {"loan_amount": 500000}}, headers=customer_headers)
+    upload = await client.post(
+        f"/api/v1/applications/{application_id}/documents/upload-url", json={"document_type_id": product["document_type_id"], "file_name": "pan.pdf"},
+        headers=customer_headers,
+    )
+    s3_key = upload.json()["data"]["s3_key"]
+    await client.post(
+        f"/api/v1/applications/{application_id}/documents",
+        json={"document_type_id": product["document_type_id"], "file_name": "pan.pdf", "s3_key": s3_key}, headers=customer_headers,
+    )
+    r = await client.post(f"/api/v1/applications/{application_id}/submit", json={}, headers=customer_headers)
+    assert r.status_code == 200, r.text
+
+    r = await client.get("/api/v1/loan-cases?unassigned_only=true", headers=owner_headers)
+    case_id = next(c["id"] for c in r.json()["data"] if c["application_id"] == application_id)
+
+    first_employee = await _create_employee(client, owner_headers, master_data, mobile="9511111195", email="case-first-rm@example.com")
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/assign", json={"employee_id": first_employee["id"]}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    r = await client.get("/api/v1/customers/me/dashboard", headers=customer_headers)
+    assert r.json()["data"]["relationship_manager"]["id"] == first_employee["id"]
+
+    second_employee = await _create_employee(client, owner_headers, master_data, mobile="9511111194", email="case-second-rm@example.com")
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/assign", json={"employee_id": second_employee["id"]}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+
+    r = await client.get("/api/v1/customers/me/dashboard", headers=customer_headers)
+    rm = r.json()["data"]["relationship_manager"]
+    assert rm["id"] == second_employee["id"]
+    assert rm["id"] != first_employee["id"]
+
+
+async def test_customer_cannot_see_another_customers_relationship_manager(client, mock_db, owner_headers, master_data):
+    """IDOR/ownership guard: Customer A's dashboard must never surface Customer B's RM
+    (or any other data) — `get_portal_dashboard` is scoped entirely by the authenticated
+    actor's own user id via `_resolve_primary_application`, never by a client-supplied
+    application/customer id."""
+    product = await _seed_product_and_form(mock_db)
+
+    customer_a_headers = await _register_customer(client, mock_db, mobile="9611111154")
+    r = await client.post(
+        "/api/v1/applications", json={"product_category": product["product_category"], "product_id": product["product_id"]}, headers=customer_a_headers
+    )
+    application_a_id = r.json()["data"]["id"]
+    employee_a = await _create_employee(client, owner_headers, master_data, mobile="9511111193", email="rm-a@example.com")
+    r = await client.post(f"/api/v1/applications/{application_a_id}/assign", json={"employee_id": employee_a["id"]}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+
+    customer_b_headers = await _register_customer(client, mock_db, mobile="9611111155")
+    r = await client.post(
+        "/api/v1/applications", json={"product_category": product["product_category"], "product_id": product["product_id"]}, headers=customer_b_headers
+    )
+    application_b_id = r.json()["data"]["id"]
+    employee_b = await _create_employee(client, owner_headers, master_data, mobile="9511111192", email="rm-b@example.com")
+    r = await client.post(f"/api/v1/applications/{application_b_id}/assign", json={"employee_id": employee_b["id"]}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+
+    r = await client.get("/api/v1/customers/me/dashboard", headers=customer_a_headers)
+    rm_a = r.json()["data"]["relationship_manager"]
+    assert rm_a["id"] == employee_a["id"]
+    assert rm_a["id"] != employee_b["id"]
+
+    r = await client.get("/api/v1/customers/me/dashboard", headers=customer_b_headers)
+    rm_b = r.json()["data"]["relationship_manager"]
+    assert rm_b["id"] == employee_b["id"]
+    assert rm_b["id"] != employee_a["id"]
+
+    # Direct application-id-based endpoints stay ownership-scoped too — Customer A can
+    # never fetch Customer B's application (or its RM) by simply supplying the id.
+    r = await client.get(f"/api/v1/applications/{application_b_id}", headers=customer_a_headers)
+    assert r.status_code == 403, r.text
+
+
 async def test_application_timeline_reflects_draft_then_submitted(client, mock_db, owner_headers):
     await _seed_workflow_definitions(mock_db)
     product = await _seed_product_and_form(mock_db)

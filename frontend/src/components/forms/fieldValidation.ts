@@ -55,10 +55,20 @@ export function validateField(field: FormField, value: unknown): string | null {
   if (isBlank(value)) {
     return field.required ? `${field.label} is required.` : null;
   }
+  const text = String(value);
+  if (field.field_type === "select" && field.options_source === "static" && field.options && field.options.length > 0) {
+    // Mirrors backend/app/features/customer/field_validation.py's own static-options
+    // membership check — UX only, the backend independently re-validates on submit.
+    // Deliberately checked BEFORE the `!validation` early-return below — a select
+    // field's options constraint doesn't depend on a `validation` block being set.
+    if (!field.options.includes(text)) {
+      return `${field.label} must be one of: ${field.options.join(", ")}.`;
+    }
+  }
+
   const validation = field.validation;
   if (!validation) return null;
 
-  const text = String(value);
   if (validation.min_length != null && text.length < validation.min_length) {
     return `${field.label} must be at least ${validation.min_length} characters.`;
   }

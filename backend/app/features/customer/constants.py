@@ -57,6 +57,21 @@ class OptionsSource:
     ALL = (STATIC, API)
 
 
+# Production fix — "Gender must be a dropdown in ALL Product Schemas." `key` is always
+# `_slugify(label)` for a field literally labelled "Gender" (see
+# scripts/seed_product_schemas.py's `F()` helper), so this one key is the same across
+# every product, current or future, master or custom. `FormFieldDefinition`'s own
+# model_validator (see models.py) enforces this — a field with this key is ALWAYS a
+# static-options Select with exactly these three options, no matter what field_type/
+# options a caller (a stale request payload, an old seeded document, a new schema being
+# authored) supplies. Values are the exact display strings (this schema engine's
+# `options: list[str]` has no separate value/label pair — see FormFieldDefinition), which
+# is also exactly what every pre-existing "Male"/"Female"/"Other" application already has
+# stored, so no data migration is needed for backward compatibility.
+CANONICAL_GENDER_FIELD_KEY = "gender"
+CANONICAL_GENDER_OPTIONS = ["Male", "Female", "Other"]
+
+
 # Product Schema Engine (Phase 2) — lifecycle for an `ApplicationFormDefinition`. Only
 # ACTIVE schemas are served by the shared by-product lookup every portal reads
 # (`find_by_product`); DRAFT lets an Owner build/edit a schema before it goes live,
