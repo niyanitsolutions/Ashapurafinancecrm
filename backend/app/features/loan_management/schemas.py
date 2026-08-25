@@ -52,32 +52,43 @@ class BankOfferRequest(BaseModel):
     """Add or edit one bank/NBFC's offer on a Loan Case — a case can carry any number of
     these; adding one never overwrites another (decision #129, superseding the old
     single-slot `BankDetailsRequest`/`OfferRequest` flow for Credit Evaluation/Offer
-    Acceptance)."""
+    Acceptance). Now also the New Customer stage's own bank/NBFC capture (this round):
+    `branch`/`loan_type`/`requested_amount` are populated there; `decision` is left
+    `None` (persisted as `pending`) until a real Credit Evaluation decision is made."""
 
     bank_name: str
+    branch: str | None = None
+    loan_type: str | None = None
+    requested_amount: float | None = None
     bank_application_id: str | None = None
     reference_number: str | None = None
     assigned_officer: str | None = None
-    decision: str
+    decision: str | None = None
     approved_amount: float | None = None
     interest_rate: float | None = None
     tenure_months: int | None = None
     processing_fee: float | None = None
+    emi_per_month: float | None = None
     remarks: str | None = None
 
     @field_validator("decision")
     @classmethod
-    def _decision_must_be_valid(cls, value: str) -> str:
+    def _decision_must_be_valid(cls, value: str | None) -> str:
+        value = value or BankOfferDecision.PENDING
         if value not in BankOfferDecision.ALL:
             raise ValueError(f"'{value}' is not a valid bank offer decision.")
         return value
 
     @model_validator(mode="after")
-    def _approved_amount_required_iff_approved(self) -> "BankOfferRequest":
-        if self.decision == BankOfferDecision.APPROVED and self.approved_amount is None:
-            raise ValueError("approved_amount is required when decision is 'approved'.")
-        if self.decision != BankOfferDecision.APPROVED:
+    def _approved_amount_and_emi_required_iff_approved(self) -> "BankOfferRequest":
+        if self.decision == BankOfferDecision.APPROVED:
+            if self.approved_amount is None:
+                raise ValueError("approved_amount is required when decision is 'approved'.")
+            if self.emi_per_month is None:
+                raise ValueError("emi_per_month is required when decision is 'approved'.")
+        else:
             self.approved_amount = None
+            self.emi_per_month = None
         return self
 
 
@@ -161,10 +172,28 @@ class LoanCaseListItem(BaseModel):
     created_at: datetime
 
 
-class LoanCaseDetailResponse(LoanCaseListItem):
-    pending_document_type_ids: list[str]
-    loan_details: LoanCaseDetailsResponse
-    updated_at: datetime
+class LoanCaseCustomerSummary(BaseModel):
+    """Requirement 21.B — the customer profile already collected before Loan Management,
+    surfaced read-only here (never edited through this module)."""
+
+    full_name: str
+    mobile: str
+    email: str | None
+    date_of_birth: datetime | None
+    address_line1: str | None
+    address_line2: str | None
+    city: str | None
+    state: str | None
+    pincode: str | None
+
+
+class LoanCaseApplicationSummary(BaseModel):
+    """Requirement 21.C — the underlying Application's own fields, read-only."""
+
+    application_code: str
+    product_category: str
+    status: str
+    submitted_at: datetime | None
 
 
 class BankOfferResponse(BaseModel):
@@ -173,6 +202,9 @@ class BankOfferResponse(BaseModel):
     id: str
     loan_case_id: str
     bank_name: str
+    branch: str | None
+    loan_type: str | None
+    requested_amount: float | None
     bank_application_id: str | None
     reference_number: str | None
     assigned_officer: str | None
@@ -181,6 +213,7 @@ class BankOfferResponse(BaseModel):
     interest_rate: float | None
     tenure_months: int | None
     processing_fee: float | None
+    emi_per_month: float | None
     remarks: str | None
     is_selected: bool
     selected_at: datetime | None
@@ -189,14 +222,99 @@ class BankOfferResponse(BaseModel):
     updated_at: datetime
 
 
+class LoanCaseDetailResponse(LoanCaseListItem):
+    pending_document_type_ids: list[str]
+    loan_details: LoanCaseDetailsResponse
+    updated_at: datetime
+    allowed_previous_statuses: list[str] = Field(default_factory=list)
+    customer: LoanCaseCustomerSummary | None = None
+    application: LoanCaseApplicationSummary | None = None
+    bank_offers: list[BankOfferResponse] = Field(default_factory=list)
+
+
+class AdditionalDocumentRequest(BaseModel):
+    name: str = Field(min_length=1)
+
+
+class RejectAdditionalDocumentRequest(BaseModel):
+    reason: str = Field(min_length=1)
+
+
+class AdditionalDocumentUploadUrlRequest(BaseModel):
+    file_name: str
+    content_type: str | None = None
+
+
+class AdditionalDocumentUploadUrlResponse(BaseModel):
+    upload_url: str
+    s3_key: str
+
+
+class ConfirmAdditionalDocumentRequest(BaseModel):
+    file_name: str
+    # Accepted for symmetry with Module 6B's `ConfirmDocumentRequest` but never trusted —
+    # the real S3 key is re-derived server-side, same reasoning as that schema.
+    s3_key: str
+    content_type: str | None = None
+
+
+class AdditionalDocumentResponse(BaseModel):
+    id: str
+    loan_case_id: str
+    name: str
+    document_status: str
+    verification_status: str
+    rejection_reason: str | None
+    file_name: str | None
+    download_url: str | None = None
+    attachment_url: str | None = None
+    uploaded_at: datetime | None
+    verified_by_name: str | None = None
+    verified_at: datetime | None
+    created_at: datetime
+
+
+class CaseRemarksRequest(BaseModel):
+    """Generic optional-remarks body — used by both `move_to_credit_evaluation` (a
+    forward move) and `move_back` (this round's new backward move); neither carries any
+    other data."""
+
+    remarks: str | None = None
+
+
+class DisbursementItem(BaseModel):
+    id: str
+    case_code: str
+    customer_name: str | None
+    product_name: str
+    approved_amount: float | None
+    disbursed_amount: float | None
+    disbursed_reference: str | None
+    disbursed_at: datetime | None
+
+
+class DisbursementListResponse(BaseModel):
+    """List + aggregate from the SAME filtered query (requirement 29) — the card and the
+    table can never disagree because they're read off this one response."""
+
+    items: list[DisbursementItem]
+    total_count: int
+    total_amount: float
+
+
 class CustomerBankOfferResponse(BaseModel):
     """Customer-facing view — approved offers only, trimmed to exactly the fields the
-    spec allows a customer to see. No bank_application_id/reference_number/
-    assigned_officer/remarks/decision — those are staff-only (decision #129)."""
+    spec allows a customer to see (bank + full offer economics). No
+    bank_application_id/reference_number/assigned_officer/remarks/decision — those stay
+    staff-only (decision #129)."""
 
     id: str
     bank_name: str
     approved_amount: float
+    interest_rate: float | None
+    tenure_months: int | None
+    processing_fee: float | None
+    emi_per_month: float | None
 
 
 class LoanCaseCountsResponse(BaseModel):

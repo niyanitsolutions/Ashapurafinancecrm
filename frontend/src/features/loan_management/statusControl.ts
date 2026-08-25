@@ -25,18 +25,36 @@ export type StatusControlAction =
   | { kind: "none" };
 
 const LOAN_STATUS_CONTROL: Record<string, StatusControlAction[]> = {
-  new_customer: [{ kind: "dedicated", actionLabel: "New Customer Details" }],
+  // This round: New Customer's bank/NBFC records are saved independently (Add/Edit/
+  // Delete, no transition attached) and "Move to Credit Evaluation" is its own dedicated
+  // action requiring >=1 record — see UpdateLoanCaseModal's NewCustomerBankOffers panel.
+  new_customer: [
+    { kind: "dedicated", actionLabel: "Bank / NBFC Offers" },
+    { kind: "simple", nextStatus: "rejected", label: "Reject" },
+  ],
   credit_evaluation: [
     { kind: "dedicated", actionLabel: "Bank / NBFC Offers" },
     { kind: "simple", nextStatus: "rejected", label: "Reject" },
     { kind: "simple", nextStatus: "re_eligible", label: "Mark Re-Eligible" },
   ],
   offer_acceptance: [{ kind: "dedicated", actionLabel: "Offer Acceptance" }],
-  additional_documents: [{ kind: "simple", nextStatus: "rv_ov_ref" }],
-  rv_ov_ref: [{ kind: "simple", nextStatus: "esign_nach_kyc" }],
-  esign_nach_kyc: [{ kind: "dedicated", actionLabel: "eSign / NACH / KYC Checklist" }],
+  additional_documents: [
+    { kind: "simple", nextStatus: "rv_ov_ref", label: "Move to RV / OV / Ref" },
+    { kind: "simple", nextStatus: "rejected", label: "Reject" },
+  ],
+  rv_ov_ref: [
+    { kind: "simple", nextStatus: "esign_nach_kyc" },
+    { kind: "simple", nextStatus: "rejected", label: "Reject" },
+  ],
+  esign_nach_kyc: [
+    { kind: "dedicated", actionLabel: "eSign / NACH / KYC Checklist" },
+    { kind: "simple", nextStatus: "rejected", label: "Reject" },
+  ],
   final_evaluation: [{ kind: "dedicated", actionLabel: "Final Evaluation" }],
-  send_for_disbursement: [{ kind: "dedicated", actionLabel: "Disbursement" }],
+  send_for_disbursement: [
+    { kind: "dedicated", actionLabel: "Disbursement" },
+    { kind: "simple", nextStatus: "rejected", label: "Reject" },
+  ],
   on_hold: [{ kind: "dedicated", actionLabel: "Resume" }],
   re_eligible: [
     { kind: "simple", nextStatus: "credit_evaluation", label: "Move to Credit Evaluation" },

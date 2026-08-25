@@ -20,6 +20,8 @@ import { ApplicationListPage } from "@/features/customer/pages/ApplicationListPa
 import { ApplicationPage } from "@/features/customer/pages/ApplicationPage";
 import { ApplicationTimelinePage } from "@/features/customer/pages/ApplicationTimelinePage";
 import { LoanOffersPage } from "@/features/customer/pages/LoanOffersPage";
+import { AdditionalDocumentsPage } from "@/features/customer/pages/AdditionalDocumentsPage";
+import { DisbursementsPage } from "@/features/loan_management/pages/DisbursementsPage";
 import { CompleteProfilePage } from "@/features/customer/pages/CompleteProfilePage";
 import { CustomerDetailsPage } from "@/features/customer/pages/CustomerDetailsPage";
 import { CustomerListPage } from "@/features/customer/pages/CustomerListPage";
@@ -247,7 +249,7 @@ export const router = createBrowserRouter([
               { path: "esign-nach-kyc", element: <LoanCaseListPage key="esign_nach_kyc" fixedStatus="esign_nach_kyc" /> },
               { path: "final-evaluation", element: <LoanCaseListPage key="final_evaluation" fixedStatus="final_evaluation" /> },
               { path: "send-for-disbursement", element: <LoanCaseListPage key="send_for_disbursement" fixedStatus="send_for_disbursement" /> },
-              { path: "disbursements", element: <LoanCaseListPage key="disbursed" fixedStatus="disbursed" /> },
+              { path: "disbursements", element: <DisbursementsPage key="disbursements" /> },
               { path: "on-hold", element: <LoanCaseListPage key="on_hold" fixedStatus="on_hold" /> },
               { path: "re-eligible", element: <LoanCaseListPage key="re_eligible" fixedStatus="re_eligible" /> },
               { path: "rejected", element: <LoanCaseListPage key="rejected" fixedStatus="rejected" /> },
@@ -414,6 +416,7 @@ export const router = createBrowserRouter([
               { path: "/portal/applications/:id", element: <ApplicationPage /> },
               { path: "/portal/applications/:id/timeline", element: <ApplicationTimelinePage /> },
               { path: "/portal/applications/:id/loan-offers", element: <LoanOffersPage /> },
+              { path: "/portal/applications/:id/additional-documents", element: <AdditionalDocumentsPage /> },
               { path: "/portal/documents", element: <DocumentsPage /> },
               // "Message your RM" — a real two-way thread (see backend `messaging`
               // module), distinct from the one-way Communication History feed below.

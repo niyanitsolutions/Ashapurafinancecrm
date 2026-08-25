@@ -1,9 +1,13 @@
 from typing import Any
 
-from app.features.loan_management.models import LoanCaseBankOffer
+from app.features.customer.models import Application, Customer
+from app.features.loan_management.models import LoanCaseAdditionalDocument, LoanCaseBankOffer
 from app.features.loan_management.schemas import (
+    AdditionalDocumentResponse,
     BankOfferResponse,
     CustomerBankOfferResponse,
+    LoanCaseApplicationSummary,
+    LoanCaseCustomerSummary,
     LoanCaseDetailResponse,
     LoanCaseDetailsResponse,
     LoanCaseListItem,
@@ -45,9 +49,11 @@ def to_list_item(
 def bank_offer_to_response(offer: LoanCaseBankOffer) -> BankOfferResponse:
     return BankOfferResponse(
         id=offer.require_id(), loan_case_id=offer.loan_case_id, bank_name=offer.bank_name,
+        branch=offer.branch, loan_type=offer.loan_type, requested_amount=offer.requested_amount,
         bank_application_id=offer.bank_application_id, reference_number=offer.reference_number,
         assigned_officer=offer.assigned_officer, decision=offer.decision, approved_amount=offer.approved_amount,
         interest_rate=offer.interest_rate, tenure_months=offer.tenure_months, processing_fee=offer.processing_fee,
+        emi_per_month=offer.emi_per_month,
         remarks=offer.remarks, is_selected=offer.is_selected, selected_at=offer.selected_at, selected_by=offer.selected_by,
         created_at=offer.created_at, updated_at=offer.updated_at,
     )
@@ -55,18 +61,60 @@ def bank_offer_to_response(offer: LoanCaseBankOffer) -> BankOfferResponse:
 
 def bank_offer_to_customer_response(offer: LoanCaseBankOffer) -> CustomerBankOfferResponse:
     assert offer.approved_amount is not None
-    return CustomerBankOfferResponse(id=offer.require_id(), bank_name=offer.bank_name, approved_amount=offer.approved_amount)
+    return CustomerBankOfferResponse(
+        id=offer.require_id(), bank_name=offer.bank_name, approved_amount=offer.approved_amount,
+        interest_rate=offer.interest_rate, tenure_months=offer.tenure_months, processing_fee=offer.processing_fee,
+        emi_per_month=offer.emi_per_month,
+    )
+
+
+def customer_to_summary(customer: Customer | None) -> LoanCaseCustomerSummary | None:
+    if customer is None:
+        return None
+    address = customer.address
+    return LoanCaseCustomerSummary(
+        full_name=customer.full_name, mobile=customer.mobile, email=customer.email, date_of_birth=customer.date_of_birth,
+        address_line1=address.line1 if address else None, address_line2=address.line2 if address else None,
+        city=address.city if address else None, state=address.state if address else None,
+        pincode=address.pincode if address else None,
+    )
+
+
+def application_to_summary(application: Application | None) -> LoanCaseApplicationSummary | None:
+    if application is None:
+        return None
+    return LoanCaseApplicationSummary(
+        application_code=application.application_code, product_category=application.product_category,
+        status=application.status, submitted_at=application.submitted_at,
+    )
 
 
 def to_detail_response(
     case: ApplicationWorkflow, customer_name: str | None, product_name: str, assigned_to_name: str | None,
-    allowed_next_statuses: list[str] | None = None,
+    allowed_next_statuses: list[str] | None = None, *, allowed_previous_statuses: list[str] | None = None,
+    customer: Customer | None = None, application: Application | None = None,
+    bank_offers: list[LoanCaseBankOffer] | None = None,
 ) -> LoanCaseDetailResponse:
     return LoanCaseDetailResponse(
         **to_list_item(case, customer_name, product_name, assigned_to_name, allowed_next_statuses).model_dump(),
         pending_document_type_ids=case.pending_document_type_ids,
         loan_details=_details_response(case),
         updated_at=case.updated_at,
+        allowed_previous_statuses=allowed_previous_statuses or [],
+        customer=customer_to_summary(customer),
+        application=application_to_summary(application),
+        bank_offers=[bank_offer_to_response(o) for o in (bank_offers or [])],
+    )
+
+
+def additional_document_to_response(
+    doc: LoanCaseAdditionalDocument, download_url: str | None = None, attachment_url: str | None = None, verified_by_name: str | None = None,
+) -> AdditionalDocumentResponse:
+    return AdditionalDocumentResponse(
+        id=doc.require_id(), loan_case_id=doc.loan_case_id, name=doc.name, document_status=doc.document_status,
+        verification_status=doc.verification_status, rejection_reason=doc.rejection_reason, file_name=doc.file_name,
+        download_url=download_url, attachment_url=attachment_url, uploaded_at=doc.uploaded_at,
+        verified_by_name=verified_by_name, verified_at=doc.verified_at, created_at=doc.created_at,
     )
 
 

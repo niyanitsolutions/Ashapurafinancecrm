@@ -213,7 +213,7 @@ async def test_loan_pipeline_happy_path_to_disbursed(client, mock_db, owner_head
     # Multiple bank offers — adding one never overwrites another.
     r = await client.post(
         f"/api/v1/loan-cases/{case_id}/bank-offers",
-        json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 90000}, headers=employee_headers,
+        json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 90000, "emi_per_month": 4200}, headers=employee_headers,
     )
     assert r.status_code == 200, r.text
     hdfc_offer_id = r.json()["data"]["id"]
@@ -226,7 +226,7 @@ async def test_loan_pipeline_happy_path_to_disbursed(client, mock_db, owner_head
 
     r = await client.post(
         f"/api/v1/loan-cases/{case_id}/bank-offers",
-        json={"bank_name": "Axis Bank", "decision": "approved", "approved_amount": 75000}, headers=employee_headers,
+        json={"bank_name": "Axis Bank", "decision": "approved", "approved_amount": 75000, "emi_per_month": 3500}, headers=employee_headers,
     )
     assert r.status_code == 200, r.text
     axis_offer_id = r.json()["data"]["id"]
@@ -508,7 +508,10 @@ async def test_loan_case_hold_and_resume(client, mock_db, owner_headers):
     assert r.json()["data"]["current_status"] == "credit_evaluation"  # resumed to exactly where it paused
 
     # And the case can now continue normally.
-    r = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 60000}, headers=owner_headers)
+    r = await client.post(
+        f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 60000, "emi_per_month": 2800},
+        headers=owner_headers,
+    )
     assert r.status_code == 200, r.text
     offer_id = r.json()["data"]["id"]
     r = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers/{offer_id}/select", headers=owner_headers)

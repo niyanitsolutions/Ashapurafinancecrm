@@ -148,11 +148,11 @@ async def _loan_case_in_credit_evaluation(client, mock_db, owner_headers, master
 async def test_multiple_bank_offers_added_without_overwriting(client, mock_db, owner_headers, master_data):
     case_id, employee_headers, _c, _a = await _loan_case_in_credit_evaluation(client, mock_db, owner_headers, master_data, mobile_suffix="00000101")
 
-    r = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000}, headers=employee_headers)
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000, "emi_per_month": 18500}, headers=employee_headers)
     assert r.status_code == 200, r.text
     r = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "ICICI Bank", "decision": "rejected_re_eligible"}, headers=employee_headers)
     assert r.status_code == 200, r.text
-    r = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "Axis Bank", "decision": "approved", "approved_amount": 750000}, headers=employee_headers)
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "Axis Bank", "decision": "approved", "approved_amount": 750000, "emi_per_month": 17200}, headers=employee_headers)
     assert r.status_code == 200, r.text
 
     r = await client.get(f"/api/v1/loan-cases/{case_id}/bank-offers", headers=employee_headers)
@@ -176,8 +176,8 @@ async def test_bank_offer_rejected_re_eligible_does_not_require_approved_amount(
 
 async def test_multiple_approved_offers_can_coexist(client, mock_db, owner_headers, master_data):
     case_id, employee_headers, _c, _a = await _loan_case_in_credit_evaluation(client, mock_db, owner_headers, master_data, mobile_suffix="00000104")
-    r1 = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000}, headers=employee_headers)
-    r2 = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "Axis Bank", "decision": "approved", "approved_amount": 750000}, headers=employee_headers)
+    r1 = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000, "emi_per_month": 18500}, headers=employee_headers)
+    r2 = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "Axis Bank", "decision": "approved", "approved_amount": 750000, "emi_per_month": 17200}, headers=employee_headers)
     assert r1.status_code == 200 and r2.status_code == 200
 
     r = await client.get(f"/api/v1/loan-cases/{case_id}/bank-offers", headers=employee_headers)
@@ -187,14 +187,14 @@ async def test_multiple_approved_offers_can_coexist(client, mock_db, owner_heade
 
 async def test_edit_bank_offer_does_not_affect_other_offers(client, mock_db, owner_headers, master_data):
     case_id, employee_headers, _c, _a = await _loan_case_in_credit_evaluation(client, mock_db, owner_headers, master_data, mobile_suffix="00000105")
-    r1 = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000}, headers=employee_headers)
+    r1 = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000, "emi_per_month": 18500}, headers=employee_headers)
     offer1_id = r1.json()["data"]["id"]
-    r2 = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "Axis Bank", "decision": "approved", "approved_amount": 750000}, headers=employee_headers)
+    r2 = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "Axis Bank", "decision": "approved", "approved_amount": 750000, "emi_per_month": 17200}, headers=employee_headers)
     offer2_id = r2.json()["data"]["id"]
 
     r = await client.patch(
         f"/api/v1/loan-cases/{case_id}/bank-offers/{offer1_id}",
-        json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 820000}, headers=employee_headers,
+        json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 820000, "emi_per_month": 19000}, headers=employee_headers,
     )
     assert r.status_code == 200, r.text
     assert r.json()["data"]["approved_amount"] == 820000
@@ -209,7 +209,7 @@ async def test_edit_bank_offer_does_not_affect_other_offers(client, mock_db, own
 
 async def test_staff_can_select_bank_offer(client, mock_db, owner_headers, master_data):
     case_id, employee_headers, _c, _a = await _loan_case_in_credit_evaluation(client, mock_db, owner_headers, master_data, mobile_suffix="00000106")
-    r = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000}, headers=employee_headers)
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000, "emi_per_month": 18500}, headers=employee_headers)
     offer_id = r.json()["data"]["id"]
 
     r = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers/{offer_id}/select", headers=employee_headers)
@@ -221,7 +221,7 @@ async def test_staff_can_select_bank_offer(client, mock_db, owner_headers, maste
 
 async def test_customer_can_select_bank_offer(client, mock_db, owner_headers, master_data):
     case_id, employee_headers, customer_headers, _a = await _loan_case_in_credit_evaluation(client, mock_db, owner_headers, master_data, mobile_suffix="00000107")
-    r = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000}, headers=employee_headers)
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000, "emi_per_month": 18500}, headers=employee_headers)
     offer_id = r.json()["data"]["id"]
 
     r = await client.post(f"/api/v1/loan-cases/mine/{case_id}/bank-offers/{offer_id}/select", headers=customer_headers)
@@ -231,9 +231,9 @@ async def test_customer_can_select_bank_offer(client, mock_db, owner_headers, ma
 
 async def test_only_one_offer_can_be_selected_at_a_time(client, mock_db, owner_headers, master_data):
     case_id, employee_headers, _c, _a = await _loan_case_in_credit_evaluation(client, mock_db, owner_headers, master_data, mobile_suffix="00000108")
-    r1 = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000}, headers=employee_headers)
+    r1 = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000, "emi_per_month": 18500}, headers=employee_headers)
     offer1_id = r1.json()["data"]["id"]
-    r2 = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "Axis Bank", "decision": "approved", "approved_amount": 750000}, headers=employee_headers)
+    r2 = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "Axis Bank", "decision": "approved", "approved_amount": 750000, "emi_per_month": 17200}, headers=employee_headers)
     offer2_id = r2.json()["data"]["id"]
 
     r = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers/{offer1_id}/select", headers=employee_headers)
@@ -264,7 +264,7 @@ async def test_selecting_a_non_approved_offer_is_rejected(client, mock_db, owner
 
 async def test_selecting_offer_does_not_auto_confirm_acceptance(client, mock_db, owner_headers, master_data):
     case_id, employee_headers, customer_headers, _a = await _loan_case_in_credit_evaluation(client, mock_db, owner_headers, master_data, mobile_suffix="00000110")
-    r = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000}, headers=employee_headers)
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000, "emi_per_month": 18500}, headers=employee_headers)
     offer_id = r.json()["data"]["id"]
     r = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers/{offer_id}/select", headers=employee_headers)
     assert r.json()["data"]["current_status"] == "offer_acceptance"
@@ -293,7 +293,8 @@ async def test_customer_sees_only_safe_bank_offer_fields(client, mock_db, owner_
         f"/api/v1/loan-cases/{case_id}/bank-offers",
         json={
             "bank_name": "HDFC Bank", "bank_application_id": "HDFC-APP-12345", "reference_number": "REF-001",
-            "assigned_officer": "Internal Officer Name", "decision": "approved", "approved_amount": 800000, "remarks": "Internal staff note",
+            "assigned_officer": "Internal Officer Name", "decision": "approved", "approved_amount": 800000, "emi_per_month": 18500,
+            "remarks": "Internal staff note",
         },
         headers=employee_headers,
     )
@@ -306,12 +307,18 @@ async def test_customer_sees_only_safe_bank_offer_fields(client, mock_db, owner_
     offer = offers[0]
     assert offer["bank_name"] == "HDFC Bank"
     assert offer["approved_amount"] == 800000
-    assert set(offer.keys()) == {"id", "bank_name", "approved_amount"}  # no staff-only fields at all
+    # Customer-safe offer economics (requirement 7) — no bank_application_id/
+    # reference_number/assigned_officer/remarks/decision (staff-only, decision #129).
+    assert set(offer.keys()) == {"id", "bank_name", "approved_amount", "interest_rate", "tenure_months", "processing_fee", "emi_per_month"}
+    assert "bank_application_id" not in offer
+    assert "assigned_officer" not in offer
+    assert "remarks" not in offer
+    assert "decision" not in offer
 
 
 async def test_customer_cannot_see_another_customers_bank_offers(client, mock_db, owner_headers, master_data):
     case_id, employee_headers, _c1, _a1 = await _loan_case_in_credit_evaluation(client, mock_db, owner_headers, master_data, mobile_suffix="00000113")
-    await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000}, headers=employee_headers)
+    await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000, "emi_per_month": 18500}, headers=employee_headers)
 
     _case2, _e2, other_customer_headers, _a2 = await _loan_case_in_credit_evaluation(client, mock_db, owner_headers, master_data, mobile_suffix="00000114")
     r = await client.get(f"/api/v1/loan-cases/mine/{case_id}/bank-offers", headers=other_customer_headers)
@@ -326,7 +333,7 @@ async def test_bank_offer_endpoints_require_permission(client, mock_db, owner_he
     await _create_employee(client, owner_headers, master_data, mobile="9711100115", email="no-perm-bank@example.com")
     bystander_headers = await _login(client, "9711100115")
 
-    r = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000}, headers=bystander_headers)
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000, "emi_per_month": 18500}, headers=bystander_headers)
     assert r.status_code == 403, r.text
 
 
@@ -390,7 +397,7 @@ async def test_loan_case_counts_endpoint_reflects_current_tab_distribution(clien
     assert counts["credit_evaluation"] == 2
     assert counts["new_customer"] == 0
 
-    r = await client.post(f"/api/v1/loan-cases/{case1_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000}, headers=employee_headers)
+    r = await client.post(f"/api/v1/loan-cases/{case1_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000, "emi_per_month": 18500}, headers=employee_headers)
     offer_id = r.json()["data"]["id"]
     r = await client.post(f"/api/v1/loan-cases/{case1_id}/bank-offers/{offer_id}/select", headers=employee_headers)
     assert r.status_code == 200, r.text

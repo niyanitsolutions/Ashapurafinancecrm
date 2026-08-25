@@ -1,4 +1,4 @@
-import { apiRequest, apiRequestRaw, type PaginationMeta } from "@/shared/api/client";
+import { ApiError, apiRequest, apiRequestRaw, type PaginationMeta } from "@/shared/api/client";
 import { getCurrentCoordinates } from "@/shared/geolocation";
 
 export interface LoanCaseDetails {
@@ -56,20 +56,26 @@ export interface LoanCaseListItem {
   created_at: string;
 }
 
-// One bank/NBFC offer on a Loan Case's Credit Evaluation (decision #129) — a case can
-// carry any number of these; adding one never overwrites another.
+// One bank/NBFC offer on a Loan Case. A case can carry any number of these; adding one
+// never overwrites another. Now captured starting at New Customer (branch/loan_type/
+// requested_amount), with `decision` staying "pending" until a real Credit Evaluation
+// decision (approved/rejected_re_eligible) is recorded on the SAME record.
 export interface BankOffer {
   id: string;
   loan_case_id: string;
   bank_name: string;
+  branch: string | null;
+  loan_type: string | null;
+  requested_amount: number | null;
   bank_application_id: string | null;
   reference_number: string | null;
   assigned_officer: string | null;
-  decision: "approved" | "rejected_re_eligible";
+  decision: "pending" | "approved" | "rejected_re_eligible";
   approved_amount: number | null;
   interest_rate: number | null;
   tenure_months: number | null;
   processing_fee: number | null;
+  emi_per_month: number | null;
   remarks: string | null;
   is_selected: boolean;
   selected_at: string | null;
@@ -78,12 +84,49 @@ export interface BankOffer {
   updated_at: string;
 }
 
-// Customer-facing view — approved offers only, trimmed to exactly bank name + amount
-// (no bank_application_id/assigned_officer/reference_number/remarks/decision).
+// Customer-facing view — approved offers only, trimmed to bank + full offer economics
+// (no bank_application_id/assigned_officer/reference_number/remarks/decision — staff-only).
 export interface CustomerBankOffer {
   id: string;
   bank_name: string;
   approved_amount: number;
+  interest_rate: number | null;
+  tenure_months: number | null;
+  processing_fee: number | null;
+  emi_per_month: number | null;
+}
+
+export interface AdditionalDocument {
+  id: string;
+  loan_case_id: string;
+  name: string;
+  document_status: "requested" | "uploaded";
+  verification_status: "pending" | "verified" | "rejected";
+  rejection_reason: string | null;
+  file_name: string | null;
+  download_url: string | null;
+  attachment_url: string | null;
+  uploaded_at: string | null;
+  verified_by_name: string | null;
+  verified_at: string | null;
+  created_at: string;
+}
+
+export interface DisbursementItem {
+  id: string;
+  case_code: string;
+  customer_name: string | null;
+  product_name: string;
+  approved_amount: number | null;
+  disbursed_amount: number | null;
+  disbursed_reference: string | null;
+  disbursed_at: string | null;
+}
+
+export interface DisbursementList {
+  items: DisbursementItem[];
+  total_count: number;
+  total_amount: number;
 }
 
 export interface LoanCaseCounts {
@@ -101,10 +144,35 @@ export interface LoanCaseCounts {
   rejected: number;
 }
 
+export interface LoanCaseCustomerSummary {
+  full_name: string;
+  mobile: string;
+  email: string | null;
+  date_of_birth: string | null;
+  address_line1: string | null;
+  address_line2: string | null;
+  city: string | null;
+  state: string | null;
+  pincode: string | null;
+}
+
+export interface LoanCaseApplicationSummary {
+  application_code: string;
+  product_category: string;
+  status: string;
+  submitted_at: string | null;
+}
+
 export interface LoanCaseDetail extends LoanCaseListItem {
   pending_document_type_ids: string[];
   loan_details: LoanCaseDetails;
   updated_at: string;
+  // "Move Back" (decision this round) — the one status this case could move back to,
+  // if any; empty when there is none configured for the current status.
+  allowed_previous_statuses: string[];
+  customer: LoanCaseCustomerSummary | null;
+  application: LoanCaseApplicationSummary | null;
+  bank_offers: BankOffer[];
 }
 
 export interface CaseTimelineEntry {
@@ -212,14 +280,18 @@ export function recordCreditEvaluation(caseId: string, payload: { credit_score?:
 
 export interface BankOfferPayload {
   bank_name: string;
+  branch?: string;
+  loan_type?: string;
+  requested_amount?: number;
   bank_application_id?: string;
   reference_number?: string;
   assigned_officer?: string;
-  decision: "approved" | "rejected_re_eligible";
+  decision?: "pending" | "approved" | "rejected_re_eligible";
   approved_amount?: number;
   interest_rate?: number;
   tenure_months?: number;
   processing_fee?: number;
+  emi_per_month?: number;
   remarks?: string;
 }
 
@@ -233,6 +305,85 @@ export function addBankOffer(caseId: string, payload: BankOfferPayload) {
 
 export function updateBankOffer(caseId: string, offerId: string, payload: BankOfferPayload) {
   return apiRequest<BankOffer>(`/loan-cases/${caseId}/bank-offers/${offerId}`, { method: "PATCH", body: JSON.stringify(payload) });
+}
+
+export function deleteBankOffer(caseId: string, offerId: string) {
+  return apiRequest<null>(`/loan-cases/${caseId}/bank-offers/${offerId}`, { method: "DELETE" });
+}
+
+// New Customer's "Move to Credit Evaluation" — bank/NBFC records are already saved
+// independently via addBankOffer/updateBankOffer before this is ever called.
+export function moveToCreditEvaluation(caseId: string, remarks?: string) {
+  return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/move-to-credit-evaluation`, { method: "POST", body: JSON.stringify({ remarks }) });
+}
+
+// Generic "Move Back" — reads the case's own `allowed_previous_statuses` off the
+// backend's transition graph; there's no client-side choice of target status.
+export function moveLoanCaseBack(caseId: string, remarks?: string) {
+  return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/move-back`, { method: "POST", body: JSON.stringify({ remarks }) });
+}
+
+export function listAdditionalDocuments(caseId: string) {
+  return apiRequest<AdditionalDocument[]>(`/loan-cases/${caseId}/additional-documents`);
+}
+
+export function addAdditionalDocument(caseId: string, name: string) {
+  return apiRequest<AdditionalDocument>(`/loan-cases/${caseId}/additional-documents`, { method: "POST", body: JSON.stringify({ name }) });
+}
+
+export function verifyAdditionalDocument(caseId: string, docId: string) {
+  return apiRequest<AdditionalDocument>(`/loan-cases/${caseId}/additional-documents/${docId}/verify`, { method: "POST" });
+}
+
+export function rejectAdditionalDocument(caseId: string, docId: string, reason: string) {
+  return apiRequest<AdditionalDocument>(`/loan-cases/${caseId}/additional-documents/${docId}/reject`, { method: "POST", body: JSON.stringify({ reason }) });
+}
+
+export function listOwnAdditionalDocuments(caseId: string) {
+  return apiRequest<AdditionalDocument[]>(`/loan-cases/mine/${caseId}/additional-documents`);
+}
+
+// Upload an Additional Document as the customer — mint a presigned PUT URL, PUT the file
+// straight to S3, then confirm. Same 3-step pattern and error normalization as Module
+// 6B's own document upload (@/features/customer/api.ts's uploadApplicationDocument) —
+// no second upload mechanism.
+async function putAdditionalDocumentToStorage(uploadUrl: string, file: File): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type || "application/octet-stream" } });
+  } catch (err) {
+    console.error("[Additional Document Upload] Storage PUT failed before a response was received (network/CORS)", err);
+    throw new ApiError("document_upload_failed", "Document upload failed. Please try again.", err);
+  }
+  if (!response.ok) {
+    console.error(`[Additional Document Upload] Storage rejected the upload: ${response.status} ${response.statusText}`);
+    throw new ApiError("document_upload_failed", "Document upload failed. Please try again.", { status: response.status, statusText: response.statusText });
+  }
+}
+
+export async function uploadOwnAdditionalDocument(caseId: string, docId: string, file: File): Promise<AdditionalDocument> {
+  const { upload_url, s3_key } = await apiRequest<{ upload_url: string; s3_key: string }>(
+    `/loan-cases/mine/${caseId}/additional-documents/${docId}/upload-url`,
+    { method: "POST", body: JSON.stringify({ file_name: file.name, content_type: file.type || undefined }) },
+  );
+  await putAdditionalDocumentToStorage(upload_url, file);
+  return apiRequest<AdditionalDocument>(`/loan-cases/mine/${caseId}/additional-documents/${docId}/confirm`, {
+    method: "POST",
+    body: JSON.stringify({ file_name: file.name, s3_key, content_type: file.type || undefined }),
+  });
+}
+
+export function listDisbursements(params: {
+  date_from?: string; date_to?: string; product_id?: string; search?: string; page?: number; page_size?: number;
+}): Promise<{ data: DisbursementList | null; pagination: PaginationMeta | null }> {
+  const usp = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== "") usp.set(key, String(value));
+  }
+  const qs = usp.toString();
+  return apiRequestRaw<DisbursementList>(`/loan-cases/disbursements${qs ? `?${qs}` : ""}`).then((envelope) => ({
+    data: envelope.data, pagination: envelope.meta?.pagination ?? null,
+  }));
 }
 
 // Selection only — marks which offer the case proceeds with and moves it to Offer

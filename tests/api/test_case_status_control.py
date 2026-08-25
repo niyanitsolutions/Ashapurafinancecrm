@@ -470,7 +470,8 @@ async def _advance_to_rv_ov_ref(client, case_id, employee_headers):
     the same sequence `test_loan_bank_offers.py` already exercises."""
     await client.post(f"/api/v1/loan-cases/{case_id}/new-customer-details", json={}, headers=employee_headers)
     r = await client.post(
-        f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000},
+        f"/api/v1/loan-cases/{case_id}/bank-offers",
+        json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000, "emi_per_month": 18500},
         headers=employee_headers,
     )
     offer_id = r.json()["data"]["id"]
@@ -613,7 +614,7 @@ async def test_bank_offer_additive_fields_round_trip(client, mock_db, owner_head
         f"/api/v1/loan-cases/{case_id}/bank-offers",
         json={
             "bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000,
-            "interest_rate": 11.5, "tenure_months": 60, "processing_fee": 5000,
+            "interest_rate": 11.5, "tenure_months": 60, "processing_fee": 5000, "emi_per_month": 17400,
         },
         headers=employee_headers,
     )
@@ -622,22 +623,28 @@ async def test_bank_offer_additive_fields_round_trip(client, mock_db, owner_head
     assert r.json()["data"]["interest_rate"] == 11.5
     assert r.json()["data"]["tenure_months"] == 60
     assert r.json()["data"]["processing_fee"] == 5000
+    assert r.json()["data"]["emi_per_month"] == 17400
 
     r = await client.get(f"/api/v1/loan-cases/{case_id}/bank-offers", headers=employee_headers)
     offer = next(o for o in r.json()["data"] if o["id"] == offer_id)
     assert offer["interest_rate"] == 11.5
     assert offer["tenure_months"] == 60
     assert offer["processing_fee"] == 5000
+    assert offer["emi_per_month"] == 17400
 
     r = await client.patch(
         f"/api/v1/loan-cases/{case_id}/bank-offers/{offer_id}",
-        json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000, "interest_rate": 10.75, "tenure_months": 48, "processing_fee": 4500},
+        json={
+            "bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000,
+            "interest_rate": 10.75, "tenure_months": 48, "processing_fee": 4500, "emi_per_month": 20600,
+        },
         headers=employee_headers,
     )
     assert r.status_code == 200, r.text
     assert r.json()["data"]["interest_rate"] == 10.75
     assert r.json()["data"]["tenure_months"] == 48
     assert r.json()["data"]["processing_fee"] == 4500
+    assert r.json()["data"]["emi_per_month"] == 20600
 
     r = await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers/{offer_id}/select", headers=employee_headers)
     assert r.status_code == 200, r.text
@@ -779,7 +786,8 @@ async def test_offer_acceptance_badge_matches_list_exactly(client, mock_db, owne
     case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000105")
     await client.post(f"/api/v1/loan-cases/{case_id}/new-customer-details", json={}, headers=employee_headers)
     r = await client.post(
-        f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000},
+        f"/api/v1/loan-cases/{case_id}/bank-offers",
+        json={"bank_name": "HDFC Bank", "decision": "approved", "approved_amount": 800000, "emi_per_month": 18500},
         headers=employee_headers,
     )
     offer_id = r.json()["data"]["id"]

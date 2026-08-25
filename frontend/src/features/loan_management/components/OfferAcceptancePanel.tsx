@@ -7,11 +7,13 @@ import { Button } from "@/components/buttons/Button";
 export function OfferAcceptancePanel({
   bankName,
   approvedAmount,
+  emiPerMonth,
   canConfirm,
   onConfirm,
 }: {
   bankName: string | null;
   approvedAmount: number | null;
+  emiPerMonth?: number | null;
   canConfirm: boolean;
   onConfirm: () => void;
 }) {
@@ -26,6 +28,12 @@ export function OfferAcceptancePanel({
           <div className="text-xs text-text/50">Approved Amount</div>
           <div className="text-sm font-medium text-text">{approvedAmount != null ? `₹${approvedAmount.toLocaleString("en-IN")}` : "—"}</div>
         </div>
+        {emiPerMonth != null && (
+          <div>
+            <div className="text-xs text-text/50">EMI Per Month</div>
+            <div className="text-sm font-medium text-text">₹{emiPerMonth.toLocaleString("en-IN")}</div>
+          </div>
+        )}
       </div>
       {canConfirm ? (
         <Button size="sm" onClick={onConfirm}>

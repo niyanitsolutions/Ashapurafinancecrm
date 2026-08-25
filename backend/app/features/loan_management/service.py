@@ -22,6 +22,8 @@ case on every call; `get_own_case`/staff `get_case` also sync individually by
 `application_id` so a case is never more than one request away from existing.
 """
 
+import re
+from datetime import date
 from typing import Any, ClassVar
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -30,17 +32,22 @@ from app.constants.roles import EMPLOYEE, OWNER
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from app.features.auth.models import User
 from app.features.customer.constants import AuditEvent, DocumentAvailabilityStatus
-from app.features.customer.models import Application
+from app.features.customer.models import Application, Customer
 from app.features.customer.repository import (
     ApplicationDocumentRepository,
     ApplicationRepository,
     CustomerRepository,
 )
 from app.features.employee.repository import EmployeeRepository
-from app.features.loan_management.models import LoanCaseBankOffer
-from app.features.loan_management.repository import LoanCaseBankOfferRepository
+from app.features.loan_management.models import LoanCaseAdditionalDocument, LoanCaseBankOffer
+from app.features.loan_management.repository import (
+    LoanCaseAdditionalDocumentRepository,
+    LoanCaseBankOfferRepository,
+)
 from app.features.loan_management.schemas import (
+    AdditionalDocumentUploadUrlRequest,
     BankOfferRequest,
+    ConfirmAdditionalDocumentRequest,
     CreditEvaluationRequest,
     DisburseRequest,
     EsignNachKycRequest,
@@ -48,6 +55,9 @@ from app.features.loan_management.schemas import (
     NewCustomerDetailsRequest,
     RvOvRefRequest,
 )
+from app.features.reminders.constants import NotificationType
+from app.features.reminders.service import RemindersService
+from app.features.reporting.aggregations import date_range_match
 from app.features.system_settings.repository import DocumentTypeRepository, LoanProductRepository
 from app.features.workflow_engine.constants import (
     BankOfferDecision,
@@ -74,6 +84,11 @@ from app.features.workflow_engine.repository import (
     ApplicationWorkflowRepository,
     WorkflowDefinitionRepository,
 )
+from app.services.storage.client import (
+    generate_presigned_download_url,
+    generate_presigned_upload_url,
+    get_object_size,
+)
 from app.shared.audit_log import write_audit_log
 from app.utils.datetime import utc_now
 from app.utils.id_generator import IdPrefix, generate_id
@@ -96,7 +111,9 @@ class LoanCaseService:
         self._products = LoanProductRepository(db)
         self._document_types = DocumentTypeRepository(db)
         self._bank_offers = LoanCaseBankOfferRepository(db)
+        self._additional_documents = LoanCaseAdditionalDocumentRepository(db)
         self._definitions = WorkflowDefinitionRepository(db)
+        self._reminders = RemindersService(db)
 
     # ---------------------------------------------------------------- case sync / lookup
 
@@ -299,12 +316,17 @@ class LoanCaseService:
     # genuinely bodiless move — nothing beyond an optional remark is ever required
     # (decision #129).
     _PLAIN_TRANSITIONS: ClassVar[set[tuple[str, str]]] = {
+        (LoanStatus.NEW_CUSTOMER, LoanStatus.REJECTED),
         (LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED),
         (LoanStatus.CREDIT_EVALUATION, LoanStatus.RE_ELIGIBLE),
         (LoanStatus.RE_ELIGIBLE, LoanStatus.CREDIT_EVALUATION),
         (LoanStatus.RE_ELIGIBLE, LoanStatus.REJECTED),
         (LoanStatus.OFFER_ACCEPTANCE, LoanStatus.REJECTED),
         (LoanStatus.ADDITIONAL_DOCUMENTS, LoanStatus.RV_OV_REF),
+        (LoanStatus.ADDITIONAL_DOCUMENTS, LoanStatus.REJECTED),
+        (LoanStatus.RV_OV_REF, LoanStatus.REJECTED),
+        (LoanStatus.ESIGN_NACH_KYC, LoanStatus.REJECTED),
+        (LoanStatus.SEND_FOR_DISBURSEMENT, LoanStatus.REJECTED),
     }
 
     async def update_status(self, case_id: str, new_status: str, actor: User, *, remarks: str | None = None) -> ApplicationWorkflow:
@@ -330,6 +352,12 @@ class LoanCaseService:
                 # Evaluation actions already enforce — the plain control must not offer a
                 # quieter way to reject a case with no reason recorded (decision #129).
                 raise ValidationError("A reason is mandatory when rejecting a case.")
+            if transition_key == (LoanStatus.ADDITIONAL_DOCUMENTS, LoanStatus.RV_OV_REF):
+                # Requirement 18 — backend-enforced gate: every named Additional Document
+                # requested for this case must be verified (none pending/rejected/still
+                # unuploaded) before the case can move on. The frontend's own "enabled
+                # once all verified" hint is only a courtesy; this is the real check.
+                await self._assert_additional_documents_complete(case_id)
             updated = await self._engine.transition(case, new_status, actor, remarks=remarks)
             if new_status == LoanStatus.REJECTED:
                 updated = await self._workflows.update(case_id, {"rejection_reason": remarks}, updated_by=actor.require_id())
@@ -442,16 +470,22 @@ class LoanCaseService:
 
     # ---------------------------------------------------------------- bank/NBFC offers
 
+    # Bank/NBFC records can now be captured starting at New Customer (this round) — the
+    # SAME record is later edited in place at Credit Evaluation to add its decision, so
+    # staff is never asked to re-enter data the case already has.
+    _BANK_OFFER_EDITABLE_STATUSES: ClassVar[tuple[str, ...]] = (LoanStatus.NEW_CUSTOMER, LoanStatus.CREDIT_EVALUATION)
+
     async def add_bank_offer(self, case_id: str, payload: BankOfferRequest, actor: User) -> LoanCaseBankOffer:
         case = await self.get_case(case_id, actor)
-        if case.current_status != LoanStatus.CREDIT_EVALUATION:
-            raise ConflictError("Bank offers can only be added while this case is in Credit Evaluation.")
+        if case.current_status not in self._BANK_OFFER_EDITABLE_STATUSES:
+            raise ConflictError("Bank offers can only be added while this case is at New Customer or Credit Evaluation.")
         offer = LoanCaseBankOffer(
-            loan_case_id=case_id, bank_name=payload.bank_name, bank_application_id=payload.bank_application_id,
+            loan_case_id=case_id, bank_name=payload.bank_name, branch=payload.branch, loan_type=payload.loan_type,
+            requested_amount=payload.requested_amount, bank_application_id=payload.bank_application_id,
             reference_number=payload.reference_number, assigned_officer=payload.assigned_officer,
-            decision=payload.decision, approved_amount=payload.approved_amount, interest_rate=payload.interest_rate,
-            tenure_months=payload.tenure_months, processing_fee=payload.processing_fee, remarks=payload.remarks,
-            created_by=actor.require_id(),
+            decision=payload.decision or BankOfferDecision.PENDING, approved_amount=payload.approved_amount,
+            interest_rate=payload.interest_rate, tenure_months=payload.tenure_months, processing_fee=payload.processing_fee,
+            emi_per_month=payload.emi_per_month, remarks=payload.remarks, created_by=actor.require_id(),
         )
         offer_id = await self._bank_offers.insert(offer)
         await write_audit_log(
@@ -463,19 +497,65 @@ class LoanCaseService:
         return found
 
     async def update_bank_offer(self, case_id: str, offer_id: str, payload: BankOfferRequest, actor: User) -> LoanCaseBankOffer:
-        await self.get_case(case_id, actor)
+        case = await self.get_case(case_id, actor)
+        if case.current_status not in self._BANK_OFFER_EDITABLE_STATUSES:
+            raise ConflictError("Bank offers can only be edited while this case is at New Customer or Credit Evaluation.")
         offer = await self._bank_offers.find_by_id(offer_id)
         if offer is None or offer.loan_case_id != case_id:
             raise NotFoundError("Bank offer not found.")
         updates = {
-            "bank_name": payload.bank_name, "bank_application_id": payload.bank_application_id,
+            "bank_name": payload.bank_name, "branch": payload.branch, "loan_type": payload.loan_type,
+            "requested_amount": payload.requested_amount, "bank_application_id": payload.bank_application_id,
             "reference_number": payload.reference_number, "assigned_officer": payload.assigned_officer,
-            "decision": payload.decision, "approved_amount": payload.approved_amount, "interest_rate": payload.interest_rate,
-            "tenure_months": payload.tenure_months, "processing_fee": payload.processing_fee, "remarks": payload.remarks,
+            "decision": payload.decision or BankOfferDecision.PENDING, "approved_amount": payload.approved_amount,
+            "interest_rate": payload.interest_rate, "tenure_months": payload.tenure_months,
+            "processing_fee": payload.processing_fee, "emi_per_month": payload.emi_per_month, "remarks": payload.remarks,
         }
         updated = await self._bank_offers.update(offer_id, updates, updated_by=actor.require_id())
         assert updated is not None
         return updated
+
+    async def delete_bank_offer(self, case_id: str, offer_id: str, actor: User) -> None:
+        case = await self.get_case(case_id, actor)
+        if case.current_status not in self._BANK_OFFER_EDITABLE_STATUSES:
+            raise ConflictError("Bank offers can only be deleted while this case is at New Customer or Credit Evaluation.")
+        offer = await self._bank_offers.find_by_id(offer_id)
+        if offer is None or offer.loan_case_id != case_id:
+            raise NotFoundError("Bank offer not found.")
+        if offer.is_selected:
+            raise ConflictError("The offer the case has already selected cannot be deleted.")
+        deleted = await self._bank_offers.soft_delete(offer_id, deleted_by=actor.require_id())
+        if not deleted:
+            raise NotFoundError("Bank offer not found.")
+
+    async def move_to_credit_evaluation(self, case_id: str, actor: User, *, remarks: str | None = None) -> ApplicationWorkflow:
+        """New Customer's "Move to Credit Evaluation" action (this round) — the bank/NBFC
+        records themselves are already saved independently via `add_bank_offer`/
+        `update_bank_offer` before this is ever called; this only requires at least one
+        exists, then advances the case. Supersedes `record_new_customer_details` as the
+        button's backend action (that method is kept, unused by the current frontend, for
+        any external/legacy caller)."""
+        case = await self.get_case(case_id, actor)
+        if case.current_status != LoanStatus.NEW_CUSTOMER:
+            raise ConflictError("This case is not at New Customer.")
+        offers = await self._bank_offers.find_for_case(case_id)
+        if not offers:
+            raise ValidationError("Add at least one Bank/NBFC record before moving to Credit Evaluation.")
+        return await self._engine.transition(case, LoanStatus.CREDIT_EVALUATION, actor, remarks=remarks)
+
+    async def move_back(self, case_id: str, actor: User, *, remarks: str | None = None) -> ApplicationWorkflow:
+        """Generic "Move Back" (this round) — reads the ONE configured previous status
+        for the case's current status off `WorkflowDefinition.allowed_previous_statuses`
+        (reserved on the schema since Module 6C's first version, wired up for real here)
+        and transitions there. Deliberately independent of `_PLAIN_TRANSITIONS` (that set
+        is for forward, bodiless moves only) but still goes through the same
+        `WorkflowEngine.assert_transition_allowed` check every other transition does."""
+        case = await self.get_case(case_id, actor)
+        definition = await self._engine.get_definition(CaseType.LOAN, case.current_status)
+        if not definition.allowed_previous_statuses:
+            raise ConflictError(f"'{case.current_status}' has no configured previous status to move back to.")
+        target = definition.allowed_previous_statuses[0]
+        return await self._engine.transition(case, target, actor, remarks=remarks)
 
     async def list_bank_offers(self, case_id: str, actor: User) -> list[LoanCaseBankOffer]:
         await self.get_case(case_id, actor)
@@ -601,6 +681,150 @@ class LoanCaseService:
         )
         return await self._engine.transition(case, LoanStatus.DISBURSED, actor, updates={"loan_details": details.model_dump()})
 
+    # ---------------------------------------------------------------- additional documents (named, ad-hoc)
+
+    _ADDITIONAL_DOCUMENT_KEY_PREFIX = "additional"
+
+    async def _assert_additional_documents_complete(self, case_id: str) -> None:
+        docs = await self._additional_documents.find_for_case(case_id)
+        unverified = [d for d in docs if d.verification_status != "verified"]
+        if unverified:
+            raise ValidationError("Every requested Additional Document must be verified before moving to the next stage.")
+
+    async def add_additional_document(self, case_id: str, name: str, actor: User) -> LoanCaseAdditionalDocument:
+        case = await self.get_case(case_id, actor)
+        if case.current_status != LoanStatus.ADDITIONAL_DOCUMENTS:
+            raise ConflictError("Additional documents can only be requested while this case is at Additional Documents.")
+        doc = LoanCaseAdditionalDocument(loan_case_id=case_id, application_id=case.application_id, name=name, created_by=actor.require_id())
+        doc_id = await self._additional_documents.insert(doc)
+        found = await self._additional_documents.find_by_id(doc_id)
+        assert found is not None
+        return found
+
+    async def list_additional_documents(self, case_id: str, actor: User) -> list[LoanCaseAdditionalDocument]:
+        await self.get_case(case_id, actor)
+        return await self._additional_documents.find_for_case(case_id)
+
+    async def list_additional_documents_own(self, case_id: str, actor: User) -> list[LoanCaseAdditionalDocument]:
+        await self.get_own_case(case_id, actor)
+        return await self._additional_documents.find_for_case(case_id)
+
+    def _additional_document_s3_key(self, application_code: str, doc_id: str, file_name: str) -> str:
+        # Same convention as Module 6B's own ApplicationDocument keys
+        # (`application-documents/{code}/{document_type_id}/{file_name}`) — a distinct
+        # `additional/{doc_id}` segment in place of a document_type_id, since these
+        # documents have no catalog entry. Same S3 bucket/prefix, no second storage
+        # mechanism.
+        return f"application-documents/{application_code}/{self._ADDITIONAL_DOCUMENT_KEY_PREFIX}/{doc_id}/{file_name}"
+
+    async def _get_own_additional_document(self, case_id: str, doc_id: str, actor: User) -> tuple[ApplicationWorkflow, LoanCaseAdditionalDocument]:
+        case = await self.get_own_case(case_id, actor)
+        doc = await self._additional_documents.find_by_id(doc_id)
+        if doc is None or doc.loan_case_id != case_id:
+            raise NotFoundError("Additional document not found.")
+        return case, doc
+
+    async def mint_additional_document_upload_url(
+        self, case_id: str, doc_id: str, payload: AdditionalDocumentUploadUrlRequest, actor: User
+    ) -> tuple[str, str]:
+        case, _doc = await self._get_own_additional_document(case_id, doc_id, actor)
+        application = await self._applications.find_by_id(case.application_id)
+        if application is None:
+            raise NotFoundError("Application not found.")
+        s3_key = self._additional_document_s3_key(application.application_code, doc_id, payload.file_name)
+        upload_url = generate_presigned_upload_url(s3_key, content_type=payload.content_type)
+        return upload_url, s3_key
+
+    async def confirm_additional_document_upload(
+        self, case_id: str, doc_id: str, payload: ConfirmAdditionalDocumentRequest, actor: User
+    ) -> LoanCaseAdditionalDocument:
+        case, doc = await self._get_own_additional_document(case_id, doc_id, actor)
+        application = await self._applications.find_by_id(case.application_id)
+        if application is None:
+            raise NotFoundError("Application not found.")
+        # Never trust the client-supplied s3_key — re-derive it the same way the upload
+        # URL was minted, same reasoning as Module 6B's `ConfirmDocumentRequest`.
+        s3_key = self._additional_document_s3_key(application.application_code, doc_id, payload.file_name)
+        size = get_object_size(s3_key)
+        if size is None:
+            raise ValidationError("The file hasn't finished uploading yet. Please try again in a moment.")
+        updated = await self._additional_documents.update(
+            doc_id,
+            {
+                "document_status": "uploaded", "verification_status": "pending", "rejection_reason": None,
+                "s3_key": s3_key, "file_name": payload.file_name, "content_type": payload.content_type,
+                "file_size_bytes": size, "uploaded_at": utc_now(),
+            },
+            updated_by=actor.require_id(),
+        )
+        assert updated is not None
+        # Staff notification (requirement 15) — reuses the existing Reminders engine
+        # verbatim, same mechanism as every other in-app notification here. Notify the
+        # case's assigned employee if there is one, otherwise every Owner (same
+        # "notify every Owner" fallback CustomerService.raise_support_request already
+        # established).
+        if case.assigned_to:
+            employee = await self._employees.find_by_id(case.assigned_to)
+            if employee is not None:
+                await self._reminders.create_notification(
+                    recipient_user_id=employee.user_id, notification_type=NotificationType.DOCUMENT_UPLOADED,
+                    title="New Additional Document", message=f"Customer uploaded: {doc.name}",
+                    entity_type="loan_case", entity_id=case_id,
+                )
+        else:
+            owners = await self._db["users"].find({"role": OWNER, "is_deleted": False}).to_list(length=50)
+            for owner_doc in owners:
+                await self._reminders.create_notification(
+                    recipient_user_id=str(owner_doc["_id"]), notification_type=NotificationType.DOCUMENT_UPLOADED,
+                    title="New Additional Document", message=f"Customer uploaded: {doc.name}",
+                    entity_type="loan_case", entity_id=case_id,
+                )
+        return updated
+
+    async def verify_additional_document(self, case_id: str, doc_id: str, actor: User) -> LoanCaseAdditionalDocument:
+        await self.get_case(case_id, actor)
+        doc = await self._additional_documents.find_by_id(doc_id)
+        if doc is None or doc.loan_case_id != case_id:
+            raise NotFoundError("Additional document not found.")
+        if doc.document_status != "uploaded":
+            raise ConflictError("This document hasn't been uploaded yet.")
+        updated = await self._additional_documents.update(
+            doc_id, {"verification_status": "verified", "rejection_reason": None, "verified_by": actor.require_id(), "verified_at": utc_now()},
+            updated_by=actor.require_id(),
+        )
+        assert updated is not None
+        return updated
+
+    async def reject_additional_document(self, case_id: str, doc_id: str, reason: str, actor: User) -> LoanCaseAdditionalDocument:
+        case = await self.get_case(case_id, actor)
+        doc = await self._additional_documents.find_by_id(doc_id)
+        if doc is None or doc.loan_case_id != case_id:
+            raise NotFoundError("Additional document not found.")
+        if doc.document_status != "uploaded":
+            raise ConflictError("This document hasn't been uploaded yet.")
+        updated = await self._additional_documents.update(
+            doc_id, {"verification_status": "rejected", "rejection_reason": reason, "verified_by": actor.require_id(), "verified_at": utc_now()},
+            updated_by=actor.require_id(),
+        )
+        assert updated is not None
+        application = await self._applications.find_by_id(case.application_id)
+        if application is not None:
+            await self._reminders.notify(
+                recipient_user_id=application.user_id, notification_type=NotificationType.DOCUMENT_REJECTED,
+                default_title="Document Rejected", default_message=f"Your {doc.name} was rejected. {reason}",
+                variables={"document_name": doc.name, "reason": reason},
+                entity_type="loan_case", entity_id=case_id,
+            )
+        return updated
+
+    def additional_document_download_url(self, doc: LoanCaseAdditionalDocument) -> str | None:
+        return generate_presigned_download_url(doc.s3_key) if doc.s3_key else None
+
+    def additional_document_attachment_url(self, doc: LoanCaseAdditionalDocument) -> str | None:
+        if not doc.s3_key or not doc.file_name:
+            return None
+        return generate_presigned_download_url(doc.s3_key, response_content_disposition=f'attachment; filename="{doc.file_name}"')
+
     # ---------------------------------------------------------------- notes / timeline
 
     async def add_note(self, case_id: str, text: str, actor: User) -> ApplicationNote:
@@ -628,6 +852,25 @@ class LoanCaseService:
         definitions = await self._definitions.find_for_case_type(CaseType.LOAN)
         return {d.status: d.allowed_next_statuses for d in definitions}
 
+    async def previous_status_map(self) -> dict[str, list[str]]:
+        """Same batch-fetch pattern as `status_transition_map`, for the new "Move Back"
+        feature's `allowed_previous_statuses` instead of `allowed_next_statuses`."""
+        definitions = await self._definitions.find_for_case_type(CaseType.LOAN)
+        return {d.status: d.allowed_previous_statuses for d in definitions}
+
+    # ---------------------------------------------------------------- complete application view
+
+    async def get_case_context(self, case: ApplicationWorkflow) -> tuple[Customer | None, Application | None, list[LoanCaseBankOffer]]:
+        """Requirement 21 — the Loan Case View's "complete application" data, all sourced
+        from repositories this service already holds read-only references to (no new
+        cross-module coupling). Returns `None` for customer/application gracefully rather
+        than raising, so a legacy or inconsistent record still renders the rest of the
+        page (requirement 33)."""
+        customer = await self._customers.find_by_id(case.customer_id) if case.customer_id else None
+        application = await self._applications.find_by_id(case.application_id)
+        bank_offers = await self._bank_offers.find_for_case(case.require_id())
+        return customer, application, bank_offers
+
     # ---------------------------------------------------------------- name resolution
 
     async def resolve_names(self, cases: list[ApplicationWorkflow]) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
@@ -643,3 +886,40 @@ class LoanCaseService:
         product_map = {p.require_id(): p.name for p in products if p.require_id() in product_ids}
         employee_map = {e.require_id(): e.display_name for e in employees if e.require_id() in employee_ids}
         return customer_map, product_map, employee_map
+
+    # ---------------------------------------------------------------- disbursements report
+
+    async def list_disbursements(
+        self, actor: User, *, date_from: date | None, date_to: date | None, product_id: str | None, search: str | None, skip: int, limit: int,
+    ) -> tuple[list[ApplicationWorkflow], int, float]:
+        """One `$facet` aggregation — list page, total count, and total amount all read
+        off the SAME filtered match (requirement 29: card/table/pagination can never
+        disagree, because there is only one query to disagree with). `actor` is accepted
+        for symmetry with every other list method here and because the router's
+        `_perm("view")` dependency already gates the endpoint; no further per-row scoping
+        is applied — Disbursements is a company-wide report, same visibility rule as the
+        existing Disbursed tab and `loan_disbursed` report definition."""
+        match: dict[str, Any] = {"is_deleted": False, "case_type": CaseType.LOAN, "current_status": LoanStatus.DISBURSED}
+        match.update(date_range_match("loan_details.disbursed_at", date_from, date_to))
+        if product_id:
+            match["product_id"] = product_id
+        if search:
+            match["case_code"] = re.compile(re.escape(search), re.IGNORECASE)
+
+        pipeline: list[dict[str, Any]] = [
+            {"$match": match},
+            {"$sort": {"loan_details.disbursed_at": -1}},
+            {
+                "$facet": {
+                    "items": [{"$skip": skip}, {"$limit": limit}],
+                    "count": [{"$count": "total"}],
+                    "sum": [{"$group": {"_id": None, "total_amount": {"$sum": "$loan_details.disbursed_amount"}}}],
+                }
+            },
+        ]
+        result = await self._workflows.collection.aggregate(pipeline).to_list(length=1)
+        facet = result[0] if result else {"items": [], "count": [], "sum": []}
+        items = [ApplicationWorkflow.model_validate(doc) for doc in facet["items"]]
+        total_count = facet["count"][0]["total"] if facet["count"] else 0
+        total_amount = facet["sum"][0]["total_amount"] if facet["sum"] else 0.0
+        return items, total_count, float(total_amount or 0.0)

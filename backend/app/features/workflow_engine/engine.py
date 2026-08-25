@@ -55,7 +55,11 @@ class WorkflowEngine:
 
     async def assert_transition_allowed(self, case_type: str, from_status: str, to_status: str) -> WorkflowDefinition:
         current = await self.get_definition(case_type, from_status)
-        if to_status not in current.allowed_next_statuses:
+        # `allowed_previous_statuses` (reserved on the schema since Module 6C's first
+        # version) now backs the "Move Back" feature — a target listed there is just as
+        # valid as one in `allowed_next_statuses`, the same single transition-graph check
+        # either direction goes through.
+        if to_status not in current.allowed_next_statuses and to_status not in current.allowed_previous_statuses:
             raise ValidationError(f"Invalid status transition: {from_status} -> {to_status} is not allowed for {case_type} cases.")
         return current
 

@@ -560,7 +560,7 @@ async def seed_workflow_definitions() -> None:
     # needs `scripts/migrate_redesign_loan_pipeline.py` to actually pick up the changed
     # `allowed_next_statuses` on pre-existing rows.
     loan_rows = [
-        (LoanStatus.NEW_CUSTOMER, "New Customer", 1, [LoanStatus.CREDIT_EVALUATION], False, False, LoanAuditEvent.CASE_CREATED, "loan_case.created"),
+        (LoanStatus.NEW_CUSTOMER, "New Customer", 1, [LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED], False, False, LoanAuditEvent.CASE_CREATED, "loan_case.created"),
         (
             LoanStatus.CREDIT_EVALUATION, "Credit Evaluation", 2,
             [LoanStatus.OFFER_ACCEPTANCE, LoanStatus.REJECTED, LoanStatus.RE_ELIGIBLE],
@@ -571,22 +571,25 @@ async def seed_workflow_definitions() -> None:
             True, True, LoanAuditEvent.BANK_OFFER_SELECTED, "loan_case.bank_offer_selected",
         ),
         (
-            LoanStatus.ADDITIONAL_DOCUMENTS, "Additional Documents", 4, [LoanStatus.RV_OV_REF],
+            LoanStatus.ADDITIONAL_DOCUMENTS, "Additional Documents", 4, [LoanStatus.RV_OV_REF, LoanStatus.REJECTED],
             True, True, LoanAuditEvent.OFFER_ACCEPTED, "loan_case.offer_accepted",
         ),
         (
-            LoanStatus.RV_OV_REF, "RV/OV/Ref", 5, [LoanStatus.ESIGN_NACH_KYC],
+            LoanStatus.RV_OV_REF, "RV/OV/Ref", 5, [LoanStatus.ESIGN_NACH_KYC, LoanStatus.REJECTED],
             False, True, LoanAuditEvent.ADDITIONAL_DOCS_VERIFIED, "loan_case.additional_docs_verified",
         ),
         (
-            LoanStatus.ESIGN_NACH_KYC, "eSign / NACH / KYC", 6, [LoanStatus.FINAL_EVALUATION],
+            LoanStatus.ESIGN_NACH_KYC, "eSign / NACH / KYC", 6, [LoanStatus.FINAL_EVALUATION, LoanStatus.REJECTED],
             False, True, LoanAuditEvent.RV_OV_REF_COMPLETED, "loan_case.rv_ov_ref_completed",
         ),
         (
             LoanStatus.FINAL_EVALUATION, "Final Evaluation", 7, [LoanStatus.SEND_FOR_DISBURSEMENT, LoanStatus.REJECTED],
             False, True, LoanAuditEvent.ESIGN_NACH_KYC_COMPLETED, "loan_case.esign_nach_kyc_completed",
         ),
-        (LoanStatus.SEND_FOR_DISBURSEMENT, "Send For Disbursement", 8, [LoanStatus.DISBURSED], False, True, LoanAuditEvent.FINAL_EVALUATED, "loan_case.approved"),
+        (
+            LoanStatus.SEND_FOR_DISBURSEMENT, "Send For Disbursement", 8, [LoanStatus.DISBURSED, LoanStatus.REJECTED],
+            False, True, LoanAuditEvent.FINAL_EVALUATED, "loan_case.approved",
+        ),
         (LoanStatus.DISBURSED, "Disbursed", 9, [], False, False, LoanAuditEvent.DISBURSED, "loan_case.disbursed"),
         (
             LoanStatus.RE_ELIGIBLE, "Re-Eligible", 10, [LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED],
@@ -594,6 +597,23 @@ async def seed_workflow_definitions() -> None:
         ),
         (LoanStatus.REJECTED, "Application Rejected", 11, [], False, False, LoanAuditEvent.REJECTED, "loan_case.rejected"),
     ]
+    # "Move Back" (production redesign, this round): one configured previous status per
+    # loan status, backed by `WorkflowDefinition.allowed_previous_statuses` — reserved on
+    # the schema since Module 6C's first version, wired up for real here for the first
+    # time. Deliberately Loan-only (Insurance's lifecycle is untouched); deliberately one
+    # step back only, matching every "Move Back to X" example in the spec — not a full
+    # arbitrary-history rollback. An already-seeded database needs
+    # `scripts/migrate_loan_workflow_transitions.py` to pick up both this and the
+    # REJECTED edges added above, same caveat as the rest of this function.
+    loan_allowed_previous: dict[str, list[str]] = {
+        LoanStatus.CREDIT_EVALUATION: [LoanStatus.NEW_CUSTOMER],
+        LoanStatus.OFFER_ACCEPTANCE: [LoanStatus.CREDIT_EVALUATION],
+        LoanStatus.ADDITIONAL_DOCUMENTS: [LoanStatus.OFFER_ACCEPTANCE],
+        LoanStatus.RV_OV_REF: [LoanStatus.ADDITIONAL_DOCUMENTS],
+        LoanStatus.ESIGN_NACH_KYC: [LoanStatus.RV_OV_REF],
+        LoanStatus.FINAL_EVALUATION: [LoanStatus.ESIGN_NACH_KYC],
+        LoanStatus.SEND_FOR_DISBURSEMENT: [LoanStatus.FINAL_EVALUATION],
+    }
     insurance_rows = [
         (InsuranceStatus.APPLICATION_SUBMITTED, "Application Submitted", 1, [InsuranceStatus.DOCUMENTS_PENDING], False, False, InsuranceAuditEvent.CASE_CREATED, "insurance_case.created"),
         (InsuranceStatus.DOCUMENTS_PENDING, "Documents Pending", 2, [InsuranceStatus.UNDERWRITING], True, True, InsuranceAuditEvent.DOCUMENTS_REQUESTED, "insurance_case.documents_requested"),
@@ -628,9 +648,10 @@ async def seed_workflow_definitions() -> None:
             # Every non-terminal status can also be placed On Hold (Optional Status,
             # decision 064) — appended here rather than duplicated in every row above.
             full_allowed_next = [*allowed_next, ON_HOLD_STATUS] if status in resumable else allowed_next
+            allowed_previous = loan_allowed_previous.get(status, []) if case_type == CaseType.LOAN else []
             definition = WorkflowDefinition(
                 case_type=case_type, status=status, label=label, sequence=sequence, allowed_next_statuses=full_allowed_next,
-                required_permission=f"{module}:applications:edit",
+                allowed_previous_statuses=allowed_previous, required_permission=f"{module}:applications:edit",
                 customer_editable=customer_editable, employee_editable=employee_editable, audit_event=audit_event,
                 notification_trigger_key=notification_key, reminder_trigger_key=None,
             )

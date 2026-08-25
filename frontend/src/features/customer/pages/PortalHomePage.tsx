@@ -4,6 +4,7 @@ import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { getOwnCustomerProfile, getOwnDashboard, type Customer, type DocumentPreviewItem, type PortalDashboard } from "@/features/customer/api";
 import { getErrorMessage } from "@/features/customer/errors";
 import { buildMilestones, type MilestoneState } from "@/features/customer/timelineSummary";
+import { listOwnAdditionalDocuments, listOwnBankOffers, listOwnLoanCases, type AdditionalDocument, type CustomerBankOffer } from "@/features/loan_management/api";
 import { formatISTDateTime } from "@/shared/dateFormat";
 import { Icon, type IconName } from "@/theme/icons";
 
@@ -64,6 +65,98 @@ function Hero({ customer, dashboard }: { customer: Customer; dashboard: PortalDa
       )}
     </div>
   );
+}
+
+// Requirement 11/13: a loan offer awaiting acceptance, or a named Additional Document
+// awaiting upload, must be impossible to miss — not just another timeline entry. Shown
+// prominently at the TOP of the portal home page, above every other card.
+function ActionRequiredBanner({ dashboard }: { dashboard: PortalDashboard }) {
+  const [offer, setOffer] = useState<CustomerBankOffer | null>(null);
+  const [selectedBankName, setSelectedBankName] = useState<string | null>(null);
+  const [pendingDocs, setPendingDocs] = useState<AdditionalDocument[]>([]);
+
+  useEffect(() => {
+    if (dashboard.current_stage_label !== "Offer Acceptance" && dashboard.current_stage_label !== "Additional Documents") return;
+    listOwnLoanCases()
+      .then(async (cases) => {
+        const match = cases.find((c) => c.application_id === dashboard.application_id);
+        if (!match) return;
+        if (match.current_status === "offer_acceptance") {
+          setSelectedBankName(match.selected_bank_name);
+          const offers = await listOwnBankOffers(match.id);
+          setOffer(offers.find((o) => o.bank_name === match.selected_bank_name) ?? offers[0] ?? null);
+        } else if (match.current_status === "additional_documents") {
+          const docs = await listOwnAdditionalDocuments(match.id);
+          setPendingDocs(docs.filter((d) => d.document_status === "requested" || d.verification_status === "rejected"));
+        }
+      })
+      .catch(() => {});
+  }, [dashboard.current_stage_label, dashboard.application_id]);
+
+  if (dashboard.current_stage_label === "Offer Acceptance" && (offer || selectedBankName)) {
+    return (
+      <div className="mb-6 rounded-card border-2 border-warning bg-warning/10 p-5 shadow-card animate-fade-in">
+        <div className="flex items-center gap-2 mb-2">
+          <Icon name="clock" className="h-5 w-5 text-warning" />
+          <h2 className="text-sm font-bold uppercase tracking-wide text-warning">Action Required</h2>
+        </div>
+        <p className="text-sm text-text mb-3">Your loan offer is ready for acceptance.</p>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4 text-sm">
+          <div>
+            <p className="text-[11px] uppercase tracking-wide text-text/40">Bank</p>
+            <p className="font-semibold text-text">{offer?.bank_name ?? selectedBankName}</p>
+          </div>
+          {offer && (
+            <>
+              <div>
+                <p className="text-[11px] uppercase tracking-wide text-text/40">Approved Amount</p>
+                <p className="font-semibold text-text">₹{offer.approved_amount.toLocaleString("en-IN")}</p>
+              </div>
+              {offer.emi_per_month != null && (
+                <div>
+                  <p className="text-[11px] uppercase tracking-wide text-text/40">EMI</p>
+                  <p className="font-semibold text-text">₹{offer.emi_per_month.toLocaleString("en-IN")}</p>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        <Link to={`/portal/applications/${dashboard.application_id}/loan-offers`} className="inline-block rounded-xl bg-warning text-white text-sm font-semibold py-2.5 px-5 hover-lift">
+          Review &amp; Accept Offer
+        </Link>
+      </div>
+    );
+  }
+
+  if (dashboard.current_stage_label === "Additional Documents" && pendingDocs.length > 0) {
+    return (
+      <div className="mb-6 rounded-card border-2 border-warning bg-warning/10 p-5 shadow-card animate-fade-in">
+        <div className="flex items-center gap-2 mb-2">
+          <Icon name="clock" className="h-5 w-5 text-warning" />
+          <h2 className="text-sm font-bold uppercase tracking-wide text-warning">Action Required</h2>
+        </div>
+        <p className="text-sm text-text mb-2">
+          {pendingDocs.length === 1 ? "An additional document is required" : `${pendingDocs.length} additional documents are required`}:
+        </p>
+        <ul className="mb-4 list-disc pl-5 text-sm text-text">
+          {pendingDocs.map((d) => (
+            <li key={d.id}>
+              {d.name}
+              {d.verification_status === "rejected" && <span className="text-danger"> — rejected, please re-upload</span>}
+            </li>
+          ))}
+        </ul>
+        <Link
+          to={`/portal/applications/${dashboard.application_id}/additional-documents`}
+          className="inline-block rounded-xl bg-warning text-white text-sm font-semibold py-2.5 px-5 hover-lift"
+        >
+          Upload Document
+        </Link>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 function QuickActionCard({ to, icon, title, subtitle }: { to: string; icon: IconName; title: string; subtitle: string }) {
@@ -334,6 +427,7 @@ export function PortalHomePage() {
 
       {dashboard && dashboard.has_application && (
         <div className="space-y-4">
+          <ActionRequiredBanner dashboard={dashboard} />
           <QuickActions dashboard={dashboard} />
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

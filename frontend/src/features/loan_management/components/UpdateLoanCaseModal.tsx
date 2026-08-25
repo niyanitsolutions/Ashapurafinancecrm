@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/buttons/Button";
 import { CheckboxField } from "@/components/forms/CheckboxField";
 import { FormField } from "@/components/forms/FormField";
@@ -7,21 +7,21 @@ import { SubmitButton } from "@/components/forms/SubmitButton";
 import { TextareaField } from "@/components/forms/TextareaField";
 import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
 import { Modal } from "@/components/overlays/Modal";
-import { getFormDefinition, type RequiredDocument } from "@/features/customer/api";
 import { getErrorMessage } from "@/features/customer/errors";
 import {
   confirmOfferAcceptance,
   disburseLoanCase,
+  moveLoanCaseBack,
+  moveToCreditEvaluation,
   recordCreditEvaluation,
   recordEsignNachKyc,
   recordFinalEvaluation,
-  recordNewCustomerDetails,
   recordRvOvRef,
-  requestLoanCaseDocuments,
   updateLoanCaseStatus,
-  verifyLoanCaseDocuments,
+  type BankOffer,
   type LoanCaseDetail,
 } from "@/features/loan_management/api";
+import { AdditionalDocumentsPanel } from "@/features/loan_management/components/AdditionalDocumentsPanel";
 import { CreditEvaluationBankOffers } from "@/features/loan_management/components/CreditEvaluationBankOffers";
 import { OfferAcceptancePanel } from "@/features/loan_management/components/OfferAcceptancePanel";
 import { LOAN_STATUS_LABELS as STATUS_LABELS } from "@/features/loan_management/constants";
@@ -36,7 +36,7 @@ import { getLoanStatusControlInfo, type StatusControlAction } from "@/features/l
 // performs its own transition). A successful action that actually changed
 // `current_status` closes the modal (matches the walkthrough: submit, confirm the status
 // changed, click Update again for the next stage); one that only saved in-stage data
-// (e.g. Credit Score, Request Documents) leaves it open so staff can keep working the
+// (e.g. Credit Score, a bank/NBFC record) leaves it open so staff can keep working the
 // same stage.
 export function UpdateLoanCaseModal({
   caseId,
@@ -55,18 +55,10 @@ export function UpdateLoanCaseModal({
 }) {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [confirmVerify, setConfirmVerify] = useState(false);
-  // Decision #132: the loan case's OWN product's required documents — not the full
-  // system-wide document-type catalog `documentTypesApi.list()` used to pull in.
-  const [requiredDocuments, setRequiredDocuments] = useState<RequiredDocument[]>([]);
+  const [bankOffers, setBankOffers] = useState<BankOffer[]>(loanCase.bank_offers);
   const status = loanCase.current_status;
   const details = loanCase.loan_details;
-
-  useEffect(() => {
-    getFormDefinition("loan", loanCase.product_id)
-      .then((def) => setRequiredDocuments(def.required_documents))
-      .catch(() => setRequiredDocuments([]));
-  }, [loanCase.product_id]);
+  const selectedOffer = bankOffers.find((o) => o.is_selected) ?? null;
 
   const run = async (action: () => Promise<LoanCaseDetail>, successMessage: string) => {
     setError(null);
@@ -101,17 +93,42 @@ export function UpdateLoanCaseModal({
           </div>
         )}
 
+        {canEdit && loanCase.allowed_previous_statuses.length > 0 && (
+          <MoveBackControl
+            targetLabel={STATUS_LABELS[loanCase.allowed_previous_statuses[0]] ?? loanCase.allowed_previous_statuses[0]}
+            onMoveBack={(remarks) => run(() => moveLoanCaseBack(caseId, remarks), "Case moved back.")}
+          />
+        )}
+
         {canEdit && status === "new_customer" && (
           <div>
-            <h3 className="mb-2 text-sm font-semibold text-text/70">New Customer Details</h3>
-            <NewCustomerDetailsForm onSubmit={(payload) => run(() => recordNewCustomerDetails(caseId, payload), "New Customer details saved.")} />
+            <h3 className="mb-2 text-sm font-semibold text-text/70">Bank / NBFC Offers</h3>
+            <CreditEvaluationBankOffers caseId={caseId} canEdit={canEdit} stage="new_customer" onOffersChanged={setBankOffers} />
+            <Button
+              className="mt-3"
+              size="sm"
+              disabled={bankOffers.length === 0}
+              onClick={() => run(() => moveToCreditEvaluation(caseId), "Moved to Credit Evaluation.")}
+            >
+              Move to Credit Evaluation
+            </Button>
+            {bankOffers.length === 0 && <p className="mt-1 text-xs text-text/40">Add at least one Bank / NBFC record first.</p>}
           </div>
         )}
 
         {canEdit && status === "credit_evaluation" && (
           <div>
             <h3 className="mb-2 text-sm font-semibold text-text/70">Bank / NBFC Offers</h3>
-            <CreditEvaluationBankOffers caseId={caseId} canEdit={canEdit} onOfferSelected={() => { onUpdated(); onClose(); }} />
+            <CreditEvaluationBankOffers
+              caseId={caseId}
+              canEdit={canEdit}
+              stage="credit_evaluation"
+              onOffersChanged={setBankOffers}
+              onOfferSelected={() => {
+                onUpdated();
+                onClose();
+              }}
+            />
           </div>
         )}
 
@@ -122,33 +139,23 @@ export function UpdateLoanCaseModal({
           </div>
         )}
 
-        {canEdit && (status === "new_customer" || status === "additional_documents") && (
-          <div>
-            <h3 className="mb-2 text-sm font-semibold text-text/70">Document Verification</h3>
-            <p className="mb-2 text-xs text-text/50">
-              Pending: {loanCase.pending_document_type_ids.length === 0 ? "none requested" : loanCase.pending_document_type_ids.length}
-            </p>
-            <RequestDocumentsForm
-              requiredDocuments={requiredDocuments}
-              onSubmit={(ids) => run(() => requestLoanCaseDocuments(caseId, ids), "Documents requested.")}
-            />
-            {status !== "new_customer" && (
-              <Button size="sm" className="mt-2" onClick={() => setConfirmVerify(true)}>
-                Verify Documents
-              </Button>
-            )}
-          </div>
-        )}
-
         {canEdit && status === "offer_acceptance" && (
           <div>
             <h3 className="mb-2 text-sm font-semibold text-text/70">Offer Acceptance</h3>
             <OfferAcceptancePanel
               bankName={loanCase.selected_bank_name}
               approvedAmount={loanCase.approved_amount}
+              emiPerMonth={selectedOffer?.emi_per_month}
               canConfirm={canEdit}
               onConfirm={() => run(() => confirmOfferAcceptance(caseId), "Offer acceptance confirmed.")}
             />
+          </div>
+        )}
+
+        {status === "additional_documents" && (
+          <div>
+            <h3 className="mb-2 text-sm font-semibold text-text/70">Additional Documents</h3>
+            <AdditionalDocumentsPanel caseId={caseId} canEdit={canEdit} />
           </div>
         )}
 
@@ -184,18 +191,6 @@ export function UpdateLoanCaseModal({
           </div>
         )}
       </div>
-
-      <ConfirmDialog
-        open={confirmVerify}
-        title="Verify Documents"
-        message="Mark all requested documents as verified for this case? This moves the case to the next stage."
-        confirmLabel="Verify Documents"
-        onConfirm={async () => {
-          await run(() => verifyLoanCaseDocuments(caseId), "Documents verified.");
-          setConfirmVerify(false);
-        }}
-        onClose={() => setConfirmVerify(false)}
-      />
     </Modal>
   );
 }
@@ -295,64 +290,47 @@ function StatusUpdateControl({
   );
 }
 
-function RequestDocumentsForm({ requiredDocuments, onSubmit }: { requiredDocuments: RequiredDocument[]; onSubmit: (ids: string[]) => void }) {
-  const [selected, setSelected] = useState<string[]>([]);
-  // Decision #132: scoped to this case's own product — never the full system-wide
-  // document-type catalog (that belongs to Document Collection/Document Verification,
-  // not Loan Management's Update flow).
-  const options = requiredDocuments.filter((d) => !d.hidden && d.required !== false);
-  return (
-    <div className="space-y-2">
-      {options.length === 0 && <p className="text-xs text-text/40">No additional documents configured for this product.</p>}
-      <div className="flex flex-wrap gap-3">
-        {options.map((d) => (
-          <CheckboxField
-            key={d.document_type_id}
-            label={d.name_override || d.document_type_name}
-            checked={selected.includes(d.document_type_id)}
-            onChange={(e) => setSelected((prev) => (e.target.checked ? [...prev, d.document_type_id] : prev.filter((id) => id !== d.document_type_id)))}
-          />
-        ))}
-      </div>
-      <Button variant="secondary" size="sm" disabled={selected.length === 0} onClick={() => onSubmit(selected)}>
-        Request Selected Documents
-      </Button>
-    </div>
-  );
-}
-
-function NewCustomerDetailsForm({
-  onSubmit,
-}: {
-  onSubmit: (payload: { preferred_bank_name?: string; preferred_branch?: string; loan_type?: string; requested_amount?: number; preferred_remarks?: string }) => void;
-}) {
-  const [bankName, setBankName] = useState("");
-  const [branch, setBranch] = useState("");
-  const [loanType, setLoanType] = useState("");
-  const [amount, setAmount] = useState("");
+// Generic "Move Back" (requirement 20) — the ONE configured previous status for the
+// case's current status, read straight off the backend's own transition graph
+// (`loanCase.allowed_previous_statuses`), not a client-side guess. Same explicit
+// confirm-before-mutate pattern as every other action here.
+function MoveBackControl({ targetLabel, onMoveBack }: { targetLabel: string; onMoveBack: (remarks?: string) => void }) {
+  const [confirming, setConfirming] = useState(false);
   const [remarks, setRemarks] = useState("");
 
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSubmit({
-          preferred_bank_name: bankName || undefined, preferred_branch: branch || undefined,
-          loan_type: loanType || undefined, requested_amount: amount ? Number(amount) : undefined,
-          preferred_remarks: remarks || undefined,
-        });
-      }}
-      className="space-y-2"
-    >
-      <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
-        <FormField label="Bank / NBFC Name" name="preferred_bank_name" value={bankName} onChange={(e) => setBankName(e.target.value)} />
-        <FormField label="Branch" name="preferred_branch" value={branch} onChange={(e) => setBranch(e.target.value)} />
-        <FormField label="Loan Type" name="loan_type" value={loanType} onChange={(e) => setLoanType(e.target.value)} />
-        <FormField label="Requested Amount" name="requested_amount" type="number" value={amount} onChange={(e) => setAmount(e.target.value)} />
+  if (confirming) {
+    return (
+      <div className="space-y-2 rounded border border-border bg-background/50 px-3 py-2">
+        <TextareaField label="Remarks (optional)" value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={2} />
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => {
+              onMoveBack(remarks.trim() || undefined);
+              setConfirming(false);
+              setRemarks("");
+            }}
+          >
+            Confirm Move Back
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => setConfirming(false)}>
+            Cancel
+          </Button>
+        </div>
       </div>
-      <TextareaField label="Remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={2} />
-      <SubmitButton>Save &amp; Continue</SubmitButton>
-    </form>
+    );
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3 rounded border border-border bg-background/50 px-3 py-2">
+      <span className="text-sm text-text/70">
+        Move back to <span className="font-medium text-text">{targetLabel}</span>
+      </span>
+      <Button size="sm" variant="secondary" onClick={() => setConfirming(true)}>
+        Move Back
+      </Button>
+    </div>
   );
 }
 

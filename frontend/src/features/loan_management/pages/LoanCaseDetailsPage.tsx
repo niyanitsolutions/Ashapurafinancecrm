@@ -9,6 +9,8 @@ import { SubmitButton } from "@/components/forms/SubmitButton";
 import { TextareaField } from "@/components/forms/TextareaField";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { usePermissions } from "@/features/access_control/usePermissions";
+import { DocumentChecklist } from "@/features/customer/components/DocumentChecklist";
+import { getFormDefinition, listDocuments, type ApplicationDocument, type RequiredDocument } from "@/features/customer/api";
 import { getErrorMessage } from "@/features/customer/errors";
 import {
   addLoanCaseNote,
@@ -16,7 +18,9 @@ import {
   getLoanCase,
   getLoanCaseTimeline,
   holdLoanCase,
+  listAdditionalDocuments,
   resumeLoanCase,
+  type AdditionalDocument,
   type CaseTimelineEntry,
   type LoanCaseDetail,
 } from "@/features/loan_management/api";
@@ -25,6 +29,8 @@ import { LOAN_STATUS_LABELS as STATUS_LABELS } from "@/features/loan_management/
 import { formatISTDateTime } from "@/shared/dateFormat";
 import { useDocumentCollectionBackContext } from "@/shared/navigationContext";
 import { HOLD_REASONS } from "@/features/workflow_engine/holdReasons";
+
+const ADDITIONAL_DOC_STATUS_LABELS: Record<string, string> = { pending: "Pending Review", verified: "Verified", rejected: "Rejected" };
 
 function Field({ label, value }: { label: string; value: string | number | null | undefined }) {
   return (
@@ -64,14 +70,32 @@ export function LoanCaseDetailsPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
+  // Requirement 22-24 — the complete application view: every document already uploaded
+  // during Document Collection (before this case ever reached Loan Management), plus
+  // this case's own Additional Documents. Reuses the SAME staff document endpoint/
+  // component StaffApplicationDetailsPage already uses — no second document mechanism.
+  const [documents, setDocuments] = useState<ApplicationDocument[]>([]);
+  const [requiredDocuments, setRequiredDocuments] = useState<RequiredDocument[]>([]);
+  const [additionalDocuments, setAdditionalDocuments] = useState<AdditionalDocument[]>([]);
 
   const load = () => {
     if (!caseId) return;
     getLoanCase(caseId).then(setLoanCase).catch((err) => setError(getErrorMessage(err)));
     getLoanCaseTimeline(caseId).then(setTimeline).catch(() => setTimeline([]));
+    listAdditionalDocuments(caseId).then(setAdditionalDocuments).catch(() => setAdditionalDocuments([]));
   };
 
   useEffect(load, [caseId]);
+
+  const applicationId = loanCase?.application_id;
+  const productId = loanCase?.product_id;
+  useEffect(() => {
+    if (!applicationId || !productId) return;
+    listDocuments(applicationId).then(setDocuments).catch(() => setDocuments([]));
+    getFormDefinition("loan", productId)
+      .then((def) => setRequiredDocuments(def.required_documents))
+      .catch(() => setRequiredDocuments([]));
+  }, [applicationId, productId]);
 
   if (!caseId) return null;
 
@@ -126,23 +150,91 @@ export function LoanCaseDetailsPage() {
         <div className="lg:col-span-2 space-y-6">
           <Section title="Case Overview">
             <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
+              <Field label="Case Code" value={loanCase.case_code} />
               <Field label="Customer" value={loanCase.customer_name} />
               <Field label="Product" value={loanCase.product_name} />
               <Field label="Assigned To" value={loanCase.assigned_to_name} />
-              <Field label="Status" value={STATUS_LABELS[status] ?? status} />
+              <Field label="Current Status" value={STATUS_LABELS[status] ?? status} />
             </div>
           </Section>
 
-          {(details.preferred_bank_name || details.preferred_branch || details.loan_type || details.requested_amount != null) && (
-            <Section title="New Customer Preferences">
+          {loanCase.customer && (
+            <Section title="Customer Details">
               <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
-                <Field label="Preferred Bank / NBFC" value={details.preferred_bank_name} />
-                <Field label="Preferred Branch" value={details.preferred_branch} />
-                <Field label="Loan Type" value={details.loan_type} />
-                <Field label="Requested Amount" value={details.requested_amount != null ? `₹${details.requested_amount.toLocaleString("en-IN")}` : null} />
-                <Field label="Remarks" value={details.preferred_remarks} />
+                <Field label="Name" value={loanCase.customer.full_name} />
+                <Field label="Mobile" value={loanCase.customer.mobile} />
+                <Field label="Email" value={loanCase.customer.email} />
+                <Field label="Date of Birth" value={loanCase.customer.date_of_birth ? formatISTDateTime(loanCase.customer.date_of_birth) : null} />
+                <Field
+                  label="Address"
+                  value={
+                    [loanCase.customer.address_line1, loanCase.customer.address_line2, loanCase.customer.city, loanCase.customer.state, loanCase.customer.pincode]
+                      .filter(Boolean)
+                      .join(", ") || null
+                  }
+                />
               </div>
             </Section>
+          )}
+
+          {loanCase.application && (
+            <Section title="Application">
+              <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
+                <Field label="Application Number" value={loanCase.application.application_code} />
+                <Field label="Product" value={loanCase.product_name} />
+                <Field label="Requested Amount" value={details.requested_amount != null ? `₹${details.requested_amount.toLocaleString("en-IN")}` : null} />
+                <Field label="Current Stage" value={STATUS_LABELS[status] ?? status} />
+                <Field label="Application Status" value={loanCase.application.status} />
+                <Field label="Submitted At" value={loanCase.application.submitted_at ? formatISTDateTime(loanCase.application.submitted_at) : null} />
+              </div>
+            </Section>
+          )}
+
+          {loanCase.bank_offers.length > 0 ? (
+            <Section title="Bank / NBFC Offers">
+              <div className="space-y-3">
+                {loanCase.bank_offers.map((offer) => (
+                  <div key={offer.id} className="rounded border border-border p-3 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium text-text">{offer.bank_name}</span>
+                      {offer.is_selected && <span className="rounded-full bg-primary/10 px-2 py-0.5 text-2xs font-semibold text-primary">Selected</span>}
+                    </div>
+                    <div className="text-xs text-text/50">
+                      {offer.branch && <span>Branch: {offer.branch} </span>}
+                      {offer.loan_type && <span>Loan Type: {offer.loan_type} </span>}
+                      {offer.requested_amount != null && <span>Requested Amount: ₹{offer.requested_amount.toLocaleString("en-IN")}</span>}
+                    </div>
+                    {offer.remarks && <div className="text-xs text-text/50">Remarks: {offer.remarks}</div>}
+                    {offer.decision !== "pending" && (
+                      <div className="text-sm text-text/70">
+                        Bank Decision: {offer.decision === "approved" ? "Approved" : "Rejected / Re-Eligible"}
+                        {offer.decision === "approved" && (
+                          <div className="mt-1 text-xs text-text/50">
+                            {offer.approved_amount != null && <span>Approved Amount: ₹{offer.approved_amount.toLocaleString("en-IN")} </span>}
+                            {offer.interest_rate != null && <span>Interest Rate: {offer.interest_rate}% </span>}
+                            {offer.tenure_months != null && <span>Tenure: {offer.tenure_months} months </span>}
+                            {offer.processing_fee != null && <span>Processing Fee: ₹{offer.processing_fee.toLocaleString("en-IN")} </span>}
+                            {offer.emi_per_month != null && <span>EMI Per Month: ₹{offer.emi_per_month.toLocaleString("en-IN")}</span>}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </Section>
+          ) : (
+            (details.preferred_bank_name || details.preferred_branch || details.loan_type || details.requested_amount != null) && (
+              <Section title="New Customer Preferences">
+                <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
+                  <Field label="Preferred Bank / NBFC" value={details.preferred_bank_name} />
+                  <Field label="Preferred Branch" value={details.preferred_branch} />
+                  <Field label="Loan Type" value={details.loan_type} />
+                  <Field label="Requested Amount" value={details.requested_amount != null ? `₹${details.requested_amount.toLocaleString("en-IN")}` : null} />
+                  <Field label="Remarks" value={details.preferred_remarks} />
+                </div>
+              </Section>
+            )
           )}
 
           {(details.credit_score != null || details.credit_remarks) && (
@@ -198,6 +290,52 @@ export function LoanCaseDetailsPage() {
                 <Field label="Disbursed Amount" value={details.disbursed_amount} />
                 <Field label="Reference" value={details.disbursed_reference} />
                 <Field label="Disbursed At" value={details.disbursed_at ? formatISTDateTime(details.disbursed_at) : null} />
+              </div>
+            </Section>
+          )}
+
+          {/* Requirement 22-24: every document already uploaded during Document
+              Collection stays visible here — the SAME staff document endpoint/component
+              StaffApplicationDetailsPage uses, read-only (no upload dropzone). */}
+          <Section title="Documents">
+            {requiredDocuments.length > 0 ? (
+              <DocumentChecklist requiredDocuments={requiredDocuments} uploadedDocuments={documents} onUpload={() => {}} uploadingFor={null} disabled />
+            ) : (
+              <p className="text-sm text-text/40">No documents on file for this application yet.</p>
+            )}
+          </Section>
+
+          {additionalDocuments.length > 0 && (
+            <Section title="Additional Documents">
+              <div className="space-y-2">
+                {additionalDocuments.map((doc) => (
+                  <div key={doc.id} className="rounded border border-border p-3 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium text-text">{doc.name}</span>
+                      <span className="text-xs text-text/50">
+                        {doc.document_status === "requested" ? "Pending Upload" : ADDITIONAL_DOC_STATUS_LABELS[doc.verification_status]}
+                      </span>
+                    </div>
+                    {doc.verification_status === "rejected" && doc.rejection_reason && (
+                      <p className="text-xs text-danger">Reason: {doc.rejection_reason}</p>
+                    )}
+                    {doc.uploaded_at && <p className="text-xs text-text/40">Uploaded: {formatISTDateTime(doc.uploaded_at)}</p>}
+                    {(doc.download_url || doc.attachment_url) && (
+                      <div className="flex gap-2 pt-1">
+                        {doc.download_url && (
+                          <a href={doc.download_url} target="_blank" rel="noreferrer" className="text-xs font-medium text-primary hover:underline">
+                            Preview
+                          </a>
+                        )}
+                        {doc.attachment_url && (
+                          <a href={doc.attachment_url} target="_blank" rel="noreferrer" className="text-xs font-medium text-primary hover:underline">
+                            Download
+                          </a>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             </Section>
           )}

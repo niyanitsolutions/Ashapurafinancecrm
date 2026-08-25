@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/buttons/Button";
-import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
+import { Modal } from "@/components/overlays/Modal";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { getErrorMessage } from "@/features/customer/errors";
 import {
@@ -104,12 +104,38 @@ export function LoanOffersPage() {
             {offers.map((offer) => (
               <div key={offer.id} className="rounded-card border border-border bg-card shadow-card p-5">
                 <h3 className="text-base font-semibold text-text">{offer.bank_name}</h3>
-                <div className="mt-3">
-                  <div className="text-xs text-text/50">Approved Amount</div>
-                  <div className="text-lg font-semibold text-text">₹{offer.approved_amount.toLocaleString("en-IN")}</div>
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                  <div>
+                    <div className="text-xs text-text/50">Approved Amount</div>
+                    <div className="text-lg font-semibold text-text">₹{offer.approved_amount.toLocaleString("en-IN")}</div>
+                  </div>
+                  {offer.emi_per_month != null && (
+                    <div>
+                      <div className="text-xs text-text/50">EMI Per Month</div>
+                      <div className="text-lg font-semibold text-text">₹{offer.emi_per_month.toLocaleString("en-IN")}</div>
+                    </div>
+                  )}
+                  {offer.interest_rate != null && (
+                    <div>
+                      <div className="text-xs text-text/50">Interest Rate</div>
+                      <div className="text-sm font-medium text-text">{offer.interest_rate}%</div>
+                    </div>
+                  )}
+                  {offer.tenure_months != null && (
+                    <div>
+                      <div className="text-xs text-text/50">Tenure</div>
+                      <div className="text-sm font-medium text-text">{offer.tenure_months} months</div>
+                    </div>
+                  )}
+                  {offer.processing_fee != null && (
+                    <div>
+                      <div className="text-xs text-text/50">Processing Fee</div>
+                      <div className="text-sm font-medium text-text">₹{offer.processing_fee.toLocaleString("en-IN")}</div>
+                    </div>
+                  )}
                 </div>
                 <Button className="mt-4 w-full" onClick={() => setConfirmOfferId(offer.id)}>
-                  Select
+                  Select This Offer
                 </Button>
               </div>
             ))}
@@ -121,16 +147,88 @@ export function LoanOffersPage() {
         <p className="text-sm text-text/40">No offer selection is available at this stage.</p>
       )}
 
-      <ConfirmDialog
-        open={confirmOfferId !== null}
-        title="Select This Offer"
-        message="Select this offer? Your case will move to Offer Acceptance, where you'll confirm acceptance in a separate step."
-        confirmLabel="Select Offer"
-        onConfirm={() => {
-          if (confirmOfferId) return selectOffer(confirmOfferId);
-        }}
-        onClose={() => setConfirmOfferId(null)}
-      />
+      {confirmOfferId !== null && (
+        <ConfirmOfferModal
+          offer={offers.find((o) => o.id === confirmOfferId) ?? null}
+          onConfirm={() => selectOffer(confirmOfferId)}
+          onClose={() => setConfirmOfferId(null)}
+        />
+      )}
     </SimplePageLayout>
+  );
+}
+
+// Requirement 8 — a full confirmation step showing every offer economics field before
+// the offer is actually selected, not a bare "are you sure?".
+function ConfirmOfferModal({ offer, onConfirm, onClose }: { offer: CustomerBankOffer | null; onConfirm: () => Promise<void>; onClose: () => void }) {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  if (!offer) return null;
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Confirm Loan Offer"
+      size="sm"
+      footer={
+        <>
+          <Button variant="secondary" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            loading={isSubmitting}
+            onClick={async () => {
+              setIsSubmitting(true);
+              try {
+                await onConfirm();
+              } finally {
+                setIsSubmitting(false);
+              }
+            }}
+          >
+            Confirm &amp; Accept
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3 text-sm">
+        <div>
+          <div className="text-xs text-text/50">Bank</div>
+          <div className="font-medium text-text">{offer.bank_name}</div>
+        </div>
+        <div>
+          <div className="text-xs text-text/50">Approved Amount</div>
+          <div className="font-medium text-text">₹{offer.approved_amount.toLocaleString("en-IN")}</div>
+        </div>
+        {offer.interest_rate != null && (
+          <div>
+            <div className="text-xs text-text/50">Interest Rate</div>
+            <div className="font-medium text-text">{offer.interest_rate}%</div>
+          </div>
+        )}
+        {offer.tenure_months != null && (
+          <div>
+            <div className="text-xs text-text/50">Tenure</div>
+            <div className="font-medium text-text">{offer.tenure_months} months</div>
+          </div>
+        )}
+        {offer.processing_fee != null && (
+          <div>
+            <div className="text-xs text-text/50">Processing Fee</div>
+            <div className="font-medium text-text">₹{offer.processing_fee.toLocaleString("en-IN")}</div>
+          </div>
+        )}
+        {offer.emi_per_month != null && (
+          <div>
+            <div className="text-xs text-text/50">EMI Per Month</div>
+            <div className="font-medium text-text">₹{offer.emi_per_month.toLocaleString("en-IN")}</div>
+          </div>
+        )}
+        <p className="pt-2 text-text/70">
+          Your case will move to Offer Acceptance, where you'll confirm acceptance in a separate step. Are you sure you want to select this offer?
+        </p>
+      </div>
+    </Modal>
   );
 }

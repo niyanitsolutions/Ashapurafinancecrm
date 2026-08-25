@@ -8,6 +8,7 @@ name Dashboard's own "Disbursed"/"Rejected" widget catalog rows already referenc
 with zero Dashboard code changes.
 """
 
+from datetime import date
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
@@ -28,10 +29,18 @@ from app.features.loan_management.dependencies import (
     get_loan_case_service,
 )
 from app.features.loan_management.schemas import (
+    AdditionalDocumentRequest,
+    AdditionalDocumentResponse,
+    AdditionalDocumentUploadUrlRequest,
+    AdditionalDocumentUploadUrlResponse,
     BankOfferRequest,
     BankOfferResponse,
+    CaseRemarksRequest,
+    ConfirmAdditionalDocumentRequest,
     CreditEvaluationRequest,
     CustomerBankOfferResponse,
+    DisbursementItem,
+    DisbursementListResponse,
     DisburseRequest,
     EsignNachKycRequest,
     FinalEvaluationRequest,
@@ -40,6 +49,7 @@ from app.features.loan_management.schemas import (
     LoanCaseListItem,
     LoanStatusUpdateRequest,
     NewCustomerDetailsRequest,
+    RejectAdditionalDocumentRequest,
     RvOvRefRequest,
 )
 from app.features.loan_management.service import LoanCaseService
@@ -69,10 +79,22 @@ async def _detail(service: LoanCaseService, case_id: str, actor: User, *, own: b
     case = await (service.get_own_case(case_id, actor) if own else service.get_case(case_id, actor))
     customer_map, product_map, employee_map = await service.resolve_names([case])
     transitions = await service.status_transition_map()
+    previous = await service.previous_status_map()
+    # Requirement 21's full customer/application/bank_offers block is staff-only — the
+    # customer path must NEVER see `BankOfferResponse`'s staff-only fields (decision,
+    # assigned_officer, internal remarks, bank_application_id, reference_number). A
+    # customer already has trimmed, dedicated endpoints for their own offers
+    # (`/mine/{case_id}/bank-offers` -> `CustomerBankOfferResponse`); this block simply
+    # stays empty on their own detail response rather than risk ever leaking it.
+    customer = application = None
+    bank_offers: list[Any] = []
+    if not own:
+        customer, application, bank_offers = await service.get_case_context(case)
     return ApiResponse[LoanCaseDetailResponse].ok(
         mappers.to_detail_response(
             case, customer_map.get(case.customer_id), product_map.get(case.product_id, ""), employee_map.get(case.assigned_to or ""),
-            transitions.get(case.current_status),
+            transitions.get(case.current_status), allowed_previous_statuses=previous.get(case.current_status),
+            customer=customer, application=application, bank_offers=bank_offers,
         )
     )
 
@@ -124,6 +146,30 @@ async def confirm_own_offer_acceptance(
     return await _detail(service, case_id, current_user, own=True)
 
 
+@router.get("/mine/{case_id}/additional-documents")
+async def list_own_additional_documents(
+    case_id: str, service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep
+) -> ApiResponse[list[AdditionalDocumentResponse]]:
+    docs = await service.list_additional_documents_own(case_id, current_user)
+    return ApiResponse[list[AdditionalDocumentResponse]].ok([mappers.additional_document_to_response(d) for d in docs])
+
+
+@router.post("/mine/{case_id}/additional-documents/{doc_id}/upload-url")
+async def mint_own_additional_document_upload_url(
+    case_id: str, doc_id: str, payload: AdditionalDocumentUploadUrlRequest, service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep
+) -> ApiResponse[AdditionalDocumentUploadUrlResponse]:
+    upload_url, s3_key = await service.mint_additional_document_upload_url(case_id, doc_id, payload, current_user)
+    return ApiResponse[AdditionalDocumentUploadUrlResponse].ok(AdditionalDocumentUploadUrlResponse(upload_url=upload_url, s3_key=s3_key))
+
+
+@router.post("/mine/{case_id}/additional-documents/{doc_id}/confirm")
+async def confirm_own_additional_document_upload(
+    case_id: str, doc_id: str, payload: ConfirmAdditionalDocumentRequest, service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep
+) -> ApiResponse[AdditionalDocumentResponse]:
+    doc = await service.confirm_additional_document_upload(case_id, doc_id, payload, current_user)
+    return ApiResponse[AdditionalDocumentResponse].ok(mappers.additional_document_to_response(doc))
+
+
 # ---------------------------------------------------------------------- Staff (Owner/Employee)
 
 
@@ -153,6 +199,36 @@ async def get_counts(service: ServiceDep, actor: Annotated[User, _perm("view")])
     # Registered before "/{case_id}" so "counts" is never captured as a case_id.
     counts = await service.get_counts(actor)
     return ApiResponse[LoanCaseCountsResponse].ok(LoanCaseCountsResponse(**counts))
+
+
+@router.get("/disbursements")
+async def list_disbursements(
+    service: ServiceDep, actor: Annotated[User, _perm("view")],
+    page: PageParamsDep,
+    date_from: date | None = None, date_to: date | None = None, product_id: str | None = None, search: str | None = None,
+) -> ApiResponse[DisbursementListResponse]:
+    # Registered before "/{case_id}" for the same reason as "/counts" above. Date-preset
+    # (This Week/Month/Quarter/Year/Custom) resolution to concrete date_from/date_to is a
+    # frontend concern — the backend only ever sees plain calendar dates, same shape as
+    # every other date-filtered report in this codebase.
+    items, total_count, total_amount = await service.list_disbursements(
+        actor, date_from=date_from, date_to=date_to, product_id=product_id, search=search, skip=page.skip, limit=page.page_size,
+    )
+    customer_map, product_map, _employee_map = await service.resolve_names(items)
+    disbursement_items = [
+        DisbursementItem(
+            id=c.require_id(), case_code=c.case_code, customer_name=customer_map.get(c.customer_id), product_name=product_map.get(c.product_id, ""),
+            approved_amount=c.loan_details.offered_amount if c.loan_details else None,
+            disbursed_amount=c.loan_details.disbursed_amount if c.loan_details else None,
+            disbursed_reference=c.loan_details.disbursed_reference if c.loan_details else None,
+            disbursed_at=c.loan_details.disbursed_at if c.loan_details else None,
+        )
+        for c in items
+    ]
+    return ApiResponse[DisbursementListResponse].ok(
+        DisbursementListResponse(items=disbursement_items, total_count=total_count, total_amount=total_amount),
+        meta=ResponseMeta(pagination=page.build_meta(total_count)),
+    )
 
 
 @router.get("/{case_id}")
@@ -221,11 +297,64 @@ async def verify_documents(
     return await _detail(service, case_id, actor)
 
 
+@router.get("/{case_id}/additional-documents")
+async def list_additional_documents(
+    case_id: str, service: ServiceDep, actor: Annotated[User, _perm("view")]
+) -> ApiResponse[list[AdditionalDocumentResponse]]:
+    docs = await service.list_additional_documents(case_id, actor)
+    return ApiResponse[list[AdditionalDocumentResponse]].ok(
+        [mappers.additional_document_to_response(d, service.additional_document_download_url(d), service.additional_document_attachment_url(d)) for d in docs]
+    )
+
+
+@router.post("/{case_id}/additional-documents")
+async def add_additional_document(
+    case_id: str, payload: AdditionalDocumentRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[AdditionalDocumentResponse]:
+    doc = await service.add_additional_document(case_id, payload.name, actor)
+    return ApiResponse[AdditionalDocumentResponse].ok(mappers.additional_document_to_response(doc))
+
+
+@router.post("/{case_id}/additional-documents/{doc_id}/verify")
+async def verify_additional_document(
+    case_id: str, doc_id: str, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[AdditionalDocumentResponse]:
+    doc = await service.verify_additional_document(case_id, doc_id, actor)
+    return ApiResponse[AdditionalDocumentResponse].ok(mappers.additional_document_to_response(doc))
+
+
+@router.post("/{case_id}/additional-documents/{doc_id}/reject")
+async def reject_additional_document(
+    case_id: str, doc_id: str, payload: RejectAdditionalDocumentRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[AdditionalDocumentResponse]:
+    doc = await service.reject_additional_document(case_id, doc_id, payload.reason, actor)
+    return ApiResponse[AdditionalDocumentResponse].ok(mappers.additional_document_to_response(doc))
+
+
 @router.post("/{case_id}/new-customer-details")
 async def record_new_customer_details(
     case_id: str, payload: NewCustomerDetailsRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
 ) -> ApiResponse[LoanCaseDetailResponse]:
+    # Kept for backward compatibility with any existing caller of the old single-slot
+    # New Customer form — the current frontend instead captures bank/NBFC records via
+    # the bank-offers endpoints below and calls move_to_credit_evaluation to advance.
     await service.record_new_customer_details(case_id, payload, actor)
+    return await _detail(service, case_id, actor)
+
+
+@router.post("/{case_id}/move-to-credit-evaluation")
+async def move_to_credit_evaluation(
+    case_id: str, payload: CaseRemarksRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[LoanCaseDetailResponse]:
+    await service.move_to_credit_evaluation(case_id, actor, remarks=payload.remarks)
+    return await _detail(service, case_id, actor)
+
+
+@router.post("/{case_id}/move-back")
+async def move_back(
+    case_id: str, payload: CaseRemarksRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[LoanCaseDetailResponse]:
+    await service.move_back(case_id, actor, remarks=payload.remarks)
     return await _detail(service, case_id, actor)
 
 
@@ -257,6 +386,12 @@ async def update_bank_offer(
 ) -> ApiResponse[BankOfferResponse]:
     offer = await service.update_bank_offer(case_id, offer_id, payload, actor)
     return ApiResponse[BankOfferResponse].ok(mappers.bank_offer_to_response(offer))
+
+
+@router.delete("/{case_id}/bank-offers/{offer_id}")
+async def delete_bank_offer(case_id: str, offer_id: str, service: ServiceDep, actor: Annotated[User, _perm("edit")]) -> ApiResponse[None]:
+    await service.delete_bank_offer(case_id, offer_id, actor)
+    return ApiResponse[None].ok(None)
 
 
 @router.post("/{case_id}/bank-offers/{offer_id}/select")

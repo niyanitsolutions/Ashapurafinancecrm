@@ -28,12 +28,6 @@ export interface UpdateLayoutItem {
   is_pinned: boolean;
 }
 
-export interface NotificationsResult {
-  available: boolean;
-  items: Record<string, unknown>[];
-  unread_count: number;
-}
-
 export interface SearchResult {
   type: string;
   id: string;
@@ -56,10 +50,6 @@ export function updateLayout(widgets: UpdateLayoutItem[]) {
 
 export function getDashboard() {
   return apiRequest<Widget[]>("/dashboard");
-}
-
-export function getNotifications() {
-  return apiRequest<NotificationsResult>("/dashboard/notifications");
 }
 
 export function search(q: string) {

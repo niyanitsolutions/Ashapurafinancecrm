@@ -134,12 +134,16 @@ class BankOfferDecision:
     """Per-bank decision on a `LoanCaseBankOffer` — deliberately independent of the Loan
     Case's own `current_status` (decision #129): a case can sit in `credit_evaluation`
     with several banks already decided (some approved, some not) while staff/customer
-    haven't yet selected a final offer."""
+    haven't yet selected a final offer. `PENDING` is the default for an offer captured at
+    `new_customer`, before any bank decision has been recorded — a case can now carry
+    bank/NBFC records from the New Customer stage onward, not only from Credit
+    Evaluation."""
 
+    PENDING = "pending"
     APPROVED = "approved"
     REJECTED_RE_ELIGIBLE = "rejected_re_eligible"
 
-    ALL = (APPROVED, REJECTED_RE_ELIGIBLE)
+    ALL = (PENDING, APPROVED, REJECTED_RE_ELIGIBLE)
 
 
 class HoldReason:
