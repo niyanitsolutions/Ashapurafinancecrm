@@ -121,6 +121,22 @@ async def _submitted_application(client, mock_db, product, *, mobile, full_name=
     return customer_headers, application_id
 
 
+async def _move_to_loan_management(client, mock_db, owner_headers, application_id, document_type_id):
+    """Production fix "DC vs LM" — a Lead-less submitted application now stages in
+    Document Collection until explicitly moved (all required documents verified first);
+    this module's assignment-sync tests need a real, already-in-Loan-Management case, so
+    perform that move explicitly instead of relying on the old immediate-visibility
+    behavior."""
+    await mock_db["application_documents"].update_one(
+        {"application_id": application_id, "document_type_id": document_type_id, "is_current": True},
+        {"$set": {"verification_status": "verified"}},
+    )
+    r = await client.post(
+        f"/api/v1/leads/document-collection/applications/{application_id}/move-to-loan-management", json={}, headers=owner_headers
+    )
+    assert r.status_code == 200, r.text
+
+
 # ---------------------------------------------------------------------- Part A: multiple products
 
 
@@ -240,6 +256,7 @@ async def test_reassigning_via_loan_case_propagates_to_application(client, mock_
     await _seed_workflow_definitions(mock_db)
     product = await _seed_product_and_form(mock_db, category="loan", product_name="Assignment Sync Loan")
     _customer_headers, application_id = await _submitted_application(client, mock_db, product, mobile="9700000103")
+    await _move_to_loan_management(client, mock_db, owner_headers, application_id, product["document_type_id"])
 
     r = await client.get("/api/v1/applications", headers=owner_headers)
     assert next(a for a in r.json()["data"] if a["id"] == application_id)["assigned_to_name"] is None
@@ -269,6 +286,7 @@ async def test_reassigning_via_application_propagates_to_loan_case(client, mock_
     await _seed_workflow_definitions(mock_db)
     product = await _seed_product_and_form(mock_db, category="loan", product_name="Reverse Sync Loan")
     _customer_headers, application_id = await _submitted_application(client, mock_db, product, mobile="9700000105")
+    await _move_to_loan_management(client, mock_db, owner_headers, application_id, product["document_type_id"])
 
     employee = await _create_employee(client, owner_headers, master_data, mobile="9700000106", email="app.assignee@example.com")
     r = await client.post(f"/api/v1/applications/{application_id}/assign", json={"employee_id": employee["id"]}, headers=owner_headers)
@@ -309,6 +327,7 @@ async def test_two_applications_same_customer_keep_independent_assignments(clien
 
     app_a = await _start_and_submit(loan_product, "loan")
     app_b = await _start_and_submit(insurance_product, "insurance")
+    await _move_to_loan_management(client, mock_db, owner_headers, app_a, loan_product["document_type_id"])
 
     employee_a = await _create_employee(client, owner_headers, master_data, mobile="9700000108", email="employee.a@example.com")
     employee_b = await _create_employee(client, owner_headers, master_data, mobile="9700000109", email="employee.b@example.com")
@@ -333,6 +352,7 @@ async def test_case_reassign_authorization_unchanged(client, mock_db, owner_head
     await _seed_workflow_definitions(mock_db)
     product = await _seed_product_and_form(mock_db, category="loan", product_name="Auth Check Loan")
     _customer_headers, application_id = await _submitted_application(client, mock_db, product, mobile="9700000110")
+    await _move_to_loan_management(client, mock_db, owner_headers, application_id, product["document_type_id"])
 
     employee = await _create_employee(client, owner_headers, master_data, mobile="9700000111", email="noperm.assign@example.com")
     employee_headers = await _login(client, "9700000111", "InitialPass1!")

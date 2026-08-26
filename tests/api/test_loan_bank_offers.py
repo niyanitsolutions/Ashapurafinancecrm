@@ -130,6 +130,19 @@ async def _loan_case_in_credit_evaluation(client, mock_db, owner_headers, master
     await _seed_workflow_definitions(mock_db)
     product = await _seed_product_and_form(mock_db, product_name=f"Loan {mobile_suffix}")
     customer_headers, application_id = await _submitted_application(client, mock_db, product, mobile=f"96{mobile_suffix}")
+    # Production fix "DC vs LM" — a Lead-less submitted application now stages in
+    # Document Collection until explicitly moved (all required documents verified
+    # first); this helper's downstream bank-offer tests need a real, already-in-Loan-
+    # Management case, so perform that move explicitly instead of relying on the old
+    # immediate-visibility behavior.
+    await mock_db["application_documents"].update_one(
+        {"application_id": application_id, "document_type_id": product["document_type_id"], "is_current": True},
+        {"$set": {"verification_status": "verified"}},
+    )
+    move = await client.post(
+        f"/api/v1/leads/document-collection/applications/{application_id}/move-to-loan-management", json={}, headers=owner_headers
+    )
+    assert move.status_code == 200, move.text
     r = await client.get("/api/v1/loan-cases?unassigned_only=true", headers=owner_headers)
     case_id = next(c["id"] for c in r.json()["data"] if c["application_id"] == application_id)
     employee = await _create_employee(client, owner_headers, master_data, mobile=f"97{mobile_suffix}", email=f"bankoffer{mobile_suffix}@example.com")

@@ -9,11 +9,18 @@ Two independent creation paths exist for a Loan Case, and each needs its own cov
   and only `LeadService.set_stage`'s `loan_management` branch may mark the case moved,
   once its own eligibility checks (submitted + all required documents verified) pass.
 - **Flow 2 (lead-less/self-registered)**: a customer registers and applies directly, with
-  no Lead/Document Collection pipeline ever involved — there is no "Move to Loan
-  Management" action to click, so the case must stay immediately visible, exactly as
-  before this fix (this is also what every `_loan_case()`-based fixture in
-  `test_case_status_control.py`/`test_loan_bank_offers.py`/`test_assignment_consistency.py`
-  relies on, so it must keep working unmodified).
+  no Lead ever created. Originally (decision #130) this had no Document Collection
+  pipeline to gate through, so the case stayed immediately visible on submission alone.
+  Production fix "DC vs LM" reverses that carve-out: a Lead-less application is now
+  synthesized into the Document Collection list/count (`LeadService.
+  list_document_collection`) exactly like a Lead-originated one, and only
+  `LeadService.move_lead_less_application_to_loan_management` (the Lead-less mirror of
+  `set_stage`'s `loan_management` branch, same eligibility checks) may mark it moved —
+  see `test_lead_less_loan_application_now_gated_through_document_collection` below and
+  `test_document_collection_lifecycle.py` for the full new coverage. Every
+  `_loan_case()`-based fixture in `test_case_status_control.py`/`test_loan_bank_offers.py`/
+  `test_workflow.py` was updated to perform that explicit move rather than relying on the
+  old immediate-visibility behavior.
 """
 
 from bson import ObjectId
@@ -252,9 +259,15 @@ async def test_customer_portal_list_and_detail_stay_consistent_before_move(clien
     assert r.status_code == 200, r.text
 
 
-async def test_lead_less_loan_application_case_visible_immediately(client, mock_db, owner_headers):
-    """Flow 2 (no Lead/Document Collection pipeline ever exists) — the eligibility gate
-    doesn't apply; the case must stay visible immediately, exactly as before this fix."""
+async def test_lead_less_loan_application_now_gated_through_document_collection(client, mock_db, owner_headers):
+    """Production fix "DC vs LM" supersedes this file's own decision #130 docstring above
+    for Flow 2 specifically: a Lead-less application (no Lead/Document Collection Lead
+    row ever created) now ALSO stays gated — submitted-but-unmoved — until Staff
+    explicitly move it via the Lead-less mirror of Move to Loan Management
+    (`LeadService.move_lead_less_application_to_loan_management`), instead of the old
+    "no pipeline exists for it, so stay immediately visible" carve-out. See
+    `test_document_collection_lifecycle.py` for the full new behavior; this test only
+    locks in that the immediate-visibility claim above no longer holds for Flow 2."""
     await _seed_workflow_definitions(mock_db)
     product = LoanProduct(name="Self-Serve Loan")
     product_id = str((await mock_db["loan_products"].insert_one(product.model_dump(by_alias=True, exclude={"id"}))).inserted_id)
@@ -281,6 +294,30 @@ async def test_lead_less_loan_application_case_visible_immediately(client, mock_
     )
     submit = await client.post(f"/api/v1/applications/{application_id}/submit", json={}, headers=customer_headers)
     assert submit.status_code == 200, submit.text
+
+    # Not moved yet — must NOT be visible in Loan Management, and stays in Document
+    # Collection instead (as a Lead-less row, `is_lead_less: true`).
+    r = await client.get("/api/v1/loan-cases?unassigned_only=true", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert application_id not in {c["application_id"] for c in r.json()["data"]}
+
+    case = await mock_db["application_workflows"].find_one({"application_id": application_id})
+    assert case is None or case["moved_to_loan_management_at"] is None
+
+    r = await client.get("/api/v1/leads?stage=document_collection", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    row = next(x for x in r.json()["data"] if x["application_id"] == application_id)
+    assert row["is_lead_less"] is True
+
+    # Verify the document and explicitly move it — only then does it become visible.
+    await mock_db["application_documents"].update_one(
+        {"application_id": application_id, "document_type_id": doc_type_id, "is_current": True},
+        {"$set": {"verification_status": "verified"}},
+    )
+    move = await client.post(
+        f"/api/v1/leads/document-collection/applications/{application_id}/move-to-loan-management", json={}, headers=owner_headers
+    )
+    assert move.status_code == 200, move.text
 
     r = await client.get("/api/v1/loan-cases?unassigned_only=true", headers=owner_headers)
     assert r.status_code == 200, r.text

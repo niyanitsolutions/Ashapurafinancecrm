@@ -183,6 +183,19 @@ async def test_dashboard_reflects_loan_case_reassignment(client, mock_db, owner_
     r = await client.post(f"/api/v1/applications/{application_id}/submit", json={}, headers=customer_headers)
     assert r.status_code == 200, r.text
 
+    # Production fix "DC vs LM" — a Lead-less submitted application now stages in
+    # Document Collection until explicitly moved (all required documents verified
+    # first); this test needs a real, already-in-Loan-Management case, so perform that
+    # move explicitly instead of relying on the old immediate-visibility behavior.
+    await mock_db["application_documents"].update_one(
+        {"application_id": application_id, "document_type_id": product["document_type_id"], "is_current": True},
+        {"$set": {"verification_status": "verified"}},
+    )
+    move = await client.post(
+        f"/api/v1/leads/document-collection/applications/{application_id}/move-to-loan-management", json={}, headers=owner_headers
+    )
+    assert move.status_code == 200, move.text
+
     r = await client.get("/api/v1/loan-cases?unassigned_only=true", headers=owner_headers)
     case_id = next(c["id"] for c in r.json()["data"] if c["application_id"] == application_id)
 

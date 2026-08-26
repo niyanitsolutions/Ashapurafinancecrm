@@ -33,6 +33,11 @@ export interface LeadListItem {
   application_status: "draft" | "submitted" | null;
   is_potential_duplicate: boolean;
   created_at: string;
+  // Production fix "DC vs LM" — a Lead-less Application (no Lead ever created)
+  // synthesized into the Document Collection list so it's staged there,
+  // submitted-but-unmoved, exactly like a Lead-originated one. Always `false` for a
+  // real Lead.
+  is_lead_less: boolean;
 }
 
 // My Leads' Update screen — financial/customer assessment (Phase 2, decision 125). A
@@ -217,6 +222,26 @@ export function rejectLead(leadId: string, reason: string) {
 
 export function setLeadStage(leadId: string, stage: "assigned" | "document_collection" | "loan_management") {
   return apiRequest<LeadDetail>(`/leads/${leadId}/stage`, { method: "POST", body: JSON.stringify({ stage }) });
+}
+
+// Production fix "DC vs LM" — the Lead-less counterpart of the document-completion
+// summary a Lead's own detail response already carries.
+export interface ApplicationDocumentSummary {
+  application_id: string;
+  application_status: string;
+  documents_required: number;
+  documents_verified: number;
+  all_documents_verified: boolean;
+}
+
+export function getLeadLessApplicationSummary(applicationId: string) {
+  return apiRequest<ApplicationDocumentSummary>(`/leads/document-collection/applications/${applicationId}/summary`);
+}
+
+// The Lead-less mirror of setLeadStage(..., "loan_management"), for an Application that
+// never had a Lead to move through that endpoint at all.
+export function moveLeadLessApplicationToLoanManagement(applicationId: string) {
+  return apiRequest<null>(`/leads/document-collection/applications/${applicationId}/move-to-loan-management`, { method: "POST" });
 }
 
 export function setFollowUp(leadId: string, nextFollowUpDate: string, comment?: string) {

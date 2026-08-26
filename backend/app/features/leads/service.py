@@ -31,6 +31,7 @@ from app.features.customer.repository import (
     ApplicationDocumentRepository,
     ApplicationFormDefinitionRepository,
     ApplicationRepository,
+    CustomerRepository,
 )
 from app.features.employee.constants import EmploymentStatus
 from app.features.employee.repository import (
@@ -38,6 +39,7 @@ from app.features.employee.repository import (
     DesignationRepository,
     EmployeeRepository,
 )
+from app.features.leads import mappers
 from app.features.leads.constants import PRODUCT_CATEGORY_MODULE, LeadActivityType, LeadStage
 from app.features.leads.models import Lead, LeadActivity, LeadFinancialAssessment, LeadNote
 from app.features.leads.repository import (
@@ -54,6 +56,7 @@ from app.features.leads.schemas import (
     EligibleAssigneeResponse,
     FinancialAssessmentRequest,
     LeadCountsResponse,
+    LeadListItem,
     UpdateLeadRequest,
 )
 from app.features.owner.repository import OwnerProfileRepository
@@ -100,6 +103,7 @@ class LeadService:
         self._form_defs = ApplicationFormDefinitionRepository(db)
         self._applications = ApplicationRepository(db)
         self._application_documents = ApplicationDocumentRepository(db)
+        self._customers = CustomerRepository(db)
         self._owners = OwnerProfileRepository(db)
         self._users = UserRepository(db)
         self._permissions = PermissionRepository(db)
@@ -356,6 +360,152 @@ class LeadService:
                     result[lead.require_id()] = (fallback_application.require_id(), fallback_application.status)
         return result
 
+    # ---------------------------------------------------------------- Document Collection (production fix "DC vs LM")
+
+    async def _lead_less_document_collection_items(
+        self, actor: User, *, search: str | None, source_id: str | None, product_category: str | None,
+        product_id: str | None, assigned_to: str | None,
+    ) -> list[LeadListItem]:
+        """The Lead-less half of the Document Collection tab (see `list_document_collection`):
+        an Application with no Lead at all (`lead_id is None` — a customer applying
+        directly through the Portal, Flow 2) that's been created/submitted but whose
+        case (if any exists yet) hasn't been moved to Loan Management. Loan-only,
+        matching this fix's scope (Insurance's own case pipeline is untouched — see
+        `LoanCaseService._create_case_for_application`'s own docstring). A Lead Source
+        filter always excludes these rows (they have none, by definition)."""
+        if source_id:
+            return []
+        scoped_assigned_to, _scoped_created_by = await self._scope_query(actor, assigned_to, LeadStage.DOCUMENT_COLLECTION)
+        effective_product_category = product_category or "loan"
+        if effective_product_category != "loan":
+            return []
+        candidates, _total = await self._applications.search_and_filter(
+            search=search, customer_id=None, assigned_to=scoped_assigned_to, unassigned_only=False, status=None,
+            product_category="loan", skip=0, limit=1000, sort=[("created_at", -1)], lead_id_is_none=True,
+        )
+        candidates = [a for a in candidates if a.status in (ApplicationStatus.DRAFT, ApplicationStatus.SUBMITTED) and a.customer_id]
+        if product_id:
+            candidates = [a for a in candidates if a.product_id == product_id]
+        if not candidates:
+            return []
+
+        # Batch-exclude any candidate whose case has already been moved to Loan
+        # Management — `moved_to_loan_management_at` is the same single source of truth
+        # `LoanCaseService` itself gates on; never a second boolean.
+        application_ids = [a.require_id() for a in candidates]
+        cases = await self._workflow_cases.find_many({"application_id": {"$in": application_ids}, "case_type": "loan"}, limit=len(application_ids))
+        moved_application_ids = {c.application_id for c in cases if c.moved_to_loan_management_at is not None}
+        candidates = [a for a in candidates if a.require_id() not in moved_application_ids]
+        if not candidates:
+            return []
+
+        customer_ids = {a.customer_id for a in candidates if a.customer_id}
+        customers = [c for cid in customer_ids for c in [await self._customers.find_by_id(cid)] if c is not None]
+        customer_map = {c.require_id(): c for c in customers}
+        product_ids = {a.product_id for a in candidates}
+        products = await self._loan_products.find_many({}, limit=500)
+        product_map = {p.require_id(): p.name for p in products if p.require_id() in product_ids}
+        employee_ids = {a.assigned_to for a in candidates if a.assigned_to}
+        employees = await self._employees.find_many({}, limit=500) if employee_ids else []
+        employee_map = {e.require_id(): e.display_name for e in employees if e.require_id() in employee_ids}
+
+        return [
+            mappers.lead_less_application_to_list_item(
+                application, customer_map.get(application.customer_id or ""), product_map.get(application.product_id, ""),
+                employee_map.get(application.assigned_to or "", None),
+            )
+            for application in candidates
+        ]
+
+    async def list_document_collection(
+        self, *, search: str | None, source_id: str | None, product_category: str | None, product_id: str | None,
+        assigned_to: str | None, status: str | None, skip: int, limit: int, sort: list[tuple[str, int]] | None, actor: User,
+    ) -> tuple[list[LeadListItem], int]:
+        """The Document Collection tab's real list — a merge of every real Lead
+        currently in the `document_collection` stage AND every Lead-less Application not
+        yet moved to Loan Management, so "submitted" or "documents uploaded" alone never
+        implies Loan Management (the actual bug being fixed). Both halves are filtered/
+        scoped identically, merged into one `created_at`-descending list, and THEN
+        paginated — so the count (`get_tab_counts`, which calls this with no
+        pagination) and this list can never disagree, by construction."""
+        leads, _total = await self.list_leads(
+            search=search, source_id=source_id, product_category=product_category, product_id=product_id,
+            assigned_to=assigned_to, status=status, stage=LeadStage.DOCUMENT_COLLECTION, exclude_stage=None,
+            skip=0, limit=1000, sort=None, actor=actor,
+        )
+        source_map, product_map, employee_map, actor_name_map = await self.resolve_names(leads)
+        application_info = await self.get_application_info_for_leads(leads, LeadStage.DOCUMENT_COLLECTION)
+        lead_items = [
+            mappers.to_list_item(
+                lead, source_map.get(lead.source_id, ""), product_map.get(lead.product_id, ""),
+                employee_map.get(lead.assigned_to or "", None), actor_name_map,
+                application_id=application_info.get(lead.require_id(), (None, None))[0],
+                application_status=application_info.get(lead.require_id(), (None, None))[1],
+            )
+            for lead in leads
+        ]
+        lead_less_items = await self._lead_less_document_collection_items(
+            actor, search=search, source_id=source_id, product_category=product_category, product_id=product_id, assigned_to=assigned_to,
+        )
+        merged = sorted(lead_items + lead_less_items, key=lambda item: item.created_at, reverse=True)
+        total = len(merged)
+        return merged[skip : skip + limit], total
+
+    async def _get_lead_less_application_scoped(self, application_id: str, actor: User) -> Application:
+        """Shared ownership check for both the Lead-less summary and Move to Loan
+        Management action — an Owner reads/acts on any Lead-less application; a
+        non-Owner only one currently assigned to them, mirroring `set_stage`'s own
+        assignment-scoping for the Lead-originated path exactly."""
+        application = await self._applications.find_by_id(application_id)
+        if application is None:
+            raise NotFoundError("Application not found.")
+        if application.lead_id is not None:
+            raise ValidationError("This application belongs to a Lead — use the Lead's own Move to Loan Management action instead.")
+        if actor.role != OWNER:
+            employee = await self._employees.find_by_user_id(actor.require_id())
+            employee_id = employee.require_id() if employee is not None else NO_MATCH_SENTINEL
+            if application.assigned_to != employee_id:
+                raise ForbiddenError("This application isn't assigned to you.")
+        return application
+
+    async def get_lead_less_document_collection_summary(self, application_id: str, actor: User) -> DocumentCollectionSummary:
+        """Read-only counterpart of `move_lead_less_application_to_loan_management`'s
+        gate — lets the Move to Loan Management modal show the same "N of M required
+        documents verified" status `UpdateStageModal` already shows for a Lead, without
+        pre-emptively attempting (and failing) the move itself."""
+        application = await self._get_lead_less_application_scoped(application_id, actor)
+        required, verified = await self._document_completion(application)
+        return DocumentCollectionSummary(
+            application_id=application.require_id(), application_status=application.status,
+            documents_required=required, documents_verified=verified, all_documents_verified=verified >= required,
+        )
+
+    async def move_lead_less_application_to_loan_management(self, application_id: str, actor: User) -> Application:
+        """The Lead-less mirror of `set_stage`'s `loan_management` branch — same gate
+        (submitted + every required document verified), same underlying effect
+        (`LoanCaseService.mark_moved_to_loan_management`, not a second implementation),
+        for an Application that never had a Lead to move through `set_stage` at all."""
+        application = await self._get_lead_less_application_scoped(application_id, actor)
+        if application.product_category != "loan":
+            raise ValidationError("Only loan applications can be moved to Loan Management here.")
+        if application.status != ApplicationStatus.SUBMITTED:
+            raise ValidationError("The customer must submit their application before it can move to Loan Management.")
+        required, verified = await self._document_completion(application)
+        if verified < required:
+            raise ValidationError(
+                f"{verified} of {required} required documents are verified. All required documents must be "
+                "verified before moving to Loan Management."
+            )
+        # Deferred import: loan_management imports this module's `Application` model at
+        # module level, so importing it back at module level here would be circular —
+        # same precedent as `set_stage`/`CustomerService.submit_application`.
+        from app.features.loan_management.service import LoanCaseService
+
+        await LoanCaseService(self._db).mark_moved_to_loan_management(application_id, actor)
+        updated = await self._applications.find_by_id(application_id)
+        assert updated is not None
+        return updated
+
     async def _document_completion(self, application: Application) -> tuple[int, int]:
         """`(documents_required, documents_verified)` for `application`, counting only
         CURRENT documents — a superseded row from before a re-upload must never count
@@ -436,9 +586,15 @@ class LeadService:
         my_leads = await self._leads.count_filtered(assigned_to=my_assigned_to, created_by=my_created_by, stage=LeadStage.ASSIGNED)
 
         dc_assigned_to, dc_created_by = await self._scope_query(actor, None, LeadStage.DOCUMENT_COLLECTION)
-        document_collection = await self._leads.count_filtered(
+        document_collection_leads = await self._leads.count_filtered(
             assigned_to=dc_assigned_to, created_by=dc_created_by, stage=LeadStage.DOCUMENT_COLLECTION
         )
+        # Production fix "DC vs LM" — same merged set `list_document_collection` returns
+        # (minus pagination), so this badge can never disagree with the list beneath it.
+        document_collection_lead_less = await self._lead_less_document_collection_items(
+            actor, search=None, source_id=None, product_category=None, product_id=None, assigned_to=None,
+        )
+        document_collection = document_collection_leads + len(document_collection_lead_less)
 
         rej_assigned_to, rej_created_by = await self._scope_query(actor, None, LeadStage.REJECTED)
         rejected = await self._leads.count_filtered(assigned_to=rej_assigned_to, created_by=rej_created_by, stage=LeadStage.REJECTED)

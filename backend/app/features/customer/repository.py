@@ -163,6 +163,7 @@ class ApplicationRepository(BaseRepository[Application]):
         skip: int,
         limit: int,
         sort: list[tuple[str, int]] | None,
+        lead_id_is_none: bool = False,
     ) -> tuple[list[Application], int]:
         query: dict[str, Any] = {"is_deleted": False}
         if customer_id:
@@ -177,6 +178,11 @@ class ApplicationRepository(BaseRepository[Application]):
             query["status"] = status
         if product_category:
             query["product_category"] = product_category
+        # Production fix "DC vs LM" — `LeadService`'s Document Collection tab needs the
+        # Lead-less half of its merged list/count (an application with no Lead at all,
+        # Flow 2). Additive/default-False: every existing caller is unaffected.
+        if lead_id_is_none:
+            query["lead_id"] = None
         if search:
             pattern = re.compile(re.escape(search), re.IGNORECASE)
             query["$or"] = [{"application_code": pattern}]

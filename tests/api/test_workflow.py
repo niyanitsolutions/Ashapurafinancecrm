@@ -174,6 +174,21 @@ async def _submitted_application(client, mock_db, product, *, mobile, extra_doc_
     return customer_headers, application_id
 
 
+async def _move_loan_application_to_loan_management(client, mock_db, owner_headers, application_id):
+    """Production fix "DC vs LM" — a Lead-less submitted application (this module's own
+    `_submitted_application` flow) now stages in Document Collection until explicitly
+    moved, all required documents verified first; this module's downstream Loan Case
+    tests need a real, already-in-Loan-Management case, so perform that move explicitly
+    instead of relying on the old immediate-visibility behavior."""
+    await mock_db["application_documents"].update_many(
+        {"application_id": application_id, "is_current": True}, {"$set": {"verification_status": "verified"}}
+    )
+    r = await client.post(
+        f"/api/v1/leads/document-collection/applications/{application_id}/move-to-loan-management", json={}, headers=owner_headers
+    )
+    assert r.status_code == 200, r.text
+
+
 # ---------------------------------------------------------------------- Loan: happy path to Disbursed
 
 
@@ -187,6 +202,7 @@ async def test_loan_pipeline_happy_path_to_disbursed(client, mock_db, owner_head
     await _seed_workflow_definitions(mock_db)
     product = await _seed_product_and_form(mock_db, category="loan", product_name="Personal Loan")
     customer_headers, application_id = await _submitted_application(client, mock_db, product, mobile="9600000001")
+    await _move_loan_application_to_loan_management(client, mock_db, owner_headers, application_id)
 
     # Case is lazily synced into existence the first time the Owner looks.
     r = await client.get("/api/v1/loan-cases?unassigned_only=true", headers=owner_headers)
@@ -328,6 +344,7 @@ async def test_loan_rejected_at_credit_evaluation_requires_reason(client, mock_d
     await _seed_workflow_definitions(mock_db)
     product = await _seed_product_and_form(mock_db, category="loan", product_name="Business Loan")
     _customer_headers, application_id = await _submitted_application(client, mock_db, product, mobile="9600000002")
+    await _move_loan_application_to_loan_management(client, mock_db, owner_headers, application_id)
 
     r = await client.get("/api/v1/loan-cases", headers=owner_headers)
     case_id = next(c["id"] for c in r.json()["data"] if c["application_id"] == application_id)
@@ -354,6 +371,7 @@ async def test_loan_all_banks_rejected_moves_case_to_rejected(client, mock_db, o
     await _seed_workflow_definitions(mock_db)
     product = await _seed_product_and_form(mock_db, category="loan", product_name="Property Loan")
     _customer_headers, application_id = await _submitted_application(client, mock_db, product, mobile="9600000003")
+    await _move_loan_application_to_loan_management(client, mock_db, owner_headers, application_id)
 
     r = await client.get("/api/v1/loan-cases", headers=owner_headers)
     case_id = next(c["id"] for c in r.json()["data"] if c["application_id"] == application_id)
@@ -486,6 +504,7 @@ async def test_loan_case_hold_and_resume(client, mock_db, owner_headers):
     await _seed_workflow_definitions(mock_db)
     product = await _seed_product_and_form(mock_db, category="loan", product_name="Two Wheeler Loan")
     _customer_headers, application_id = await _submitted_application(client, mock_db, product, mobile="9600000016")
+    await _move_loan_application_to_loan_management(client, mock_db, owner_headers, application_id)
 
     r = await client.get("/api/v1/loan-cases", headers=owner_headers)
     case_id = next(c["id"] for c in r.json()["data"] if c["application_id"] == application_id)
@@ -530,6 +549,7 @@ async def test_employee_denied_without_permission_then_scoped_once_assigned(clie
     await _seed_workflow_definitions(mock_db)
     product = await _seed_product_and_form(mock_db, category="loan", product_name="Gold Loan")
     _customer_headers, application_id = await _submitted_application(client, mock_db, product, mobile="9600000006")
+    await _move_loan_application_to_loan_management(client, mock_db, owner_headers, application_id)
 
     employee = await _create_employee(client, owner_headers, master_data, mobile="9622222222", email="unpermitted@example.com")
     employee_headers = await _login(client, "9622222222", "InitialPass1!")
@@ -569,6 +589,7 @@ async def test_unassigned_loan_cases_queue_is_owner_only(client, mock_db, owner_
     await _seed_workflow_definitions(mock_db)
     product = await _seed_product_and_form(mock_db, category="loan", product_name="Vehicle Loan")
     _customer_headers, application_id = await _submitted_application(client, mock_db, product, mobile="9600000007")
+    await _move_loan_application_to_loan_management(client, mock_db, owner_headers, application_id)
 
     r = await client.get("/api/v1/loan-cases?unassigned_only=true", headers=owner_headers)
     assert r.status_code == 200, r.text

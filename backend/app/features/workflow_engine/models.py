@@ -137,11 +137,14 @@ class ApplicationWorkflow(BaseDocument):
     # creation, independently reassignable afterward (confirmed by the user: "Owner can
     # reassign. Every reassignment must be audited.")
 
-    # Loan-only eligibility gate (decision #130): null means "not yet eligible to appear
-    # in Loan Management" for a Lead-originated application (set explicitly by
-    # `LeadService.set_stage`'s loan_management branch, once its own document-verification
-    # checks pass). Set immediately at creation for a lead-less application (no Lead/
-    # Document Collection pipeline exists to gate it through — see LoanCaseService).
+    # Loan-only eligibility gate (decision #130, revised by the "DC vs LM" production
+    # fix): null means "not yet eligible to appear in Loan Management." Every new case
+    # starts null regardless of origin. A Lead-originated application is ungated by
+    # `LeadService.set_stage`'s loan_management branch; a Lead-less application is
+    # ungated by `LeadService.move_lead_less_application_to_loan_management` — both
+    # enforce the identical submitted+all-required-documents-verified gate, and both are
+    # what makes an application visible in Document Collection until this is set (see
+    # `LeadService._lead_less_document_collection_pool` for the Lead-less half).
     # Insurance cases never set or read this field.
     moved_to_loan_management_at: datetime | None = None
 

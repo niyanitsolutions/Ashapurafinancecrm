@@ -13,10 +13,11 @@ from app.features.customer.service import CustomerService
 from app.features.geo_fencing.constants import GeoActivity
 from app.features.geo_fencing.enforcement import enforce_geo_fence
 from app.features.leads import mappers
-from app.features.leads.constants import LeadActivityType
+from app.features.leads.constants import LeadActivityType, LeadStage
 from app.features.leads.dependencies import get_lead_service
 from app.features.leads.schemas import (
     AddNoteRequest,
+    ApplicationDocumentSummaryResponse,
     AssignLeadRequest,
     CreateCustomerAccountRequest,
     CreateLeadRequest,
@@ -77,6 +78,16 @@ async def list_leads(
     stage: str | None = None,
     exclude_stage: str | None = None,
 ) -> ApiResponse[list[LeadListItem]]:
+    # Production fix "DC vs LM" — Document Collection is the one tab whose list is a
+    # merge of real Leads AND Lead-less Applications not yet moved to Loan Management
+    # (see `LeadService.list_document_collection`); every other stage's list is
+    # completely unaffected, cost-wise or otherwise.
+    if stage == LeadStage.DOCUMENT_COLLECTION:
+        items, total = await service.list_document_collection(
+            search=page.search, source_id=source_id, product_category=product_category, product_id=product_id,
+            assigned_to=assigned_to, status=status, skip=page.skip, limit=page.page_size, sort=page.sort, actor=actor,
+        )
+        return ApiResponse[list[LeadListItem]].ok(items, meta=ResponseMeta(pagination=page.build_meta(total)))
     leads, total = await service.list_leads(
         search=page.search, source_id=source_id, product_category=product_category, product_id=product_id,
         assigned_to=assigned_to, status=status, stage=stage, exclude_stage=exclude_stage,
@@ -210,6 +221,35 @@ async def set_lead_stage(
     lead = await service.set_stage(lead_id, payload.stage, actor)
     source_map, product_map, employee_map, actor_name_map = await service.resolve_names([lead])
     return ApiResponse[LeadDetailResponse].ok(await _detail(service, lead, source_map, product_map, employee_map, actor_name_map))
+
+
+# Production fix "DC vs LM" — read-only counterpart used by the Move to Loan Management
+# modal to show the same "N of M required documents verified" status a Lead's own
+# Update modal already shows, before the Owner/Employee actually attempts the move.
+@router.get("/document-collection/applications/{application_id}/summary")
+async def get_lead_less_document_collection_summary(
+    application_id: str, service: ServiceDep, actor: Annotated[User, _perm("view")]
+) -> ApiResponse[ApplicationDocumentSummaryResponse]:
+    summary = await service.get_lead_less_document_collection_summary(application_id, actor)
+    return ApiResponse[ApplicationDocumentSummaryResponse].ok(
+        ApplicationDocumentSummaryResponse(
+            application_id=summary.application_id or application_id, application_status=summary.application_status or "",
+            documents_required=summary.documents_required, documents_verified=summary.documents_verified,
+            all_documents_verified=summary.all_documents_verified,
+        )
+    )
+
+
+# Production fix "DC vs LM" — the Lead-less mirror of `POST /{lead_id}/stage` (moving to
+# "loan_management"), for an Application that never had a Lead to move through that
+# endpoint at all. Same permission, same underlying effect
+# (`LoanCaseService.mark_moved_to_loan_management`).
+@router.post("/document-collection/applications/{application_id}/move-to-loan-management")
+async def move_lead_less_application_to_loan_management(
+    application_id: str, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[None]:
+    await service.move_lead_less_application_to_loan_management(application_id, actor)
+    return ApiResponse[None].ok(None)
 
 
 @router.post("/{lead_id}/follow-up")

@@ -18,6 +18,22 @@ label {
   @apply text-text;
 }
 
+/* Production fix — remove the browser's native up/down spinner from every numeric
+   input app-wide (Product Schema forms, Loan Management update forms, etc.) without
+   touching field type/validation anywhere: this is purely cosmetic browser chrome, not
+   a validation concern, so one global rule here covers every current and future
+   `type="number"` input with zero per-component changes. */
+@layer base {
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+  }
+}
+
 /* Enterprise redesign pass — shared motion utilities, used across cards/buttons/rows
    instead of each component hand-rolling its own transition classes. Deliberately
    subtle (small translate, soft shadow swap) per the brief's "smooth, nothing flashy". */

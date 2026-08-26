@@ -1,3 +1,4 @@
+from app.features.customer.models import Application, Customer
 from app.features.leads.models import Lead, LeadActivity, LeadNote
 from app.features.leads.schemas import (
     LeadDetailResponse,
@@ -45,6 +46,48 @@ def to_list_item(
         application_status=application_status,
         is_potential_duplicate=len(lead.duplicate_of_lead_ids) > 0,
         created_at=lead.created_at,
+    )
+
+
+def lead_less_application_to_list_item(
+    application: Application, customer: Customer | None, product_name: str, assigned_to_name: str | None,
+) -> LeadListItem:
+    """Production fix "DC vs LM" — the Lead-less counterpart of `to_list_item`, for an
+    Application with no Lead at all (see `LeadService.list_document_collection`). Reuses
+    the exact same `LeadListItem` shape so the frontend's Document Collection table
+    needs no structural change — only `is_lead_less=True` distinguishes it. `lead_code`
+    carries the Application's own code (there's no Lead code to show); `source_name` is
+    "Direct" (no Lead Source applies); every Lead-only field (financial assessment,
+    assignment/rejection audit trail) is null, since none of that exists for this row."""
+    return LeadListItem(
+        id=application.require_id(),
+        lead_code=application.application_code,
+        full_name=customer.full_name if customer else "",
+        mobile=customer.mobile if customer else "",
+        email=customer.email if customer else None,
+        source_id="",
+        source_name="Direct",
+        product_category=application.product_category,
+        product_id=application.product_id,
+        product_name=product_name,
+        assigned_to=application.assigned_to,
+        assigned_to_name=assigned_to_name,
+        status="active",
+        stage="document_collection",
+        salary_in_hand=None,
+        next_follow_up_date=None,
+        assigned_by=None,
+        assigned_by_name=None,
+        assigned_at=None,
+        rejected_reason=None,
+        rejected_by=None,
+        rejected_by_name=None,
+        rejected_at=None,
+        application_id=application.require_id(),
+        application_status=application.status,
+        is_potential_duplicate=False,
+        created_at=application.created_at,
+        is_lead_less=True,
     )
 
 

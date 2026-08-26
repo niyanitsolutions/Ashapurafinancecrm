@@ -148,6 +148,13 @@ class LeadListItem(BaseModel):
     application_status: str | None = None  # "draft" | "submitted" | None (no Application yet)
     is_potential_duplicate: bool
     created_at: datetime
+    # Production fix "DC vs LM" — a Lead-less application (no Lead ever created, e.g. a
+    # customer applying directly through the Portal) synthesized into the Document
+    # Collection tab's list so it's staged there, submitted-but-unmoved, exactly like a
+    # Lead-originated one — see `LeadService.list_document_collection`. Always `False`
+    # for a real Lead; additive and default-`False`, so an existing client ignoring this
+    # field sees no behavior change for every row it already knew about.
+    is_lead_less: bool = False
 
 
 class LeadDetailResponse(LeadListItem):
@@ -167,6 +174,19 @@ class LeadDetailResponse(LeadListItem):
     documents_required: int = 0
     documents_verified: int = 0
     all_documents_verified: bool = False
+
+
+class ApplicationDocumentSummaryResponse(BaseModel):
+    """Production fix "DC vs LM" — the Lead-less counterpart of the document-completion
+    summary already surfaced on `LeadDetailResponse` (same 5 fields, same meaning),
+    for the Move to Loan Management modal a Lead-less Document Collection row opens
+    instead of `UpdateStageModal` (which assumes a real Lead)."""
+
+    application_id: str
+    application_status: str
+    documents_required: int
+    documents_verified: int
+    all_documents_verified: bool
 
 
 class LeadCountsResponse(BaseModel):

@@ -119,13 +119,21 @@ class LoanCaseService:
 
     async def _create_case_for_application(self, application: Application) -> ApplicationWorkflow:
         case_code = await generate_id(self._db, IdPrefix.LOAN_CASE)
-        # Eligibility gate (decision #130): a lead-less application (Flow 2 — the customer
-        # registered and applied directly, no Lead/Document Collection pipeline ever
-        # existed for it) has no "Move to Loan Management" action to ever fire, so it must
-        # stay immediately visible, exactly as before this fix. A Lead-originated
-        # application (Flow 1) stays gated until `mark_moved_to_loan_management` is called
-        # by `LeadService.set_stage`'s loan_management branch.
-        moved_to_loan_management_at = utc_now() if application.lead_id is None else None
+        # Eligibility gate (decision #130, revised — production fix "DC vs LM"): EVERY
+        # new case starts gated (`moved_to_loan_management_at=None`), Lead-originated and
+        # Lead-less alike. A Lead-originated application (Flow 1) is ungated by
+        # `LeadService.set_stage`'s loan_management branch; a Lead-less application
+        # (Flow 2 — the customer registered and applied directly, no Lead ever created)
+        # is now ungated by `LeadService.move_lead_less_application_to_loan_management`,
+        # which enforces the identical submitted+all-required-documents-verified gate and
+        # is what also makes it visible in Document Collection until then (see that
+        # module's `_lead_less_document_collection_pool`). Decision #130 originally
+        # exempted Flow 2 from this gate entirely ("no Document Collection pipeline
+        # exists for it") — that pipeline now exists, so the exemption is removed.
+        # Existing production cases that already have this timestamp set from before
+        # this change are unaffected (their stored value doesn't change) and correctly
+        # remain visible in Loan Management — no migration needed.
+        moved_to_loan_management_at = None
         return await self._engine.create_case(
             case_code=case_code, case_type=CaseType.LOAN, application_id=application.require_id(),
             customer_id=application.customer_id or "", product_id=application.product_id,
@@ -163,11 +171,13 @@ class LoanCaseService:
         return await self._get_or_create_for_application_id(application_id)
 
     async def mark_moved_to_loan_management(self, application_id: str, actor: User) -> None:
-        """Called only by `LeadService.set_stage`'s loan_management branch, immediately
-        after that method's own eligibility checks (application submitted, every required
-        document verified) already passed. This is the ONE place a Lead-originated case
-        becomes visible in Loan Management (decision #130). Idempotent — a no-op if
-        already set, so calling this twice never clobbers the original timestamp."""
+        """Called by `LeadService.set_stage`'s loan_management branch (Lead-originated)
+        or `LeadService.move_lead_less_application_to_loan_management` (Lead-less) —
+        both only after their own identical eligibility checks (application submitted,
+        every required document verified) already passed. This is the ONE method either
+        path uses to actually make a case visible in Loan Management (decision #130).
+        Idempotent — a no-op if already set, so calling this twice never clobbers the
+        original timestamp."""
         case = await self._get_or_create_for_application_id(application_id)
         if case.moved_to_loan_management_at is not None:
             return
@@ -247,11 +257,10 @@ class LoanCaseService:
         applications = await self._applications.find_for_user(actor.require_id(), status="submitted")
         loan_apps = [a for a in applications if a.product_category == "loan" and a.customer_id]
         cases = [await self._get_or_create_for_application_id(a.require_id()) for a in loan_apps]
-        # Decision #130: must stay consistent with `get_own_case`'s gate below — a
-        # Lead-originated case not yet moved into Loan Management must not appear in the
-        # customer's own list either, or "mine" would show an entry that 404s the moment
-        # they click into it. Lead-less (Flow 2) cases are unaffected — always moved at
-        # creation.
+        # Decision #130: must stay consistent with `get_own_case`'s gate below — a case
+        # not yet moved into Loan Management (Lead-originated or Lead-less alike) must
+        # not appear in the customer's own list either, or "mine" would show an entry
+        # that 404s the moment they click into it.
         return [c for c in cases if c.moved_to_loan_management_at is not None]
 
     # ---------------------------------------------------------------- assignment

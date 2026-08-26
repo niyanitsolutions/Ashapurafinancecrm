@@ -11,6 +11,7 @@ import { Table, TableBody, TableHead, TableHeadRow, TableRow, Td, Th } from "@/c
 import { usePermissions } from "@/features/access_control/usePermissions";
 import { GenerateLinkModal } from "@/features/leads/components/GenerateLinkModal";
 import { FollowUpModal } from "@/features/leads/components/FollowUpModal";
+import { MoveApplicationToLoanManagementModal } from "@/features/leads/components/MoveApplicationToLoanManagementModal";
 import { UpdateStageModal } from "@/features/leads/components/UpdateStageModal";
 import {
   ASSIGNED_SENTINEL,
@@ -385,9 +386,20 @@ export function LeadListPage({ tab }: { tab: LeadTab }) {
                   return (
                     <TableRow key={lead.id}>
                       <Td className="whitespace-nowrap">
-                        <Link to={`/leads/${lead.id}`} className="text-primary font-medium hover:underline">
-                          {lead.lead_code}
-                        </Link>
+                        {lead.is_lead_less ? (
+                          // Production fix "DC vs LM" — a Lead-less row has no Lead to
+                          // view; its own Application page is the only real detail view.
+                          <Link
+                            to={`/applications/${lead.application_id}?from=document-collection`}
+                            className="text-primary font-medium hover:underline"
+                          >
+                            {lead.lead_code}
+                          </Link>
+                        ) : (
+                          <Link to={`/leads/${lead.id}`} className="text-primary font-medium hover:underline">
+                            {lead.lead_code}
+                          </Link>
+                        )}
                         {lead.is_potential_duplicate && (
                           <span className="ml-2 inline-block rounded-full bg-warning/10 text-warning text-xs px-2 py-0.5">Possible duplicate</span>
                         )}
@@ -460,14 +472,25 @@ export function LeadListPage({ tab }: { tab: LeadTab }) {
                             }
                             variant="view"
                           />
-                          {tab !== "rejected" && <ActionButton variant="link" onClick={() => setLinkModalLead(lead)} />}
-                          {(tab === "fresh" || tab === "my") && canEdit && (
+                          {/* Production fix "DC vs LM" — a Lead-less row has no Lead to
+                              generate a link for, edit, or follow up on; its only real
+                              action is Update (Move to Loan Management). */}
+                          {!lead.is_lead_less && tab !== "rejected" && <ActionButton variant="link" onClick={() => setLinkModalLead(lead)} />}
+                          {!lead.is_lead_less && (tab === "fresh" || tab === "my") && canEdit && (
                             <ActionButton variant="followup" onClick={() => setFollowUpLead(lead)} />
                           )}
-                          {(tab === "my" || tab === "document_collection") && (canEdit || canReject) && (
+                          {/* A Lead-less row's only "Update" action is Move to Loan
+                              Management — there's no Reject/financial-assessment
+                              concept for it, so it's gated on canEdit alone. */}
+                          {tab === "document_collection" && lead.is_lead_less && canEdit && (
                             <ActionButton variant="update" onClick={() => setUpdateStageLead(lead)} />
                           )}
-                          {canEdit && tab !== "rejected" && <ActionButton to={`/leads/${lead.id}`} state={{ startEditing: true }} variant="edit" />}
+                          {!lead.is_lead_less && (tab === "my" || tab === "document_collection") && (canEdit || canReject) && (
+                            <ActionButton variant="update" onClick={() => setUpdateStageLead(lead)} />
+                          )}
+                          {!lead.is_lead_less && canEdit && tab !== "rejected" && (
+                            <ActionButton to={`/leads/${lead.id}`} state={{ startEditing: true }} variant="edit" />
+                          )}
                         </div>
                       </Td>
                     </TableRow>
@@ -507,9 +530,12 @@ export function LeadListPage({ tab }: { tab: LeadTab }) {
           onSaved={refreshAfterAction}
         />
       )}
-      {updateStageLead && (
-        <UpdateStageModal lead={updateStageLead} onClose={() => setUpdateStageLead(null)} onChanged={refreshAfterAction} />
-      )}
+      {updateStageLead &&
+        (updateStageLead.is_lead_less ? (
+          <MoveApplicationToLoanManagementModal lead={updateStageLead} onClose={() => setUpdateStageLead(null)} onChanged={refreshAfterAction} />
+        ) : (
+          <UpdateStageModal lead={updateStageLead} onClose={() => setUpdateStageLead(null)} onChanged={refreshAfterAction} />
+        ))}
     </div>
   );
 }
