@@ -74,6 +74,10 @@ export interface LeadDetail extends LeadListItem {
   // Application's required documents; zeros/false when no Application exists yet.
   documents_required: number;
   documents_verified: number;
+  // "I don't have this document" production fix — required documents the customer
+  // declared not-available; counted toward all_documents_verified but never folded
+  // into documents_verified, so the UI can distinguish "Verified" from "Not Available".
+  documents_not_available: number;
   all_documents_verified: boolean;
 }
 
@@ -231,6 +235,10 @@ export interface ApplicationDocumentSummary {
   application_status: string;
   documents_required: number;
   documents_verified: number;
+  // "I don't have this document" production fix — required documents the customer
+  // declared not-available; counted toward all_documents_verified but never folded
+  // into documents_verified, so the UI can distinguish "Verified" from "Not Available".
+  documents_not_available: number;
   all_documents_verified: boolean;
 }
 

@@ -174,15 +174,33 @@ async def test_optional_doc_can_be_marked_not_available_and_submit_succeeds(clie
     assert r.status_code == 200, r.text
 
 
-async def test_marking_a_required_document_not_available_is_rejected(client, mock_db, owner_headers):
+async def test_marking_a_required_document_not_available_is_allowed_and_submit_succeeds(client, mock_db, owner_headers):
+    """"I don't have this document" production fix: a REQUIRED document may now also be
+    declared unavailable (previously forbidden with 403) — submission proceeds treating
+    it as accounted-for, distinct from verified. Only front/back and hidden documents
+    still refuse this (see the dedicated tests for those)."""
+    await _seed_workflow_definitions(mock_db)
     product = await _seed_rich_product_and_form(mock_db)
     headers, application_id = await _start_application(client, product, mobile="9800000003")
+    # GST and Income Proof (both required) still genuinely uploaded — only PAN is waived.
+    for doc_id in (product["gst_doc_id"], product["income_doc_id"]):
+        r = await _upload(client, application_id, doc_id, headers)
+        assert r.status_code == 200, r.text
 
     r = await client.post(f"/api/v1/applications/{application_id}/documents/{product['pan_doc_id']}/not-available", headers=headers)
-    assert r.status_code == 403, r.text
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["document_status"] == "not_available"
+
+    r = await client.post(f"/api/v1/applications/{application_id}/submit", json={}, headers=headers)
+    assert r.status_code == 200, r.text
 
 
-async def test_owner_flipping_optional_to_required_after_not_available_blocks_submit(client, mock_db, owner_headers):
+async def test_owner_flipping_optional_to_required_after_not_available_keeps_it_waivable(client, mock_db, owner_headers):
+    """Regression for the schema-editing edge case this test module already covered:
+    since required documents can now ALSO be marked not-available, flipping Trade
+    Licence from optional to required for future applicants no longer needs to retract
+    the waiver — a fresh applicant against the now-required schema can still declare it
+    unavailable and submit."""
     await _seed_workflow_definitions(mock_db)
     product = await _seed_rich_product_and_form(mock_db)
     headers, application_id = await _start_application(client, product, mobile="9800000004")
@@ -211,9 +229,73 @@ async def test_owner_flipping_optional_to_required_after_not_available_blocks_su
     headers2, application_id2 = await _start_application(client, product, mobile="9800000014")
     await _upload_all_required(client, application_id2, product, headers2)
     r = await client.post(f"/api/v1/applications/{application_id2}/documents/{product['trade_doc_id']}/not-available", headers=headers2)
-    assert r.status_code == 403, r.text  # now required — can't be waived
+    assert r.status_code == 200, r.text  # now required — still waivable
     r = await client.post(f"/api/v1/applications/{application_id2}/submit", json={}, headers=headers2)
-    assert r.status_code >= 400, r.text  # still missing — blocked
+    assert r.status_code == 200, r.text  # accounted-for by the not-available declaration
+
+
+async def test_verified_document_cannot_be_marked_not_available(client, mock_db, owner_headers):
+    """Requirement: a customer must never be able to overwrite an already-VERIFIED
+    document with a not-available declaration — that would silently erase a completed
+    staff review. Re-upload/replacement must go through the authorized lifecycle."""
+    await _seed_workflow_definitions(mock_db)
+    product = await _seed_rich_product_and_form(mock_db)
+    headers, application_id = await _start_application(client, product, mobile="9800000015")
+    await _upload_all_required(client, application_id, product, headers)
+
+    r = await client.get(f"/api/v1/applications/{application_id}/documents", headers=headers)
+    assert r.status_code == 200, r.text
+    pan_document_id = next(d["id"] for d in r.json()["data"] if d["document_type_id"] == product["pan_doc_id"])
+
+    r = await client.patch(f"/api/v1/applications/{application_id}/documents/{pan_document_id}/verify", headers=owner_headers)
+    assert r.status_code == 200, r.text
+
+    r = await client.post(f"/api/v1/applications/{application_id}/documents/{product['pan_doc_id']}/not-available", headers=headers)
+    assert r.status_code == 403, r.text
+
+
+async def test_verify_and_reject_refuse_a_not_available_document(client, mock_db, owner_headers):
+    """Backend enforcement (not just the UI never offering Verify/Reject on a Not
+    Available row): a document with no uploaded file can never be verified or rejected."""
+    await _seed_workflow_definitions(mock_db)
+    product = await _seed_rich_product_and_form(mock_db)
+    headers, application_id = await _start_application(client, product, mobile="9800000016")
+    await _upload_all_required(client, application_id, product, headers)
+
+    r = await client.post(f"/api/v1/applications/{application_id}/documents/{product['trade_doc_id']}/not-available", headers=headers)
+    assert r.status_code == 200, r.text
+    not_available_document_id = r.json()["data"]["id"]
+
+    r = await client.patch(f"/api/v1/applications/{application_id}/documents/{not_available_document_id}/verify", headers=owner_headers)
+    assert r.status_code >= 400, r.text
+
+    r = await client.patch(
+        f"/api/v1/applications/{application_id}/documents/{not_available_document_id}/reject", json={"reason": "test"}, headers=owner_headers
+    )
+    assert r.status_code >= 400, r.text
+
+
+async def test_staff_upload_over_not_available_document_stays_pending_then_verifiable(client, mock_db, owner_headers):
+    """Staff can upload a document on a customer's behalf even after the customer
+    declared it unavailable — the upload must clear the not-available state, land as
+    pending (never auto-verified), and then follow the normal verify lifecycle."""
+    await _seed_workflow_definitions(mock_db)
+    product = await _seed_rich_product_and_form(mock_db)
+    headers, application_id = await _start_application(client, product, mobile="9800000017")
+    await _upload_all_required(client, application_id, product, headers)
+
+    r = await client.post(f"/api/v1/applications/{application_id}/documents/{product['trade_doc_id']}/not-available", headers=headers)
+    assert r.status_code == 200, r.text
+
+    r = await _upload(client, application_id, product["trade_doc_id"], owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["document_status"] == "uploaded"
+    assert r.json()["data"]["verification_status"] == "pending"
+    staff_uploaded_document_id = r.json()["data"]["id"]
+
+    r = await client.patch(f"/api/v1/applications/{application_id}/documents/{staff_uploaded_document_id}/verify", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["verification_status"] == "verified"
 
 
 # ---------------------------------------------------------------------- hidden documents

@@ -1285,10 +1285,13 @@ class CustomerService:
 
         documents = await self._documents.find_current_for_application(application_id)
         uploaded = [d for d in documents if d.document_status == DocumentAvailabilityStatus.UPLOADED]
-        uploaded_type_ids = {d.document_type_id for d in uploaded}
-        # Front & Back requirements need BOTH sides uploaded, not just any current
-        # document of that type — a side-blind check (the only kind possible before this
-        # concept existed) would let a submission through with only one side present.
+        # "I don't have this document" production fix: a required document is now
+        # "accounted for" by either a real upload OR a NOT_AVAILABLE declaration — only a
+        # document with no current row of either kind still blocks submission. Front &
+        # Back requirements are the one exception: `mark_document_not_available` already
+        # refuses front/back document types, so they can only ever be accounted for by a
+        # real upload of BOTH sides, not a side-blind "any current row" check.
+        accounted_type_ids = {d.document_type_id for d in documents}
         missing_docs = []
         for rd in form_def.required_documents:
             if not rd.required or rd.hidden:
@@ -1297,7 +1300,7 @@ class CustomerService:
                 sides = {d.side for d in uploaded if d.document_type_id == rd.document_type_id}
                 if not {DocumentSide.FRONT, DocumentSide.BACK}.issubset(sides):
                     missing_docs.append(rd.document_type_id)
-            elif rd.document_type_id not in uploaded_type_ids:
+            elif rd.document_type_id not in accounted_type_ids:
                 missing_docs.append(rd.document_type_id)
         if missing_docs:
             raise ValidationError("Please upload all required documents before submitting.")
@@ -1482,14 +1485,24 @@ class CustomerService:
             # unknown-to-this-application type or a Case-pipeline ad-hoc request; either
             # way there's no basis to authorize an exception to "upload it," so don't.
             raise ValidationError("This document type is not part of this application's document checklist.")
-        if rd.required:
-            raise ForbiddenError("This document is required and cannot be marked unavailable.")
         if rd.hidden:
             raise ValidationError("This document type is not available for upload.")
         if rd.front_back_upload:
             raise ValidationError("Front/Back documents cannot be marked as not available.")
 
-        doc_version, replaces_id = await self._next_doc_version(application_id, document_type_id)
+        # "I don't have this document" production fix: a required document may now also
+        # be declared not-available (the submission/document-completion gates below treat
+        # NOT_AVAILABLE as satisfying "this required document has been accounted for",
+        # distinct from VERIFIED for reporting) — required no longer forbids this. A
+        # document staff have already VERIFIED still cannot be overwritten this way: that
+        # would let a customer silently erase a completed review; re-upload/replacement
+        # must go through the existing authorized document lifecycle instead.
+        current_docs = await self._documents.find_current_for_application(application_id)
+        existing = next((d for d in current_docs if d.document_type_id == document_type_id), None)
+        if existing is not None and existing.verification_status == DocumentVerificationStatus.VERIFIED:
+            raise ForbiddenError("This document has already been verified and cannot be marked unavailable.")
+        doc_version = existing.doc_version + 1 if existing is not None else 1
+        replaces_id = existing.require_id() if existing is not None else None
         document = ApplicationDocument(
             application_id=application_id, document_type_id=document_type_id, created_by=actor.require_id(),
             document_status=DocumentAvailabilityStatus.NOT_AVAILABLE, doc_version=doc_version, replaces_document_id=replaces_id,
@@ -1562,7 +1575,9 @@ class CustomerService:
         return decrypt(document.password_encrypted)
 
     async def verify_document(self, application_id: str, document_id: str, actor: User) -> ApplicationDocument:
-        await self._get_document_for_staff(application_id, document_id, actor)
+        document = await self._get_document_for_staff(application_id, document_id, actor)
+        if document.document_status == DocumentAvailabilityStatus.NOT_AVAILABLE:
+            raise ValidationError("This document has not been uploaded yet and cannot be verified.")
         updated = await self._documents.update(
             document_id,
             {
@@ -1580,6 +1595,8 @@ class CustomerService:
 
     async def reject_document(self, application_id: str, document_id: str, reason: str, actor: User) -> ApplicationDocument:
         document = await self._get_document_for_staff(application_id, document_id, actor)
+        if document.document_status == DocumentAvailabilityStatus.NOT_AVAILABLE:
+            raise ValidationError("This document has not been uploaded yet and cannot be rejected.")
         # Notify only on a genuinely NEW rejection event, not on every API call — an
         # accidental double-submit/retried request against a document that's already
         # rejected must not spam a second notification for the same event. A document

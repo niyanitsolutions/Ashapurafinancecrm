@@ -102,6 +102,7 @@ def to_detail(
     application_status: str | None = None,
     documents_required: int = 0,
     documents_verified: int = 0,
+    documents_not_available: int = 0,
     all_documents_verified: bool = False,
 ) -> LeadDetailResponse:
     return LeadDetailResponse(
@@ -120,6 +121,7 @@ def to_detail(
         account_created=lead.account_created,
         documents_required=documents_required,
         documents_verified=documents_verified,
+        documents_not_available=documents_not_available,
         all_documents_verified=all_documents_verified,
     )
 

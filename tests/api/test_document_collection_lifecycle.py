@@ -424,3 +424,47 @@ async def test_lead_originated_lifecycle_still_correct_after_lead_less_fix(clien
     assert all(x["id"] != lead["id"] for x in r.json()["data"])
     r = await client.get("/api/v1/loan-cases?unassigned_only=true", headers=owner_headers)
     assert any(c["application_id"] == application_id for c in r.json()["data"])
+
+
+# ---------------------------------------------------------------------- "I don't have this document" x DC/LM gate
+
+
+async def test_lead_less_move_succeeds_with_a_not_available_required_document(client, mock_db, owner_headers, master_data):
+    """"I don't have this document" production fix: a required document the customer
+    declared not-available now satisfies the Lead-less Move to Loan Management gate
+    exactly like a verified one — but the summary must never report it as verified."""
+    await _seed_loan_new_customer_definition(mock_db)
+    lmd = await _lead_master_data(mock_db)
+    doc_type_id = await _seed_document_type(mock_db, "PAN")
+    second_doc_type_id = await _seed_document_type(mock_db, "Bank Statement")
+    await _seed_form_definition(mock_db, "loan", lmd["loan_product_id"], document_type_ids=[doc_type_id, second_doc_type_id])
+
+    customer_headers = await _register_customer(client, "9611170020")
+    r = await client.post("/api/v1/customers/me", json={"full_name": "Direct Applicant"}, headers=customer_headers)
+    assert r.status_code == 200, r.text
+    r = await client.post("/api/v1/applications", json={"product_category": "loan", "product_id": lmd["loan_product_id"]}, headers=customer_headers)
+    assert r.status_code == 200, r.text
+    application_id = r.json()["data"]["id"]
+    await client.patch(f"/api/v1/applications/{application_id}", json={"form_data": {"loan_amount": 500000}}, headers=customer_headers)
+    await _upload_and_confirm(client, customer_headers, application_id, doc_type_id)
+    # Bank Statement (also required) declared not-available BEFORE submission — the
+    # submission gate must treat this as accounted-for, not as a missing document.
+    r = await client.post(
+        f"/api/v1/applications/{application_id}/documents/{second_doc_type_id}/not-available", headers=customer_headers
+    )
+    assert r.status_code == 200, r.text
+    r = await client.post(f"/api/v1/applications/{application_id}/submit", json={}, headers=customer_headers)
+    assert r.status_code == 200, r.text
+    await _verify_document(mock_db, application_id=application_id, doc_type_id=doc_type_id)
+
+    r = await client.get(f"/api/v1/leads/document-collection/applications/{application_id}/summary", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert data["documents_verified"] == 1
+    assert data["documents_not_available"] == 1
+    assert data["all_documents_verified"] is True
+
+    r = await client.post(
+        f"/api/v1/leads/document-collection/applications/{application_id}/move-to-loan-management", json={}, headers=owner_headers
+    )
+    assert r.status_code == 200, r.text

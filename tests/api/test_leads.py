@@ -1397,10 +1397,10 @@ async def _seed_application(
     return str(result.inserted_id)
 
 
-async def _seed_document(mock_db, *, application_id, document_type_id, verification_status="pending", is_current=True):
+async def _seed_document(mock_db, *, application_id, document_type_id, verification_status="pending", is_current=True, document_status="uploaded"):
     document = ApplicationDocument(
         application_id=application_id, document_type_id=document_type_id,
-        verification_status=verification_status, is_current=is_current,
+        verification_status=verification_status, is_current=is_current, document_status=document_status,
     )
     await mock_db["application_documents"].insert_one(document.model_dump(by_alias=True, exclude={"id"}))
 
@@ -1668,6 +1668,37 @@ async def test_move_to_loan_management_succeeds_when_all_verified(client, mock_d
     r = await client.get(f"/api/v1/leads/{lead['id']}/timeline", headers=owner_headers)
     event_types = {e["event_type"] for e in r.json()["data"] if e["type"] == "activity"}
     assert "moved_to_loan_management" in event_types
+
+
+async def test_move_to_loan_management_succeeds_with_a_not_available_required_document(client, mock_db, owner_headers, master_data):
+    """"I don't have this document" production fix: a required document the customer
+    declared not-available now satisfies the Move to Loan Management gate exactly like a
+    verified one — but the two counts must never be conflated (only PAN is genuinely
+    verified; Bank Statement is merely accounted-for)."""
+    await _seed_loan_new_customer_definition(mock_db)
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880051", email="dc12@example.com")
+    lead = await _lead_in_document_collection(client, owner_headers, lmd, "9611160012", employee["id"])
+    pan_id = await _seed_document_type(mock_db, "PAN")
+    bank_id = await _seed_document_type(mock_db, "Bank Statement")
+    form_def_id = await _seed_form_definition(mock_db, "loan", lmd["loan_product_id"], document_type_ids=[pan_id, bank_id])
+    application_id = await _seed_application(
+        mock_db, lead_id=lead["id"], customer_id="000000000000000000000077", form_definition_id=form_def_id,
+        product_category="loan", product_id=lmd["loan_product_id"], status="submitted",
+    )
+    await _seed_document(mock_db, application_id=application_id, document_type_id=pan_id, verification_status="verified")
+    await _seed_document(mock_db, application_id=application_id, document_type_id=bank_id, verification_status="pending", document_status="not_available")
+
+    detail = await client.get(f"/api/v1/leads/{lead['id']}", headers=owner_headers)
+    assert detail.status_code == 200, detail.text
+    data = detail.json()["data"]
+    assert data["documents_verified"] == 1
+    assert data["documents_not_available"] == 1
+    assert data["all_documents_verified"] is True
+
+    r = await client.post(f"/api/v1/leads/{lead['id']}/stage", json={"stage": "loan_management"}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["stage"] == "loan_management"
 
 
 async def test_move_to_loan_management_blocked_from_wrong_stage(client, mock_db, owner_headers, master_data):

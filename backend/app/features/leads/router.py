@@ -61,7 +61,7 @@ async def _detail(service: LeadService, lead: Any, source_map: dict, product_map
         actor_name_map,
         application_id=summary.application_id, application_status=summary.application_status,
         documents_required=summary.documents_required, documents_verified=summary.documents_verified,
-        all_documents_verified=summary.all_documents_verified,
+        documents_not_available=summary.documents_not_available, all_documents_verified=summary.all_documents_verified,
     )
 
 
@@ -235,7 +235,7 @@ async def get_lead_less_document_collection_summary(
         ApplicationDocumentSummaryResponse(
             application_id=summary.application_id or application_id, application_status=summary.application_status or "",
             documents_required=summary.documents_required, documents_verified=summary.documents_verified,
-            all_documents_verified=summary.all_documents_verified,
+            documents_not_available=summary.documents_not_available, all_documents_verified=summary.all_documents_verified,
         )
     )
 

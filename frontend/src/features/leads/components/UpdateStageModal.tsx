@@ -393,6 +393,10 @@ export function UpdateStageModal({
                   {detail.application_status === "submitted" && (
                     <p className="text-sm text-text">
                       {detail.documents_verified} of {detail.documents_required} required documents verified.
+                      {/* "I don't have this document" — reported separately from Verified,
+                          never folded into it, so this never implies an unavailable
+                          document was actually verified. */}
+                      {detail.documents_not_available > 0 && ` ${detail.documents_not_available} marked not available.`}
                     </p>
                   )}
                   <Link
@@ -437,7 +441,9 @@ export function UpdateStageModal({
                     <p className="text-xs text-textSecondary">
                       {detail?.application_status !== "submitted"
                         ? "The customer must submit their application before this lead can move to Loan Management."
-                        : `${detail?.documents_verified ?? 0} of ${detail?.documents_required ?? 0} required documents verified — all must be verified first.`}
+                        : `${detail?.documents_verified ?? 0} of ${detail?.documents_required ?? 0} required documents verified${
+                            detail?.documents_not_available ? ` (${detail.documents_not_available} not available)` : ""
+                          } — all must be verified or marked unavailable first.`}
                     </p>
                   )}
                 </>

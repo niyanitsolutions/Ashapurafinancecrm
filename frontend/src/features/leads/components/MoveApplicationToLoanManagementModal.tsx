@@ -79,6 +79,10 @@ export function MoveApplicationToLoanManagementModal({
           {summary?.application_status === "submitted" && (
             <p className="text-sm text-text">
               {summary.documents_verified} of {summary.documents_required} required documents verified.
+              {/* "I don't have this document" — reported separately from Verified, never
+                  folded into it, so this never implies an unavailable document was
+                  actually verified. */}
+              {summary.documents_not_available > 0 && ` ${summary.documents_not_available} marked not available.`}
             </p>
           )}
           <Link to={`/applications/${lead.application_id}?from=document-collection`} className="inline-block text-sm font-medium text-primary hover:underline">
@@ -93,7 +97,9 @@ export function MoveApplicationToLoanManagementModal({
               <p className="text-xs text-textSecondary">
                 {summary?.application_status !== "submitted"
                   ? "The customer must submit their application before it can move to Loan Management."
-                  : `${summary?.documents_verified ?? 0} of ${summary?.documents_required ?? 0} required documents verified — all must be verified first.`}
+                  : `${summary?.documents_verified ?? 0} of ${summary?.documents_required ?? 0} required documents verified${
+                      summary?.documents_not_available ? ` (${summary.documents_not_available} not available)` : ""
+                    } — all must be verified or marked unavailable first.`}
               </p>
             )}
             <Button variant="secondary" className="w-full" onClick={onClose}>

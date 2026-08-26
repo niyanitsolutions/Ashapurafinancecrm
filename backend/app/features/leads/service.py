@@ -25,7 +25,7 @@ from app.features.access_control.repository import (
 )
 from app.features.auth.models import User
 from app.features.auth.repository import UserRepository
-from app.features.customer.constants import ApplicationStatus, DocumentSide, DocumentVerificationStatus
+from app.features.customer.constants import ApplicationStatus, DocumentAvailabilityStatus, DocumentSide, DocumentVerificationStatus
 from app.features.customer.models import Application
 from app.features.customer.repository import (
     ApplicationDocumentRepository,
@@ -87,6 +87,12 @@ class DocumentCollectionSummary:
     application_status: str | None
     documents_required: int
     documents_verified: int
+    # "I don't have this document" production fix — required documents the customer has
+    # declared not-available count toward `all_documents_verified` (the Move to Loan
+    # Management gate treats "accounted for" as verified-or-not-available), but are
+    # reported separately here so the UI never claims an unavailable document was
+    # actually verified.
+    documents_not_available: int
     all_documents_verified: bool
 
 
@@ -474,10 +480,11 @@ class LeadService:
         documents verified" status `UpdateStageModal` already shows for a Lead, without
         pre-emptively attempting (and failing) the move itself."""
         application = await self._get_lead_less_application_scoped(application_id, actor)
-        required, verified = await self._document_completion(application)
+        required, verified, not_available = await self._document_completion(application)
         return DocumentCollectionSummary(
             application_id=application.require_id(), application_status=application.status,
-            documents_required=required, documents_verified=verified, all_documents_verified=verified >= required,
+            documents_required=required, documents_verified=verified, documents_not_available=not_available,
+            all_documents_verified=verified + not_available >= required,
         )
 
     async def move_lead_less_application_to_loan_management(self, application_id: str, actor: User) -> Application:
@@ -490,8 +497,8 @@ class LeadService:
             raise ValidationError("Only loan applications can be moved to Loan Management here.")
         if application.status != ApplicationStatus.SUBMITTED:
             raise ValidationError("The customer must submit their application before it can move to Loan Management.")
-        required, verified = await self._document_completion(application)
-        if verified < required:
+        required, verified, not_available = await self._document_completion(application)
+        if verified + not_available < required:
             raise ValidationError(
                 f"{verified} of {required} required documents are verified. All required documents must be "
                 "verified before moving to Loan Management."
@@ -506,21 +513,31 @@ class LeadService:
         assert updated is not None
         return updated
 
-    async def _document_completion(self, application: Application) -> tuple[int, int]:
-        """`(documents_required, documents_verified)` for `application`, counting only
-        CURRENT documents — a superseded row from before a re-upload must never count
-        toward verification, matching the exact `is_current` discipline the Application/
-        ApplicationDocument system itself already enforces on every other read (see
-        `customer/service.py`'s `supersede_current`). A Front & Back requirement (see
-        `RequiredDocumentDefinition.front_back_upload`) counts as verified only once BOTH
-        sides are current and verified — one verified side alone is not "verified" for
-        this logical, single requirement."""
+    async def _document_completion(self, application: Application) -> tuple[int, int, int]:
+        """`(documents_required, documents_verified, documents_not_available)` for
+        `application`, counting only CURRENT documents — a superseded row from before a
+        re-upload must never count toward verification, matching the exact `is_current`
+        discipline the Application/ApplicationDocument system itself already enforces on
+        every other read (see `customer/service.py`'s `supersede_current`). A Front & Back
+        requirement (see `RequiredDocumentDefinition.front_back_upload`) counts as
+        verified only once BOTH sides are current and verified — one verified side alone
+        is not "verified" for this logical, single requirement (front/back documents can
+        never be NOT_AVAILABLE — `CustomerService.mark_document_not_available` refuses
+        them — so they only ever contribute to `verified_count`).
+
+        "I don't have this document" production fix: a required document the customer
+        has declared not-available (`document_status == NOT_AVAILABLE`) is counted
+        separately, in `not_available_count`, NEVER folded into `verified_count` — a
+        caller must never report an unavailable document as verified. Both counts
+        together are what gate Move to Loan Management (`verified + not_available >=
+        required`); `verified_count` alone is what the UI shows as "Verified"."""
         form_def = await self._form_defs.find_by_id(application.form_definition_id)
         required_docs = [d for d in form_def.required_documents if d.required and not d.hidden] if form_def else []
         if not required_docs:
-            return 0, 0
+            return 0, 0, 0
         current_docs = await self._application_documents.find_current_for_application(application.require_id())
         verified_count = 0
+        not_available_count = 0
         for rd in required_docs:
             matching = [d for d in current_docs if d.document_type_id == rd.document_type_id]
             if rd.front_back_upload:
@@ -532,7 +549,9 @@ class LeadService:
                     verified_count += 1
             elif any(d.verification_status == DocumentVerificationStatus.VERIFIED for d in matching):
                 verified_count += 1
-        return len(required_docs), verified_count
+            elif any(d.document_status == DocumentAvailabilityStatus.NOT_AVAILABLE for d in matching):
+                not_available_count += 1
+        return len(required_docs), verified_count, not_available_count
 
     async def _resolve_application_for_lead(self, lead: Lead) -> Application | None:
         """THE single authoritative lookup for "which Application (if any) belongs to
@@ -567,12 +586,14 @@ class LeadService:
         application = await self._resolve_application_for_lead(lead)
         if application is None:
             return DocumentCollectionSummary(
-                application_id=None, application_status=None, documents_required=0, documents_verified=0, all_documents_verified=False
+                application_id=None, application_status=None, documents_required=0, documents_verified=0,
+                documents_not_available=0, all_documents_verified=False,
             )
-        required, verified = await self._document_completion(application)
+        required, verified, not_available = await self._document_completion(application)
         return DocumentCollectionSummary(
             application_id=application.require_id(), application_status=application.status,
-            documents_required=required, documents_verified=verified, all_documents_verified=verified >= required,
+            documents_required=required, documents_verified=verified, documents_not_available=not_available,
+            all_documents_verified=verified + not_available >= required,
         )
 
     async def get_tab_counts(self, actor: User) -> LeadCountsResponse:
@@ -824,8 +845,8 @@ class LeadService:
             application = await self._resolve_application_for_lead(lead)
             if application is None or application.status != ApplicationStatus.SUBMITTED:
                 raise ValidationError("The customer must submit their application before this lead can move to Loan Management.")
-            required, verified = await self._document_completion(application)
-            if verified < required:
+            required, verified, not_available = await self._document_completion(application)
+            if verified + not_available < required:
                 raise ValidationError(
                     f"{verified} of {required} required documents are verified. All required documents must be "
                     "verified before moving to Loan Management."

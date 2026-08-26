@@ -173,12 +173,17 @@ class LeadDetailResponse(LeadListItem):
     # Application's required documents; zeros/false when no Application exists yet.
     documents_required: int = 0
     documents_verified: int = 0
+    # "I don't have this document" production fix — required documents the customer
+    # declared not-available, counted separately from `documents_verified` so the UI
+    # never reports an unavailable document as verified; still counted toward
+    # `all_documents_verified` (the Move to Loan Management gate).
+    documents_not_available: int = 0
     all_documents_verified: bool = False
 
 
 class ApplicationDocumentSummaryResponse(BaseModel):
     """Production fix "DC vs LM" — the Lead-less counterpart of the document-completion
-    summary already surfaced on `LeadDetailResponse` (same 5 fields, same meaning),
+    summary already surfaced on `LeadDetailResponse` (same fields, same meaning),
     for the Move to Loan Management modal a Lead-less Document Collection row opens
     instead of `UpdateStageModal` (which assumes a real Lead)."""
 
@@ -186,6 +191,7 @@ class ApplicationDocumentSummaryResponse(BaseModel):
     application_status: str
     documents_required: int
     documents_verified: int
+    documents_not_available: int = 0
     all_documents_verified: bool
 
 

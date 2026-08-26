@@ -88,10 +88,11 @@ class ApplicationDocument(BaseDocument):
     verified_at: datetime | None = None
     rejection_reason: str | None = None  # set only when verification_status == "rejected"
 
-    # Document management redesign — re-upload/versioning + the optional-document
-    # "I don't have this" flow. Defaults reproduce prior behavior exactly for every row
-    # written before this existed (a real uploaded file, and the only/current one), so no
-    # migration is needed.
+    # Document management redesign — re-upload/versioning + the "I don't have this
+    # document" flow (production fix: available for required documents too, not just
+    # optional ones — see CustomerService.mark_document_not_available). Defaults
+    # reproduce prior behavior exactly for every row written before this existed (a real
+    # uploaded file, and the only/current one), so no migration is needed.
     document_status: str = "uploaded"  # DocumentAvailabilityStatus: "uploaded" | "not_available"
     file_size_bytes: int | None = None  # from an S3 HEAD at confirm time — never client-trusted
     # A `RequiredDocumentDefinition.multiple_upload=False` document type has at most one

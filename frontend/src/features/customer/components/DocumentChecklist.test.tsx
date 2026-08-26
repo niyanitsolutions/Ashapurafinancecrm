@@ -218,6 +218,133 @@ describe("DocumentChecklist — Front & Back upload (generic, not Aadhaar-specif
   });
 });
 
+// "I don't have this document" production fix — required documents now also support
+// the not-available declaration (a prior, deliberate backend restriction forbidding this
+// for required documents was lifted); the checkbox must render for both required and
+// optional documents, never once a file exists (uploaded or already verified), and a
+// Not Available row must clearly render as its own distinct state.
+
+const REQUIRED_DOC: RequiredDocument = { ...PAN_DOC, required: true };
+const OPTIONAL_DOC: RequiredDocument = { ...PAN_DOC, document_type_id: "dt-optional", document_type_name: "Company ID", required: false };
+
+describe("DocumentChecklist — \"I don't have this document\"", () => {
+  it("renders the checkbox for a REQUIRED document with nothing uploaded yet", () => {
+    render(
+      <DocumentChecklist
+        requiredDocuments={[REQUIRED_DOC]}
+        uploadedDocuments={[]}
+        onUpload={vi.fn()}
+        onMarkNotAvailable={vi.fn()}
+        canMarkNotAvailable
+        uploadingFor={null}
+      />,
+    );
+    expect(screen.getByText(/I don't have this document/i)).toBeInTheDocument();
+  });
+
+  it("renders the checkbox for an OPTIONAL document, and leaving it unchecked never blocks anything on its own", () => {
+    render(
+      <DocumentChecklist
+        requiredDocuments={[OPTIONAL_DOC]}
+        uploadedDocuments={[]}
+        onUpload={vi.fn()}
+        onMarkNotAvailable={vi.fn()}
+        canMarkNotAvailable
+        uploadingFor={null}
+      />,
+    );
+    expect(screen.getByText(/I don't have this document/i)).toBeInTheDocument();
+    expect(documentCompletionSummary([OPTIONAL_DOC], []).missing).toEqual([]);
+  });
+
+  it("does not render the checkbox at all when canMarkNotAvailable is false (Staff view)", () => {
+    render(<DocumentChecklist requiredDocuments={[REQUIRED_DOC]} uploadedDocuments={[]} onUpload={vi.fn()} uploadingFor={null} />);
+    expect(screen.queryByText(/I don't have this document/i)).not.toBeInTheDocument();
+  });
+
+  it("clicking the checkbox calls onMarkNotAvailable with the document type id", async () => {
+    const onMarkNotAvailable = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <DocumentChecklist
+        requiredDocuments={[REQUIRED_DOC]}
+        uploadedDocuments={[]}
+        onUpload={vi.fn()}
+        onMarkNotAvailable={onMarkNotAvailable}
+        canMarkNotAvailable
+        uploadingFor={null}
+      />,
+    );
+    await user.click(screen.getByText(/I don't have this document/i));
+    expect(onMarkNotAvailable).toHaveBeenCalledWith("dt-pan");
+  });
+
+  it("renders a distinct 'Not Available' state for a not_available document, with an upload control still offered", () => {
+    const notAvailable = makeUploadedDoc({
+      id: "doc-1", document_type_id: "dt-pan", document_type_name: "PAN Card", document_status: "not_available",
+      file_name: null, content_type: null, download_url: null, attachment_url: null, side: null,
+    });
+    render(
+      <DocumentChecklist
+        requiredDocuments={[REQUIRED_DOC]}
+        uploadedDocuments={[notAvailable]}
+        onUpload={vi.fn()}
+        onMarkNotAvailable={vi.fn()}
+        canMarkNotAvailable
+        uploadingFor={null}
+      />,
+    );
+    expect(screen.getByText("Not Available")).toBeInTheDocument();
+    // The checkbox itself is not re-offered on a row already declared unavailable —
+    // the only next action is to upload the real document.
+    expect(screen.queryByText(/I don't have this document/i)).not.toBeInTheDocument();
+  });
+
+  it("never offers the checkbox once a file exists — pending, and never overwrites a verified document", () => {
+    const pending = makeUploadedDoc({ id: "doc-1", document_type_id: "dt-pan", verification_status: "pending", side: null });
+    const { rerender } = render(
+      <DocumentChecklist
+        requiredDocuments={[REQUIRED_DOC]}
+        uploadedDocuments={[pending]}
+        onUpload={vi.fn()}
+        onMarkNotAvailable={vi.fn()}
+        canMarkNotAvailable
+        uploadingFor={null}
+      />,
+    );
+    expect(screen.queryByText(/I don't have this document/i)).not.toBeInTheDocument();
+
+    const verified = makeUploadedDoc({ id: "doc-1", document_type_id: "dt-pan", verification_status: "verified", side: null });
+    rerender(
+      <DocumentChecklist
+        requiredDocuments={[REQUIRED_DOC]}
+        uploadedDocuments={[verified]}
+        onUpload={vi.fn()}
+        onMarkNotAvailable={vi.fn()}
+        canMarkNotAvailable
+        uploadingFor={null}
+      />,
+    );
+    expect(screen.queryByText(/I don't have this document/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("documentCompletionSummary — a not-available required document is accounted for, never falsely 'missing'", () => {
+  it("does not list a not_available required document as missing", () => {
+    const notAvailable = makeUploadedDoc({
+      id: "doc-1", document_type_id: "dt-pan", document_status: "not_available", file_name: null, side: null,
+    });
+    const summary = documentCompletionSummary([REQUIRED_DOC], [notAvailable]);
+    expect(summary.completed).toBe(1);
+    expect(summary.missing).toEqual([]);
+  });
+
+  it("still lists a front_back_upload document as missing when not_available (front/back can never be not_available)", () => {
+    const summary = documentCompletionSummary([DRIVING_LICENCE_DOC], []);
+    expect(summary.missing).toEqual([DRIVING_LICENCE_DOC]);
+  });
+});
+
 describe("documentCompletionSummary — Front & Back counts as one requirement, both sides required", () => {
   it("does not count a front_back_upload document as completed with only one side uploaded", () => {
     const front = makeUploadedDoc({ id: "doc-front", side: "front" });

@@ -161,7 +161,13 @@ function DocumentSlot({
           ) : (
             <FileDropZone accept={allowedTypes} maxSizeBytes={maxSizeMb ? maxSizeMb * 1024 * 1024 : null} onFile={onUpload} />
           )}
-          {!isRequired && !hasUploads && !notAvailable && canMarkNotAvailable && onMarkNotAvailable && !isUploading && (
+          {/* "I don't have this document" production fix — required documents may now
+              also be declared unavailable (the backend's own required-document
+              restriction was lifted); `isRequired` no longer gates this at all. Still
+              never offered once ANY upload exists (`!hasUploads`, including a verified
+              one) — see the backend's matching guard against overwriting a verified
+              document. */}
+          {!hasUploads && !notAvailable && canMarkNotAvailable && onMarkNotAvailable && !isUploading && (
             <button
               type="button"
               onClick={() => onMarkNotAvailable(typeId)}
@@ -378,13 +384,20 @@ export function DocumentChecklist({
  * counts as completed once BOTH sides have a current upload. */
 export function documentCompletionSummary(requiredDocuments: RequiredDocument[], uploadedDocuments: ApplicationDocument[]) {
   const required = requiredDocuments.filter((d) => !d.hidden && d.required !== false);
-  const current = uploadedDocuments.filter((d) => d.is_current && d.document_status === "uploaded");
+  const current = uploadedDocuments.filter((d) => d.is_current);
+  const uploaded = current.filter((d) => d.document_status === "uploaded");
+  // "I don't have this document" production fix — a required document declared
+  // not-available is "accounted for" here exactly like the backend's own
+  // `submit_application` gate, so this client-side pre-check never blocks a submission
+  // the backend would actually accept. Front & Back documents can never be
+  // not_available (the backend refuses that combination), so they're still satisfied
+  // only by a real upload of both sides.
   const isSatisfied = (d: RequiredDocument) => {
-    const docs = current.filter((u) => u.document_type_id === d.document_type_id);
     if (d.front_back_upload) {
+      const docs = uploaded.filter((u) => u.document_type_id === d.document_type_id);
       return docs.some((u) => u.side === "front") && docs.some((u) => u.side === "back");
     }
-    return docs.length > 0;
+    return current.some((u) => u.document_type_id === d.document_type_id);
   };
   const missing = required.filter((d) => !isSatisfied(d));
   return { total: required.length, completed: required.length - missing.length, missing };
