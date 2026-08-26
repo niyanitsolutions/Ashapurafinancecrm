@@ -161,3 +161,30 @@ def require_permission(module: str, resource: str, action: str) -> Any:
         return user
 
     return Depends(dependency)
+
+
+def require_any_permission(module: str, resource: str, actions: tuple[str, ...]) -> Any:
+    """Same contract as `require_permission`, satisfied if the caller holds ANY ONE of
+    `actions` on `module:resource` — e.g. Leads' Reject Lead action is authorized by
+    either the dedicated `reject` grant or the general `edit` grant already used to
+    manage a lead, so an employee who can already move/update a lead doesn't need a
+    second, separate permission just to reject it. Not a new permission of its own —
+    just an alternate authorization dependency over the existing action set."""
+
+    async def dependency(
+        subject: Annotated[str, Depends(get_current_subject)],
+        db: Annotated[AsyncIOMotorDatabase[Any], Depends(get_database)],
+    ) -> User:
+        user = await UserRepository(db).find_by_id(subject)
+        if user is None:
+            raise ForbiddenError("Account no longer exists.")
+        if user.status != ACCOUNT_STATUS_ACTIVE:
+            raise UnauthorizedError("Account is not active.")
+
+        engine = PermissionEngine(db)
+        for action in actions:
+            if await engine.has_permission(user, module=module, resource=resource, action=action):
+                return user
+        raise ForbiddenError(f"Missing permission: {module}:{resource}:{' or '.join(actions)}")
+
+    return Depends(dependency)

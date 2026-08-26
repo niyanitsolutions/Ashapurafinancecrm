@@ -1985,15 +1985,74 @@ async def test_reject_button_permission_and_flow_from_my_leads(client, mock_db, 
     assert lead["id"] not in {x["id"] for x in r.json()["data"]}
 
 
-async def test_reject_requires_reject_permission(client, mock_db, owner_headers, master_data):
+async def test_reject_succeeds_with_edit_permission_only_no_dedicated_reject_grant(client, mock_db, owner_headers, master_data):
+    """Production fix "Reject Lead for Employees": an employee who can already manage
+    this lead (`edit`) may reject it too — no separate `reject` permission assignment
+    required. Supersedes this test's old assertion (403), which was exactly the
+    reported bug: an employee who could move a lead through every other stage still
+    couldn't reject it without a second, explicitly-granted permission."""
     lmd = await _lead_master_data(mock_db)
     employee = await _create_employee(client, owner_headers, master_data, mobile="9788880066", email="norejectperm1@example.com")
-    await _grant_leads_actions(client, owner_headers, employee["id"], ["view", "create", "edit"], role_name="No Reject Role")
+    await _grant_leads_actions(client, owner_headers, employee["id"], ["view", "create", "edit"], role_name="Edit Only Role")
     headers = await _login(client, "9788880066")
 
     lead = await _create_lead(client, headers, lmd, mobile="9611170031", assigned_to="__self__")
     r = await client.post(f"/api/v1/leads/{lead['id']}/reject", json={"reason": "Not a fit"}, headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["stage"] == "rejected"
+
+
+async def test_reject_still_denied_with_neither_edit_nor_reject_permission(client, mock_db, owner_headers, master_data):
+    """The employee-scope safety requirement: an employee with no edit/reject grant at
+    all on leads:leads must still be denied — this fix only extends WHO already
+    qualifies (edit implies reject), it does not weaken the permission gate itself."""
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880069", email="noleadsperm1@example.com")
+    await _grant_leads_actions(client, owner_headers, employee["id"], ["view"], role_name="View Only Role")
+    headers = await _login(client, "9788880069")
+
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611170034")
+    await client.post(f"/api/v1/leads/{lead['id']}/assign", json={"employee_id": employee["id"]}, headers=owner_headers)
+
+    r = await client.post(f"/api/v1/leads/{lead['id']}/reject", json={"reason": "Not a fit"}, headers=headers)
     assert r.status_code == 403, r.text
+
+
+async def test_reject_scoped_employee_cannot_reject_a_lead_assigned_to_someone_else(client, mock_db, owner_headers, master_data):
+    """Employee scope must remain safe: `edit` now implying reject-eligibility must not
+    also imply reject-ANY-lead — `get_lead_scoped`'s existing assignment scoping (the
+    same check `set_stage`/every other employee-facing lead mutation already relies on)
+    must still apply to reject, unchanged."""
+    lmd = await _lead_master_data(mock_db)
+    employee_a = await _create_employee(client, owner_headers, master_data, mobile="9788880070", email="scopeda@example.com")
+    employee_b = await _create_employee(client, owner_headers, master_data, mobile="9788880071", email="scopedb@example.com")
+    await _grant_leads_actions(client, owner_headers, employee_a["id"], ["view", "create", "edit"], role_name="Scoped Edit Role A")
+    headers_a = await _login(client, "9788880070")
+
+    lead = await _create_lead(client, owner_headers, lmd, mobile="9611170035", assigned_to=employee_b["id"])
+    r = await client.post(f"/api/v1/leads/{lead['id']}/reject", json={"reason": "Not mine"}, headers=headers_a)
+    assert r.status_code == 403, r.text
+
+
+async def test_reject_available_to_edit_only_employee_from_document_collection(client, mock_db, owner_headers, master_data):
+    """Spec section 9 — Reject Lead must be available to an authorized employee wherever
+    the existing workflow already allows rejection, not only from `assigned`. Document
+    Collection is one such stage (`reject_lead` only forbids `rejected`/
+    `loan_management`) — this must work identically to the `assigned`-stage case above,
+    with no change to Document Collection's own document/verification rules."""
+    lmd = await _lead_master_data(mock_db)
+    employee = await _create_employee(client, owner_headers, master_data, mobile="9788880072", email="dcreject1@example.com")
+    await _grant_leads_actions(client, owner_headers, employee["id"], ["view", "create", "edit"], role_name="DC Edit Only Role")
+    lead = await _lead_in_document_collection(client, owner_headers, lmd, "9611170036", employee["id"])
+
+    headers = await _login(client, "9788880072")
+    r = await client.post(f"/api/v1/leads/{lead['id']}/reject", json={"reason": "Documents never arrived"}, headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["stage"] == "rejected"
+
+    r = await client.get(f"/api/v1/leads/{lead['id']}/timeline", headers=owner_headers)
+    event_types = {e["event_type"] for e in r.json()["data"] if e["type"] == "activity"}
+    assert "rejected" in event_types
 
 
 # ---------------------------------------------------------------------- production stabilization: Reject Lead visibility

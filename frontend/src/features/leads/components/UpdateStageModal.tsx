@@ -78,7 +78,11 @@ export function UpdateStageModal({
 }) {
   const { can } = usePermissions();
   const canEdit = can("leads:leads", "edit");
-  const canReject = can("leads:leads", "reject");
+  // An employee who can already manage this lead (`edit`) sees Reject Lead exactly like
+  // one specifically granted the dedicated `reject` action — no separate permission
+  // assignment required (matches the backend's `require_any_permission` gate on the
+  // reject endpoint).
+  const canReject = canEdit || can("leads:leads", "reject");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isRejecting, setIsRejecting] = useState(false);

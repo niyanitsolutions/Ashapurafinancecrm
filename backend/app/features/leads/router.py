@@ -6,7 +6,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.config.database import get_database
 from app.core.pagination import PageParams, page_params
 from app.core.response import ApiResponse, ResponseMeta
-from app.features.access_control.permission_engine import require_permission
+from app.features.access_control.permission_engine import require_any_permission, require_permission
 from app.features.auth.models import User
 from app.features.customer.dependencies import get_customer_service
 from app.features.customer.service import CustomerService
@@ -207,7 +207,11 @@ async def unassign_lead(lead_id: str, service: ServiceDep, actor: Annotated[User
 
 @router.post("/{lead_id}/reject")
 async def reject_lead(
-    lead_id: str, payload: RejectLeadRequest, service: ServiceDep, actor: Annotated[User, _perm("reject")]
+    lead_id: str, payload: RejectLeadRequest, service: ServiceDep,
+    # An employee who can already manage this lead (`edit`) may reject it exactly like
+    # one specifically granted the dedicated `reject` action — no separate permission
+    # assignment required. See `require_any_permission`'s own docstring.
+    actor: Annotated[User, require_any_permission(_MODULE, _RESOURCE, ("edit", "reject"))],
 ) -> ApiResponse[LeadDetailResponse]:
     lead = await service.reject_lead(lead_id, payload.reason, actor)
     source_map, product_map, employee_map, actor_name_map = await service.resolve_names([lead])
