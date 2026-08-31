@@ -51,6 +51,16 @@ describe("router — Loan/Insurance Management tab routes stay keyed", () => {
     expect(new Set(keys).size).toBe(keys.length);
   });
 
+  it("Top Up Loan: lives under /leads, not /loan-management (moved per production spec)", () => {
+    const leads = findRouteByPath(router.routes as RouteLike[], "/leads");
+    expect(leads).toBeTruthy();
+    expect(findRoute(leads?.children, "top-up")).toBeTruthy();
+
+    const loanManagement = findRouteByPath(router.routes as RouteLike[], "/loan-management");
+    expect(loanManagement).toBeTruthy();
+    expect(findRoute(loanManagement?.children, "top-up")).toBeUndefined();
+  });
+
   it("every /insurance-management tab route's element has a distinct, non-empty key", () => {
     const insuranceManagement = findRouteByPath(router.routes as RouteLike[], "/insurance-management");
     expect(insuranceManagement).toBeTruthy();

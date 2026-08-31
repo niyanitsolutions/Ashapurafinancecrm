@@ -178,6 +178,12 @@ export const router = createBrowserRouter([
               { path: "document-collection", element: <LeadListPage tab="document_collection" /> },
               { path: "rejected", element: <LeadListPage tab="rejected" /> },
               { path: "assigned", element: <LeadListPage tab="assigned" /> },
+              // Top Up Loan — moved here from Loan Management (its original placement);
+              // the underlying data/actions are still entirely Loan Management's own
+              // (same TopUpLoanListPage component, same /loan-cases API, same
+              // loan_management:applications permission) — only the tab's location
+              // changed, per explicit instruction not to duplicate or redesign it.
+              { path: "top-up", element: <TopUpLoanListPage key="top_up" /> },
             ],
           },
           {
@@ -251,7 +257,6 @@ export const router = createBrowserRouter([
               { path: "final-evaluation", element: <LoanCaseListPage key="final_evaluation" fixedStatus="final_evaluation" /> },
               { path: "send-for-disbursement", element: <LoanCaseListPage key="send_for_disbursement" fixedStatus="send_for_disbursement" /> },
               { path: "disbursements", element: <DisbursementsPage key="disbursements" /> },
-              { path: "top-up", element: <TopUpLoanListPage key="top_up" /> },
               { path: "on-hold", element: <LoanCaseListPage key="on_hold" fixedStatus="on_hold" /> },
               { path: "re-eligible", element: <LoanCaseListPage key="re_eligible" fixedStatus="re_eligible" /> },
               { path: "rejected", element: <LoanCaseListPage key="rejected" fixedStatus="rejected" /> },
