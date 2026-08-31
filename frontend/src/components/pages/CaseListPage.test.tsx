@@ -82,6 +82,24 @@ describe("CaseListPage row actions", () => {
     expect(viewLinks[0]).toHaveAttribute("href", "/loan-management/cases/case-1");
     expect(viewLinks[0]).not.toHaveAttribute("href", expect.stringContaining("/loan-cases/"));
   });
+
+  it("Top Up Loan (production add-on): rowActions renders per-row custom actions alongside View, and titleOverride/descriptionOverride replace the computed title/description", async () => {
+    renderList({
+      fixedStatus: "disbursed",
+      titleOverride: "Top Up Loan",
+      descriptionOverride: "Custom description",
+      rowActions: (item: CaseListItem) => <button type="button">Custom Action {item.id}</button>,
+    });
+    await screen.findByText("AFS-LOAN-000001");
+
+    expect(screen.getByRole("heading", { name: "Top Up Loan" })).toBeInTheDocument();
+    expect(screen.getByText("Custom description")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Custom Action case-1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Custom Action case-2" })).toBeInTheDocument();
+    // Every existing caller (none of which pass rowActions) is unaffected — View still
+    // renders regardless.
+    expect(screen.getAllByRole("link", { name: /view/i })).toHaveLength(2);
+  });
 });
 
 // Production bug: Loan Management's tab badges (Credit Evaluation, Offer Acceptance,

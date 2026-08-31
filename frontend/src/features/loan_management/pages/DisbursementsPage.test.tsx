@@ -24,13 +24,37 @@ const listDisbursements = vi.fn((_params?: Record<string, unknown>) =>
   }),
 );
 
+// Top Up Loan (production add-on) — the "Top Up" action's own popup self-fetches via
+// getLoanCase/scheduleTopUp; mocked alongside listDisbursements in the one combined
+// module mock below (a second vi.mock call for the same module isn't supported).
+const getLoanCase = vi.fn((_id: string) =>
+  Promise.resolve({
+    id: "case-1", case_code: "AFS-LOAN-000012", customer_name: "Dharmendra", customer: { full_name: "Dharmendra" },
+    loan_details: { disbursed_at: "2026-08-25T04:00:00.000Z" },
+  }),
+);
+const scheduleTopUp = vi.fn((_id: string, _payload: Record<string, unknown>) => Promise.resolve({}));
+
 vi.mock("@/features/loan_management/api", async () => {
   const actual = await vi.importActual<typeof import("@/features/loan_management/api")>("@/features/loan_management/api");
-  return { ...actual, listDisbursements: (...args: unknown[]) => listDisbursements(...(args as [])) };
+  return {
+    ...actual,
+    listDisbursements: (...args: unknown[]) => listDisbursements(...(args as [])),
+    getLoanCase: (id: string) => getLoanCase(id),
+    scheduleTopUp: (id: string, payload: Record<string, unknown>) => scheduleTopUp(id, payload),
+  };
 });
 
 vi.mock("@/features/system_settings/api", () => ({
   loanProductsApi: { list: vi.fn(() => Promise.resolve([{ id: "prod-1", name: "Personal Loan", description: null, status: "active", created_at: "" }])) },
+}));
+
+// The "Top Up" action is gated on the same loan_management:applications edit
+// permission every other Loan Management mutation already uses; mocked true here so
+// the pre-existing tests above (which predate this action) keep exercising the same
+// rendered table shape, plus new coverage below.
+vi.mock("@/features/access_control/usePermissions", () => ({
+  usePermissions: () => ({ isOwner: true, loading: false, can: () => true }),
 }));
 
 function renderPage() {
@@ -95,5 +119,19 @@ describe("DisbursementsPage", () => {
     renderPage();
     expect(await screen.findByText("No disbursements match your filters")).toBeInTheDocument();
     expect(screen.getByText("₹0")).toBeInTheDocument();
+  });
+
+  it("shows a Top Up action per row, and clicking it opens the Top Up scheduling popup for that case", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("AFS-LOAN-000012");
+
+    await user.click(screen.getByRole("button", { name: "Top Up" }));
+
+    expect(await screen.findByRole("heading", { name: "Top Up Loan" })).toBeInTheDocument();
+    expect(getLoanCase).toHaveBeenCalledWith("case-1");
+    await waitFor(() =>
+      expect(screen.getAllByText((_, el) => Boolean(el?.textContent?.includes("25-Aug-2026"))).length).toBeGreaterThan(0),
+    );
   });
 });

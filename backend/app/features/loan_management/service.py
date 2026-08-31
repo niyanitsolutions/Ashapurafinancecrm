@@ -54,6 +54,7 @@ from app.features.loan_management.schemas import (
     FinalEvaluationRequest,
     NewCustomerDetailsRequest,
     RvOvRefRequest,
+    ScheduleTopUpRequest,
 )
 from app.features.reminders.constants import NotificationType
 from app.features.reminders.service import RemindersService
@@ -66,6 +67,7 @@ from app.features.workflow_engine.constants import (
     DecisionType,
     LoanAuditEvent,
     LoanStatus,
+    TopUpPeriod,
     WorkflowAuditEvent,
 )
 from app.features.workflow_engine.engine import WorkflowEngine
@@ -90,7 +92,7 @@ from app.services.storage.client import (
     get_object_size,
 )
 from app.shared.audit_log import write_audit_log
-from app.utils.datetime import utc_now
+from app.utils.datetime import add_calendar_months, ensure_utc, ist_date_to_utc_midnight, to_ist, utc_now
 from app.utils.id_generator import IdPrefix, generate_id
 
 _NO_ASSIGNMENT_SENTINEL = "___none___"
@@ -226,32 +228,51 @@ class LoanCaseService:
     async def list_cases(
         self, actor: User, *, search: str | None, customer_id: str | None, assigned_to: str | None,
         unassigned_only: bool, status: str | None, skip: int, limit: int, sort: list[tuple[str, int]] | None,
+        top_up_eligible: bool = False,
     ) -> tuple[list[ApplicationWorkflow], int]:
         await self._sync_new_cases()
         if actor.role == EMPLOYEE:
             assigned_to = await self._acting_employee_id(actor)
             unassigned_only = False
+        extra_filter: dict[str, Any] = dict(self._LOAN_MANAGEMENT_GATE)
+        if top_up_eligible:
+            # Top Up Loan is a derived view, not a `LoanStatus` value: every case here is
+            # still plainly `disbursed`, filtered further to only those whose Top Up
+            # eligibility date has actually been reached — see `_TOP_UP_ELIGIBLE_FILTER`.
+            status = LoanStatus.DISBURSED
+            extra_filter.update(self._top_up_eligible_filter())
         return await self._workflows.search_and_filter(
             case_type=CaseType.LOAN, search=search, customer_id=customer_id, assigned_to=assigned_to,
             unassigned_only=unassigned_only, status=status, skip=skip, limit=limit, sort=sort,
-            extra_filter=self._LOAN_MANAGEMENT_GATE,
+            extra_filter=extra_filter,
         )
 
     async def get_counts(self, actor: User) -> dict[str, int]:
         """One count per `LoanStatus.ALL` tab, built from the identical `assigned_to`
         scoping `list_cases` itself applies — a count can never disagree with what its
         matching tab's list call returns, same principle Leads' `get_tab_counts`
-        established (decision 125)."""
+        established (decision 125). `top_up_eligible` is an additional, non-`LoanStatus`
+        count on this same response — see `list_cases`' `top_up_eligible` branch, which
+        this must stay consistent with."""
         await self._sync_new_cases()
         assigned_to: str | None = None
         if actor.role == EMPLOYEE:
             assigned_to = await self._acting_employee_id(actor)
-        return {
+        counts = {
             status: await self._workflows.count_filtered(
                 case_type=CaseType.LOAN, status=status, assigned_to=assigned_to, extra_filter=self._LOAN_MANAGEMENT_GATE,
             )
             for status in LoanStatus.ALL
         }
+        counts["top_up_eligible"] = await self._workflows.count_filtered(
+            case_type=CaseType.LOAN, status=LoanStatus.DISBURSED, assigned_to=assigned_to,
+            extra_filter={**self._LOAN_MANAGEMENT_GATE, **self._top_up_eligible_filter()},
+        )
+        return counts
+
+    @staticmethod
+    def _top_up_eligible_filter() -> dict[str, Any]:
+        return {"loan_details.top_up_eligibility_date": {"$ne": None, "$lte": utc_now()}}
 
     async def list_own_cases(self, actor: User) -> list[ApplicationWorkflow]:
         applications = await self._applications.find_for_user(actor.require_id(), status="submitted")
@@ -689,6 +710,114 @@ class LoanCaseService:
             update={"disbursed_amount": payload.disbursed_amount, "disbursed_reference": payload.disbursed_reference, "disbursed_at": utc_now()}
         )
         return await self._engine.transition(case, LoanStatus.DISBURSED, actor, updates={"loan_details": details.model_dump()})
+
+    # ---------------------------------------------------------------- Top Up Loan
+
+    @staticmethod
+    def _is_top_up_eligible(case: ApplicationWorkflow) -> bool:
+        if case.current_status != LoanStatus.DISBURSED or case.loan_details is None:
+            return False
+        eligibility_date = case.loan_details.top_up_eligibility_date
+        return eligibility_date is not None and ensure_utc(eligibility_date) <= utc_now()
+
+    @staticmethod
+    def _top_up_note_text(period: str, eligibility_date: Any, remarks: str | None) -> str:
+        if period == TopUpPeriod.NO:
+            text = "Top Up: customer declined — no eligibility scheduled."
+        else:
+            label = {"3_months": "3 Months", "6_months": "6 Months", "12_months": "12 Months", "custom": "Custom"}[period]
+            text = f"Top Up scheduled ({label}) — eligible from {to_ist(eligibility_date).strftime('%d %b %Y')}."
+        return f"{text} Remarks: {remarks}" if remarks else text
+
+    async def schedule_top_up(self, case_id: str, payload: ScheduleTopUpRequest, actor: User) -> ApplicationWorkflow:
+        """Backs BOTH the "Top Up" action on a Disbursed row (initial scheduling) and
+        "Rejected" on a Top Up Loan row (reject + reschedule) — one endpoint, one popup,
+        per spec. Never a `WorkflowEngine` transition: the case stays `current_status=
+        disbursed` throughout every Top Up cycle; only `loan_details.top_up_*` changes.
+        The eligibility date is always computed from the case's own stored
+        `disbursed_at` (never "now"), so repeated reject/reschedule cycles keep anchoring
+        to the same original disbursement, exactly as the spec requires."""
+        case = await self.get_case(case_id, actor)
+        if case.current_status != LoanStatus.DISBURSED:
+            raise ValidationError("Only a disbursed case can be scheduled for Top Up.")
+        assert case.loan_details is not None
+        disbursed_at = case.loan_details.disbursed_at
+        if disbursed_at is None:
+            raise ValidationError("This case has no recorded disbursement date.")
+        disbursed_at = ensure_utc(disbursed_at)
+
+        if payload.period == TopUpPeriod.NO:
+            eligibility_date = None
+        elif payload.period == TopUpPeriod.CUSTOM:
+            assert payload.custom_date is not None  # enforced by ScheduleTopUpRequest
+            eligibility_date = ist_date_to_utc_midnight(payload.custom_date)
+            if eligibility_date < disbursed_at:
+                raise ValidationError("The custom eligibility date cannot be earlier than the disbursed date.")
+        else:
+            eligibility_date = add_calendar_months(disbursed_at, TopUpPeriod.MONTHS_BY_PERIOD[payload.period])
+
+        details = case.loan_details.model_copy(
+            update={
+                "top_up_period": payload.period, "top_up_eligibility_date": eligibility_date,
+                "top_up_remarks": payload.remarks, "top_up_scheduled_at": utc_now(), "top_up_scheduled_by": actor.require_id(),
+            }
+        )
+        updated = await self._workflows.update(case_id, {"loan_details": details.model_dump()}, updated_by=actor.require_id())
+        assert updated is not None
+        await write_audit_log(
+            self._db, event_type=LoanAuditEvent.TOP_UP_SCHEDULED, user_id=actor.require_id(),
+            metadata={
+                "application_workflow_id": case_id, "period": payload.period,
+                "eligibility_date": eligibility_date.isoformat() if eligibility_date else None,
+            },
+        )
+        await self._notes.insert(
+            ApplicationNote(
+                application_workflow_id=case_id, created_by=actor.require_id(),
+                text=self._top_up_note_text(payload.period, eligibility_date, payload.remarks),
+            )
+        )
+        return updated
+
+    async def move_top_up_to_document_collection(self, case_id: str, actor: User) -> Application:
+        """Top Up Loan's "Move to Document Collection" action. Per spec, this must enter
+        the EXISTING Leads -> Document Collection -> Loan Management flow completely
+        unmodified — never a second, Top-Up-specific Document Collection. The original,
+        already-`disbursed` case's history (disbursed_amount/disbursed_at/original
+        approval) is never touched; only its `top_up_eligibility_date` is cleared (this
+        Top Up slot has now been consumed). A brand-new, ordinary Lead-less `Application`
+        is created for the same customer/product via `CustomerService.
+        create_application_for_customer` — the exact same Application-creation path a
+        customer applying directly through the portal would create for themselves — so
+        it surfaces in Document Collection exactly like any other Lead-less application,
+        with zero new/duplicated Document Collection logic."""
+        case = await self.get_case(case_id, actor)
+        if case.current_status != LoanStatus.DISBURSED:
+            raise ValidationError("Only a disbursed case can be moved to Document Collection for a Top Up application.")
+        if not self._is_top_up_eligible(case):
+            raise ValidationError("This case is not currently eligible for Top Up.")
+
+        from app.config.redis import get_redis  # deferred: avoid the customer <-> loan_management import cycle
+        from app.features.customer.service import CustomerService
+
+        application = await CustomerService(self._db, get_redis()).create_application_for_customer(
+            customer_id=case.customer_id, product_category=case.product_category, product_id=case.product_id, actor=actor,
+        )
+
+        assert case.loan_details is not None
+        details = case.loan_details.model_copy(update={"top_up_eligibility_date": None})
+        await self._workflows.update(case_id, {"loan_details": details.model_dump()}, updated_by=actor.require_id())
+        await write_audit_log(
+            self._db, event_type=LoanAuditEvent.TOP_UP_MOVED_TO_DOCUMENT_COLLECTION, user_id=actor.require_id(),
+            metadata={"application_workflow_id": case_id, "new_application_id": application.require_id()},
+        )
+        await self._notes.insert(
+            ApplicationNote(
+                application_workflow_id=case_id, created_by=actor.require_id(),
+                text=f"Top Up: moved to Document Collection — new application {application.application_code} started.",
+            )
+        )
+        return application
 
     # ---------------------------------------------------------------- additional documents (named, ad-hoc)
 

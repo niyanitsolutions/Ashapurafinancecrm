@@ -99,6 +99,25 @@ class LoanCaseDetails(BaseModel):
     disbursed_at: datetime | None = None
     disbursed_reference: str | None = None
 
+    # Top Up Loan — a disbursed case remains `current_status=DISBURSED` forever (a Top
+    # Up decision is never a WorkflowEngine status transition); eligibility is a
+    # derived, read-time check (`disbursed` status + `top_up_eligibility_date` reached),
+    # never a new status of its own. `top_up_period`/`top_up_eligibility_date` always
+    # reflect the LAST scheduling decision (the original one made right after
+    # disbursement, or any later reject/reschedule from the Top Up Loan tab — repeated
+    # cycles simply overwrite these, with each decision preserved in the case's own
+    # ApplicationStatusHistory/ApplicationNote timeline via LoanCaseService.
+    # schedule_top_up, never a second history mechanism). `top_up_eligibility_date=None`
+    # means no Top Up is currently scheduled — never scheduled yet, "No" was selected, or
+    # this Top Up slot was already consumed by "Move to Document Collection". All fields
+    # optional/default None so every case disbursed before this existed keeps behaving
+    # exactly as before (never Top Up eligible) with no migration required.
+    top_up_period: str | None = None  # TopUpPeriod: "3_months" | "6_months" | "12_months" | "no" | "custom"
+    top_up_eligibility_date: datetime | None = None
+    top_up_remarks: str | None = None
+    top_up_scheduled_at: datetime | None = None
+    top_up_scheduled_by: str | None = None  # ref: users — who made the last scheduling decision
+
 
 class InsuranceCaseDetails(BaseModel):
     """Insurance-specific fields, embedded on `ApplicationWorkflow` when

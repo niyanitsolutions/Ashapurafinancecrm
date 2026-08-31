@@ -69,6 +69,9 @@ export function CaseListPage<T extends CaseListItem>({
   onUpdate,
   canUpdateRow,
   refreshToken,
+  rowActions,
+  titleOverride,
+  descriptionOverride,
 }: {
   icon: IconName;
   entityLabel: string;
@@ -101,6 +104,19 @@ export function CaseListPage<T extends CaseListItem>({
    * current page/search/filter state. Optional; omit if nothing external can change the
    * list's data (Insurance's read-only-list usage doesn't need it). */
   refreshToken?: unknown;
+  /** Top Up Loan (production add-on) — arbitrary extra row-level actions beyond View/
+   * Update, rendered after them in the Actions cell. Generic on purpose (a render prop,
+   * not fixed button variants) so a module-specific list (e.g. Reject/Move to Document
+   * Collection) doesn't need this shared component to know its business actions. Omit
+   * for every other existing usage — fully backward compatible. */
+  rowActions?: (item: T) => React.ReactNode;
+  /** Overrides the computed title/description (normally derived from `fixedStatus`/
+   * `reEligible`/`entityLabel`) — for a fixed-status view whose tab name doesn't match
+   * its underlying status label (e.g. Top Up Loan, `fixedStatus="disbursed"` but the
+   * tab itself is never called "Disbursed"). Omit for every existing usage, which keeps
+   * computing the title/description exactly as before. */
+  titleOverride?: string;
+  descriptionOverride?: string;
 }) {
   const { role } = useAuth();
   const [searchParams] = useSearchParams();
@@ -160,14 +176,17 @@ export function CaseListPage<T extends CaseListItem>({
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
-  const title = reEligible ? "Re-Eligible Cases" : fixedStatus ? (statusLabels[fixedStatus] ?? `${entityLabel} Cases`) : `${entityLabel} Cases`;
-  const description = reEligible
-    ? reEligibleDescription
-    : fixedStatus
-      ? undefined
-      : status
-        ? `Filtered by status: ${statusLabels[status] ?? status}`
-        : defaultDescription;
+  const title =
+    titleOverride ?? (reEligible ? "Re-Eligible Cases" : fixedStatus ? (statusLabels[fixedStatus] ?? `${entityLabel} Cases`) : `${entityLabel} Cases`);
+  const description =
+    descriptionOverride ??
+    (reEligible
+      ? reEligibleDescription
+      : fixedStatus
+        ? undefined
+        : status
+          ? `Filtered by status: ${statusLabels[status] ?? status}`
+          : defaultDescription);
 
   const clearFilters = () => {
     setSearch("");
@@ -314,6 +333,7 @@ export function CaseListPage<T extends CaseListItem>({
                       <div className="flex items-center gap-1.5">
                         <ActionButton to={`${detailBasePath}/${c.id}`} variant="view" />
                         {onUpdate && (!canUpdateRow || canUpdateRow(c)) && <ActionButton variant="update" onClick={() => onUpdate(c)} />}
+                        {rowActions?.(c)}
                       </div>
                     </Td>
                   </TableRow>

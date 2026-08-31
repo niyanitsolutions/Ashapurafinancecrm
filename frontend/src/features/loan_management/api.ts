@@ -32,6 +32,14 @@ export interface LoanCaseDetails {
   disbursed_amount: number | null;
   disbursed_at: string | null;
   disbursed_reference: string | null;
+  // Top Up Loan (production add-on) — always present on the response, null until a Top
+  // Up decision has ever been made for this case. See TopUpPeriod (backend) for the
+  // possible `top_up_period` values.
+  top_up_period: string | null;
+  top_up_eligibility_date: string | null;
+  top_up_remarks: string | null;
+  top_up_scheduled_at: string | null;
+  top_up_scheduled_by: string | null;
 }
 
 export interface LoanCaseListItem {
@@ -53,6 +61,8 @@ export interface LoanCaseListItem {
   allowed_next_statuses: string[];
   selected_bank_name: string | null;
   approved_amount: number | null;
+  disbursed_amount: number | null;
+  disbursed_at: string | null;
   created_at: string;
 }
 
@@ -142,6 +152,7 @@ export interface LoanCaseCounts {
   on_hold: number;
   re_eligible: number;
   rejected: number;
+  top_up_eligible: number;
 }
 
 export interface LoanCaseCustomerSummary {
@@ -192,6 +203,7 @@ export interface PaginatedResponse<T> {
 
 export async function listLoanCases(params: {
   page?: number; page_size?: number; search?: string; status?: string; assigned_to?: string; unassigned_only?: boolean;
+  top_up_eligible?: boolean;
 }): Promise<PaginatedResponse<LoanCaseListItem>> {
   const usp = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -434,4 +446,18 @@ export function recordFinalEvaluation(caseId: string, payload: { remarks?: strin
 
 export function disburseLoanCase(caseId: string, payload: { disbursed_amount: number; disbursed_reference: string }) {
   return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/disburse`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+// Top Up Loan (production add-on). `period` is one of "3_months"|"6_months"|
+// "12_months"|"no"|"custom"; `custom_date` ("YYYY-MM-DD") is required only for
+// "custom" — the backend computes/validates the actual eligibility date from the
+// case's own stored disbursed_at, never from whatever date the popup happened to be
+// opened on. Backs BOTH the Disbursed list's "Top Up" action and the Top Up Loan
+// list's "Rejected" (reject + reschedule) action — same endpoint, same popup.
+export function scheduleTopUp(caseId: string, payload: { period: string; custom_date?: string; remarks?: string }) {
+  return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/top-up/schedule`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function moveTopUpToDocumentCollection(caseId: string) {
+  return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/top-up/move-to-document-collection`, { method: "POST" });
 }

@@ -42,6 +42,8 @@ def to_list_item(
         rejection_reason=case.rejection_reason, allowed_next_statuses=allowed_next_statuses or [],
         selected_bank_name=details.bank_nbfc_name if details else None,
         approved_amount=details.offered_amount if details else None,
+        disbursed_amount=details.disbursed_amount if details else None,
+        disbursed_at=details.disbursed_at if details else None,
         created_at=case.created_at,
     )
 

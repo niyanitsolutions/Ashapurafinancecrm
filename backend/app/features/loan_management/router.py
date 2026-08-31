@@ -51,6 +51,7 @@ from app.features.loan_management.schemas import (
     NewCustomerDetailsRequest,
     RejectAdditionalDocumentRequest,
     RvOvRefRequest,
+    ScheduleTopUpRequest,
 )
 from app.features.loan_management.service import LoanCaseService
 from app.features.workflow_engine.schemas import (
@@ -177,10 +178,11 @@ async def confirm_own_additional_document_upload(
 async def list_cases(
     service: ServiceDep, actor: Annotated[User, _perm("view")], page: PageParamsDep,
     customer_id: str | None = None, assigned_to: str | None = None, unassigned_only: bool = False, status: str | None = None,
+    top_up_eligible: bool = False,
 ) -> ApiResponse[list[LoanCaseListItem]]:
     cases, total = await service.list_cases(
         actor, search=page.search, customer_id=customer_id, assigned_to=assigned_to, unassigned_only=unassigned_only,
-        status=status, skip=page.skip, limit=page.page_size, sort=page.sort,
+        status=status, skip=page.skip, limit=page.page_size, sort=page.sort, top_up_eligible=top_up_eligible,
     )
     customer_map, product_map, employee_map = await service.resolve_names(cases)
     transitions = await service.status_transition_map()
@@ -437,4 +439,25 @@ async def final_evaluation(
 @router.post("/{case_id}/disburse")
 async def disburse(case_id: str, payload: DisburseRequest, service: ServiceDep, actor: Annotated[User, _perm("approve")]) -> ApiResponse[LoanCaseDetailResponse]:
     await service.disburse(case_id, payload, actor)
+    return await _detail(service, case_id, actor)
+
+
+# ---------------------------------------------------------------------- Top Up Loan
+
+
+@router.post("/{case_id}/top-up/schedule")
+async def schedule_top_up(
+    case_id: str, payload: ScheduleTopUpRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[LoanCaseDetailResponse]:
+    # Backs both the Disbursed list's "Top Up" action and the Top Up Loan list's
+    # "Rejected" (reject + reschedule) action — one endpoint for both, per spec.
+    await service.schedule_top_up(case_id, payload, actor)
+    return await _detail(service, case_id, actor)
+
+
+@router.post("/{case_id}/top-up/move-to-document-collection")
+async def move_top_up_to_document_collection(
+    case_id: str, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[LoanCaseDetailResponse]:
+    await service.move_top_up_to_document_collection(case_id, actor)
     return await _detail(service, case_id, actor)

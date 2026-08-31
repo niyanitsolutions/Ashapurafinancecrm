@@ -63,6 +63,7 @@ import { LeadsLayout } from "@/features/leads/pages/LeadsLayout";
 import { LoanCaseDetailsPage } from "@/features/loan_management/pages/LoanCaseDetailsPage";
 import { LoanCaseListPage } from "@/features/loan_management/pages/LoanCaseListPage";
 import { LoanManagementLayout } from "@/features/loan_management/pages/LoanManagementLayout";
+import { TopUpLoanListPage } from "@/features/loan_management/pages/TopUpLoanListPage";
 import { RequireReferralPartner } from "@/features/referral_partner_management/components/RequireReferralPartner";
 import { ReferralPartnerPortalLayout } from "@/features/referral_partner_management/components/ReferralPartnerPortalLayout";
 import { ReferralPartnerCommissionHistoryPage } from "@/features/referral_partner_management/pages/ReferralPartnerCommissionHistoryPage";
@@ -250,6 +251,7 @@ export const router = createBrowserRouter([
               { path: "final-evaluation", element: <LoanCaseListPage key="final_evaluation" fixedStatus="final_evaluation" /> },
               { path: "send-for-disbursement", element: <LoanCaseListPage key="send_for_disbursement" fixedStatus="send_for_disbursement" /> },
               { path: "disbursements", element: <DisbursementsPage key="disbursements" /> },
+              { path: "top-up", element: <TopUpLoanListPage key="top_up" /> },
               { path: "on-hold", element: <LoanCaseListPage key="on_hold" fixedStatus="on_hold" /> },
               { path: "re-eligible", element: <LoanCaseListPage key="re_eligible" fixedStatus="re_eligible" /> },
               { path: "rejected", element: <LoanCaseListPage key="rejected" fixedStatus="rejected" /> },

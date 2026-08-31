@@ -12,6 +12,10 @@ import type { LoanCaseDetail } from "@/features/loan_management/api";
 const updateLoanCaseStatus = vi.fn(() => Promise.resolve({ current_status: "re_eligible" }));
 const moveToCreditEvaluation = vi.fn(() => Promise.resolve({ current_status: "credit_evaluation" }));
 const moveLoanCaseBack = vi.fn(() => Promise.resolve({ current_status: "new_customer" }));
+const disburseLoanCase = vi.fn((_id: string, _payload: Record<string, unknown>) => Promise.resolve({ current_status: "disbursed" }));
+const getLoanCase = vi.fn((_id: string) =>
+  Promise.resolve({ id: "case-1", case_code: "AFS-LOAN-000005", customer: null, loan_details: { disbursed_at: "2026-08-25T04:00:00.000Z" } }),
+);
 
 vi.mock("@/features/loan_management/api", async () => {
   const actual = await vi.importActual<typeof import("@/features/loan_management/api")>("@/features/loan_management/api");
@@ -22,6 +26,8 @@ vi.mock("@/features/loan_management/api", async () => {
     updateLoanCaseStatus: (...args: unknown[]) => updateLoanCaseStatus(...(args as [])),
     moveToCreditEvaluation: (...args: unknown[]) => moveToCreditEvaluation(...(args as [])),
     moveLoanCaseBack: (...args: unknown[]) => moveLoanCaseBack(...(args as [])),
+    disburseLoanCase: (id: string, payload: Record<string, unknown>) => disburseLoanCase(id, payload),
+    getLoanCase: (id: string) => getLoanCase(id),
   };
 });
 
@@ -32,6 +38,7 @@ const baseDetails: LoanCaseDetail["loan_details"] = {
   offered_interest_rate: null, offer_decision: "pending", rv_ov_ref_type: null, rv_ov_ref_status: null, rv_ov_ref_date: null,
   rv_ov_ref_verified_by: null, rv_ov_ref_result: null, rv_ov_ref_remarks: null, esign_completed: false, nach_completed: false,
   kyc_completed: false, final_evaluation_remarks: null, disbursed_amount: null, disbursed_at: null, disbursed_reference: null,
+  top_up_period: null, top_up_eligibility_date: null, top_up_remarks: null, top_up_scheduled_at: null, top_up_scheduled_by: null,
 };
 
 function makeCase(status: string, allowedNext: string[] = [], allowedPrevious: string[] = []): LoanCaseDetail {
@@ -39,7 +46,8 @@ function makeCase(status: string, allowedNext: string[] = [], allowedPrevious: s
     id: "case-1", case_code: "AFS-LOAN-000005", application_id: "app-1", customer_id: "cust-1", customer_name: "Kamal Mandal",
     product_id: "prod-1", product_name: "Personal Loan", assigned_to: "emp-1", assigned_to_name: "Lucky Kumar",
     current_status: status, rejection_reason: null, allowed_next_statuses: allowedNext, selected_bank_name: null,
-    approved_amount: null, created_at: "2026-01-01T00:00:00Z", pending_document_type_ids: [], loan_details: baseDetails,
+    approved_amount: null, disbursed_amount: null, disbursed_at: null,
+    created_at: "2026-01-01T00:00:00Z", pending_document_type_ids: [], loan_details: baseDetails,
     updated_at: "2026-01-01T00:00:00Z", allowed_previous_statuses: allowedPrevious, customer: null, application: null, bank_offers: [],
   };
 }
@@ -79,6 +87,33 @@ describe("UpdateLoanCaseModal stage-specific form rendering", () => {
     renderModal("esign_nach_kyc", ["final_evaluation", "rejected"]);
     expect(await screen.findByRole("heading", { name: "eSign / NACH / KYC Checklist" })).toBeInTheDocument();
     expect(screen.queryByText("RV / OV / Ref")).not.toBeInTheDocument();
+  });
+
+  it("Top Up Loan (production add-on): a successful disbursement opens the Top Up scheduling popup automatically instead of just closing", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(
+      <UpdateLoanCaseModal
+        caseId="case-1"
+        loanCase={makeCase("send_for_disbursement", ["disbursed"])}
+        canEdit
+        canDisburse
+        onClose={onClose}
+        onUpdated={() => {}}
+      />,
+    );
+    await screen.findByRole("heading", { name: "Disbursement" });
+
+    await user.type(screen.getByRole("spinbutton"), "90000");
+    await user.type(screen.getByRole("textbox"), "UTR12345");
+    await user.click(screen.getByRole("button", { name: "Mark Disbursed" }));
+    await user.click(await screen.findByRole("button", { name: "Confirm Disbursement" }));
+
+    await screen.findByRole("heading", { name: "Top Up Loan" });
+    expect(disburseLoanCase).toHaveBeenCalledWith("case-1", { disbursed_amount: 90000, disbursed_reference: "UTR12345" });
+    // The Update modal's own onClose is deferred until the Top Up popup itself closes —
+    // it must not have fired yet just because disbursement succeeded.
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("Disbursed (terminal): shows no stage-specific form and no available next status", async () => {

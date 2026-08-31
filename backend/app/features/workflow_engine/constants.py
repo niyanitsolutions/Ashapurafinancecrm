@@ -61,6 +61,28 @@ class LoanStatus:
     TERMINAL = (DISBURSED, REJECTED)
 
 
+class TopUpPeriod:
+    """Top Up Loan eligibility scheduling (production add-on to the Disbursed stage —
+    NOT a `LoanStatus` member: a Top Up decision never transitions `current_status`, it
+    only sets `LoanCaseDetails.top_up_*` fields on an otherwise-unchanged `disbursed`
+    case; see `LoanCaseService.schedule_top_up`). `THREE_MONTHS`/`SIX_MONTHS`/
+    `TWELVE_MONTHS` are CALENDAR months from `disbursed_at` (see `app.utils.datetime.
+    add_calendar_months`), never a fixed day-count. `NO` schedules nothing (the case
+    stays plain `disbursed`, never Top Up eligible). `CUSTOM` uses a staff-supplied date
+    (validated >= `disbursed_at`) instead of a period."""
+
+    THREE_MONTHS = "3_months"
+    SIX_MONTHS = "6_months"
+    TWELVE_MONTHS = "12_months"
+    NO = "no"
+    CUSTOM = "custom"
+
+    ALL = (THREE_MONTHS, SIX_MONTHS, TWELVE_MONTHS, NO, CUSTOM)
+    # Only these three carry a fixed calendar-month offset; NO/CUSTOM compute their
+    # eligibility date differently (see schedule_top_up).
+    MONTHS_BY_PERIOD = {THREE_MONTHS: 3, SIX_MONTHS: 6, TWELVE_MONTHS: 12}
+
+
 class InsuranceStatus:
     """Finalized lifecycle (decision 064) — supersedes the draft flagged as an
     assumption in decision 057. Both `medical_verification` and `additional_documents`
@@ -192,6 +214,8 @@ class LoanAuditEvent:
     REJECTED = "loan_case_rejected"
     MARKED_RE_ELIGIBLE = "loan_case_marked_re_eligible"
     MOVED_TO_LOAN_MANAGEMENT = "loan_case_moved_to_loan_management"
+    TOP_UP_SCHEDULED = "loan_case_top_up_scheduled"
+    TOP_UP_MOVED_TO_DOCUMENT_COLLECTION = "loan_case_top_up_moved_to_document_collection"
 
 
 class InsuranceAuditEvent:

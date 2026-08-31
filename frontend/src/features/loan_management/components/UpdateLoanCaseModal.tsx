@@ -24,6 +24,7 @@ import {
 import { AdditionalDocumentsPanel } from "@/features/loan_management/components/AdditionalDocumentsPanel";
 import { CreditEvaluationBankOffers } from "@/features/loan_management/components/CreditEvaluationBankOffers";
 import { OfferAcceptancePanel } from "@/features/loan_management/components/OfferAcceptancePanel";
+import { TopUpSchedulingModal } from "@/features/loan_management/components/TopUpSchedulingModal";
 import { LOAN_STATUS_LABELS as STATUS_LABELS } from "@/features/loan_management/constants";
 import { getLoanStatusControlInfo, type StatusControlAction } from "@/features/loan_management/statusControl";
 
@@ -56,6 +57,12 @@ export function UpdateLoanCaseModal({
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [bankOffers, setBankOffers] = useState<BankOffer[]>(loanCase.bank_offers);
+  // Top Up Loan (production add-on) — spec requires the scheduling popup to open
+  // automatically right after a successful disbursement, not only later from the
+  // Disbursed list's own "Top Up" action. `run()`'s generic close-on-status-change
+  // behavior is bypassed here on purpose: the Update modal closes, then this popup
+  // opens in its place for the SAME case.
+  const [showTopUpAfterDisburse, setShowTopUpAfterDisburse] = useState(false);
   const status = loanCase.current_status;
   const details = loanCase.loan_details;
   const selectedOffer = bankOffers.find((o) => o.is_selected) ?? null;
@@ -75,6 +82,22 @@ export function UpdateLoanCaseModal({
       setError(getErrorMessage(err));
     }
   };
+
+  if (showTopUpAfterDisburse) {
+    return (
+      <TopUpSchedulingModal
+        caseId={caseId}
+        onClose={() => {
+          setShowTopUpAfterDisburse(false);
+          onClose();
+        }}
+        onScheduled={() => {
+          setShowTopUpAfterDisburse(false);
+          onClose();
+        }}
+      />
+    );
+  }
 
   return (
     <Modal open title={`Update ${loanCase.case_code}`} description={`Current Status: ${STATUS_LABELS[status] ?? status}`} size="lg" onClose={onClose}>
@@ -187,7 +210,18 @@ export function UpdateLoanCaseModal({
         {canDisburse && status === "send_for_disbursement" && (
           <div>
             <h3 className="mb-2 text-sm font-semibold text-text/70">Disbursement</h3>
-            <DisburseForm onSubmit={(payload) => run(() => disburseLoanCase(caseId, payload), "Loan disbursed.")} />
+            <DisburseForm
+              onSubmit={async (payload) => {
+                setError(null);
+                try {
+                  await disburseLoanCase(caseId, payload);
+                  onUpdated();
+                  setShowTopUpAfterDisburse(true);
+                } catch (err) {
+                  setError(getErrorMessage(err));
+                }
+              }}
+            />
           </div>
         )}
       </div>

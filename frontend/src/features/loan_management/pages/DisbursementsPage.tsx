@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { Button } from "@/components/buttons/Button";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { EmptyState } from "@/components/layout/EmptyState";
 import { Pagination } from "@/components/tables/Pagination";
 import { Table, TableBody, TableHead, TableHeadRow, TableRow, Td, Th } from "@/components/tables/DataTable";
+import { usePermissions } from "@/features/access_control/usePermissions";
 import { getErrorMessage } from "@/features/customer/errors";
 import { listDisbursements, type DisbursementItem } from "@/features/loan_management/api";
+import { TopUpSchedulingModal } from "@/features/loan_management/components/TopUpSchedulingModal";
 import { loanProductsApi, type NamedMasterData } from "@/features/system_settings/api";
 import { formatISTDateTime } from "@/shared/dateFormat";
 import { Icon } from "@/theme/icons";
@@ -54,6 +57,10 @@ function presetRange(preset: DatePreset): { from: string; to: string } {
 // `listDisbursements(...)` call per filter change so the card/table/pagination can never
 // disagree (the backend computes list + count + total from a single aggregation).
 export function DisbursementsPage() {
+  const { can } = usePermissions();
+  const canEdit = can("loan_management:applications", "edit");
+  const [topUpCaseId, setTopUpCaseId] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [preset, setPreset] = useState<DatePreset>("this_month");
   const [customFrom, setCustomFrom] = useState(presetRange("this_month").from);
   const [customTo, setCustomTo] = useState(presetRange("this_month").to);
@@ -88,7 +95,7 @@ export function DisbursementsPage() {
       })
       .catch((err) => setError(getErrorMessage(err)))
       .finally(() => setIsLoading(false));
-  }, [range.from, range.to, productId, search, page, pageSize]);
+  }, [range.from, range.to, productId, search, page, pageSize, refreshKey]);
 
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
   const productLabel = productId ? (products.find((p) => p.id === productId)?.name ?? "Selected Product") : "All Loans";
@@ -216,19 +223,20 @@ export function DisbursementsPage() {
                   <Th>Approved Amount</Th>
                   <Th>Disbursed Amount</Th>
                   <Th>Disbursed Date</Th>
+                  {canEdit && <Th>Actions</Th>}
                 </TableHeadRow>
               </TableHead>
               <TableBody>
                 {isLoading && (
                   <tr>
-                    <Td colSpan={6} className="text-center text-text/50 py-6">
+                    <Td colSpan={canEdit ? 7 : 6} className="text-center text-text/50 py-6">
                       Loading…
                     </Td>
                   </tr>
                 )}
                 {!isLoading && items.length === 0 && (
                   <tr>
-                    <td colSpan={6}>
+                    <td colSpan={canEdit ? 7 : 6}>
                       <EmptyState
                         icon="loan"
                         title="No disbursements match your filters"
@@ -249,6 +257,13 @@ export function DisbursementsPage() {
                     <Td>{item.approved_amount != null ? `₹${item.approved_amount.toLocaleString("en-IN")}` : "—"}</Td>
                     <Td>{item.disbursed_amount != null ? `₹${item.disbursed_amount.toLocaleString("en-IN")}` : "—"}</Td>
                     <Td>{item.disbursed_at ? formatISTDateTime(item.disbursed_at) : "—"}</Td>
+                    {canEdit && (
+                      <Td>
+                        <Button size="sm" variant="secondary" onClick={() => setTopUpCaseId(item.id)}>
+                          Top Up
+                        </Button>
+                      </Td>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>
@@ -269,6 +284,13 @@ export function DisbursementsPage() {
           }}
         />
       </div>
+      {topUpCaseId && (
+        <TopUpSchedulingModal
+          caseId={topUpCaseId}
+          onClose={() => setTopUpCaseId(null)}
+          onScheduled={() => setRefreshKey((k) => k + 1)}
+        />
+      )}
     </div>
   );
 }

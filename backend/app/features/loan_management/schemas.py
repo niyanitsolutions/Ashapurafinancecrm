@@ -1,8 +1,8 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.features.workflow_engine.constants import BankOfferDecision, LoanStatus
+from app.features.workflow_engine.constants import BankOfferDecision, LoanStatus, TopUpPeriod
 
 
 class LoanStatusUpdateRequest(BaseModel):
@@ -152,6 +152,11 @@ class LoanCaseDetailsResponse(BaseModel):
     disbursed_amount: float | None
     disbursed_at: datetime | None
     disbursed_reference: str | None
+    top_up_period: str | None = None
+    top_up_eligibility_date: datetime | None = None
+    top_up_remarks: str | None = None
+    top_up_scheduled_at: datetime | None = None
+    top_up_scheduled_by: str | None = None
 
 
 class LoanCaseListItem(BaseModel):
@@ -169,6 +174,8 @@ class LoanCaseListItem(BaseModel):
     allowed_next_statuses: list[str] = Field(default_factory=list)
     selected_bank_name: str | None = None
     approved_amount: float | None = None
+    disbursed_amount: float | None = None
+    disbursed_at: datetime | None = None
     created_at: datetime
 
 
@@ -282,6 +289,33 @@ class CaseRemarksRequest(BaseModel):
     remarks: str | None = None
 
 
+class ScheduleTopUpRequest(BaseModel):
+    """Backs both entry points into the Top Up scheduling popup: the "Top Up" action on
+    a Disbursed row (initial scheduling) and "Rejected" on a Top Up Loan row (reject +
+    reschedule) — same popup, same request shape, same endpoint (`LoanCaseService.
+    schedule_top_up`), per spec. `custom_date` is required only when `period="custom"`;
+    the service validates it isn't before the case's own `disbursed_at`."""
+
+    period: str
+    custom_date: date | None = None
+    remarks: str | None = None
+
+    @field_validator("period")
+    @classmethod
+    def _period_must_be_valid(cls, value: str) -> str:
+        if value not in TopUpPeriod.ALL:
+            raise ValueError(f"'{value}' is not a valid Top Up period.")
+        return value
+
+    @model_validator(mode="after")
+    def _custom_date_required_iff_custom(self) -> "ScheduleTopUpRequest":
+        if self.period == TopUpPeriod.CUSTOM and self.custom_date is None:
+            raise ValueError("custom_date is required when period is 'custom'.")
+        if self.period != TopUpPeriod.CUSTOM:
+            self.custom_date = None
+        return self
+
+
 class DisbursementItem(BaseModel):
     id: str
     case_code: str
@@ -334,3 +368,9 @@ class LoanCaseCountsResponse(BaseModel):
     on_hold: int
     re_eligible: int
     rejected: int
+    # Not a `LoanStatus.ALL` member — a derived count over currently-`disbursed` cases
+    # whose `top_up_eligibility_date` has been reached (see
+    # LoanCaseService.count_top_up_eligible_cases). Kept alongside the status counts on
+    # this one response so the Top Up Loan tab badge is fetched from the exact same call
+    # as every other tab's.
+    top_up_eligible: int = 0

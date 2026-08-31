@@ -60,7 +60,11 @@ export const NAV_SECTIONS: NavSection[] = [
       // Phase 1) — the underlying Customer entity, its routes, and Loan Management's
       // dependency on them are untouched; only the confusing top-level nav entry is
       // gone. Customer creation now happens as part of the Lead workflow (Phase 2).
-      { label: "Tasks", to: "/tasks", icon: "tasks", matchKey: "tasks" },
+      //
+      // "Tasks" removed from the sidebar (Top Up Loan + navigation cleanup) — this is a
+      // visibility-only change: the /tasks route, TaskListPage, and every backend
+      // task API/model/service remain fully intact and reachable by direct URL; only
+      // this nav entry is gone, per explicit instruction not to delete the feature.
     ],
   },
   {
@@ -95,10 +99,10 @@ export const NAV_SECTIONS: NavSection[] = [
       },
     ],
   },
-  {
-    label: null,
-    items: [{ label: "Message Center", to: "/communication", icon: "communication", matchKey: "communication" }],
-  },
+  // "Message Center" removed from the sidebar (Top Up Loan + navigation cleanup) —
+  // visibility-only, same as "Tasks" above: /communication, CommunicationPage, and
+  // every backend messaging API/model/service remain fully intact and reachable by
+  // direct URL; only this nav entry is gone.
   {
     label: null,
     items: [{ label: "Customer Messages", to: "/conversations", icon: "chat", matchKey: "messaging" }],

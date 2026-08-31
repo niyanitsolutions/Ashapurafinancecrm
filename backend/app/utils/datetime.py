@@ -1,3 +1,4 @@
+import calendar
 from datetime import UTC, date, datetime, timedelta
 from functools import lru_cache
 from zoneinfo import ZoneInfo
@@ -103,6 +104,21 @@ def ist_date_to_utc_midnight(d: date) -> datetime:
 
 def add_days(dt: datetime, days: int) -> datetime:
     return dt + timedelta(days=days)
+
+
+def add_calendar_months(dt: datetime, months: int) -> datetime:
+    """Adds `months` CALENDAR months to `dt`'s business-timezone calendar date, clamping
+    the day to the target month's actual length (e.g. 31 Jan + 1 month -> 28/29 Feb —
+    never an invalid "31 Feb", and never a rollover into March like naive month/day
+    arithmetic would produce). Top Up Loan's "3/6/12 Months" eligibility periods are
+    calendar months from the disbursed date (25 Aug + 3 months = 25 Nov), NOT a fixed
+    90/180/365-day offset — this is the one place that distinction is computed."""
+    ist = to_ist(dt)
+    month_index = ist.month - 1 + months
+    year = ist.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(ist.day, calendar.monthrange(year, month)[1])
+    return ist_date_to_utc_midnight(date(year, month, day))
 
 
 def is_expired(expires_at: datetime) -> bool:

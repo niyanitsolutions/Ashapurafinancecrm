@@ -712,6 +712,30 @@ class CustomerService:
             initial_assigned_to=initial_assigned_to,
         )
 
+    async def create_application_for_customer(
+        self, *, customer_id: str, product_category: str, product_id: str, actor: User,
+    ) -> Application:
+        """Staff-initiated counterpart of `start_application` — used by Top Up Loan's
+        "Move to Document Collection" action (`LoanCaseService.
+        move_top_up_to_document_collection`) to start a brand-new application for an
+        existing, already-disbursed customer. Reuses the exact same Lead-less
+        `_create_application` path a customer applying directly through the portal would
+        use for themselves, so the new application surfaces in Document Collection
+        through the existing, unmodified Lead-less pipeline — no second Document
+        Collection mechanism. `actor` is the staff member who triggered this (recorded
+        as `created_by`), never the customer; nothing prevents a customer from having
+        more than one Application for the same product (no uniqueness constraint on
+        `applications`), so this doesn't disturb the customer's original, already-
+        disbursed loan case in any way."""
+        customer = await self._customers.find_by_id(customer_id)
+        if customer is None:
+            raise ValidationError("Customer not found.")
+        form_def = await self._get_or_error_form_definition(product_category, product_id)
+        return await self._create_application(
+            user_id=customer.user_id, customer_id=customer_id, lead_id=None,
+            product_category=product_category, product_id=product_id, form_definition=form_def, actor=actor,
+        )
+
     async def _resolve_initial_assigned_to(self, mobile: str, product_category: str, product_id: str) -> str | None:
         """Seeds a new (Flow 2 / continuing) Application's initial assignment from any
         pre-existing Lead sharing this customer's mobile and product — same

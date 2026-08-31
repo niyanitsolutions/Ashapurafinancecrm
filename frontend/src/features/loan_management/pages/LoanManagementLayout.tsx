@@ -28,6 +28,7 @@ export function LoanManagementLayout() {
     { label: "Final Evaluation", to: "/loan-management/final-evaluation", count: counts?.final_evaluation },
     { label: "Send For Disbursement", to: "/loan-management/send-for-disbursement", count: counts?.send_for_disbursement },
     { label: "Disbursed", to: "/loan-management/disbursements", count: counts?.disbursed },
+    { label: "Top Up Loan", to: "/loan-management/top-up", count: counts?.top_up_eligible },
     { label: "On Hold", to: "/loan-management/on-hold", count: counts?.on_hold },
     { label: "Re-Eligible", to: "/loan-management/re-eligible", count: counts?.re_eligible },
     { label: "Rejected", to: "/loan-management/rejected", count: counts?.rejected },
