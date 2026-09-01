@@ -190,6 +190,16 @@ async def seed_permission_catalog() -> None:
     case_actions = [PermissionAction.VIEW, PermissionAction.EDIT, PermissionAction.APPROVE, PermissionAction.REJECT, PermissionAction.ASSIGN]
     entries.append(Permission(module="loan_management", resource="applications", actions=case_actions, label="Loan Cases"))
     entries.append(Permission(module="insurance_management", resource="applications", actions=case_actions, label="Insurance Cases"))
+    # Insurance Advisor Recruitment — a second workflow inside Insurance Management,
+    # reusing the same permission module with its own resource. Additive: no existing
+    # role gains it until an Owner grants it via Roles & Permissions.
+    entries.append(
+        Permission(
+            module="insurance_management", resource="recruitment",
+            actions=[PermissionAction.VIEW, PermissionAction.CREATE, PermissionAction.EDIT, PermissionAction.ASSIGN, PermissionAction.APPROVE],
+            label="Recruitment Leads",
+        )
+    )
     # Module 6D (Reminder & Notification Engine) — `resource="tasks"` matches Dashboard's
     # own pre-existing "Tasks" widget catalog row (module="reminders", resource="tasks"),
     # same forward-compatibility pattern as loan/insurance_management above.
@@ -523,6 +533,13 @@ async def seed_workflow_nav_items() -> None:
         NavItem(
             key="insurance_cases", label="Insurance Cases", route="/insurance-cases", order=26,
             required_module="insurance_management", required_resource="applications", required_action=PermissionAction.VIEW,
+        ),
+        # Insurance Advisor Recruitment — gates the "Recruitment Leads" tab inside the
+        # Insurance Management module. Same module, own resource; a role only sees the
+        # tab once granted insurance_management:recruitment:view.
+        NavItem(
+            key="recruitment_leads", label="Recruitment Leads", route="/insurance-management/recruitment", order=27,
+            required_module="insurance_management", required_resource="recruitment", required_action=PermissionAction.VIEW,
         ),
     ]
     for nav_item in nav_defs:

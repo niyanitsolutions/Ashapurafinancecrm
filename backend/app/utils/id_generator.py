@@ -21,6 +21,8 @@ class IdPrefix:
     REFERRAL_PARTNER = "REF"
     LOAN_CASE = "LOAN"
     INSURANCE_CASE = "INS"
+    RECRUITMENT = "RCT"
+    ADVISOR = "ADV"
     INTEGRATION = "INTG"
     TICKET = "TICKET"
 

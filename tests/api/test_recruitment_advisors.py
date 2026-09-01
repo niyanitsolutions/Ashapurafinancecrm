@@ -1,0 +1,263 @@
+"""End-to-end tests for Advisor Management (Phase 2).
+
+Covers the Advisor list + filters (Individual / Total Employees / Active / Inactive),
+QR / Non-QR derivation from the agency code, the Advisor detail (with linked recruitment
+info), Add Business, and the policy-count / total-premium aggregation from the saved
+business records.
+"""
+
+from app.features.system_settings.models import LeadSource
+
+RECRUIT = "/api/v1/recruitment-leads"
+ADV = "/api/v1/advisors"
+
+
+async def _source_id(mock_db) -> str:
+    result = await mock_db["lead_sources"].insert_one(LeadSource(name="Referral").model_dump(by_alias=True, exclude={"id"}))
+    return str(result.inserted_id)
+
+
+async def _promote_advisor(client, headers, mock_db, *, mobile="9876543210") -> dict:
+    """Run a recruitment lead all the way to examination PASS and return its Advisor."""
+    source_id = await _source_id(mock_db)
+    body = {
+        "full_name": "Ravi Kumar", "mobile": mobile, "email": "ravi@example.com", "gender": "male",
+        "age": 32, "source_id": source_id, "profession": "salaried",
+    }
+    lead = (await client.post(RECRUIT, json=body, headers=headers)).json()["data"]
+    lid = lead["id"]
+    assert (await client.post(f"{RECRUIT}/{lid}/move-to-bop", headers=headers)).status_code == 200
+    assert (await client.post(f"{RECRUIT}/{lid}/move-to-doc-collection", headers=headers)).status_code == 200
+
+    async def upload(slot, name):
+        r = await client.post(f"{RECRUIT}/{lid}/documents/upload-url", json={"slot": slot, "file_name": name}, headers=headers)
+        return {"s3_key": r.json()["data"]["s3_key"], "file_name": name}
+
+    docs = {
+        "pan": await upload("pan", "pan.jpg"),
+        "aadhaar": await upload("aadhaar", "aadhaar.jpg"),
+        "bank_proof": await upload("bank_proof", "passbook.jpg"),
+        "qualification": await upload("qualification", "degree.pdf"),
+        "photo": await upload("photo", "photo.jpg"),
+        "bank_proof_type": "passbook",
+        "nominee": {"name": "Priya", "dob": "1995-08-15", "relationship": "spouse"},
+        "signature": {"method": "type", "value": "Ravi Kumar"},
+        "mobile": mobile,
+    }
+    assert (await client.put(f"{RECRUIT}/{lid}/documents", json=docs, headers=headers)).status_code == 200
+    r = await client.post(f"{RECRUIT}/{lid}/examination", json={"result": "pass"}, headers=headers)
+    assert r.status_code == 200, r.text
+    advisor = (await client.get(f"{RECRUIT}/{lid}/advisor", headers=headers)).json()["data"]
+    return advisor
+
+
+# ---------------------------------------------------------------- list / detail
+
+
+async def test_promoted_advisor_appears_in_non_qr_list(client, mock_db, owner_headers):
+    advisor = await _promote_advisor(client, owner_headers, mock_db)
+    r = await client.get(f"{ADV}?channel=non_qr", headers=owner_headers)
+    assert r.status_code == 200
+    ids = [a["id"] for a in r.json()["data"]]
+    assert advisor["id"] in ids
+    row = next(a for a in r.json()["data"] if a["id"] == advisor["id"])
+    assert row["channel"] == "non_qr"
+    assert row["no_of_policies"] == 0
+    assert row["total_premium"] == 0
+
+    qr = await client.get(f"{ADV}?channel=qr", headers=owner_headers)
+    assert advisor["id"] not in [a["id"] for a in qr.json()["data"]]
+
+
+async def test_advisor_detail_includes_linked_recruitment(client, mock_db, owner_headers):
+    advisor = await _promote_advisor(client, owner_headers, mock_db)
+    r = await client.get(f"{ADV}/{advisor['id']}", headers=owner_headers)
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert data["recruitment"]["full_name"] == "Ravi Kumar"
+    assert data["recruitment"]["stage"] == "advisor"
+    assert data["recruitment"]["documents"]["pan"]["file_name"] == "pan.jpg"
+    assert data["businesses"] == []
+
+
+# ---------------------------------------------------------------- QR derivation
+
+
+async def test_agency_code_makes_advisor_qr_and_back(client, mock_db, owner_headers):
+    advisor = await _promote_advisor(client, owner_headers, mock_db)
+    aid = advisor["id"]
+
+    r = await client.patch(f"{ADV}/{aid}", json={"agency_code": "AG-1001"}, headers=owner_headers)
+    assert r.status_code == 200
+    assert r.json()["data"]["channel"] == "qr"
+    assert r.json()["data"]["agency_code"] == "AG-1001"
+    assert aid in [a["id"] for a in (await client.get(f"{ADV}?channel=qr", headers=owner_headers)).json()["data"]]
+    assert aid not in [a["id"] for a in (await client.get(f"{ADV}?channel=non_qr", headers=owner_headers)).json()["data"]]
+
+    # Clearing the agency code flips it back to Non-QR.
+    r = await client.patch(f"{ADV}/{aid}", json={"agency_code": ""}, headers=owner_headers)
+    assert r.json()["data"]["channel"] == "non_qr"
+    assert r.json()["data"]["agency_code"] is None
+
+
+async def test_status_inactive_and_filter(client, mock_db, owner_headers):
+    advisor = await _promote_advisor(client, owner_headers, mock_db)
+    aid = advisor["id"]
+    assert (await client.patch(f"{ADV}/{aid}", json={"status": "inactive"}, headers=owner_headers)).json()["data"]["status"] == "inactive"
+
+    active = await client.get(f"{ADV}?channel=non_qr&filter_key=active", headers=owner_headers)
+    assert aid not in [a["id"] for a in active.json()["data"]]
+    inactive = await client.get(f"{ADV}?channel=non_qr&filter_key=inactive", headers=owner_headers)
+    assert [a["id"] for a in inactive.json()["data"]] == [aid]
+
+
+# ---------------------------------------------------------------- Individual / Total Employees
+
+
+async def test_individual_vs_total_employees_filter(client, mock_db, owner_headers):
+    from app.features.employee.models import Employee
+
+    a1 = await _promote_advisor(client, owner_headers, mock_db, mobile="9700000001")
+    a2 = await _promote_advisor(client, owner_headers, mock_db, mobile="9700000002")
+
+    # Make a1's mobile match an employees row.
+    emp = Employee(
+        user_id="u1", employee_code="AFS-EMP-000099", first_name="X", last_name="Y", display_name="X Y",
+        mobile="9700000001", email="x@example.com", department_id="d", designation_id="de", branch_id="b",
+        joining_date=__import__("datetime").datetime(2026, 1, 1, tzinfo=__import__("datetime").UTC),
+        employment_type="full_time",
+    )
+    await mock_db["employees"].insert_one(emp.model_dump(by_alias=True, exclude={"id"}))
+
+    individuals = await client.get(f"{ADV}?channel=non_qr&filter_key=individual", headers=owner_headers)
+    assert [a["id"] for a in individuals.json()["data"]] == [a2["id"]]
+    employees = await client.get(f"{ADV}?channel=non_qr&filter_key=total_employees", headers=owner_headers)
+    assert [a["id"] for a in employees.json()["data"]] == [a1["id"]]
+
+    counts = (await client.get(f"{ADV}/counts?channel=non_qr", headers=owner_headers)).json()["data"]
+    assert counts["individual"] == 1
+    assert counts["total_employees"] == 1
+    assert counts["non_qr"] == 2
+
+
+# ---------------------------------------------------------------- Add Business + aggregation
+
+
+async def _add_business(client, headers, aid, **overrides):
+    body = {
+        "product_category": "savings", "product_name": "ABC Guaranteed Savings", "premium": 50000,
+        "ppt": 10, "pt": 20, "policy_issue_date": "2026-09-01", "comment": "Annual premium",
+    }
+    body.update(overrides)
+    return await client.post(f"{ADV}/{aid}/business", json=body, headers=headers)
+
+
+async def test_add_business_and_single_aggregate(client, mock_db, owner_headers):
+    advisor = await _promote_advisor(client, owner_headers, mock_db)
+    aid = advisor["id"]
+
+    r = await _add_business(client, owner_headers, aid)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["product_name"] == "ABC Guaranteed Savings"
+
+    listed = await client.get(f"{ADV}/{aid}/business", headers=owner_headers)
+    assert len(listed.json()["data"]) == 1
+
+    detail = (await client.get(f"{ADV}/{aid}", headers=owner_headers)).json()["data"]
+    assert detail["no_of_policies"] == 1
+    assert detail["total_premium"] == 50000
+
+
+async def test_multiple_businesses_aggregate(client, mock_db, owner_headers):
+    advisor = await _promote_advisor(client, owner_headers, mock_db)
+    aid = advisor["id"]
+    await _add_business(client, owner_headers, aid, product_category="savings", premium=50000)
+    await _add_business(client, owner_headers, aid, product_category="protection", premium=25000)
+    await _add_business(client, owner_headers, aid, product_category="ulip", premium=75000)
+
+    detail = (await client.get(f"{ADV}/{aid}", headers=owner_headers)).json()["data"]
+    assert detail["no_of_policies"] == 3
+    assert detail["total_premium"] == 150000
+
+    row = next(a for a in (await client.get(f"{ADV}?channel=non_qr", headers=owner_headers)).json()["data"] if a["id"] == aid)
+    assert row["no_of_policies"] == 3
+    assert row["total_premium"] == 150000
+
+
+async def test_custom_category_requires_custom_name(client, mock_db, owner_headers):
+    advisor = await _promote_advisor(client, owner_headers, mock_db)
+    aid = advisor["id"]
+    r = await _add_business(client, owner_headers, aid, product_category="custom", custom_category=None)
+    assert r.status_code == 422
+    r = await _add_business(client, owner_headers, aid, product_category="custom", custom_category="Micro Insurance")
+    assert r.status_code == 200
+    assert r.json()["data"]["custom_category"] == "Micro Insurance"
+
+
+async def test_business_validation(client, mock_db, owner_headers):
+    advisor = await _promote_advisor(client, owner_headers, mock_db)
+    aid = advisor["id"]
+    for bad in ({"premium": -1}, {"ppt": 0}, {"pt": 0}, {"product_category": "whole_life"}, {"policy_issue_date": "not-a-date"}, {"product_name": ""}):
+        r = await _add_business(client, owner_headers, aid, **bad)
+        assert r.status_code == 422, (bad, r.text)
+
+
+# ---------------------------------------------------------------- permissions
+
+
+async def _employee(client, owner_headers, master_data, mobile="9500000061"):
+    r = await client.post(
+        "/api/v1/employees",
+        json={
+            "mobile": mobile, "initial_password": "InitialPass1!", "first_name": "Adv", "last_name": "Mgr",
+            "email": f"adv{mobile}@example.com", "department_id": master_data["department_id"],
+            "designation_id": master_data["designation_id"], "branch_id": master_data["branch_id"],
+            "joining_date": "2026-01-15", "employment_type": "full_time",
+        },
+        headers=owner_headers,
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]
+
+
+async def _grant(client, owner_headers, employee_id, actions, role_name):
+    r = await client.post(
+        "/api/v1/permissions",
+        json={"module": "insurance_management", "resource": "recruitment", "actions": ["view", "create", "edit", "assign", "approve"]},
+        headers=owner_headers,
+    )
+    if r.status_code == 200:
+        perm_id = r.json()["data"]["id"]
+    else:
+        existing = await client.get("/api/v1/permissions", headers=owner_headers)
+        perm_id = next(p["id"] for p in existing.json()["data"] if p["module"] == "insurance_management" and p["resource"] == "recruitment")
+    role = await client.post("/api/v1/roles", json={"name": role_name}, headers=owner_headers)
+    role_id = role.json()["data"]["id"]
+    grants = [{"permission_id": perm_id, "granted_actions": actions}] if actions else []
+    await client.put(f"/api/v1/roles/{role_id}/permissions", json={"grants": grants}, headers=owner_headers)
+    await client.post(f"/api/v1/roles/{role_id}/assign", json={"employee_id": employee_id}, headers=owner_headers)
+
+
+async def _login(client, mobile):
+    r = await client.post("/api/v1/auth/login", json={"mobile": mobile, "password": "InitialPass1!"})
+    return {"Authorization": f"Bearer {r.json()['data']['access_token']}"}
+
+
+async def test_permission_gating(client, mock_db, owner_headers, master_data):
+    advisor = await _promote_advisor(client, owner_headers, mock_db)
+    aid = advisor["id"]
+
+    no_access = await _employee(client, owner_headers, master_data, mobile="9500000061")
+    await _grant(client, owner_headers, no_access["id"], [], "Adv No Access")
+    h = await _login(client, "9500000061")
+    assert (await client.get(ADV, headers=h)).status_code == 403
+    assert (await client.get(f"{ADV}/{aid}", headers=h)).status_code == 403
+    assert (await client.patch(f"{ADV}/{aid}", json={"status": "inactive"}, headers=h)).status_code == 403
+    assert (await _add_business(client, h, aid)).status_code == 403
+
+    view_only = await _employee(client, owner_headers, master_data, mobile="9500000062")
+    await _grant(client, owner_headers, view_only["id"], ["view"], "Adv View Only")
+    h2 = await _login(client, "9500000062")
+    assert (await client.get(ADV, headers=h2)).status_code == 200
+    assert (await client.patch(f"{ADV}/{aid}", json={"status": "inactive"}, headers=h2)).status_code == 403
+    assert (await _add_business(client, h2, aid)).status_code == 403

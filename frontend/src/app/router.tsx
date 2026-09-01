@@ -54,6 +54,13 @@ import { LeadCapturePage } from "@/features/lead_capture/pages/LeadCapturePage";
 import { InsuranceCaseDetailsPage } from "@/features/insurance_management/pages/InsuranceCaseDetailsPage";
 import { InsuranceCaseListPage } from "@/features/insurance_management/pages/InsuranceCaseListPage";
 import { InsuranceManagementLayout } from "@/features/insurance_management/pages/InsuranceManagementLayout";
+import { AdvisorDetailsPage } from "@/features/recruitment/pages/AdvisorDetailsPage";
+import { AdvisorListPage } from "@/features/recruitment/pages/AdvisorListPage";
+import { AdvisorsLayout } from "@/features/recruitment/pages/AdvisorsLayout";
+import { DocCollectionLayout } from "@/features/recruitment/pages/DocCollectionLayout";
+import { RecruitmentDetailsPage } from "@/features/recruitment/pages/RecruitmentDetailsPage";
+import { RecruitmentLayout } from "@/features/recruitment/pages/RecruitmentLayout";
+import { RecruitmentListPage } from "@/features/recruitment/pages/RecruitmentListPage";
 import { IntegrationDetailsPage } from "@/features/integrations/pages/IntegrationDetailsPage";
 import { IntegrationListPage } from "@/features/integrations/pages/IntegrationListPage";
 import { CreateLeadPage } from "@/features/leads/pages/CreateLeadPage";
@@ -274,6 +281,41 @@ export const router = createBrowserRouter([
               { path: "policies-issued", element: <InsuranceCaseListPage key="policy_issued" fixedStatus="policy_issued" /> },
               { path: "re-eligible", element: <InsuranceCaseListPage key="re_eligible" reEligible /> },
               { path: "rejected", element: <InsuranceCaseListPage key="rejected" fixedStatus="rejected" /> },
+              // Insurance Advisor Recruitment (Phase 1) — a second workflow inside the
+              // same module. Own sub-tab layout; keyed per stage for the same remount
+              // reason as the case tabs above.
+              {
+                path: "recruitment",
+                element: <RecruitmentLayout />,
+                children: [
+                  { index: true, element: <Navigate to="/insurance-management/recruitment/fresh" replace /> },
+                  { path: "fresh", element: <RecruitmentListPage key="rec_fresh" variant="fresh" /> },
+                  { path: "bop", element: <RecruitmentListPage key="rec_bop" variant="bop" /> },
+                  {
+                    path: "doc-collection",
+                    element: <DocCollectionLayout />,
+                    children: [
+                      { index: true, element: <Navigate to="/insurance-management/recruitment/doc-collection/examination" replace /> },
+                      { path: "examination", element: <RecruitmentListPage key="rec_exam" variant="examination" /> },
+                      { path: "re-examination", element: <RecruitmentListPage key="rec_reexam" variant="re_examination" /> },
+                      { path: "agency-code", element: <RecruitmentListPage key="rec_agency" variant="agency_code" /> },
+                    ],
+                  },
+                  { path: "rejected", element: <RecruitmentListPage key="rec_rejected" variant="rejected" /> },
+                ],
+              },
+              { path: "recruitment/:recruitmentId", element: <RecruitmentDetailsPage /> },
+              // Phase 2 — Advisor Management. Own QR / Non-QR sub-tab layout.
+              {
+                path: "advisors",
+                element: <AdvisorsLayout />,
+                children: [
+                  { index: true, element: <Navigate to="/insurance-management/advisors/non-qr" replace /> },
+                  { path: "qr", element: <AdvisorListPage key="adv_qr" channel="qr" /> },
+                  { path: "non-qr", element: <AdvisorListPage key="adv_nonqr" channel="non_qr" /> },
+                ],
+              },
+              { path: "advisors/:advisorId", element: <AdvisorDetailsPage /> },
             ],
           },
           // Module 6D — Tasks permission-gated server-side (require_permission

@@ -75,6 +75,7 @@ _MY_PERMISSIONS_CATALOG: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("reminders", "reminder_rules", ("view", "create", "edit")),
     ("loan_management", "applications", ("view", "edit", "assign", "approve")),
     ("insurance_management", "applications", ("view", "edit", "assign", "approve")),
+    ("insurance_management", "recruitment", ("view", "create", "edit", "assign", "approve")),
     ("referral_partner_management", "partners", ("view", "create")),
     ("reporting", "reports", ("view", "export")),
     ("reporting", "scheduled_reports", ("view", "create", "edit", "delete")),

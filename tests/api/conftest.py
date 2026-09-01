@@ -61,6 +61,12 @@ def _stub_document_object_size(monkeypatch):
 
     monkeypatch.setattr(loan_management_service, "get_object_size", lambda key: 1024)
 
+    # `RecruitmentService` HEADs each confirmed recruitment-document / signature upload
+    # for the same real-S3-avoidance reason — same stub, same invariant.
+    from app.features.recruitment import service as recruitment_service
+
+    monkeypatch.setattr(recruitment_service, "get_object_size", lambda key: 1024)
+
 
 @pytest.fixture
 async def client(mock_db, mock_redis):

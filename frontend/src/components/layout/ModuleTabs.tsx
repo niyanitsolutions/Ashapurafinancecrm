@@ -14,6 +14,11 @@ export interface ModuleTab {
    * (e.g. a "directory" tab at the module's bare base path, like Master Settings
    * at /settings sitting alongside /settings/lead-sources). */
   exact?: boolean;
+  /** Extra pathname prefixes (besides `to`) that also mark this tab active — for a
+   * tab that fronts a group of sibling routes living under different URLs (e.g. an
+   * "Insurance Cases" tab at /insurance-management/cases that should also light up on
+   * /insurance-management/policies-issued). Mirrors NavLeaf.activePrefixes. */
+  activePrefixes?: string[];
   /** Live count badge next to the label (e.g. Leads' Fresh/My Leads/Document
    * Collection/Rejected/Assigned tabs — decision 125). Omit for a tab with no count
    * concept — every other module's tabs simply don't set this. */
@@ -32,8 +37,11 @@ export function ModuleTabs({ tabs }: { tabs: ModuleTab[] }) {
   const visibleTabs = tabs.filter((tab) => hasNavAccess(availableKeys, tab.matchKey));
   if (visibleTabs.length === 0) return null;
 
-  const isActive = (tab: ModuleTab) =>
-    tab.exact ? location.pathname === tab.to : location.pathname === tab.to || location.pathname.startsWith(`${tab.to}/`);
+  const isActive = (tab: ModuleTab) => {
+    if (tab.exact) return location.pathname === tab.to;
+    if ((tab.activePrefixes ?? []).some((prefix) => location.pathname.startsWith(prefix))) return true;
+    return location.pathname === tab.to || location.pathname.startsWith(`${tab.to}/`);
+  };
 
   return (
     <nav className="flex gap-1 overflow-x-auto border-b border-border bg-card px-4 lg:px-6">
