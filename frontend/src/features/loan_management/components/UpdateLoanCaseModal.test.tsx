@@ -16,12 +16,15 @@ const disburseLoanCase = vi.fn((_id: string, _payload: Record<string, unknown>) 
 const getLoanCase = vi.fn((_id: string) =>
   Promise.resolve({ id: "case-1", case_code: "AFS-LOAN-000005", customer: null, loan_details: { disbursed_at: "2026-08-25T04:00:00.000Z" } }),
 );
+const listBankOffers = vi.fn(() => Promise.resolve([] as unknown[]));
+const selectBankOffer = vi.fn((_caseId: string, _offerId: string) => Promise.resolve({ current_status: "offer_acceptance" }));
 
 vi.mock("@/features/loan_management/api", async () => {
   const actual = await vi.importActual<typeof import("@/features/loan_management/api")>("@/features/loan_management/api");
   return {
     ...actual,
-    listBankOffers: vi.fn(() => Promise.resolve([])),
+    listBankOffers: () => listBankOffers(),
+    selectBankOffer: (caseId: string, offerId: string) => selectBankOffer(caseId, offerId),
     listAdditionalDocuments: vi.fn(() => Promise.resolve([])),
     updateLoanCaseStatus: (...args: unknown[]) => updateLoanCaseStatus(...(args as [])),
     moveToCreditEvaluation: (...args: unknown[]) => moveToCreditEvaluation(...(args as [])),
@@ -30,6 +33,16 @@ vi.mock("@/features/loan_management/api", async () => {
     getLoanCase: (id: string) => getLoanCase(id),
   };
 });
+
+function makeBankOffer(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: "offer-1", loan_case_id: "case-1", bank_name: "HDFC Bank", branch: null, loan_type: null, requested_amount: null,
+    bank_application_id: null, reference_number: null, assigned_officer: null, decision: "pending", approved_amount: null,
+    interest_rate: null, tenure_months: null, processing_fee: null, emi_per_month: null, remarks: null,
+    is_selected: false, selected_at: null, selected_by: null, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
 
 const baseDetails: LoanCaseDetail["loan_details"] = {
   preferred_bank_name: null, preferred_branch: null, loan_type: null, requested_amount: null, preferred_remarks: null,
@@ -73,6 +86,46 @@ describe("UpdateLoanCaseModal stage-specific form rendering", () => {
     expect(screen.getByText("Credit Score (optional)")).toBeInTheDocument();
     expect(screen.queryByText("RV / OV / Ref")).not.toBeInTheDocument();
     expect(screen.queryByText("Additional Documents")).not.toBeInTheDocument();
+  });
+
+  it("Credit Evaluation: with no approved offer yet, explains that approving + selecting an offer moves the case to Offer Acceptance", async () => {
+    listBankOffers.mockResolvedValueOnce([makeBankOffer({ decision: "pending" })]);
+    renderModal("credit_evaluation", ["offer_acceptance", "rejected", "re_eligible"]);
+    const hint = await screen.findByText(/move this case to/i);
+    expect(hint.textContent).toMatch(/Offer Acceptance/);
+    expect(hint.textContent).toMatch(/Approved/);
+    expect(hint.textContent).toMatch(/Select/);
+    expect(screen.queryByRole("button", { name: "Select" })).not.toBeInTheDocument();
+  });
+
+  it("Credit Evaluation: an Approved, unselected offer shows Select; confirming it calls the existing selectBankOffer transition", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    listBankOffers.mockResolvedValueOnce([
+      makeBankOffer({ decision: "approved", approved_amount: 500000, interest_rate: 10.5, tenure_months: 36, emi_per_month: 16000 }),
+    ]);
+    renderModal("credit_evaluation", ["offer_acceptance", "rejected", "re_eligible"], onClose);
+
+    const selectButton = await screen.findByRole("button", { name: "Select" });
+    // The explanatory hint is gone now that a selectable offer exists.
+    expect(screen.queryByText(/move this case to/i)).not.toBeInTheDocument();
+
+    await user.click(selectButton);
+    await user.click(await screen.findByRole("button", { name: "Select Offer" }));
+
+    expect(selectBankOffer).toHaveBeenCalledWith("case-1", "offer-1");
+    // Same "onOfferSelected -> onUpdated + onClose" behavior the existing Offer
+    // Acceptance hand-off already used before this fix.
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("Credit Evaluation: existing Reject/Mark Re-Eligible/Move back actions are unaffected by the hint text", async () => {
+    listBankOffers.mockResolvedValueOnce([makeBankOffer({ decision: "pending" })]);
+    renderModal("credit_evaluation", ["offer_acceptance", "rejected", "re_eligible"], () => {}, ["new_customer"]);
+    await screen.findByText(/move this case to/i);
+    expect(screen.getAllByRole("button", { name: "Reject" }).length).toBeGreaterThan(0);
+    expect(screen.getByText("Mark Re-Eligible")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Move Back" })).toBeInTheDocument();
   });
 
   it("RV / OV / Ref: shows the RV/OV/Ref form only", async () => {

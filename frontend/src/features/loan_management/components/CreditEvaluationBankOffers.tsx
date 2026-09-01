@@ -105,9 +105,25 @@ export function CreditEvaluationBankOffers({
     }
   };
 
+  // Production fix — the case's forward move to Offer Acceptance already exists (see
+  // `handleSelect`/`selectBankOffer`, decision #129): it's reached by approving a bank
+  // offer's decision (Edit Bank -> Bank Decision: Approved -> Save) and then clicking
+  // Select, never a bare status-only button — the amount/rate/tenure/EMI recorded there
+  // is required data Offer Acceptance's own screen depends on. That mechanism was never
+  // broken, just not obviously connected to "how do I move this case forward" — this
+  // note makes the connection explicit right where staff are already looking, instead of
+  // adding a second, bypass-the-data way to reach the same status.
+  const hasSelectableOrSelectedOffer = offers.some((o) => o.is_selected || o.decision === "approved");
   return (
     <div className="space-y-3">
       {error && <p className="text-sm text-danger">{error}</p>}
+
+      {stage === "credit_evaluation" && !hasSelectableOrSelectedOffer && (
+        <p className="text-sm text-text/60">
+          To move this case to <span className="font-medium text-text">Offer Acceptance</span>, edit a bank/NBFC offer below, set its Bank Decision to
+          "Approved" with the approved amount and EMI, save it, then click <span className="font-medium text-text">Select</span>.
+        </p>
+      )}
 
       {offers.length === 0 && <p className="text-sm text-text/40">No bank/NBFC offers recorded yet.</p>}
 
