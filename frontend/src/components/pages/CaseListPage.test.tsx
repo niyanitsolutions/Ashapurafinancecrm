@@ -101,6 +101,26 @@ describe("CaseListPage row actions", () => {
     expect(screen.getAllByRole("link", { name: /view/i })).toHaveLength(2);
   });
 
+  it("showFollowUp renders a coloured Next Follow-up column; other usages don't have it", async () => {
+    const withDates = () =>
+      Promise.resolve({
+        data: [
+          { ...items[0], id: "c1", case_code: "AFS-LOAN-1", next_follow_up_date: "2000-01-01T00:00:00Z" },
+        ],
+        pagination: { total: 1 },
+      } as CaseListResponse<CaseListItem>);
+
+    renderList({ listFn: withDates });
+    await screen.findByText("AFS-LOAN-1");
+    expect(screen.queryByRole("columnheader", { name: "Next Follow-up" })).not.toBeInTheDocument();
+
+    renderList({ listFn: withDates, showFollowUp: true });
+    expect(await screen.findByRole("columnheader", { name: "Next Follow-up" })).toBeInTheDocument();
+    // A date far in the past renders as a coloured badge (danger/Past tone).
+    const badge = screen.getByText(/2000/);
+    expect(badge.className).toContain("danger");
+  });
+
   it("pagination: a refetch that empties the current page snaps back to the last valid page", async () => {
     // 11 rows total → page 2 has 1 row. Once on page 2, the next fetch reports total 10
     // (as if that row was deleted) → page 2 no longer exists → must land on page 1, not

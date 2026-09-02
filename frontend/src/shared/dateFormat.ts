@@ -90,6 +90,19 @@ export function todayISTDateString(): string {
   return istDateKey();
 }
 
+/** Follow-up date tone (Leads spec §5, reused by Loan Re-Eligible): compares an
+ * instant's IST calendar date to today's — `< today` → "danger" (Past), `== today` →
+ * "info" (Today), `> today` → "success" (Future), no date → null. The colour is always
+ * computed here at render time from the stored date, never persisted. */
+export function followUpTone(iso: string | null | undefined): "danger" | "info" | "success" | null {
+  if (!iso) return null;
+  const day = istDateKey(iso);
+  const today = todayISTDateString();
+  if (day < today) return "danger";
+  if (day === today) return "info";
+  return "success";
+}
+
 /** Converts a user-entered wall-clock date/time (from a `type="date"`/`type="time"`/
  * `type="datetime-local"` input, e.g. dateStr="2026-08-17", timeStr="14:30") — meant as
  * IST regardless of the entering user's own browser timezone — into the correct UTC

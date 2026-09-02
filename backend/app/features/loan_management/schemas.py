@@ -213,6 +213,7 @@ class LoanCaseListItem(BaseModel):
     approved_amount: float | None = None
     disbursed_amount: float | None = None
     disbursed_at: datetime | None = None
+    next_follow_up_date: datetime | None = None
     created_at: datetime
 
 
@@ -326,6 +327,15 @@ class CaseRemarksRequest(BaseModel):
     remarks: str | None = None
 
 
+class LoanFollowUpRequest(BaseModel):
+    """Re-Eligible Case Management enhancement — a follow-up comment + optional follow-up
+    date. Never overwrites a prior comment (each is a new `ApplicationNote`). `follow_up_date`
+    is a plain calendar date and may be in the past (staff log past outcomes too)."""
+
+    comment: str = Field(min_length=1)
+    follow_up_date: date | None = None
+
+
 class ScheduleTopUpRequest(BaseModel):
     """Backs both entry points into the Top Up scheduling popup: the "Top Up" action on
     a Disbursed row (initial scheduling) and "Rejected" on a Top Up Loan row (reject +
@@ -394,6 +404,7 @@ class LoanCaseCountsResponse(BaseModel):
     established (decision #125)."""
 
     new_customer: int
+    documents_pending: int
     credit_evaluation: int
     offer_acceptance: int
     additional_documents: int

@@ -23,7 +23,8 @@ from app.features.workflow_engine.constants import (
 from app.features.workflow_engine.models import WorkflowDefinition
 
 _LOAN_ROWS = [
-    (LoanStatus.NEW_CUSTOMER, "New Customer", 1, [LoanStatus.CREDIT_EVALUATION], LoanAuditEvent.CASE_CREATED),
+    (LoanStatus.NEW_CUSTOMER, "New Customer", 1, [LoanStatus.DOCUMENTS_PENDING, LoanStatus.CREDIT_EVALUATION], LoanAuditEvent.CASE_CREATED),
+    (LoanStatus.DOCUMENTS_PENDING, "Document Collection", 12, [LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED], LoanAuditEvent.DOCUMENTS_REQUESTED),
     (
         LoanStatus.CREDIT_EVALUATION, "Credit Evaluation", 2,
         [LoanStatus.OFFER_ACCEPTANCE, LoanStatus.REJECTED, LoanStatus.RE_ELIGIBLE], LoanAuditEvent.CREDIT_EVALUATED,
@@ -35,7 +36,11 @@ _LOAN_ROWS = [
     (LoanStatus.FINAL_EVALUATION, "Final Evaluation", 7, [LoanStatus.SEND_FOR_DISBURSEMENT, LoanStatus.REJECTED], LoanAuditEvent.ESIGN_NACH_KYC_COMPLETED),
     (LoanStatus.SEND_FOR_DISBURSEMENT, "Send For Disbursement", 8, [LoanStatus.DISBURSED], LoanAuditEvent.FINAL_EVALUATED),
     (LoanStatus.DISBURSED, "Disbursed", 9, [], LoanAuditEvent.DISBURSED),
-    (LoanStatus.RE_ELIGIBLE, "Re-Eligible", 10, [LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED], LoanAuditEvent.MARKED_RE_ELIGIBLE),
+    (
+        LoanStatus.RE_ELIGIBLE, "Re-Eligible", 10,
+        [LoanStatus.NEW_CUSTOMER, LoanStatus.DOCUMENTS_PENDING, LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED],
+        LoanAuditEvent.MARKED_RE_ELIGIBLE,
+    ),
     (LoanStatus.REJECTED, "Application Rejected", 11, [LoanStatus.RE_ELIGIBLE], LoanAuditEvent.REJECTED),
 ]
 _INSURANCE_ROWS = [

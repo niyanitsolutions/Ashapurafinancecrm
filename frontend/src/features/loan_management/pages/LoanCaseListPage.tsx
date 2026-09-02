@@ -2,6 +2,7 @@ import { useState } from "react";
 import { CaseListPage, type CaseListExtraColumn } from "@/components/pages/CaseListPage";
 import { usePermissions } from "@/features/access_control/usePermissions";
 import { getLoanCase, listLoanCases, type LoanCaseDetail, type LoanCaseListItem } from "@/features/loan_management/api";
+import { ReEligibleUpdateModal } from "@/features/loan_management/components/ReEligibleUpdateModal";
 import { UpdateLoanCaseModal } from "@/features/loan_management/components/UpdateLoanCaseModal";
 import { LOAN_STATUS_LABELS } from "@/features/loan_management/constants";
 
@@ -16,18 +17,25 @@ const EXTRA_COLUMNS: CaseListExtraColumn<LoanCaseListItem>[] = [
 // `/loan-management/cases/:id` — NOT the legacy `/loan-cases/:id` back-compat alias, so
 // Loan Management's own UI never round-trips through the old route. Update opens the
 // same stage-aware modal used from the detail page, directly from the list row — no
-// separate update route/page.
+// separate update route/page. Re-Eligible Case Management enhancement: the Re-Eligible
+// tab opens a dedicated modal (status dropdown + follow-up + grouped history) instead.
 export function LoanCaseListPage({ fixedStatus }: { fixedStatus?: string } = {}) {
   const { can } = usePermissions();
   const canEdit = can("loan_management:applications", "edit");
   // Disbursement is available to a case's `approve` holder OR its `edit` holder — mirrors
   // the backend's `require_any_permission(("approve", "edit"))` on POST /disburse.
   const canDisburse = can("loan_management:applications", "approve") || canEdit;
+  const isReEligible = fixedStatus === "re_eligible";
   const [updatingCase, setUpdatingCase] = useState<LoanCaseDetail | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const openUpdate = (row: LoanCaseListItem) => {
     getLoanCase(row.id).then(setUpdatingCase);
+  };
+
+  const refreshCurrent = () => {
+    if (updatingCase) getLoanCase(updatingCase.id).then(setUpdatingCase);
+    setRefreshKey((k) => k + 1);
   };
 
   return (
@@ -43,25 +51,31 @@ export function LoanCaseListPage({ fixedStatus }: { fixedStatus?: string } = {})
         listFn={listLoanCases}
         extraColumns={EXTRA_COLUMNS}
         defaultDescription="Every loan application moving through underwriting to disbursement."
-        reEligibleDescription="Rejected loan cases that become eligible to reapply after their cooldown period."
+        reEligibleDescription="Re-Eligible loan cases — a customer eligible to restart. Use Update to move the case on and log follow-ups."
         emptyStateDescription="A loan case appears here once explicitly moved from Document Collection into Loan Management."
         onUpdate={canEdit || canDisburse ? openUpdate : undefined}
         canUpdateRow={(row) => !TERMINAL_STATUSES.has(row.current_status)}
         deleteResourceKey="loan_cases"
+        showFollowUp={isReEligible}
       />
-      {updatingCase && (
-        <UpdateLoanCaseModal
-          caseId={updatingCase.id}
-          loanCase={updatingCase}
-          canEdit={canEdit}
-          canDisburse={canDisburse}
-          onClose={() => setUpdatingCase(null)}
-          onUpdated={() => {
-            getLoanCase(updatingCase.id).then(setUpdatingCase);
-            setRefreshKey((k) => k + 1);
-          }}
-        />
-      )}
+      {updatingCase &&
+        (isReEligible ? (
+          <ReEligibleUpdateModal
+            loanCase={updatingCase}
+            canEdit={canEdit}
+            onClose={() => setUpdatingCase(null)}
+            onUpdated={refreshCurrent}
+          />
+        ) : (
+          <UpdateLoanCaseModal
+            caseId={updatingCase.id}
+            loanCase={updatingCase}
+            canEdit={canEdit}
+            canDisburse={canDisburse}
+            onClose={() => setUpdatingCase(null)}
+            onUpdated={refreshCurrent}
+          />
+        ))}
     </>
   );
 }

@@ -11,13 +11,21 @@ from app.features.customer.models import ApplicationFormDefinition, FormFieldDef
 from app.features.system_settings.models import DocumentType, LoanProduct
 from app.features.workflow_engine.constants import ON_HOLD_STATUS, CaseType, LoanAuditEvent, LoanStatus
 from app.features.workflow_engine.models import WorkflowDefinition
+from app.utils.helpers import to_object_id as _to_oid
 
 # Mirrors scripts/seed.py's current loan_rows exactly (allowed_next_statuses +
 # allowed_previous_statuses) — must be kept in sync with that file by hand, same
 # accepted convention every other test file in this suite already follows for its own
 # local `_seed_workflow_definitions`.
 _LOAN_ROWS = [
-    (LoanStatus.NEW_CUSTOMER, "New Customer", 1, [LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED], [], LoanAuditEvent.CASE_CREATED),
+    (
+        LoanStatus.NEW_CUSTOMER, "New Customer", 1,
+        [LoanStatus.DOCUMENTS_PENDING, LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED], [], LoanAuditEvent.CASE_CREATED,
+    ),
+    (
+        LoanStatus.DOCUMENTS_PENDING, "Document Collection", 12,
+        [LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED], [], LoanAuditEvent.DOCUMENTS_REQUESTED,
+    ),
     (
         LoanStatus.CREDIT_EVALUATION, "Credit Evaluation", 2,
         [LoanStatus.OFFER_ACCEPTANCE, LoanStatus.REJECTED, LoanStatus.RE_ELIGIBLE], [LoanStatus.NEW_CUSTOMER], LoanAuditEvent.CREDIT_EVALUATED,
@@ -47,7 +55,11 @@ _LOAN_ROWS = [
         [LoanStatus.FINAL_EVALUATION], LoanAuditEvent.FINAL_EVALUATED,
     ),
     (LoanStatus.DISBURSED, "Disbursed", 9, [], [], LoanAuditEvent.DISBURSED),
-    (LoanStatus.RE_ELIGIBLE, "Re-Eligible", 10, [LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED], [], LoanAuditEvent.MARKED_RE_ELIGIBLE),
+    (
+        LoanStatus.RE_ELIGIBLE, "Re-Eligible", 10,
+        [LoanStatus.NEW_CUSTOMER, LoanStatus.DOCUMENTS_PENDING, LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED], [],
+        LoanAuditEvent.MARKED_RE_ELIGIBLE,
+    ),
     (LoanStatus.REJECTED, "Application Rejected", 11, [LoanStatus.RE_ELIGIBLE], [], LoanAuditEvent.REJECTED),
 ]
 
@@ -366,6 +378,124 @@ async def test_move_back_rejected_when_no_previous_status_configured(client, moc
     case_id, employee_headers, _c, _a = await _loan_case_at_new_customer(client, mock_db, owner_headers, master_data, mobile_suffix="10000009")
     r = await client.post(f"/api/v1/loan-cases/{case_id}/move-back", json={}, headers=employee_headers)
     assert r.status_code == 409, r.text
+
+
+# ---------------------------------------------------------------------- Re-Eligible Case Management enhancement
+
+
+async def _loan_case_at_re_eligible(client, mock_db, owner_headers, master_data, *, mobile_suffix):
+    case_id, employee_headers, _c, _a = await _loan_case_at_new_customer(client, mock_db, owner_headers, master_data, mobile_suffix=mobile_suffix)
+    await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC"}, headers=employee_headers)
+    await client.post(f"/api/v1/loan-cases/{case_id}/move-to-credit-evaluation", json={}, headers=employee_headers)
+    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "re_eligible", "remarks": "cooldown"}, headers=employee_headers)
+    assert r.status_code == 200 and r.json()["data"]["current_status"] == "re_eligible", r.text
+    return case_id, employee_headers
+
+
+async def _workflow_count(mock_db, application_id):
+    return await mock_db["application_workflows"].count_documents({"application_id": application_id, "is_deleted": False})
+
+
+async def test_re_eligible_moves_to_each_restart_safe_stage(client, mock_db, owner_headers, master_data):
+    for i, dest in enumerate(("new_customer", "documents_pending", "credit_evaluation")):
+        case_id, emp = await _loan_case_at_re_eligible(client, mock_db, owner_headers, master_data, mobile_suffix=f"1000020{i}")
+        detail_before = (await client.get(f"/api/v1/loan-cases/{case_id}", headers=emp)).json()["data"]
+        r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": dest}, headers=emp)
+        assert r.status_code == 200, r.text
+        body = r.json()["data"]
+        assert body["current_status"] == dest
+        assert body["case_code"] == detail_before["case_code"]  # SAME case, not a duplicate
+        assert body["customer_id"] == detail_before["customer_id"]
+        assert await _workflow_count(mock_db, detail_before["application_id"]) == 1
+        # A status-history entry was written.
+        tl = (await client.get(f"/api/v1/loan-cases/{case_id}/timeline", headers=emp)).json()["data"]
+        assert any(e["type"] == "status" and e["to_status"] == dest for e in tl)
+
+
+async def test_re_eligible_cannot_jump_to_a_mid_pipeline_stage(client, mock_db, owner_headers, master_data):
+    case_id, emp = await _loan_case_at_re_eligible(client, mock_db, owner_headers, master_data, mobile_suffix="10000210")
+    for dest in ("offer_acceptance", "additional_documents", "rv_ov_ref", "esign_nach_kyc", "final_evaluation", "send_for_disbursement", "disbursed"):
+        r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": dest}, headers=emp)
+        assert r.status_code in (409, 422), f"{dest}: {r.status_code} {r.text}"
+        d = (await client.get(f"/api/v1/loan-cases/{case_id}", headers=emp)).json()["data"]
+        assert d["current_status"] == "re_eligible"  # untouched
+
+
+async def test_re_eligible_unknown_status_is_rejected(client, mock_db, owner_headers, master_data):
+    case_id, emp = await _loan_case_at_re_eligible(client, mock_db, owner_headers, master_data, mobile_suffix="10000211")
+    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "not_a_real_status"}, headers=emp)
+    assert r.status_code == 422, r.text
+
+
+async def test_document_collection_stage_collect_then_move_on(client, mock_db, owner_headers, master_data):
+    case_id, emp = await _loan_case_at_re_eligible(client, mock_db, owner_headers, master_data, mobile_suffix="10000212")
+    await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "documents_pending"}, headers=emp)
+
+    # request/verify documents work from Document Collection and advance to Credit Evaluation.
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/documents/verify", json={}, headers=emp)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["current_status"] == "credit_evaluation"
+
+    counts = await client.get("/api/v1/loan-cases/counts", headers=owner_headers)
+    assert counts.status_code == 200 and "documents_pending" in counts.json()["data"]
+
+
+async def test_follow_up_comment_with_dates_and_no_date(client, mock_db, owner_headers, master_data):
+    case_id, emp = await _loan_case_at_re_eligible(client, mock_db, owner_headers, master_data, mobile_suffix="10000213")
+
+    for comment, fu in (("Called, no answer", "2026-08-25"), ("Requested docs", "2026-09-02"), ("Promised for later", "2027-01-10"), ("Generic note", None)):
+        payload = {"comment": comment}
+        if fu:
+            payload["follow_up_date"] = fu
+        r = await client.post(f"/api/v1/loan-cases/{case_id}/follow-up", json=payload, headers=emp)
+        assert r.status_code == 200, r.text
+
+    tl = (await client.get(f"/api/v1/loan-cases/{case_id}/timeline", headers=emp)).json()["data"]
+    notes = [e for e in tl if e["type"] == "note"]
+    assert len(notes) == 4  # every comment kept — none overwritten
+    dated = {n["text"]: n["follow_up_date"] for n in notes}
+    assert dated["Called, no answer"] is not None and "2026-08" in dated["Called, no answer"]
+    assert dated["Generic note"] is None
+
+    # `next_follow_up_date` on the case reflects the most recent DATED follow-up (2027-01-10).
+    detail = (await client.get(f"/api/v1/loan-cases/{case_id}", headers=emp)).json()["data"]
+    assert detail["next_follow_up_date"] is not None and "2027-01" in detail["next_follow_up_date"]
+    # It also surfaces on the Re-Eligible list.
+    listing = (await client.get("/api/v1/loan-cases?status=re_eligible", headers=owner_headers)).json()["data"]
+    row = next(c for c in listing if c["id"] == case_id)
+    assert row["next_follow_up_date"] is not None
+
+    # An audit row was written for the follow-up (reuses NOTE_ADDED).
+    assert await mock_db["audit_logs"].count_documents({"event_type": "workflow_note_added"}) >= 4
+
+
+async def test_follow_up_never_moves_the_case(client, mock_db, owner_headers, master_data):
+    case_id, emp = await _loan_case_at_re_eligible(client, mock_db, owner_headers, master_data, mobile_suffix="10000214")
+    await client.post(f"/api/v1/loan-cases/{case_id}/follow-up", json={"comment": "x", "follow_up_date": "2020-01-01"}, headers=emp)
+    d = (await client.get(f"/api/v1/loan-cases/{case_id}", headers=emp)).json()["data"]
+    assert d["current_status"] == "re_eligible"  # a past follow-up date does NOT auto-transition
+
+
+async def test_follow_up_requires_edit_permission(client, mock_db, owner_headers, master_data):
+    case_id, _emp = await _loan_case_at_re_eligible(client, mock_db, owner_headers, master_data, mobile_suffix="10000215")
+    viewer = await _create_employee(client, owner_headers, master_data, mobile="9810000215", email="viewer215@example.com")
+    await _grant_case_permission(client, owner_headers, viewer["id"], actions=["view"])
+    vh = await _login(client, "9810000215")
+    assert (await client.post(f"/api/v1/loan-cases/{case_id}/follow-up", json={"comment": "x"}, headers=vh)).status_code == 403
+    assert (await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=vh)).status_code == 403
+
+
+async def test_deleting_a_re_eligible_case_does_not_500_the_list(client, mock_db, owner_headers, master_data):
+    case_id, _emp = await _loan_case_at_re_eligible(client, mock_db, owner_headers, master_data, mobile_suffix="10000216")
+    assert (await client.delete(f"/api/v1/bin/loan_cases/{case_id}", headers=owner_headers)).status_code == 200
+
+    assert (await client.get("/api/v1/loan-cases?status=re_eligible", headers=owner_headers)).status_code == 200
+    assert (await client.get("/api/v1/loan-cases/counts", headers=owner_headers)).status_code == 200
+
+    entry = next(e for e in (await client.get("/api/v1/bin", headers=owner_headers)).json()["data"] if e["document_id"] == case_id)
+    assert (await client.post(f"/api/v1/bin/{entry['id']}/restore", headers=owner_headers)).status_code == 200
+    restored = await mock_db["application_workflows"].find_one({"_id": _to_oid(case_id)})
+    assert restored["current_status"] == "re_eligible"  # back in its original stage
 
 
 # ---------------------------------------------------------------------- Loan Management View — complete application

@@ -72,6 +72,10 @@ export interface LoanCaseListItem {
   approved_amount: number | null;
   disbursed_amount: number | null;
   disbursed_at: string | null;
+  // Re-Eligible Case Management enhancement — the case's current follow-up plan (the
+  // most recent dated follow-up comment's date). The Past/Today/Future colour is computed
+  // from this at render time, never stored.
+  next_follow_up_date: string | null;
   created_at: string;
 }
 
@@ -150,6 +154,7 @@ export interface DisbursementList {
 
 export interface LoanCaseCounts {
   new_customer: number;
+  documents_pending: number;
   credit_evaluation: number;
   offer_acceptance: number;
   additional_documents: number;
@@ -201,6 +206,7 @@ export interface CaseTimelineEntry {
   to_status: string | null;
   remarks: string | null;
   text: string | null;
+  follow_up_date: string | null;
   created_by: string | null;
   created_at: string;
 }
@@ -243,6 +249,13 @@ export function getLoanCaseTimeline(caseId: string) {
 
 export function addLoanCaseNote(caseId: string, text: string) {
   return apiRequest<{ id: string }>(`/loan-cases/${caseId}/notes`, { method: "POST", body: JSON.stringify({ text }) });
+}
+
+// Re-Eligible Case Management enhancement — a follow-up comment + optional follow-up date
+// (`YYYY-MM-DD`, may be in the past). Never overwrites a prior comment. Returns the
+// refreshed case detail.
+export function addLoanFollowUp(caseId: string, payload: { comment: string; follow_up_date?: string }) {
+  return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/follow-up`, { method: "POST", body: JSON.stringify(payload) });
 }
 
 export function assignLoanCase(caseId: string, employeeId: string) {

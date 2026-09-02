@@ -30,6 +30,11 @@ const LOAN_STATUS_CONTROL: Record<string, StatusControlAction[]> = {
   // action requiring >=1 record — see UpdateLoanCaseModal's NewCustomerBankOffers panel.
   new_customer: [
     { kind: "dedicated", actionLabel: "Bank / NBFC Offers" },
+    { kind: "simple", nextStatus: "documents_pending", label: "Move to Document Collection" },
+    { kind: "simple", nextStatus: "rejected", label: "Reject" },
+  ],
+  documents_pending: [
+    { kind: "simple", nextStatus: "credit_evaluation", label: "Move to Credit Evaluation" },
     { kind: "simple", nextStatus: "rejected", label: "Reject" },
   ],
   credit_evaluation: [

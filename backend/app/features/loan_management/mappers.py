@@ -44,6 +44,7 @@ def to_list_item(
         approved_amount=details.offered_amount if details else None,
         disbursed_amount=details.disbursed_amount if details else None,
         disbursed_at=details.disbursed_at if details else None,
+        next_follow_up_date=case.next_follow_up_date,
         created_at=case.created_at,
     )
 
@@ -121,7 +122,10 @@ def additional_document_to_response(
 
 
 def note_to_response(note: ApplicationNote) -> CaseNoteResponse:
-    return CaseNoteResponse(id=note.require_id(), text=note.text, created_by=note.created_by, created_at=note.created_at)
+    return CaseNoteResponse(
+        id=note.require_id(), text=note.text, follow_up_date=note.follow_up_date,
+        created_by=note.created_by, created_at=note.created_at,
+    )
 
 
 def timeline_entry_to_response(entry_type: str, doc: Any) -> CaseTimelineEntryResponse:
@@ -130,4 +134,6 @@ def timeline_entry_to_response(entry_type: str, doc: Any) -> CaseTimelineEntryRe
             type=entry_type, from_status=doc.from_status, to_status=doc.to_status, remarks=doc.remarks,
             created_by=doc.created_by, created_at=doc.created_at,
         )
-    return CaseTimelineEntryResponse(type=entry_type, text=doc.text, created_by=doc.created_by, created_at=doc.created_at)
+    return CaseTimelineEntryResponse(
+        type=entry_type, text=doc.text, follow_up_date=doc.follow_up_date, created_by=doc.created_by, created_at=doc.created_at,
+    )

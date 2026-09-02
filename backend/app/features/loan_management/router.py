@@ -47,6 +47,7 @@ from app.features.loan_management.schemas import (
     LoanCaseCountsResponse,
     LoanCaseDetailResponse,
     LoanCaseListItem,
+    LoanFollowUpRequest,
     LoanStatusUpdateRequest,
     NewCustomerDetailsRequest,
     RejectAdditionalDocumentRequest,
@@ -248,6 +249,17 @@ async def get_timeline(case_id: str, service: ServiceDep, actor: Annotated[User,
 async def add_note(case_id: str, payload: AddCaseNoteRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]) -> ApiResponse[CaseNoteResponse]:
     note = await service.add_note(case_id, payload.text, actor)
     return ApiResponse[CaseNoteResponse].ok(mappers.note_to_response(note))
+
+
+@router.post("/{case_id}/follow-up")
+async def add_follow_up(
+    case_id: str, payload: LoanFollowUpRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[LoanCaseDetailResponse]:
+    # Re-Eligible Case Management enhancement — a follow-up comment + optional date. Same
+    # `edit` permission and per-case scoping as `add_note` / every other case action; the
+    # date is a reminder only and never moves the case.
+    await service.add_follow_up(case_id, payload.comment, payload.follow_up_date, actor)
+    return await _detail(service, case_id, actor)
 
 
 @router.post("/{case_id}/assign")

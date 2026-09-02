@@ -21,6 +21,7 @@ export function LoanManagementLayout() {
 
   const tabs = [
     { label: "Loan Cases", to: "/loan-management/cases", exact: true, count: counts?.new_customer },
+    { label: "Document Collection", to: "/loan-management/document-collection", count: counts?.documents_pending },
     { label: "Credit Evaluation", to: "/loan-management/credit-evaluation", count: counts?.credit_evaluation },
     { label: "Offer Acceptance", to: "/loan-management/offer-acceptance", count: counts?.offer_acceptance },
     { label: "Additional Documents", to: "/loan-management/additional-documents", count: counts?.additional_documents },

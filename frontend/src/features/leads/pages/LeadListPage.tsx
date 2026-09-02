@@ -25,7 +25,7 @@ import {
 import { getErrorMessage } from "@/features/leads/errors";
 import { leadSourcesApi, type NamedMasterData } from "@/features/system_settings/api";
 import { getAccessToken } from "@/shared/api/client";
-import { formatISTDate, formatISTTime, istDateKey, todayISTDateString } from "@/shared/dateFormat";
+import { followUpTone, formatISTDate, formatISTTime } from "@/shared/dateFormat";
 import { Icon } from "@/theme/icons";
 
 // Leads (including Meta Lead Ads, which arrive via a server-side webhook the browser
@@ -94,18 +94,6 @@ const ALL_OPTIONAL_COLUMNS: ColumnOption[] = [
 
 function formatDateTime(iso: string): { date: string; time: string } {
   return { date: formatISTDate(iso), time: formatISTTime(iso) };
-}
-
-// Past = red, Today = blue, Future = green (spec section 5) — computed from the IST
-// calendar date only, never the frontend letting a user pick a color, and never a raw
-// browser-local comparison (see @/shared/dateFormat's IST discipline).
-function followUpTone(iso: string | null): "danger" | "info" | "success" | null {
-  if (!iso) return null;
-  const day = istDateKey(iso);
-  const today = todayISTDateString();
-  if (day < today) return "danger";
-  if (day === today) return "info";
-  return "success";
 }
 
 function NextFollowUp({ iso }: { iso: string | null }) {

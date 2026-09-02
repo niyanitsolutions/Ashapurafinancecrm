@@ -588,7 +588,21 @@ async def seed_workflow_definitions() -> None:
     # needs `scripts/migrate_redesign_loan_pipeline.py` to actually pick up the changed
     # `allowed_next_statuses` on pre-existing rows.
     loan_rows = [
-        (LoanStatus.NEW_CUSTOMER, "New Customer", 1, [LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED], False, False, LoanAuditEvent.CASE_CREATED, "loan_case.created"),
+        (
+            LoanStatus.NEW_CUSTOMER, "New Customer", 1,
+            [LoanStatus.DOCUMENTS_PENDING, LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED],
+            False, False, LoanAuditEvent.CASE_CREATED, "loan_case.created",
+        ),
+        # "Document Collection" — brought back (Re-Eligible Case Management enhancement) as
+        # a MANUAL holding stage a staff member parks a restarting case in to (re)collect
+        # docs; `request_documents`/`verify_documents` drive it, then it moves on to
+        # Credit Evaluation. Never entered automatically. Already-seeded DBs need
+        # `scripts/migrate_re_eligible_restart_transitions.py`.
+        (
+            LoanStatus.DOCUMENTS_PENDING, "Document Collection", 12,
+            [LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED],
+            False, True, LoanAuditEvent.DOCUMENTS_REQUESTED, "loan_case.documents_requested",
+        ),
         (
             LoanStatus.CREDIT_EVALUATION, "Credit Evaluation", 2,
             [LoanStatus.OFFER_ACCEPTANCE, LoanStatus.REJECTED, LoanStatus.RE_ELIGIBLE],
@@ -620,7 +634,11 @@ async def seed_workflow_definitions() -> None:
         ),
         (LoanStatus.DISBURSED, "Disbursed", 9, [], False, False, LoanAuditEvent.DISBURSED, "loan_case.disbursed"),
         (
-            LoanStatus.RE_ELIGIBLE, "Re-Eligible", 10, [LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED],
+            # Re-Eligible Case Management enhancement: a re-eligible case restarts from one
+            # of the restart-safe entry points (never a mid-pipeline stage that needs bank
+            # -offer / disbursement data). `on_hold` is appended by the loop below.
+            LoanStatus.RE_ELIGIBLE, "Re-Eligible", 10,
+            [LoanStatus.NEW_CUSTOMER, LoanStatus.DOCUMENTS_PENDING, LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED],
             False, True, LoanAuditEvent.MARKED_RE_ELIGIBLE, "loan_case.marked_re_eligible",
         ),
         # `rejected -> re_eligible` (production add-on): a rejected case scheduled at

@@ -62,7 +62,7 @@ function makeCase(status: string, allowedNext: string[] = [], allowedPrevious: s
     id: "case-1", case_code: "AFS-LOAN-000005", application_id: "app-1", customer_id: "cust-1", customer_name: "Kamal Mandal",
     product_id: "prod-1", product_name: "Personal Loan", assigned_to: "emp-1", assigned_to_name: "Lucky Kumar",
     current_status: status, rejection_reason: null, allowed_next_statuses: allowedNext, selected_bank_name: null,
-    approved_amount: null, disbursed_amount: null, disbursed_at: null,
+    approved_amount: null, disbursed_amount: null, disbursed_at: null, next_follow_up_date: null,
     created_at: "2026-01-01T00:00:00Z", pending_document_type_ids: [], loan_details: baseDetails,
     updated_at: "2026-01-01T00:00:00Z", allowed_previous_statuses: allowedPrevious, customer: null, application: null, bank_offers: [],
   };

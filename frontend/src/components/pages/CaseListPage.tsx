@@ -6,10 +6,12 @@ import { ColumnsMenu, type ColumnOption } from "@/components/tables/ColumnsMenu"
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { EmptyState } from "@/components/layout/EmptyState";
 import { Pagination } from "@/components/tables/Pagination";
+import { Badge } from "@/components/badges/Badge";
 import { Table, TableBody, TableHead, TableHeadRow, TableRow, Td, Th } from "@/components/tables/DataTable";
 import { useAuth } from "@/features/auth/useAuth";
 import { useListDelete } from "@/features/bin/useListDelete";
 import { getErrorMessage } from "@/features/customer/errors";
+import { followUpTone, formatISTDate } from "@/shared/dateFormat";
 import { Icon, type IconName } from "@/theme/icons";
 
 export interface CaseListItem {
@@ -19,6 +21,7 @@ export interface CaseListItem {
   product_name: string;
   assigned_to_name: string | null;
   current_status: string;
+  next_follow_up_date?: string | null;
 }
 
 export interface CaseListParams {
@@ -74,6 +77,7 @@ export function CaseListPage<T extends CaseListItem>({
   titleOverride,
   descriptionOverride,
   deleteResourceKey,
+  showFollowUp = false,
 }: {
   icon: IconName;
   entityLabel: string;
@@ -124,6 +128,10 @@ export function CaseListPage<T extends CaseListItem>({
    * render no delete affordances at all (the shared component is used in read-only
    * contexts too). */
   deleteResourceKey?: string;
+  /** Re-Eligible Case Management enhancement — render a "Next Follow-up" column (from
+   * `item.next_follow_up_date`, coloured Past/Today/Future). Only the Re-Eligible list
+   * passes this; every other usage is unaffected (column absent). */
+  showFollowUp?: boolean;
 }) {
   const { role } = useAuth();
   const [searchParams] = useSearchParams();
@@ -152,7 +160,8 @@ export function CaseListPage<T extends CaseListItem>({
       return next;
     });
   const isVisible = (key: string) => visibleColumns.has(key);
-  const columnCount = 2 + (deleteEnabled ? 1 : 0) + OPTIONAL_COLUMNS.filter((c) => isVisible(c.key)).length + (extraColumns?.length ?? 0);
+  const columnCount =
+    2 + (deleteEnabled ? 1 : 0) + (showFollowUp ? 1 : 0) + OPTIONAL_COLUMNS.filter((c) => isVisible(c.key)).length + (extraColumns?.length ?? 0);
 
   const hasCustomFilters = !fixedStatus && !reEligible;
 
@@ -305,6 +314,7 @@ export function CaseListPage<T extends CaseListItem>({
                   {isVisible("product") && <Th>Product</Th>}
                   {isVisible("assigned_to") && <Th>Assigned To</Th>}
                   {isVisible("status") && <Th>Status</Th>}
+                  {showFollowUp && <Th>Next Follow-up</Th>}
                   {extraColumns?.map((col) => <Th key={col.key}>{col.label}</Th>)}
                   <Th>Actions</Th>
                 </TableHeadRow>
@@ -369,6 +379,15 @@ export function CaseListPage<T extends CaseListItem>({
                     {isVisible("status") && (
                       <Td>
                         <StatusBadge status={c.current_status} label={statusLabels[c.current_status]} />
+                      </Td>
+                    )}
+                    {showFollowUp && (
+                      <Td>
+                        {c.next_follow_up_date && followUpTone(c.next_follow_up_date) ? (
+                          <Badge tone={followUpTone(c.next_follow_up_date)!}>{formatISTDate(c.next_follow_up_date)}</Badge>
+                        ) : (
+                          <span className="text-text/40">—</span>
+                        )}
                       </Td>
                     )}
                     {extraColumns?.map((col) => <Td key={col.key}>{col.render(c)}</Td>)}

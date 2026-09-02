@@ -186,6 +186,12 @@ class ApplicationWorkflow(BaseDocument):
     current_status: str
     rejection_reason: str | None = None  # mandatory whenever current_status == "rejected"
 
+    # Re-Eligible Case Management enhancement — denormalised "the case's current follow-up
+    # plan": the `follow_up_date` of the most recently added dated follow-up note (mirrors
+    # how `Lead.next_follow_up_date` is overwritten by `LeadService.set_follow_up`). Read
+    # by the Re-Eligible list's "Next Follow-up" column so it needs no per-row note query.
+    next_follow_up_date: datetime | None = None
+
     # Populated only while current_status == "on_hold" (workflow_engine/hold.py);
     # cleared on resume. `on_hold_previous_status` is what `resume` transitions back
     # into — an Optional Status on the workflow definition, not a hardcoded branch.
@@ -220,6 +226,11 @@ class ApplicationStatusHistory(BaseDocument):
 class ApplicationNote(BaseDocument):
     application_workflow_id: str
     text: str
+    # Re-Eligible Case Management enhancement — a follow-up comment carries the date staff
+    # want to next act on the case. UTC-midnight of the IST calendar date (same convention
+    # as `Lead.next_follow_up_date`); None for a plain note. The Past/Today/Future colour
+    # is computed at render time from this, never stored.
+    follow_up_date: datetime | None = None
     # created_by = author, created_at = when (BaseDocument fields)
 
 

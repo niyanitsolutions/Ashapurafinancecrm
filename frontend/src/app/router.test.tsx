@@ -38,7 +38,7 @@ describe("router — Loan/Insurance Management tab routes stay keyed", () => {
     const loanManagement = findRouteByPath(router.routes as RouteLike[], "/loan-management");
     expect(loanManagement).toBeTruthy();
     const tabPaths = [
-      "cases", "credit-evaluation", "offer-acceptance", "additional-documents", "rv-ov-ref",
+      "cases", "document-collection", "credit-evaluation", "offer-acceptance", "additional-documents", "rv-ov-ref",
       "esign-nach-kyc", "final-evaluation", "send-for-disbursement", "disbursements", "on-hold", "rejected",
     ];
     const keys = tabPaths.map((path) => {

@@ -361,8 +361,15 @@ class LoanCaseService:
     # (decision #129).
     _PLAIN_TRANSITIONS: ClassVar[set[tuple[str, str]]] = {
         (LoanStatus.NEW_CUSTOMER, LoanStatus.REJECTED),
+        (LoanStatus.NEW_CUSTOMER, LoanStatus.DOCUMENTS_PENDING),
+        (LoanStatus.DOCUMENTS_PENDING, LoanStatus.CREDIT_EVALUATION),
+        (LoanStatus.DOCUMENTS_PENDING, LoanStatus.REJECTED),
         (LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED),
         (LoanStatus.CREDIT_EVALUATION, LoanStatus.RE_ELIGIBLE),
+        # Re-Eligible Case Management enhancement — the restart-safe destinations a
+        # re-eligible case's "Move Case To" dropdown offers. All genuinely bodiless.
+        (LoanStatus.RE_ELIGIBLE, LoanStatus.NEW_CUSTOMER),
+        (LoanStatus.RE_ELIGIBLE, LoanStatus.DOCUMENTS_PENDING),
         (LoanStatus.RE_ELIGIBLE, LoanStatus.CREDIT_EVALUATION),
         (LoanStatus.RE_ELIGIBLE, LoanStatus.REJECTED),
         (LoanStatus.OFFER_ACCEPTANCE, LoanStatus.REJECTED),
@@ -432,7 +439,7 @@ class LoanCaseService:
         document types staff is waiting on; the case's own status only ever moves via
         `update_status`'s plain transitions or `verify_documents` below."""
         case = await self.get_case(case_id, actor)
-        if case.current_status not in (LoanStatus.NEW_CUSTOMER, LoanStatus.ADDITIONAL_DOCUMENTS):
+        if case.current_status not in (LoanStatus.NEW_CUSTOMER, LoanStatus.DOCUMENTS_PENDING, LoanStatus.ADDITIONAL_DOCUMENTS):
             raise ConflictError("Documents cannot be requested at this stage.")
         for doc_type_id in document_type_ids:
             if await self._document_types.find_by_id(doc_type_id) is None:
@@ -448,14 +455,13 @@ class LoanCaseService:
 
     async def verify_documents(self, case_id: str, actor: User) -> ApplicationWorkflow:
         """Optional dedicated action for staff who actually called `request_documents` —
-        confirms every requested type is uploaded, then advances the case. Retargeted
-        (decision #129): `new_customer -> credit_evaluation` (previously via
-        `documents_pending`) and `additional_documents -> rv_ov_ref` (previously
-        `esign_nach_kyc`). Not the only way to reach either target — `update_status`'s
-        plain transitions reach the same destinations without a document request ever
-        having been made; this is purely a convenience for when one was."""
+        confirms every requested type is uploaded, then advances the case:
+        `new_customer`/`documents_pending` -> `credit_evaluation`, `additional_documents`
+        -> `rv_ov_ref`. Not the only way to reach either target — `update_status`'s plain
+        transitions reach the same destinations without a document request ever having
+        been made; this is purely a convenience for when one was."""
         case = await self.get_case(case_id, actor)
-        if case.current_status not in (LoanStatus.NEW_CUSTOMER, LoanStatus.ADDITIONAL_DOCUMENTS):
+        if case.current_status not in (LoanStatus.NEW_CUSTOMER, LoanStatus.DOCUMENTS_PENDING, LoanStatus.ADDITIONAL_DOCUMENTS):
             raise ConflictError("This case is not awaiting document verification.")
         # An empty `pending_document_type_ids` (nothing was actually requested — the
         # application's own documents already sufficed) is vacuously satisfied, not an
@@ -465,7 +471,9 @@ class LoanCaseService:
         missing = [t for t in case.pending_document_type_ids if t not in uploaded_type_ids]
         if missing:
             raise ValidationError("Not all requested documents have been uploaded yet.")
-        next_status = LoanStatus.CREDIT_EVALUATION if case.current_status == LoanStatus.NEW_CUSTOMER else LoanStatus.RV_OV_REF
+        next_status = (
+            LoanStatus.RV_OV_REF if case.current_status == LoanStatus.ADDITIONAL_DOCUMENTS else LoanStatus.CREDIT_EVALUATION
+        )
         return await self._engine.transition(case, next_status, actor, updates={"pending_document_type_ids": []})
 
     # ---------------------------------------------------------------- RV / OV / Ref
@@ -1072,6 +1080,29 @@ class LoanCaseService:
         found = await self._notes.find_by_id(note_id)
         assert found is not None
         return found
+
+    async def add_follow_up(self, case_id: str, comment: str, follow_up_date: date | None, actor: User) -> ApplicationWorkflow:
+        """Re-Eligible Case Management enhancement — a follow-up comment (a NEW
+        `ApplicationNote`, never overwriting a prior one, exactly like `add_note`) plus an
+        optional follow-up date. When a date is given it's also denormalised onto
+        `ApplicationWorkflow.next_follow_up_date` (the case's current follow-up plan — same
+        overwrite semantics as `LeadService.set_follow_up`). The follow-up date is NEVER
+        used to move the case automatically; it's a reminder only."""
+        case = await self.get_case(case_id, actor)
+        fu_utc = ist_date_to_utc_midnight(follow_up_date) if follow_up_date is not None else None
+        note = ApplicationNote(
+            application_workflow_id=case_id, text=comment, follow_up_date=fu_utc, created_by=actor.require_id(),
+        )
+        await self._notes.insert(note)
+        await write_audit_log(
+            self._db, event_type=WorkflowAuditEvent.NOTE_ADDED, user_id=actor.require_id(),
+            metadata={"application_workflow_id": case_id, "follow_up_date": follow_up_date.isoformat() if follow_up_date else None},
+        )
+        if fu_utc is not None:
+            updated = await self._workflows.update(case_id, {"next_follow_up_date": fu_utc}, updated_by=actor.require_id())
+            assert updated is not None
+            return updated
+        return case
 
     async def get_timeline(self, case_id: str, actor: User) -> list[tuple[str, Any]]:
         await self.get_case(case_id, actor)

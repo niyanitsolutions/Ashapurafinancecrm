@@ -29,6 +29,7 @@ class HoldCaseRequest(BaseModel):
 class CaseNoteResponse(BaseModel):
     id: str
     text: str
+    follow_up_date: datetime | None = None
     created_by: str | None
     created_at: datetime
 
@@ -39,5 +40,6 @@ class CaseTimelineEntryResponse(BaseModel):
     to_status: str | None = None
     remarks: str | None = None
     text: str | None = None
+    follow_up_date: datetime | None = None
     created_by: str | None
     created_at: datetime
