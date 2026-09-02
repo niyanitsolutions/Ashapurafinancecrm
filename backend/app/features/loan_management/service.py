@@ -146,7 +146,10 @@ class LoanCaseService:
         )
 
     async def _sync_new_cases(self) -> None:
-        existing = await self._workflows.find_existing_application_ids(CaseType.LOAN)
+        # `include_deleted=True`: a submitted Application whose case is currently in the
+        # Bin must NOT be re-synced into a fresh case (see
+        # `ApplicationWorkflowRepository.find_existing_application_ids`).
+        existing = await self._workflows.find_existing_application_ids(CaseType.LOAN, include_deleted=True)
         submitted = await self._applications.find_many(
             {"status": "submitted", "product_category": "loan", "customer_id": {"$ne": None}}, limit=1000
         )
@@ -154,23 +157,31 @@ class LoanCaseService:
             if application.require_id() not in existing:
                 await self._create_case_for_application(application)
 
-    async def _get_or_create_for_application_id(self, application_id: str) -> ApplicationWorkflow:
+    async def _get_or_create_for_application_id(self, application_id: str) -> ApplicationWorkflow | None:
+        """Returns the live case for `application_id`, creating one if the application is a
+        valid submitted Loan application with none yet. Returns `None` when a case DOES
+        exist but is soft-deleted (in the Bin) — the caller must treat that application as
+        "has no active case", never re-create it (the unique `application_id` index counts
+        the deleted row, and re-creating resurrects a deliberately-binned record)."""
         existing = await self._workflows.find_by_application_id(application_id)
         if existing is not None:
             return existing
+        if await self._workflows.find_by_application_id(application_id, include_deleted=True) is not None:
+            return None
         application = await self._applications.find_by_id(application_id)
         if application is None or application.status != "submitted" or application.product_category != "loan" or application.customer_id is None:
             raise NotFoundError("No loan case exists for this application.")
         return await self._create_case_for_application(application)
 
-    async def ensure_case_for_application(self, application_id: str) -> ApplicationWorkflow:
+    async def ensure_case_for_application(self, application_id: str) -> ApplicationWorkflow | None:
         """Public entry point for `CustomerService.submit_application` (see that method) —
         case creation used to be entirely lazy, synced only when someone opened the case
         list (`_sync_new_cases`/`list_own_cases`), so a freshly-submitted application had
         no case, and was invisible to every dashboard/report/notification keyed on cases,
         until a staff member happened to view the list. Idempotent (same underlying
         lookup-or-create as the lazy paths), so calling it eagerly at submission time is
-        safe even if a lazy sync also fires for the same application."""
+        safe even if a lazy sync also fires for the same application. Returns `None` if the
+        application's case is currently soft-deleted."""
         return await self._get_or_create_for_application_id(application_id)
 
     async def mark_moved_to_loan_management(self, application_id: str, actor: User) -> None:
@@ -182,6 +193,8 @@ class LoanCaseService:
         Idempotent — a no-op if already set, so calling this twice never clobbers the
         original timestamp."""
         case = await self._get_or_create_for_application_id(application_id)
+        if case is None:
+            return  # the case for this application is currently in the Bin — nothing to move
         if case.moved_to_loan_management_at is not None:
             return
         updated = await self._workflows.update(
@@ -282,8 +295,8 @@ class LoanCaseService:
         # Decision #130: must stay consistent with `get_own_case`'s gate below — a case
         # not yet moved into Loan Management (Lead-originated or Lead-less alike) must
         # not appear in the customer's own list either, or "mine" would show an entry
-        # that 404s the moment they click into it.
-        return [c for c in cases if c.moved_to_loan_management_at is not None]
+        # that 404s the moment they click into it. `None` = the case is in the Bin.
+        return [c for c in cases if c is not None and c.moved_to_loan_management_at is not None]
 
     # ---------------------------------------------------------------- assignment
 

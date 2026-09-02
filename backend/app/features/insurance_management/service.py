@@ -102,7 +102,9 @@ class InsuranceCaseService:
         )
 
     async def _sync_new_cases(self) -> None:
-        existing = await self._workflows.find_existing_application_ids(CaseType.INSURANCE)
+        # `include_deleted=True`: a submitted Application whose case is in the Bin must not
+        # be re-synced (see LoanCaseService._sync_new_cases / the repo method).
+        existing = await self._workflows.find_existing_application_ids(CaseType.INSURANCE, include_deleted=True)
         submitted = await self._applications.find_many(
             {"status": "submitted", "product_category": "insurance", "customer_id": {"$ne": None}}, limit=1000
         )
@@ -110,19 +112,23 @@ class InsuranceCaseService:
             if application.require_id() not in existing:
                 await self._create_case_for_application(application)
 
-    async def _get_or_create_for_application_id(self, application_id: str) -> ApplicationWorkflow:
+    async def _get_or_create_for_application_id(self, application_id: str) -> ApplicationWorkflow | None:
+        """See `LoanCaseService._get_or_create_for_application_id`. Returns `None` when the
+        application's case exists but is soft-deleted (in the Bin)."""
         existing = await self._workflows.find_by_application_id(application_id)
         if existing is not None:
             return existing
+        if await self._workflows.find_by_application_id(application_id, include_deleted=True) is not None:
+            return None
         application = await self._applications.find_by_id(application_id)
         if application is None or application.status != "submitted" or application.product_category != "insurance" or application.customer_id is None:
             raise NotFoundError("No insurance case exists for this application.")
         return await self._create_case_for_application(application)
 
-    async def ensure_case_for_application(self, application_id: str) -> ApplicationWorkflow:
+    async def ensure_case_for_application(self, application_id: str) -> ApplicationWorkflow | None:
         """See the identical method on `LoanCaseService` — public entry point for
         `CustomerService.submit_application` so case creation happens at submission time
-        instead of being purely lazy."""
+        instead of being purely lazy. Returns `None` if the case is currently in the Bin."""
         return await self._get_or_create_for_application_id(application_id)
 
     async def _acting_employee_id(self, actor: User) -> str | None:
@@ -166,7 +172,8 @@ class InsuranceCaseService:
     async def list_own_cases(self, actor: User) -> list[ApplicationWorkflow]:
         applications = await self._applications.find_for_user(actor.require_id(), status="submitted")
         insurance_apps = [a for a in applications if a.product_category == "insurance" and a.customer_id]
-        return [await self._get_or_create_for_application_id(a.require_id()) for a in insurance_apps]
+        cases = [await self._get_or_create_for_application_id(a.require_id()) for a in insurance_apps]
+        return [c for c in cases if c is not None]
 
     # ---------------------------------------------------------------- assignment
 

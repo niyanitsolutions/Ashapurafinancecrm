@@ -29,12 +29,23 @@ class ApplicationWorkflowRepository(BaseRepository[ApplicationWorkflow]):
     collection_name = "application_workflows"
     model = ApplicationWorkflow
 
-    async def find_by_application_id(self, application_id: str) -> ApplicationWorkflow | None:
-        doc = await self.collection.find_one({"application_id": application_id, "is_deleted": False})
+    async def find_by_application_id(self, application_id: str, *, include_deleted: bool = False) -> ApplicationWorkflow | None:
+        query: dict[str, Any] = {"application_id": application_id}
+        if not include_deleted:
+            query["is_deleted"] = False
+        doc = await self.collection.find_one(query)
         return self.model.model_validate(doc) if doc else None
 
-    async def find_existing_application_ids(self, case_type: str) -> set[str]:
-        cursor = self.collection.find({"case_type": case_type, "is_deleted": False}, {"application_id": 1})
+    async def find_existing_application_ids(self, case_type: str, *, include_deleted: bool = False) -> set[str]:
+        # `include_deleted=True` for the lazy case-sync (`*Service._sync_new_cases`): the
+        # unique index on `application_workflows.application_id` counts SOFT-DELETED rows,
+        # so a submitted Application whose case is in the Bin must NOT be re-synced into a
+        # brand-new case — that both hits a DuplicateKeyError and resurrects a record the
+        # Owner deliberately deleted.
+        query: dict[str, Any] = {"case_type": case_type}
+        if not include_deleted:
+            query["is_deleted"] = False
+        cursor = self.collection.find(query, {"application_id": 1})
         return {doc["application_id"] async for doc in cursor}
 
     async def search_and_filter(

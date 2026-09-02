@@ -213,8 +213,16 @@ export function LeadListPage({ tab }: { tab: LeadTab }) {
       ...TAB_QUERY[tab],
     })
       .then((res) => {
+        const nextTotal = res.pagination?.total ?? res.data.length;
+        // Deleting the last row on a page can leave the current page out of range —
+        // snap back to the last valid page (the deps-driven effect refetches).
+        const lastPage = Math.max(1, Math.ceil(nextTotal / pageSize));
+        if (page > lastPage) {
+          setPage(lastPage);
+          return;
+        }
         setItems(res.data);
-        setTotal(res.pagination?.total ?? res.data.length);
+        setTotal(nextTotal);
       })
       .catch((err) => {
         // A poll tick failing (a momentary network blip) shouldn't blow away an

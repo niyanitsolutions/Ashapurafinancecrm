@@ -177,8 +177,17 @@ export function CaseListPage<T extends CaseListItem>({
       unassigned_only: unassignedOnly || undefined,
     })
       .then((res) => {
+        const nextTotal = res.pagination?.total ?? res.data.length;
+        // Deleting the last row on a page (e.g. a bulk delete) can leave the current
+        // page out of range — snap back to the last valid page rather than showing an
+        // empty page. The deps-driven effect refetches for the corrected page.
+        const lastPage = Math.max(1, Math.ceil(nextTotal / pageSize));
+        if (page > lastPage) {
+          setPage(lastPage);
+          return;
+        }
         setItems(res.data);
-        setTotal(res.pagination?.total ?? res.data.length);
+        setTotal(nextTotal);
       })
       .catch((err) => setError(getErrorMessage(err)))
       .finally(() => setIsLoading(false));

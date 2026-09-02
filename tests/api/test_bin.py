@@ -2,7 +2,10 @@
 Bin listing. The 30-day purge job is covered in test_bin_cleanup.py.
 """
 
+from app.features.customer.models import Application
 from app.features.system_settings.models import InsuranceProduct, LeadSource, LoanProduct
+from app.features.workflow_engine.indexes import ensure_workflow_engine_indexes
+from app.features.workflow_engine.models import ApplicationWorkflow, LoanCaseDetails, WorkflowDefinition
 from app.utils.datetime import utc_now
 from app.utils.helpers import to_object_id
 
@@ -142,3 +145,106 @@ async def test_resources_endpoint_lists_deletable_record_types(client, mock_db, 
 
 async def test_unknown_resource_key_is_rejected(client, mock_db, owner_headers):
     assert (await client.delete("/api/v1/bin/loan_products/000000000000000000000000", headers=owner_headers)).status_code == 422
+
+
+# ---------------------------------------------------------------------- Loan case delete → list consistency
+# Regression for the production bug: after soft-deleting a Loan case, the next
+# `GET /loan-cases` (and /counts) 500'd because `_sync_new_cases` tried to re-create a
+# case for the still-`submitted` Application — and the unique `application_workflows.
+# application_id` index counts the soft-deleted row (DuplicateKeyError).
+
+
+async def _seed_loan_new_customer_def(mock_db):
+    await ensure_workflow_engine_indexes(mock_db)
+    await mock_db["workflow_definitions"].insert_one(
+        WorkflowDefinition(
+            case_type="loan", status="new_customer", label="New Customer", sequence=1,
+            allowed_next_statuses=["credit_evaluation", "rejected"], audit_event="loan_case_created",
+        ).model_dump(by_alias=True, exclude={"id"})
+    )
+
+
+async def _make_loan_case(mock_db, code):
+    now = utc_now()
+    app = Application(
+        application_code=f"AFS-APP-{code}", user_id="u1", customer_id="c1",
+        product_category="loan", product_id="p1", form_definition_id="f1", status="submitted",
+    )
+    app_res = await mock_db["applications"].insert_one(app.model_dump(by_alias=True, exclude={"id"}))
+    wf = ApplicationWorkflow(
+        case_code=f"AFS-LOAN-{code}", case_type="loan", application_id=str(app_res.inserted_id), customer_id="c1",
+        product_id="p1", product_category="loan", current_status="new_customer",
+        moved_to_loan_management_at=now, loan_details=LoanCaseDetails(),
+    )
+    wf_res = await mock_db["application_workflows"].insert_one(wf.model_dump(by_alias=True, exclude={"id"}))
+    return str(wf_res.inserted_id)
+
+
+async def _loan_case_codes(client, headers, status="new_customer"):
+    r = await client.get(f"/api/v1/loan-cases?status={status}", headers=headers)
+    assert r.status_code == 200, r.text
+    return [c["case_code"] for c in r.json()["data"]]
+
+
+async def test_single_loan_delete_leaves_the_rest_of_the_list_working(client, mock_db, owner_headers):
+    await _seed_loan_new_customer_def(mock_db)
+    for code in ("000016", "000017"):
+        await _make_loan_case(mock_db, code)
+    doomed = await _make_loan_case(mock_db, "000018")
+
+    r = await client.delete(f"/api/v1/bin/loan_cases/{doomed}", headers=owner_headers)
+    assert r.status_code == 200, r.text
+
+    # The list AND the counts endpoint must both still work (both call _sync_new_cases).
+    assert set(await _loan_case_codes(client, owner_headers)) == {"AFS-LOAN-000016", "AFS-LOAN-000017"}
+    counts = await client.get("/api/v1/loan-cases/counts", headers=owner_headers)
+    assert counts.status_code == 200, counts.text
+    assert counts.json()["data"]["new_customer"] == 2
+
+    # And a second list call must not resurrect the deleted case (no re-sync).
+    assert "AFS-LOAN-000018" not in await _loan_case_codes(client, owner_headers)
+    assert any(e["record_code"] == "AFS-LOAN-000018" for e in (await client.get("/api/v1/bin", headers=owner_headers)).json()["data"])
+
+
+async def test_deleting_the_only_loan_case_returns_a_clean_empty_list(client, mock_db, owner_headers):
+    await _seed_loan_new_customer_def(mock_db)
+    only = await _make_loan_case(mock_db, "000018")
+
+    assert (await client.delete(f"/api/v1/bin/loan_cases/{only}", headers=owner_headers)).status_code == 200
+
+    r = await client.get("/api/v1/loan-cases?status=new_customer", headers=owner_headers)
+    assert r.status_code == 200, r.text  # NOT a 500
+    body = r.json()
+    assert body["data"] == []
+    assert body["meta"]["pagination"]["total"] == 0
+
+
+async def test_restore_returns_loan_case_to_original_stage_and_the_active_list(client, mock_db, owner_headers):
+    await _seed_loan_new_customer_def(mock_db)
+    case_id = await _make_loan_case(mock_db, "000018")
+    entry = (await client.delete(f"/api/v1/bin/loan_cases/{case_id}", headers=owner_headers)).json()["data"]
+    assert entry["stage_label"] == "New Customer"
+
+    r = await client.post(f"/api/v1/bin/{entry['id']}/restore", headers=owner_headers)
+    assert r.status_code == 200, r.text
+
+    assert "AFS-LOAN-000018" in await _loan_case_codes(client, owner_headers)
+    restored = await mock_db["application_workflows"].find_one({"_id": to_object_id(case_id)})
+    assert restored["current_status"] == "new_customer"  # original stage, untouched
+    assert restored["is_deleted"] is False and restored["status"] == "active"
+    assert all(e["record_code"] != "AFS-LOAN-000018" for e in (await client.get("/api/v1/bin", headers=owner_headers)).json()["data"])
+
+
+async def test_bulk_loan_delete_leaves_the_remaining_cases_listable(client, mock_db, owner_headers):
+    await _seed_loan_new_customer_def(mock_db)
+    ids = {code: await _make_loan_case(mock_db, code) for code in ("000016", "000017", "000018", "000024", "000025")}
+
+    r = await client.post(
+        "/api/v1/bin/loan_cases/bulk-delete",
+        json={"document_ids": [ids["000016"], ids["000017"], ids["000018"]]}, headers=owner_headers,
+    )
+    assert r.status_code == 200, r.text
+
+    assert set(await _loan_case_codes(client, owner_headers)) == {"AFS-LOAN-000024", "AFS-LOAN-000025"}
+    counts = await client.get("/api/v1/loan-cases/counts", headers=owner_headers)
+    assert counts.status_code == 200 and counts.json()["data"]["new_customer"] == 2

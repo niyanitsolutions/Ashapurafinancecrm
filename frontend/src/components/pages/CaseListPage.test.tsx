@@ -100,6 +100,41 @@ describe("CaseListPage row actions", () => {
     // renders regardless.
     expect(screen.getAllByRole("link", { name: /view/i })).toHaveLength(2);
   });
+
+  it("pagination: a refetch that empties the current page snaps back to the last valid page", async () => {
+    // 11 rows total → page 2 has 1 row. Once on page 2, the next fetch reports total 10
+    // (as if that row was deleted) → page 2 no longer exists → must land on page 1, not
+    // an empty page 2.
+    const page1 = Array.from({ length: 10 }, (_, i) => ({
+      id: `c${i}`, case_code: `AFS-LOAN-1000${i}`, customer_name: "X", product_name: "P", assigned_to_name: null, current_status: "new_customer",
+    }));
+    let total = 11;
+    let page2Calls = 0;
+    const statefulListFn = vi.fn((params: CaseListParams) => {
+      const p = params.page ?? 1;
+      if (p === 1) return Promise.resolve({ data: page1, pagination: { total } } as CaseListResponse<CaseListItem>);
+      page2Calls += 1;
+      if (page2Calls === 1) return Promise.resolve({ data: [page1[0]], pagination: { total: 11 } } as CaseListResponse<CaseListItem>);
+      total = 10;
+      return Promise.resolve({ data: [], pagination: { total: 10 } } as CaseListResponse<CaseListItem>);
+    });
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <CaseListPage {...baseProps} listFn={statefulListFn} />
+      </MemoryRouter>,
+    );
+    await screen.findByText("AFS-LOAN-10000");
+
+    await user.click(screen.getByRole("button", { name: "Next page" }));
+    await screen.findByText(/Showing 11 to 11 of 11/i);
+
+    // Re-trigger a page-2 fetch (2nd call now reports the row gone) → snap to page 1.
+    await user.click(screen.getByRole("button", { name: "Previous page" }));
+    await screen.findByText(/Showing 1 to 10 of 11/i);
+    await user.click(screen.getByRole("button", { name: "Next page" }));
+    await waitFor(() => expect(screen.getByText(/Showing 1 to 10 of 10/i)).toBeInTheDocument());
+  });
 });
 
 // Production bug: Loan Management's tab badges (Credit Evaluation, Offer Acceptance,
