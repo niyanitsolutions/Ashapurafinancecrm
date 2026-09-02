@@ -1,6 +1,6 @@
-"""Tests for scripts/migrate_re_eligible_restart_transitions.py — brings back the loan
-`documents_pending` ("Document Collection") workflow definition and merges the
-restart-safe targets into `new_customer` / `re_eligible` on an already-seeded DB.
+"""Tests for scripts/migrate_re_eligible_restart_transitions.py — merges `new_customer`
+into the loan `re_eligible` row's `allowed_next_statuses` on an already-seeded DB,
+without dropping the pre-existing targets.
 """
 
 import sys
@@ -23,45 +23,32 @@ def _patched_db(mock_db, monkeypatch):
     return mock_db
 
 
-async def _seed_old_rows(mock_db):
-    for status, label, allowed_next in [
-        ("new_customer", "New Customer", ["credit_evaluation", "rejected"]),
-        ("re_eligible", "Re-Eligible", ["credit_evaluation", "rejected", "on_hold"]),
-        ("credit_evaluation", "Credit Evaluation", ["offer_acceptance", "rejected", "re_eligible"]),
+async def _seed(mock_db):
+    for status, allowed_next in [
+        ("re_eligible", ["credit_evaluation", "rejected", "on_hold"]),
+        ("credit_evaluation", ["offer_acceptance", "rejected", "re_eligible"]),
     ]:
-        d = WorkflowDefinition(
-            case_type="loan", status=status, label=label, sequence=1, allowed_next_statuses=allowed_next, audit_event="x",
-        )
+        d = WorkflowDefinition(case_type="loan", status=status, label=status, sequence=1, allowed_next_statuses=allowed_next, audit_event="x")
         await mock_db["workflow_definitions"].insert_one(d.model_dump(by_alias=True, exclude={"id"}))
 
 
-async def test_migration_adds_document_collection_and_merges_targets(mock_db, _patched_db):
-    await _seed_old_rows(mock_db)
-
+async def test_migration_merges_new_customer_without_dropping_existing(mock_db, _patched_db):
+    await _seed(mock_db)
     await migration.main()
 
-    dc = await mock_db["workflow_definitions"].find_one({"case_type": "loan", "status": "documents_pending"})
-    assert dc is not None and dc["label"] == "Document Collection"
-    assert set(dc["allowed_next_statuses"]) == {"credit_evaluation", "rejected", "on_hold"}
-
-    nc = await mock_db["workflow_definitions"].find_one({"case_type": "loan", "status": "new_customer"})
-    assert "documents_pending" in nc["allowed_next_statuses"]
-
     re = await mock_db["workflow_definitions"].find_one({"case_type": "loan", "status": "re_eligible"})
-    assert {"new_customer", "documents_pending", "credit_evaluation", "rejected"} <= set(re["allowed_next_statuses"])
-    assert "on_hold" in re["allowed_next_statuses"]  # pre-existing target NOT dropped
+    assert set(re["allowed_next_statuses"]) == {"new_customer", "credit_evaluation", "rejected", "on_hold"}
 
-    # credit_evaluation untouched.
     ce = await mock_db["workflow_definitions"].find_one({"case_type": "loan", "status": "credit_evaluation"})
-    assert set(ce["allowed_next_statuses"]) == {"offer_acceptance", "rejected", "re_eligible"}
+    assert set(ce["allowed_next_statuses"]) == {"offer_acceptance", "rejected", "re_eligible"}  # untouched
+
+    # No Loan Management "Document Collection" row is created — it's a Leads concept.
+    assert await mock_db["workflow_definitions"].count_documents({"case_type": "loan", "status": "documents_pending"}) == 0
 
 
 async def test_migration_is_idempotent(mock_db, _patched_db):
-    await _seed_old_rows(mock_db)
+    await _seed(mock_db)
     await migration.main()
     await migration.main()
-
-    assert await mock_db["workflow_definitions"].count_documents({"case_type": "loan", "status": "documents_pending"}) == 1
     re = await mock_db["workflow_definitions"].find_one({"case_type": "loan", "status": "re_eligible"})
-    # No duplicate entries in the list.
     assert len(re["allowed_next_statuses"]) == len(set(re["allowed_next_statuses"]))

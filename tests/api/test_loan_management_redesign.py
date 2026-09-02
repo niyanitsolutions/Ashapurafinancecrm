@@ -18,14 +18,7 @@ from app.utils.helpers import to_object_id as _to_oid
 # accepted convention every other test file in this suite already follows for its own
 # local `_seed_workflow_definitions`.
 _LOAN_ROWS = [
-    (
-        LoanStatus.NEW_CUSTOMER, "New Customer", 1,
-        [LoanStatus.DOCUMENTS_PENDING, LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED], [], LoanAuditEvent.CASE_CREATED,
-    ),
-    (
-        LoanStatus.DOCUMENTS_PENDING, "Document Collection", 12,
-        [LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED], [], LoanAuditEvent.DOCUMENTS_REQUESTED,
-    ),
+    (LoanStatus.NEW_CUSTOMER, "New Customer", 1, [LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED], [], LoanAuditEvent.CASE_CREATED),
     (
         LoanStatus.CREDIT_EVALUATION, "Credit Evaluation", 2,
         [LoanStatus.OFFER_ACCEPTANCE, LoanStatus.REJECTED, LoanStatus.RE_ELIGIBLE], [LoanStatus.NEW_CUSTOMER], LoanAuditEvent.CREDIT_EVALUATED,
@@ -57,8 +50,7 @@ _LOAN_ROWS = [
     (LoanStatus.DISBURSED, "Disbursed", 9, [], [], LoanAuditEvent.DISBURSED),
     (
         LoanStatus.RE_ELIGIBLE, "Re-Eligible", 10,
-        [LoanStatus.NEW_CUSTOMER, LoanStatus.DOCUMENTS_PENDING, LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED], [],
-        LoanAuditEvent.MARKED_RE_ELIGIBLE,
+        [LoanStatus.NEW_CUSTOMER, LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED], [], LoanAuditEvent.MARKED_RE_ELIGIBLE,
     ),
     (LoanStatus.REJECTED, "Application Rejected", 11, [LoanStatus.RE_ELIGIBLE], [], LoanAuditEvent.REJECTED),
 ]
@@ -397,7 +389,7 @@ async def _workflow_count(mock_db, application_id):
 
 
 async def test_re_eligible_moves_to_each_restart_safe_stage(client, mock_db, owner_headers, master_data):
-    for i, dest in enumerate(("new_customer", "documents_pending", "credit_evaluation")):
+    for i, dest in enumerate(("new_customer", "credit_evaluation")):
         case_id, emp = await _loan_case_at_re_eligible(client, mock_db, owner_headers, master_data, mobile_suffix=f"1000020{i}")
         detail_before = (await client.get(f"/api/v1/loan-cases/{case_id}", headers=emp)).json()["data"]
         r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": dest}, headers=emp)
@@ -425,19 +417,6 @@ async def test_re_eligible_unknown_status_is_rejected(client, mock_db, owner_hea
     case_id, emp = await _loan_case_at_re_eligible(client, mock_db, owner_headers, master_data, mobile_suffix="10000211")
     r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "not_a_real_status"}, headers=emp)
     assert r.status_code == 422, r.text
-
-
-async def test_document_collection_stage_collect_then_move_on(client, mock_db, owner_headers, master_data):
-    case_id, emp = await _loan_case_at_re_eligible(client, mock_db, owner_headers, master_data, mobile_suffix="10000212")
-    await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "documents_pending"}, headers=emp)
-
-    # request/verify documents work from Document Collection and advance to Credit Evaluation.
-    r = await client.post(f"/api/v1/loan-cases/{case_id}/documents/verify", json={}, headers=emp)
-    assert r.status_code == 200, r.text
-    assert r.json()["data"]["current_status"] == "credit_evaluation"
-
-    counts = await client.get("/api/v1/loan-cases/counts", headers=owner_headers)
-    assert counts.status_code == 200 and "documents_pending" in counts.json()["data"]
 
 
 async def test_follow_up_comment_with_dates_and_no_date(client, mock_db, owner_headers, master_data):

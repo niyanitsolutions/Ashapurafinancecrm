@@ -262,7 +262,6 @@ export const router = createBrowserRouter([
               // resetting every bit of that state correctly with zero changes needed
               // inside CaseListPage.tsx itself.
               { path: "cases", element: <LoanCaseListPage key="new_customer" fixedStatus="new_customer" /> },
-              { path: "document-collection", element: <LoanCaseListPage key="documents_pending" fixedStatus="documents_pending" /> },
               { path: "credit-evaluation", element: <LoanCaseListPage key="credit_evaluation" fixedStatus="credit_evaluation" /> },
               { path: "offer-acceptance", element: <LoanCaseListPage key="offer_acceptance" fixedStatus="offer_acceptance" /> },
               { path: "additional-documents", element: <LoanCaseListPage key="additional_documents" fixedStatus="additional_documents" /> },

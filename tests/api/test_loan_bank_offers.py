@@ -13,8 +13,7 @@ from app.features.workflow_engine.constants import ON_HOLD_STATUS, CaseType, Loa
 from app.features.workflow_engine.models import WorkflowDefinition
 
 _LOAN_ROWS = [
-    (LoanStatus.NEW_CUSTOMER, "New Customer", 1, [LoanStatus.DOCUMENTS_PENDING, LoanStatus.CREDIT_EVALUATION], LoanAuditEvent.CASE_CREATED),
-    (LoanStatus.DOCUMENTS_PENDING, "Document Collection", 12, [LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED], LoanAuditEvent.DOCUMENTS_REQUESTED),
+    (LoanStatus.NEW_CUSTOMER, "New Customer", 1, [LoanStatus.CREDIT_EVALUATION], LoanAuditEvent.CASE_CREATED),
     (
         LoanStatus.CREDIT_EVALUATION, "Credit Evaluation", 2,
         [LoanStatus.OFFER_ACCEPTANCE, LoanStatus.REJECTED, LoanStatus.RE_ELIGIBLE], LoanAuditEvent.CREDIT_EVALUATED,
@@ -28,8 +27,7 @@ _LOAN_ROWS = [
     (LoanStatus.DISBURSED, "Disbursed", 9, [], LoanAuditEvent.DISBURSED),
     (
         LoanStatus.RE_ELIGIBLE, "Re-Eligible", 10,
-        [LoanStatus.NEW_CUSTOMER, LoanStatus.DOCUMENTS_PENDING, LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED],
-        LoanAuditEvent.MARKED_RE_ELIGIBLE,
+        [LoanStatus.NEW_CUSTOMER, LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED], LoanAuditEvent.MARKED_RE_ELIGIBLE,
     ),
     (LoanStatus.REJECTED, "Application Rejected", 11, [LoanStatus.RE_ELIGIBLE], LoanAuditEvent.REJECTED),
 ]
@@ -390,22 +388,19 @@ async def test_rejected_case_cannot_be_manually_moved_to_re_eligible_via_status_
     assert r.status_code == 409, r.text
 
 
-# ---------------------------------------------------------------------- status dropdown / documents_pending
+# ---------------------------------------------------------------------- status dropdown / documents_pending retired
 
 
-async def test_status_dropdown_accepts_exactly_the_loan_statuses(client, mock_db, owner_headers, master_data):
+async def test_status_dropdown_accepts_exactly_the_twelve_statuses(client, mock_db, owner_headers, master_data):
     case_id, employee_headers, _c, _a = await _loan_case_in_credit_evaluation(client, mock_db, owner_headers, master_data, mobile_suffix="00000119")
-    # `documents_pending` ("Document Collection") is back as a real status (Re-Eligible Case
-    # Management enhancement) — a manual holding stage, not the retired mandatory gate.
     expected = {
-        "new_customer", "documents_pending", "credit_evaluation", "offer_acceptance", "additional_documents", "rv_ov_ref",
+        "new_customer", "credit_evaluation", "offer_acceptance", "additional_documents", "rv_ov_ref",
         "esign_nach_kyc", "final_evaluation", "send_for_disbursement", "disbursed", "on_hold", "re_eligible", "rejected",
     }
     assert expected == set(LoanStatus.ALL)
 
-    # But it's still not reachable from Credit Evaluation — the transition graph rejects it.
     r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "documents_pending"}, headers=employee_headers)
-    assert r.status_code == 422, r.text
+    assert r.status_code == 422, r.text  # retired — Document Collection is a Leads concept, not a Loan Management stage
 
 
 # ---------------------------------------------------------------------- counts

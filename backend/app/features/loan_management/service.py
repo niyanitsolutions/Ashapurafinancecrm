@@ -361,15 +361,11 @@ class LoanCaseService:
     # (decision #129).
     _PLAIN_TRANSITIONS: ClassVar[set[tuple[str, str]]] = {
         (LoanStatus.NEW_CUSTOMER, LoanStatus.REJECTED),
-        (LoanStatus.NEW_CUSTOMER, LoanStatus.DOCUMENTS_PENDING),
-        (LoanStatus.DOCUMENTS_PENDING, LoanStatus.CREDIT_EVALUATION),
-        (LoanStatus.DOCUMENTS_PENDING, LoanStatus.REJECTED),
         (LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED),
         (LoanStatus.CREDIT_EVALUATION, LoanStatus.RE_ELIGIBLE),
         # Re-Eligible Case Management enhancement — the restart-safe destinations a
         # re-eligible case's "Move Case To" dropdown offers. All genuinely bodiless.
         (LoanStatus.RE_ELIGIBLE, LoanStatus.NEW_CUSTOMER),
-        (LoanStatus.RE_ELIGIBLE, LoanStatus.DOCUMENTS_PENDING),
         (LoanStatus.RE_ELIGIBLE, LoanStatus.CREDIT_EVALUATION),
         (LoanStatus.RE_ELIGIBLE, LoanStatus.REJECTED),
         (LoanStatus.OFFER_ACCEPTANCE, LoanStatus.REJECTED),
@@ -439,7 +435,7 @@ class LoanCaseService:
         document types staff is waiting on; the case's own status only ever moves via
         `update_status`'s plain transitions or `verify_documents` below."""
         case = await self.get_case(case_id, actor)
-        if case.current_status not in (LoanStatus.NEW_CUSTOMER, LoanStatus.DOCUMENTS_PENDING, LoanStatus.ADDITIONAL_DOCUMENTS):
+        if case.current_status not in (LoanStatus.NEW_CUSTOMER, LoanStatus.ADDITIONAL_DOCUMENTS):
             raise ConflictError("Documents cannot be requested at this stage.")
         for doc_type_id in document_type_ids:
             if await self._document_types.find_by_id(doc_type_id) is None:
@@ -456,12 +452,12 @@ class LoanCaseService:
     async def verify_documents(self, case_id: str, actor: User) -> ApplicationWorkflow:
         """Optional dedicated action for staff who actually called `request_documents` —
         confirms every requested type is uploaded, then advances the case:
-        `new_customer`/`documents_pending` -> `credit_evaluation`, `additional_documents`
-        -> `rv_ov_ref`. Not the only way to reach either target — `update_status`'s plain
-        transitions reach the same destinations without a document request ever having
-        been made; this is purely a convenience for when one was."""
+        `new_customer` -> `credit_evaluation`, `additional_documents` -> `rv_ov_ref`. Not
+        the only way to reach either target — `update_status`'s plain transitions reach
+        the same destinations without a document request ever having been made; this is
+        purely a convenience for when one was."""
         case = await self.get_case(case_id, actor)
-        if case.current_status not in (LoanStatus.NEW_CUSTOMER, LoanStatus.DOCUMENTS_PENDING, LoanStatus.ADDITIONAL_DOCUMENTS):
+        if case.current_status not in (LoanStatus.NEW_CUSTOMER, LoanStatus.ADDITIONAL_DOCUMENTS):
             raise ConflictError("This case is not awaiting document verification.")
         # An empty `pending_document_type_ids` (nothing was actually requested — the
         # application's own documents already sufficed) is vacuously satisfied, not an
@@ -471,9 +467,7 @@ class LoanCaseService:
         missing = [t for t in case.pending_document_type_ids if t not in uploaded_type_ids]
         if missing:
             raise ValidationError("Not all requested documents have been uploaded yet.")
-        next_status = (
-            LoanStatus.RV_OV_REF if case.current_status == LoanStatus.ADDITIONAL_DOCUMENTS else LoanStatus.CREDIT_EVALUATION
-        )
+        next_status = LoanStatus.CREDIT_EVALUATION if case.current_status == LoanStatus.NEW_CUSTOMER else LoanStatus.RV_OV_REF
         return await self._engine.transition(case, next_status, actor, updates={"pending_document_type_ids": []})
 
     # ---------------------------------------------------------------- RV / OV / Ref

@@ -24,17 +24,18 @@ class CaseType:
 
 
 class LoanStatus:
-    """`DOCUMENTS_PENDING` ("Document Collection") history: decision #129 retired it as the
-    *mandatory* gate between `NEW_CUSTOMER` and `CREDIT_EVALUATION` (a Lead now only reaches
-    Loan Management once its required documents are already verified, Leads decision #127).
-    The Re-Eligible Case Management enhancement brings it back as a **manual, optional
-    holding stage** — a staff member restarting a Re-Eligible (or New Customer) case can
-    park it here to (re)collect documents, then move it on to Credit Evaluation. It is
-    never entered automatically. `request_documents`/`verify_documents` drive it, same as
-    they drive `NEW_CUSTOMER`/`ADDITIONAL_DOCUMENTS`."""
+    """Production redesign (decision #129): `DOCUMENTS_PENDING` is kept defined — old
+    `ApplicationStatusHistory` rows reference it as a plain string and the model layer
+    doesn't constrain `current_status`, so removing the constant would be a needless
+    break — but it is deliberately absent from `RESUMABLE`/`ALL` below: no new case can
+    ever be placed into it again. Document Collection is a Leads-module concept
+    (`LeadStage.DOCUMENT_COLLECTION`), not a Loan Management stage — a Lead only reaches
+    Loan Management after its required documents are already verified (Leads decision
+    #127). `request_documents`/`verify_documents` remain available as optional,
+    non-pipeline-driving actions at `NEW_CUSTOMER`/`ADDITIONAL_DOCUMENTS`."""
 
     NEW_CUSTOMER = "new_customer"
-    DOCUMENTS_PENDING = "documents_pending"  # "Document Collection" — manual holding stage
+    DOCUMENTS_PENDING = "documents_pending"  # retired from ALL/RESUMABLE — see docstring
     CREDIT_EVALUATION = "credit_evaluation"
     OFFER_ACCEPTANCE = "offer_acceptance"
     ADDITIONAL_DOCUMENTS = "additional_documents"
@@ -49,7 +50,7 @@ class LoanStatus:
 
     # Every status a case can be resumed back into after being placed on hold.
     RESUMABLE = (
-        NEW_CUSTOMER, DOCUMENTS_PENDING, CREDIT_EVALUATION, OFFER_ACCEPTANCE, ADDITIONAL_DOCUMENTS,
+        NEW_CUSTOMER, CREDIT_EVALUATION, OFFER_ACCEPTANCE, ADDITIONAL_DOCUMENTS,
         RV_OV_REF, ESIGN_NACH_KYC, FINAL_EVALUATION, SEND_FOR_DISBURSEMENT, RE_ELIGIBLE,
     )
     ALL = (*RESUMABLE, DISBURSED, ON_HOLD, REJECTED)

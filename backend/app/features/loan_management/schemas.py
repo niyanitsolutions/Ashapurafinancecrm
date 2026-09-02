@@ -404,7 +404,6 @@ class LoanCaseCountsResponse(BaseModel):
     established (decision #125)."""
 
     new_customer: int
-    documents_pending: int
     credit_evaluation: int
     offer_acceptance: int
     additional_documents: int

@@ -154,7 +154,6 @@ export interface DisbursementList {
 
 export interface LoanCaseCounts {
   new_customer: number;
-  documents_pending: number;
   credit_evaluation: number;
   offer_acceptance: number;
   additional_documents: number;

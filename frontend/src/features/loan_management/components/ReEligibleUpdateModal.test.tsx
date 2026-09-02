@@ -26,7 +26,7 @@ const loanCase = {
   id: "case-1", case_code: "AFS-LOAN-000002", application_id: "app-1", customer_id: "c1", customer_name: "Lucky Kumar",
   product_id: "p1", product_name: "Personal Loan", assigned_to: null, assigned_to_name: null,
   current_status: "re_eligible", rejection_reason: null,
-  allowed_next_statuses: ["new_customer", "documents_pending", "credit_evaluation", "rejected", "on_hold"],
+  allowed_next_statuses: ["new_customer", "credit_evaluation", "rejected", "on_hold"],
   selected_bank_name: null, approved_amount: null, disbursed_amount: null, disbursed_at: null, next_follow_up_date: null,
   created_at: "2026-01-01T00:00:00Z", pending_document_type_ids: [], loan_details: {} as LoanCaseDetail["loan_details"],
   updated_at: "2026-01-01T00:00:00Z", allowed_previous_statuses: [], customer: null, application: null, bank_offers: [],
@@ -39,11 +39,13 @@ function renderModal(props: Partial<Parameters<typeof ReEligibleUpdateModal>[0]>
 }
 
 describe("ReEligibleUpdateModal", () => {
-  it("the Move Case To dropdown offers exactly the case's allowed_next_statuses (incl. Document Collection)", async () => {
+  it("the Move Case To dropdown offers exactly the case's allowed_next_statuses (restart-safe only)", async () => {
     renderModal();
     const select = await screen.findByLabelText("Move Case To");
     const options = [...select.querySelectorAll("option")].map((o) => o.textContent).filter((t) => t && t !== "Select Status");
-    expect(options).toEqual(["New Customer", "Document Collection", "Credit Evaluation", "Rejected", "On Hold"]);
+    expect(options).toEqual(["New Customer", "Credit Evaluation", "Rejected", "On Hold"]);
+    // Document Collection is a Leads-module concept — never a Loan Management destination.
+    expect(options).not.toContain("Document Collection");
   });
 
   it("selecting a plain stage and clicking Update Status calls updateLoanCaseStatus", async () => {
