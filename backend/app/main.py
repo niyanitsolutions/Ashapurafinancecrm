@@ -18,6 +18,8 @@ from app.features.access_control.indexes import ensure_access_control_indexes
 from app.features.access_control.router import router as access_control_router
 from app.features.auth.indexes import ensure_auth_indexes
 from app.features.auth.router import router as auth_router
+from app.features.bin.indexes import ensure_bin_indexes
+from app.features.bin.router import router as bin_router
 from app.features.communication.indexes import ensure_communication_indexes
 from app.features.communication.router import public_router as communication_public_router
 from app.features.communication.router import router as communication_router
@@ -95,6 +97,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await ensure_support_indexes(get_database())
     await ensure_messaging_indexes(get_database())
     await ensure_recruitment_indexes(get_database())
+    await ensure_bin_indexes(get_database())
     yield
     await close_client()
     await close_redis()
@@ -137,6 +140,7 @@ def create_app() -> FastAPI:
     app.include_router(recruitment_router, prefix=settings.api_v1_prefix)
     app.include_router(advisor_router, prefix=settings.api_v1_prefix)
     app.include_router(reminders_router, prefix=settings.api_v1_prefix)
+    app.include_router(bin_router, prefix=settings.api_v1_prefix)
     app.include_router(referral_partner_management_router, prefix=settings.api_v1_prefix)
     app.include_router(reporting_router, prefix=settings.api_v1_prefix)
     app.include_router(integrations_public_router, prefix=settings.api_v1_prefix)

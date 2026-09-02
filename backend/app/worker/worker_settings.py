@@ -14,6 +14,7 @@ from arq.cron import cron
 
 from app.config.settings import get_settings
 from app.logging_config import configure_logging
+from app.worker.tasks.bin_cleanup import purge_expired_bin_entries
 from app.worker.tasks.communication import (
     poll_business_events,
     process_bulk_message_jobs,
@@ -24,6 +25,7 @@ from app.worker.tasks.lead_capture import retry_capture_failures
 from app.worker.tasks.meta_token_refresh import refresh_meta_tokens
 from app.worker.tasks.referral_partner import check_commission_triggers
 from app.worker.tasks.reminders import (
+    auto_transition_re_eligible_cases,
     check_re_eligible_cases,
     check_task_reminders,
     poll_audit_events,
@@ -69,7 +71,9 @@ class WorkerSettings:
         # arq's actual calling convention (ctx, *args, **kwargs).
         cron(poll_audit_events, minute=set(range(0, 60, 5)), run_at_startup=True),  # type: ignore[arg-type]  # every 5 minutes
         cron(check_task_reminders, minute=set(range(0, 60, 15)), run_at_startup=True),  # type: ignore[arg-type]  # every 15 minutes
+        cron(purge_expired_bin_entries, hour={1}, minute={30}),  # type: ignore[arg-type]  # once daily; instant-based, timezone-safe
         cron(check_re_eligible_cases, hour={2}, minute={0}),  # type: ignore[arg-type]  # once daily, assumes server clock = UTC
+        cron(auto_transition_re_eligible_cases, hour={2}, minute={15}),  # type: ignore[arg-type]  # once daily; instant-based, timezone-safe
         cron(check_commission_triggers, hour={3}, minute={0}),  # type: ignore[arg-type]  # once daily, assumes server clock = UTC
         cron(refresh_meta_tokens, hour={4}, minute={0}),  # type: ignore[arg-type]  # once daily, assumes server clock = UTC
         cron(retry_capture_failures, minute=set(range(0, 60, 15)), run_at_startup=True),  # type: ignore[arg-type]  # every 15 minutes

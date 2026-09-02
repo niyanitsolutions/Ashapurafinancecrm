@@ -26,7 +26,7 @@ _LOAN_ROWS = [
     (LoanStatus.SEND_FOR_DISBURSEMENT, "Send For Disbursement", 8, [LoanStatus.DISBURSED], LoanAuditEvent.FINAL_EVALUATED),
     (LoanStatus.DISBURSED, "Disbursed", 9, [], LoanAuditEvent.DISBURSED),
     (LoanStatus.RE_ELIGIBLE, "Re-Eligible", 10, [LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED], LoanAuditEvent.MARKED_RE_ELIGIBLE),
-    (LoanStatus.REJECTED, "Application Rejected", 11, [], LoanAuditEvent.REJECTED),
+    (LoanStatus.REJECTED, "Application Rejected", 11, [LoanStatus.RE_ELIGIBLE], LoanAuditEvent.REJECTED),
 ]
 
 
@@ -373,13 +373,16 @@ async def test_re_eligible_can_move_to_rejected(client, mock_db, owner_headers, 
     assert r.json()["data"]["current_status"] == "rejected"
 
 
-async def test_rejected_case_cannot_move_directly_to_re_eligible(client, mock_db, owner_headers, master_data):
-    """`REJECTED` stays terminal (decision #129) — `list_eligible_assignees` relies on
-    that meaning "permanently closed" for workload balancing."""
+async def test_rejected_case_cannot_be_manually_moved_to_re_eligible_via_status_control(client, mock_db, owner_headers, master_data):
+    """`rejected -> re_eligible` is a real transition-graph edge now (the
+    `auto_transition_re_eligible_cases` worker job walks it on a case's scheduled date),
+    but the generic Case Status control still refuses it manually — it's not a
+    `_PLAIN_TRANSITIONS` move, so `update_status` returns a 409 pointing at the real
+    (automated) mechanism. Only the scheduled job flips a rejected case."""
     case_id, employee_headers, _c, _a = await _loan_case_in_credit_evaluation(client, mock_db, owner_headers, master_data, mobile_suffix="00000118")
     await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "rejected", "remarks": "Not eligible"}, headers=employee_headers)
     r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "re_eligible"}, headers=employee_headers)
-    assert r.status_code == 422, r.text
+    assert r.status_code == 409, r.text
 
 
 # ---------------------------------------------------------------------- status dropdown / documents_pending retired

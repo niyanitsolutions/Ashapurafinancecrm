@@ -2,10 +2,42 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.features.workflow_engine.constants import BankOfferDecision, LoanStatus, TopUpPeriod
+from app.features.workflow_engine.constants import (
+    BankOfferDecision,
+    LoanStatus,
+    ReEligibilityPeriod,
+    TopUpPeriod,
+)
 
 
-class LoanStatusUpdateRequest(BaseModel):
+class _ReEligibilitySchedulingFields(BaseModel):
+    """Reject → Re-Eligibility scheduling, shared by the generic status control and Final
+    Evaluation's reject decision. Both fields are optional at the schema layer (the same
+    request shapes carry non-reject transitions); `LoanCaseService` enforces that a
+    Re-Eligibility choice is mandatory *when the target is `rejected`*, exactly like the
+    existing "rejection reason is mandatory" rule. `re_eligible_date` is only meaningful
+    with `re_eligibility="custom"`."""
+
+    re_eligibility: str | None = None
+    re_eligible_date: date | None = None
+
+    @field_validator("re_eligibility")
+    @classmethod
+    def _choice_must_be_valid(cls, value: str | None) -> str | None:
+        if value is not None and value not in ReEligibilityPeriod.ALL:
+            raise ValueError(f"'{value}' is not a valid Re-Eligibility option.")
+        return value
+
+    @model_validator(mode="after")
+    def _custom_date_required_iff_custom(self) -> "_ReEligibilitySchedulingFields":
+        if self.re_eligibility == ReEligibilityPeriod.CUSTOM and self.re_eligible_date is None:
+            raise ValueError("re_eligible_date is required when re_eligibility is 'custom'.")
+        if self.re_eligibility != ReEligibilityPeriod.CUSTOM:
+            self.re_eligible_date = None
+        return self
+
+
+class LoanStatusUpdateRequest(_ReEligibilitySchedulingFields):
     """Backs the generic Case Status control on the Loan Case detail page — validated
     against `LoanStatus.ALL` only, so an Insurance status value (or any other string) is
     rejected here at the schema layer, before the service layer even runs the existing
@@ -110,7 +142,7 @@ class EsignNachKycRequest(BaseModel):
     kyc_completed: bool = False
 
 
-class FinalEvaluationRequest(BaseModel):
+class FinalEvaluationRequest(_ReEligibilitySchedulingFields):
     remarks: str | None = None
     decision: str  # "approved" | "rejected"
     rejection_reason: str | None = None
@@ -149,6 +181,11 @@ class LoanCaseDetailsResponse(BaseModel):
     nach_completed: bool
     kyc_completed: bool
     final_evaluation_remarks: str | None
+    re_eligibility_choice: str | None = None
+    re_eligible_date: datetime | None = None
+    re_eligibility_scheduled_at: datetime | None = None
+    re_eligibility_scheduled_by: str | None = None
+    re_eligibility_auto_transitioned: bool = False
     disbursed_amount: float | None
     disbursed_at: datetime | None
     disbursed_reference: str | None

@@ -20,7 +20,9 @@ const EXTRA_COLUMNS: CaseListExtraColumn<LoanCaseListItem>[] = [
 export function LoanCaseListPage({ fixedStatus }: { fixedStatus?: string } = {}) {
   const { can } = usePermissions();
   const canEdit = can("loan_management:applications", "edit");
-  const canDisburse = can("loan_management:applications", "approve");
+  // Disbursement is available to a case's `approve` holder OR its `edit` holder — mirrors
+  // the backend's `require_any_permission(("approve", "edit"))` on POST /disburse.
+  const canDisburse = can("loan_management:applications", "approve") || canEdit;
   const [updatingCase, setUpdatingCase] = useState<LoanCaseDetail | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -45,6 +47,7 @@ export function LoanCaseListPage({ fixedStatus }: { fixedStatus?: string } = {})
         emptyStateDescription="A loan case appears here once explicitly moved from Document Collection into Loan Management."
         onUpdate={canEdit || canDisburse ? openUpdate : undefined}
         canUpdateRow={(row) => !TERMINAL_STATUSES.has(row.current_status)}
+        deleteResourceKey="loan_cases"
       />
       {updatingCase && (
         <UpdateLoanCaseModal

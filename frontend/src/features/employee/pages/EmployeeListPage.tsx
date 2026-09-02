@@ -17,6 +17,7 @@ import {
   type EmployeeListItem,
   type MasterDataItem,
 } from "@/features/employee/api";
+import { useListDelete } from "@/features/bin/useListDelete";
 import { getErrorMessage } from "@/features/employee/errors";
 import { StatusBadge } from "@/features/employee/components/StatusBadge";
 
@@ -38,6 +39,10 @@ export function EmployeeListPage() {
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [resetTarget, setResetTarget] = useState<EmployeeListItem | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  // Owner-only. The backend also blocks deleting an employee who still has leads/cases
+  // assigned (reassign or deactivate first) — see bin/registry _guard_employee.
+  const del = useListDelete("employees", () => setReloadKey((k) => k + 1));
 
   const load = () => {
     setIsLoading(true);
@@ -51,7 +56,7 @@ export function EmployeeListPage() {
       .finally(() => setIsLoading(false));
   };
 
-  useEffect(load, [page, search, departmentId, designationId, status]);
+  useEffect(load, [page, search, departmentId, designationId, status, reloadKey]);
   useEffect(() => {
     listDepartments().then(setDepartments).catch(() => setDepartments([]));
     listDesignations().then(setDesignations).catch(() => setDesignations([]));
@@ -144,10 +149,24 @@ export function EmployeeListPage() {
         </select>
       </div>
 
+      <ErrorBanner message={del.error} />
+      {del.bulkBar}
+
       <div className="bg-card border border-border rounded-card shadow-card overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border text-left text-text/60">
+              {del.enabled && (
+                <th className="px-4 py-3 w-10">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all"
+                    className="accent-primary"
+                    checked={items.length > 0 && items.every((e) => del.isSelected(e.id))}
+                    onChange={() => del.toggleAll(items.map((e) => e.id))}
+                  />
+                </th>
+              )}
               <th className="px-4 py-3">Name</th>
               <th className="px-4 py-3">Department</th>
               <th className="px-4 py-3">Designation</th>
@@ -158,11 +177,11 @@ export function EmployeeListPage() {
           </thead>
           <tbody>
             {isLoading && (
-              <tr><td colSpan={6} className="px-4 py-6 text-center text-text/50">Loading…</td></tr>
+              <tr><td colSpan={del.enabled ? 7 : 6} className="px-4 py-6 text-center text-text/50">Loading…</td></tr>
             )}
             {!isLoading && items.length === 0 && (
               <tr>
-                <td colSpan={6}>
+                <td colSpan={del.enabled ? 7 : 6}>
                   {hasFilters ? (
                     <EmptyState icon="search" title="No employees match your filters" description="Try a different search term, or clear the filters." secondaryAction={{ label: "Clear filters", onClick: clearFilters }} />
                   ) : (
@@ -173,6 +192,17 @@ export function EmployeeListPage() {
             )}
             {items.map((e) => (
               <tr key={e.id} className="border-b border-border last:border-0 hover:bg-background">
+                {del.enabled && (
+                  <td className="px-4 py-3">
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${e.employee_code}`}
+                      className="accent-primary"
+                      checked={del.isSelected(e.id)}
+                      onChange={() => del.toggle(e.id)}
+                    />
+                  </td>
+                )}
                 <td className="px-4 py-3">
                   <Link to={`/employees/${e.id}`} className="text-text hover:text-primary font-medium block">{e.display_name}</Link>
                   <span className="text-xs text-text/40">{e.employee_code}</span>
@@ -193,6 +223,11 @@ export function EmployeeListPage() {
                     <button type="button" disabled={busyId === e.id} onClick={() => setResetTarget(e)} className="text-primary hover:underline disabled:opacity-40">
                       Reset Password
                     </button>
+                    {del.enabled && (
+                      <button type="button" onClick={() => del.requestDelete(e.id)} className="text-danger hover:underline">
+                        Delete
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -211,6 +246,7 @@ export function EmployeeListPage() {
         onConfirm={handleResetPassword}
         onClose={() => setResetTarget(null)}
       />
+      {del.dialog}
     </SimplePageLayout>
   );
 }

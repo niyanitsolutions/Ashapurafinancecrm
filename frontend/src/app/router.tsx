@@ -84,6 +84,7 @@ import { ReportsLayout } from "@/features/reporting/pages/ReportsLayout";
 import { ReportCatalogPage } from "@/features/reporting/pages/ReportCatalogPage";
 import { ReportViewerPage } from "@/features/reporting/pages/ReportViewerPage";
 import { ScheduledReportsPage } from "@/features/reporting/pages/ScheduledReportsPage";
+import { BinPage } from "@/features/bin/pages/BinPage";
 import { CommunicationPage } from "@/features/communication/pages/CommunicationPage";
 import { SupportTicketListPage } from "@/features/support/pages/SupportTicketListPage";
 import { ConversationsPage } from "@/features/messaging/pages/ConversationsPage";
@@ -191,6 +192,11 @@ export const router = createBrowserRouter([
               // loan_management:applications permission) — only the tab's location
               // changed, per explicit instruction not to duplicate or redesign it.
               { path: "top-up", element: <TopUpLoanListPage key="top_up" /> },
+              // Re-Eligible — moved here from Loan Management (production spec). The
+              // underlying data/actions are still entirely Loan Management's own (same
+              // LoanCaseListPage component, same /loan-cases?status=re_eligible API, same
+              // loan_management:applications permission) — only the tab's location changed.
+              { path: "re-eligible", element: <LoanCaseListPage key="re_eligible" fixedStatus="re_eligible" /> },
             ],
           },
           {
@@ -265,10 +271,15 @@ export const router = createBrowserRouter([
               { path: "send-for-disbursement", element: <LoanCaseListPage key="send_for_disbursement" fixedStatus="send_for_disbursement" /> },
               { path: "disbursements", element: <DisbursementsPage key="disbursements" /> },
               { path: "on-hold", element: <LoanCaseListPage key="on_hold" fixedStatus="on_hold" /> },
-              { path: "re-eligible", element: <LoanCaseListPage key="re_eligible" fixedStatus="re_eligible" /> },
+              // "Re-Eligible" moved to /leads/re-eligible (production spec) — same
+              // LoanCaseListPage component, same /loan-cases?status=re_eligible API, same
+              // loan_management:applications permission; only the tab's location changed.
               { path: "rejected", element: <LoanCaseListPage key="rejected" fixedStatus="rejected" /> },
             ],
           },
+          // Bookmark/deep-link safety for the old Re-Eligible URL — same courtesy as the
+          // /settings/api-settings redirect below.
+          { path: "/loan-management/re-eligible", element: <Navigate to="/leads/re-eligible" replace /> },
           {
             path: "/insurance-management",
             element: <InsuranceManagementLayout />,
@@ -355,6 +366,9 @@ export const router = createBrowserRouter([
           {
             element: <RequireOwner />,
             children: [
+              // Centralized Bin — Owner-only (also enforced by every /bin API's
+              // Depends(require_owner)).
+              { path: "/bin", element: <BinPage /> },
               {
                 path: "/employees",
                 element: <EmployeesLayout />,

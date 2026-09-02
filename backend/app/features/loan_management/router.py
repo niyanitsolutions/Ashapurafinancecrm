@@ -17,7 +17,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.config.database import get_database
 from app.core.pagination import PageParams, page_params
 from app.core.response import ApiResponse, ResponseMeta
-from app.features.access_control.permission_engine import require_permission
+from app.features.access_control.permission_engine import require_any_permission, require_permission
 from app.features.auth.models import User
 from app.features.geo_fencing.constants import GeoActivity
 from app.features.geo_fencing.enforcement import enforce_geo_fence
@@ -262,7 +262,10 @@ async def assign_case(
 async def update_status(
     case_id: str, payload: LoanStatusUpdateRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
 ) -> ApiResponse[LoanCaseDetailResponse]:
-    await service.update_status(case_id, payload.status, actor, remarks=payload.remarks)
+    await service.update_status(
+        case_id, payload.status, actor, remarks=payload.remarks,
+        re_eligibility=payload.re_eligibility, re_eligible_date=payload.re_eligible_date,
+    )
     return await _detail(service, case_id, actor)
 
 
@@ -437,7 +440,21 @@ async def final_evaluation(
 
 
 @router.post("/{case_id}/disburse")
-async def disburse(case_id: str, payload: DisburseRequest, service: ServiceDep, actor: Annotated[User, _perm("approve")]) -> ApiResponse[LoanCaseDetailResponse]:
+async def disburse(
+    case_id: str,
+    payload: DisburseRequest,
+    service: ServiceDep,
+    # Disbursement (Send For Disbursement → "Mark Disbursed") is authorized by either the
+    # dedicated `approve` grant OR the general `edit` grant already used to work the case
+    # through every prior stage — an authorized Employee who can drive Credit Evaluation,
+    # RV/OV/Ref, eSign/NACH/KYC and Final Evaluation on a case (all `_perm("edit")`) can
+    # also complete its disbursement, without a second, separate permission assignment.
+    # Same pattern/reasoning as Leads' `reject_lead` (`require_any_permission(("edit",
+    # "reject"))`). Not a new permission and not a global weakening: a caller with neither
+    # `approve` nor case `edit` is still refused, and `get_case`'s per-Employee assignment
+    # check in the service still applies.
+    actor: Annotated[User, require_any_permission(_MODULE, _RESOURCE, ("approve", "edit"))],
+) -> ApiResponse[LoanCaseDetailResponse]:
     await service.disburse(case_id, payload, actor)
     return await _detail(service, case_id, actor)
 

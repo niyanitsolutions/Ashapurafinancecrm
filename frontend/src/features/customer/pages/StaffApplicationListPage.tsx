@@ -7,6 +7,7 @@ import { EmptyState } from "@/components/layout/EmptyState";
 import { Pagination } from "@/components/tables/Pagination";
 import { Table, TableBody, TableHead, TableHeadRow, TableRow, Td, Th } from "@/components/tables/DataTable";
 import { useAuth } from "@/features/auth/useAuth";
+import { useListDelete } from "@/features/bin/useListDelete";
 import { listApplicationsStaff, type ApplicationListItem } from "@/features/customer/api";
 import { getErrorMessage } from "@/features/customer/errors";
 import { Icon } from "@/theme/icons";
@@ -40,7 +41,9 @@ export function StaffApplicationListPage() {
       return next;
     });
   const isVisible = (key: string) => visibleColumns.has(key);
-  const columnCount = 2 + OPTIONAL_COLUMNS.filter((c) => isVisible(c.key)).length;
+  const [reloadKey, setReloadKey] = useState(0);
+  const del = useListDelete("applications", () => setReloadKey((k) => k + 1));
+  const columnCount = 2 + (del.enabled ? 1 : 0) + OPTIONAL_COLUMNS.filter((c) => isVisible(c.key)).length;
 
   useEffect(() => {
     setIsLoading(true);
@@ -51,7 +54,7 @@ export function StaffApplicationListPage() {
       })
       .catch((err) => setError(getErrorMessage(err)))
       .finally(() => setIsLoading(false));
-  }, [page, pageSize, status, unassignedOnly]);
+  }, [page, pageSize, status, unassignedOnly, reloadKey]);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -59,6 +62,8 @@ export function StaffApplicationListPage() {
     <div className="min-h-screen bg-background">
       <div className="p-6">
         {error && <p className="mb-4 text-sm text-danger">{error}</p>}
+        {del.error && <p className="mb-4 text-sm text-danger">{del.error}</p>}
+        {del.bulkBar}
 
         <div className="bg-card rounded-2xl shadow-card overflow-hidden">
           <div className="p-6 flex flex-wrap items-start justify-between gap-4">
@@ -109,6 +114,17 @@ export function StaffApplicationListPage() {
             <Table>
               <TableHead>
                 <TableHeadRow>
+                  {del.enabled && (
+                    <Th className="w-10">
+                      <input
+                        type="checkbox"
+                        aria-label="Select all"
+                        className="accent-primary"
+                        checked={items.length > 0 && items.every((a) => del.isSelected(a.id))}
+                        onChange={() => del.toggleAll(items.map((a) => a.id))}
+                      />
+                    </Th>
+                  )}
                   <Th>Code</Th>
                   {isVisible("customer") && <Th>Customer</Th>}
                   {isVisible("product") && <Th>Product</Th>}
@@ -145,6 +161,17 @@ export function StaffApplicationListPage() {
                 )}
                 {items.map((app) => (
                   <TableRow key={app.id}>
+                    {del.enabled && (
+                      <Td>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${app.application_code}`}
+                          className="accent-primary"
+                          checked={del.isSelected(app.id)}
+                          onChange={() => del.toggle(app.id)}
+                        />
+                      </Td>
+                    )}
                     <Td className="whitespace-nowrap">
                       <Link to={`/applications/${app.id}`} className="text-primary font-medium hover:underline">
                         {app.application_code}
@@ -161,7 +188,10 @@ export function StaffApplicationListPage() {
                       </Td>
                     )}
                     <Td>
-                      <ActionButton to={`/applications/${app.id}`} variant="view" />
+                      <div className="flex items-center gap-1.5">
+                        <ActionButton to={`/applications/${app.id}`} variant="view" />
+                        {del.enabled && <ActionButton variant="delete" onClick={() => del.requestDelete(app.id)} />}
+                      </div>
                     </Td>
                   </TableRow>
                 ))}
@@ -183,6 +213,7 @@ export function StaffApplicationListPage() {
           }}
         />
       </div>
+      {del.dialog}
     </div>
   );
 }

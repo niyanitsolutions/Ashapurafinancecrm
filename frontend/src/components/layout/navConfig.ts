@@ -139,4 +139,11 @@ export const NAV_SECTIONS: NavSection[] = [
     // stale cached nav response) is redirected away rather than reaching the page.
     items: [{ label: "Owner Management", to: "/owner-accounts", icon: "shield-check", matchKey: "owner_accounts" }],
   },
+  {
+    label: null,
+    // Centralized Bin — Owner-only (nav_items row `owner_only=True`, so `matchKey: "bin"`
+    // is only ever present in the nav response for an Owner; the /bin route is
+    // RequireOwner-wrapped and every /bin API is Depends(require_owner)).
+    items: [{ label: "Bin", to: "/bin", icon: "trash", matchKey: "bin" }],
+  },
 ];

@@ -16,6 +16,7 @@ from typing import Any
 
 from app.config.database import get_database
 from app.constants.roles import OWNER
+from app.features.auth.models import User
 from app.features.auth.repository import UserRepository
 from app.features.customer.repository import ApplicationRepository
 from app.features.employee.repository import EmployeeRepository
@@ -34,11 +35,13 @@ from app.features.reminders.repository import (
     TaskRepository,
 )
 from app.features.reminders.service import RemindersService
-from app.features.workflow_engine.constants import CaseType, LoanStatus
+from app.features.workflow_engine.constants import CaseType, LoanAuditEvent, LoanStatus
+from app.features.workflow_engine.engine import WorkflowEngine
 from app.features.workflow_engine.repository import (
     ApplicationStatusHistoryRepository,
     ApplicationWorkflowRepository,
 )
+from app.shared.audit_log import write_audit_log
 from app.utils.datetime import ensure_utc, utc_now
 
 
@@ -165,6 +168,47 @@ async def check_re_eligible_cases(_ctx: dict[Any, Any], *_args: Any, **_kwargs: 
                             variables={"case_code": case.case_code, "eligible_date": eligible_at.date().isoformat()},
                             entity_type=target_type, entity_id=case_id,
                         )
+
+
+async def auto_transition_re_eligible_cases(_ctx: dict[Any, Any], *_args: Any, **_kwargs: Any) -> Any:
+    """Reject → Re-Eligibility scheduling (production add-on). Flips a rejected Loan case
+    to `re_eligible` on/after the per-case date staff chose at rejection time
+    (`loan_details.re_eligible_date`, set by `LoanCaseService._apply_re_eligibility_
+    schedule`). A "No" rejection has `re_eligible_date is None` and is therefore never
+    selected here — it stays rejected forever, by construction. Reuses the generic
+    `WorkflowEngine.transition` (history + audit + event publish) exactly like a manual
+    "Mark Re-Eligible"; the `rejected -> re_eligible` edge is a real configured
+    transition (see scripts/seed.py / migrate_rejected_re_eligible_transition.py).
+
+    Timezone-safe as-is: `re_eligible_date <= now` is an absolute-instant comparison, not
+    a calendar-day boundary (same note as `check_re_eligible_cases` above)."""
+    db = get_database()
+    workflows = ApplicationWorkflowRepository(db)
+    engine = WorkflowEngine(db)
+    now = utc_now()
+
+    owner_doc = await db["users"].find_one({"role": OWNER, "is_deleted": False})
+    if owner_doc is None:
+        return  # every transition needs an attributable actor for its history/audit row
+    system_actor = User.model_validate(owner_doc)
+
+    cases, _total = await workflows.search_and_filter(
+        case_type=CaseType.LOAN, search=None, customer_id=None, assigned_to=None, unassigned_only=False,
+        status=LoanStatus.REJECTED, skip=0, limit=1000, sort=None,
+        extra_filter={"loan_details.re_eligible_date": {"$ne": None, "$lte": now}},
+    )
+    for case in cases:
+        if case.loan_details is None:
+            continue
+        details = case.loan_details.model_copy(update={"re_eligibility_auto_transitioned": True, "re_eligible_date": None})
+        await engine.transition(
+            case, LoanStatus.RE_ELIGIBLE, system_actor,
+            updates={"loan_details": details.model_dump()}, remarks="Automatically became Re-Eligible on the scheduled date.",
+        )
+        await write_audit_log(
+            db, event_type=LoanAuditEvent.RE_ELIGIBILITY_AUTO_TRANSITIONED, user_id=system_actor.require_id(),
+            metadata={"application_workflow_id": case.require_id(), "case_code": case.case_code},
+        )
 
 
 async def check_task_reminders(_ctx: dict[Any, Any], *_args: Any, **_kwargs: Any) -> Any:

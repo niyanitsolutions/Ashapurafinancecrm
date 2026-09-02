@@ -12,7 +12,12 @@ from datetime import timedelta
 from app.features.reminders.models import ReminderRule, Task
 from app.utils.datetime import utc_now
 from app.utils.helpers import to_object_id
-from app.worker.tasks.reminders import check_re_eligible_cases, check_task_reminders, poll_audit_events
+from app.worker.tasks.reminders import (
+    auto_transition_re_eligible_cases,
+    check_re_eligible_cases,
+    check_task_reminders,
+    poll_audit_events,
+)
 
 
 async def _create_employee(client, owner_headers, master_data, mobile, email):
@@ -507,3 +512,97 @@ async def test_task_due_and_escalation_ladder_ends_with_owner_notification(clien
     await check_task_reminders({})  # already owner_escalated — must not fire again
     escalations = [doc async for doc in mock_db["reminders"].find({"target_id": str(task_id), "reminder_type": "task_escalation"})]
     assert len(escalations) == 2
+
+
+# ---------------------------------------------------------- Reject → Re-Eligibility auto-transition
+
+
+async def _seed_reject_re_eligible_defs(mock_db):
+    from app.features.workflow_engine.models import WorkflowDefinition
+
+    for status, label, seq, allowed_next, audit_event in [
+        ("re_eligible", "Re-Eligible", 10, ["credit_evaluation", "rejected"], "loan_case_marked_re_eligible"),
+        ("rejected", "Application Rejected", 11, ["re_eligible"], "loan_case_rejected"),
+    ]:
+        definition = WorkflowDefinition(
+            case_type="loan", status=status, label=label, sequence=seq,
+            allowed_next_statuses=allowed_next, audit_event=audit_event,
+        )
+        await mock_db["workflow_definitions"].insert_one(definition.model_dump(by_alias=True, exclude={"id"}))
+
+
+async def _insert_rejected_case(mock_db, *, case_code, re_eligible_date, choice="6_months"):
+    now = utc_now()
+    loan_details = {"re_eligibility_choice": choice, "re_eligible_date": re_eligible_date, "re_eligibility_auto_transitioned": False}
+    result = await mock_db["application_workflows"].insert_one(
+        {
+            "case_code": case_code, "case_type": "loan", "application_id": f"app-{case_code}",
+            "customer_id": f"cust-{case_code}", "product_id": "prod-1", "product_category": "loan",
+            "assigned_to": None, "current_status": "rejected", "rejection_reason": "Low credit score",
+            "pending_document_type_ids": [], "loan_details": loan_details, "is_deleted": False, "status": "active",
+            "created_at": now, "updated_at": now, "version": 1,
+        }
+    )
+    return str(result.inserted_id)
+
+
+async def test_auto_transition_flips_scheduled_rejected_case_to_re_eligible(mock_db, owner_headers, monkeypatch):
+    monkeypatch.setattr("app.worker.tasks.reminders.get_database", lambda: mock_db)
+    await _seed_reject_re_eligible_defs(mock_db)
+    case_id = await _insert_rejected_case(mock_db, case_code="AFS-LOAN-RE1", re_eligible_date=utc_now() - timedelta(days=1))
+
+    await auto_transition_re_eligible_cases({})
+
+    case = await mock_db["application_workflows"].find_one({"_id": to_object_id(case_id)})
+    assert case["current_status"] == "re_eligible"
+    assert case["loan_details"]["re_eligibility_auto_transitioned"] is True
+    assert case["loan_details"]["re_eligible_date"] is None
+    # History + audit written by the generic engine.
+    assert await mock_db["application_status_history"].count_documents({"application_workflow_id": case_id, "to_status": "re_eligible"}) == 1
+    assert await mock_db["audit_logs"].count_documents({"event_type": "loan_case_re_eligibility_auto_transitioned"}) == 1
+
+
+async def test_auto_transition_leaves_future_dated_case_rejected(mock_db, owner_headers, monkeypatch):
+    monkeypatch.setattr("app.worker.tasks.reminders.get_database", lambda: mock_db)
+    await _seed_reject_re_eligible_defs(mock_db)
+    case_id = await _insert_rejected_case(mock_db, case_code="AFS-LOAN-RE2", re_eligible_date=utc_now() + timedelta(days=30))
+
+    await auto_transition_re_eligible_cases({})
+
+    case = await mock_db["application_workflows"].find_one({"_id": to_object_id(case_id)})
+    assert case["current_status"] == "rejected"
+
+
+async def test_auto_transition_never_touches_a_no_case_even_after_a_long_time(mock_db, owner_headers, monkeypatch):
+    monkeypatch.setattr("app.worker.tasks.reminders.get_database", lambda: mock_db)
+    await _seed_reject_re_eligible_defs(mock_db)
+    # "No" == re_eligible_date is None. Run the job repeatedly to simulate months passing.
+    case_id = await _insert_rejected_case(mock_db, case_code="AFS-LOAN-RE3", re_eligible_date=None, choice="no")
+
+    for _ in range(3):
+        await auto_transition_re_eligible_cases({})
+
+    case = await mock_db["application_workflows"].find_one({"_id": to_object_id(case_id)})
+    assert case["current_status"] == "rejected"
+
+
+async def test_auto_transition_ignores_unrelated_active_cases(mock_db, owner_headers, monkeypatch):
+    monkeypatch.setattr("app.worker.tasks.reminders.get_database", lambda: mock_db)
+    await _seed_reject_re_eligible_defs(mock_db)
+    now = utc_now()
+    active_id = (
+        await mock_db["application_workflows"].insert_one(
+            {
+                "case_code": "AFS-LOAN-ACT", "case_type": "loan", "application_id": "app-act", "customer_id": "cust-act",
+                "product_id": "prod-1", "product_category": "loan", "assigned_to": None, "current_status": "credit_evaluation",
+                "pending_document_type_ids": [], "loan_details": {}, "is_deleted": False, "status": "active",
+                "created_at": now, "updated_at": now, "version": 1,
+            }
+        )
+    ).inserted_id
+    await _insert_rejected_case(mock_db, case_code="AFS-LOAN-RE4", re_eligible_date=now - timedelta(days=1))
+
+    await auto_transition_re_eligible_cases({})
+
+    active = await mock_db["application_workflows"].find_one({"_id": active_id})
+    assert active["current_status"] == "credit_evaluation"

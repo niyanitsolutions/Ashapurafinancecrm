@@ -524,6 +524,17 @@ async def seed_leads_nav_item() -> None:
     print("nav items: ensured leads")
 
 
+async def seed_bin_nav_item() -> None:
+    # Centralized Bin — Owner-only (owner_only=True; every /bin route is
+    # Depends(require_owner) server-side). Same "feature seeds its own nav_items row"
+    # pattern as seed_leads_nav_item.
+    db = get_database()
+    nav_item = NavItem(key="bin", label="Bin", route="/bin", order=95, owner_only=True)
+    payload = nav_item.model_dump(by_alias=True, exclude={"id"})
+    await db["nav_items"].update_one({"key": nav_item.key}, {"$setOnInsert": payload}, upsert=True)
+    print("nav items: ensured bin")
+
+
 async def seed_workflow_nav_items() -> None:
     # Module 6C — same "future modules add their own nav item" pattern as Module 6A's
     # seed_leads_nav_item, not an edit to Module 5's own seed_dashboard_catalog.
@@ -612,7 +623,12 @@ async def seed_workflow_definitions() -> None:
             LoanStatus.RE_ELIGIBLE, "Re-Eligible", 10, [LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED],
             False, True, LoanAuditEvent.MARKED_RE_ELIGIBLE, "loan_case.marked_re_eligible",
         ),
-        (LoanStatus.REJECTED, "Application Rejected", 11, [], False, False, LoanAuditEvent.REJECTED, "loan_case.rejected"),
+        # `rejected -> re_eligible` (production add-on): a rejected case scheduled at
+        # rejection time (3/6/9/12 months / Custom) is flipped here automatically by the
+        # `auto_transition_re_eligible_cases` worker job on its scheduled date. A "No"
+        # rejection is never scheduled, so this edge is never taken for it. An
+        # already-seeded database needs `scripts/migrate_rejected_re_eligible_transition.py`.
+        (LoanStatus.REJECTED, "Application Rejected", 11, [LoanStatus.RE_ELIGIBLE], False, False, LoanAuditEvent.REJECTED, "loan_case.rejected"),
     ]
     # "Move Back" (production redesign, this round): one configured previous status per
     # loan status, backed by `WorkflowDefinition.allowed_previous_statuses` — reserved on
@@ -1072,6 +1088,7 @@ async def main() -> None:
     await seed_settings_master_data()
     await seed_dashboard_catalog()
     await seed_leads_nav_item()
+    await seed_bin_nav_item()
     await seed_real_product_schemas()
     await seed_workflow_definitions()
     await seed_workflow_nav_items()

@@ -20,19 +20,26 @@ export function LeadsLayout() {
   // loan_management:applications:view permission the underlying API already
   // enforces, so this tab is never shown to someone who'd immediately get a 403 from
   // it; not a new permission, just reusing the existing check client-side too.
-  const canViewTopUp = can("loan_management:applications", "view");
+  // Top Up Loan and Re-Eligible both come from Loan Management (same case list, same
+  // permission) — only their tabs live here. Gated on the same
+  // loan_management:applications:view permission the underlying API already enforces.
+  const canViewLoanCases = can("loan_management:applications", "view");
   const [counts, setCounts] = useState<LeadCounts | null>(null);
   const [topUpCount, setTopUpCount] = useState<number | undefined>(undefined);
+  const [reEligibleCount, setReEligibleCount] = useState<number | undefined>(undefined);
 
   const loadCounts = () => {
     getLeadCounts()
       .then(setCounts)
       .catch(() => undefined);
-    if (canViewTopUp) {
-      // Reuses Loan Management's own existing counts endpoint verbatim for this one
-      // badge — no change to Leads' own counts endpoint/business logic.
+    if (canViewLoanCases) {
+      // Reuses Loan Management's own existing counts endpoint verbatim for these two
+      // badges — no change to Leads' own counts endpoint/business logic.
       getLoanCaseCounts()
-        .then((c) => setTopUpCount(c.top_up_eligible))
+        .then((c) => {
+          setTopUpCount(c.top_up_eligible);
+          setReEligibleCount(c.re_eligible);
+        })
         .catch(() => undefined);
     }
   };
@@ -42,7 +49,7 @@ export function LeadsLayout() {
     const interval = window.setInterval(loadCounts, COUNT_POLL_INTERVAL_MS);
     return () => window.clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canViewTopUp]);
+  }, [canViewLoanCases]);
 
   const tabs = [
     { label: "Fresh Leads", to: "/leads", matchKey: "leads", exact: true, count: counts?.fresh },
@@ -50,7 +57,12 @@ export function LeadsLayout() {
     { label: "Document Collection", to: "/leads/document-collection", matchKey: "leads", count: counts?.document_collection },
     { label: "Rejected", to: "/leads/rejected", matchKey: "leads", count: counts?.rejected },
     { label: "Assigned", to: "/leads/assigned", matchKey: "leads", count: counts?.assigned },
-    ...(canViewTopUp ? [{ label: "Top Up Loan", to: "/leads/top-up", matchKey: "leads", count: topUpCount }] : []),
+    ...(canViewLoanCases
+      ? [
+          { label: "Top Up Loan", to: "/leads/top-up", matchKey: "leads", count: topUpCount },
+          { label: "Re-Eligible", to: "/leads/re-eligible", matchKey: "leads", count: reEligibleCount },
+        ]
+      : []),
   ];
 
   return (

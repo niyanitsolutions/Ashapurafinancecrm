@@ -50,7 +50,10 @@ const baseDetails: LoanCaseDetail["loan_details"] = {
   assigned_officer: null, bank_decision: null, bank_remarks: null, offered_amount: null, offered_tenure_months: null,
   offered_interest_rate: null, offer_decision: "pending", rv_ov_ref_type: null, rv_ov_ref_status: null, rv_ov_ref_date: null,
   rv_ov_ref_verified_by: null, rv_ov_ref_result: null, rv_ov_ref_remarks: null, esign_completed: false, nach_completed: false,
-  kyc_completed: false, final_evaluation_remarks: null, disbursed_amount: null, disbursed_at: null, disbursed_reference: null,
+  kyc_completed: false, final_evaluation_remarks: null,
+  re_eligibility_choice: null, re_eligible_date: null, re_eligibility_scheduled_at: null, re_eligibility_scheduled_by: null,
+  re_eligibility_auto_transitioned: false,
+  disbursed_amount: null, disbursed_at: null, disbursed_reference: null,
   top_up_period: null, top_up_eligibility_date: null, top_up_remarks: null, top_up_scheduled_at: null, top_up_scheduled_by: null,
 };
 
@@ -231,7 +234,7 @@ describe("UpdateLoanCaseModal never mutates without an explicit Save/Confirm", (
     await user.click(findUpdateButton());
     await user.click(await screen.findByRole("button", { name: "Confirm" }));
     expect(updateLoanCaseStatus).toHaveBeenCalledTimes(1);
-    expect(updateLoanCaseStatus).toHaveBeenCalledWith("case-1", "re_eligible", undefined);
+    expect(updateLoanCaseStatus).toHaveBeenCalledWith("case-1", "re_eligible", undefined, undefined);
   });
 
   it("Move Back requires its own Confirm click", async () => {
@@ -243,5 +246,46 @@ describe("UpdateLoanCaseModal never mutates without an explicit Save/Confirm", (
 
     await user.click(await screen.findByRole("button", { name: "Confirm Move Back" }));
     expect(moveLoanCaseBack).toHaveBeenCalledTimes(1);
+  });
+
+  it("Reject opens the Re-Eligibility scheduling popup and sends the chosen schedule + remarks", async () => {
+    const user = userEvent.setup();
+    updateLoanCaseStatus.mockClear();
+    renderModal("new_customer", ["credit_evaluation", "rejected"]);
+
+    await user.click(await screen.findByRole("button", { name: "Reject" }));
+    // Nothing fired yet — the scheduling popup opened.
+    expect(updateLoanCaseStatus).not.toHaveBeenCalled();
+    expect(await screen.findByText(/should this case become Re-Eligible/i)).toBeInTheDocument();
+
+    // Confirm Reject is disabled until a choice + remarks are provided.
+    const confirm = screen.getByRole("button", { name: "Confirm Reject" });
+    expect(confirm).toBeDisabled();
+
+    await user.click(screen.getByLabelText("6 Months"));
+    await user.type(screen.getByLabelText(/Remarks/i), "Credit score too low");
+    expect(confirm).toBeEnabled();
+    await user.click(confirm);
+
+    expect(updateLoanCaseStatus).toHaveBeenCalledWith("case-1", "rejected", "Credit score too low", {
+      re_eligibility: "6_months",
+      re_eligible_date: undefined,
+    });
+  });
+
+  it("Reject → No sends re_eligibility 'no' (never automatically Re-Eligible)", async () => {
+    const user = userEvent.setup();
+    updateLoanCaseStatus.mockClear();
+    renderModal("new_customer", ["credit_evaluation", "rejected"]);
+
+    await user.click(await screen.findByRole("button", { name: "Reject" }));
+    await user.click(await screen.findByLabelText("No"));
+    await user.type(screen.getByLabelText(/Remarks/i), "Do not revisit");
+    await user.click(screen.getByRole("button", { name: "Confirm Reject" }));
+
+    expect(updateLoanCaseStatus).toHaveBeenCalledWith("case-1", "rejected", "Do not revisit", {
+      re_eligibility: "no",
+      re_eligible_date: undefined,
+    });
   });
 });

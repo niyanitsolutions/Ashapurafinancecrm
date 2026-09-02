@@ -3,9 +3,10 @@ import { Outlet } from "react-router-dom";
 import { ModuleTabs } from "@/components/layout/ModuleTabs";
 import { getLoanCaseCounts, type LoanCaseCounts } from "@/features/loan_management/api";
 
-// 12-tab pipeline (decision #129) — one tab per LoanStatus.ALL value, each with a live,
-// server-computed count badge (GET /loan-cases/counts), same "never trust the currently
-// loaded page" principle Leads' own tab counts established (decision 125).
+// Loan pipeline tabs (decision #129) — one tab per LoanStatus.ALL value except
+// `re_eligible`, whose tab moved to Leads (/leads/re-eligible) per production spec. Each
+// has a live, server-computed count badge (GET /loan-cases/counts), same "never trust
+// the currently loaded page" principle Leads' own tab counts established (decision 125).
 const COUNT_POLL_INTERVAL_MS = 15_000;
 
 export function LoanManagementLayout() {
@@ -29,7 +30,8 @@ export function LoanManagementLayout() {
     { label: "Send For Disbursement", to: "/loan-management/send-for-disbursement", count: counts?.send_for_disbursement },
     { label: "Disbursed", to: "/loan-management/disbursements", count: counts?.disbursed },
     { label: "On Hold", to: "/loan-management/on-hold", count: counts?.on_hold },
-    { label: "Re-Eligible", to: "/loan-management/re-eligible", count: counts?.re_eligible },
+    // "Re-Eligible" tab moved to Leads (/leads/re-eligible) per production spec — the
+    // re_eligible status, its list API and counts are unchanged.
     { label: "Rejected", to: "/loan-management/rejected", count: counts?.rejected },
   ];
 

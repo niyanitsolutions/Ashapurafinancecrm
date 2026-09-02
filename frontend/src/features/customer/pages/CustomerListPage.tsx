@@ -6,6 +6,7 @@ import { ColumnsMenu, type ColumnOption } from "@/components/tables/ColumnsMenu"
 import { EmptyState } from "@/components/layout/EmptyState";
 import { Pagination } from "@/components/tables/Pagination";
 import { Table, TableBody, TableHead, TableHeadRow, TableRow, Td, Th } from "@/components/tables/DataTable";
+import { useListDelete } from "@/features/bin/useListDelete";
 import { listCustomersStaff, type CustomerListItem } from "@/features/customer/api";
 import { getErrorMessage } from "@/features/customer/errors";
 import { Icon } from "@/theme/icons";
@@ -27,6 +28,8 @@ export function CustomerListPage() {
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [reloadKey, setReloadKey] = useState(0);
+  const del = useListDelete("customers", () => setReloadKey((k) => k + 1));
   const [visibleColumns, setVisibleColumns] = useState<Set<string>>(() => new Set(OPTIONAL_COLUMNS.map((c) => c.key)));
   const toggleColumn = (key: string) =>
     setVisibleColumns((prev) => {
@@ -38,7 +41,7 @@ export function CustomerListPage() {
   const isVisible = (key: string) => visibleColumns.has(key);
   // Source is always visible — it's the customer's original entry path (Lead vs Direct
   // registration), not an incidental detail worth hiding behind the columns toggle.
-  const columnCount = 3 + OPTIONAL_COLUMNS.filter((c) => isVisible(c.key)).length;
+  const columnCount = 3 + (del.enabled ? 1 : 0) + OPTIONAL_COLUMNS.filter((c) => isVisible(c.key)).length;
 
   useEffect(() => {
     setIsLoading(true);
@@ -49,7 +52,7 @@ export function CustomerListPage() {
       })
       .catch((err) => setError(getErrorMessage(err)))
       .finally(() => setIsLoading(false));
-  }, [page, pageSize, search]);
+  }, [page, pageSize, search, reloadKey]);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -57,6 +60,8 @@ export function CustomerListPage() {
     <div className="min-h-screen bg-background">
       <div className="p-6">
         {error && <p className="mb-4 text-sm text-danger">{error}</p>}
+        {del.error && <p className="mb-4 text-sm text-danger">{del.error}</p>}
+        {del.bulkBar}
 
         <div className="bg-card rounded-2xl shadow-card overflow-hidden">
           <div className="p-6 flex flex-wrap items-start justify-between gap-4">
@@ -94,6 +99,17 @@ export function CustomerListPage() {
             <Table>
               <TableHead>
                 <TableHeadRow>
+                  {del.enabled && (
+                    <Th className="w-10">
+                      <input
+                        type="checkbox"
+                        aria-label="Select all"
+                        className="accent-primary"
+                        checked={items.length > 0 && items.every((c) => del.isSelected(c.id))}
+                        onChange={() => del.toggleAll(items.map((c) => c.id))}
+                      />
+                    </Th>
+                  )}
                   <Th>Code</Th>
                   <Th>Name</Th>
                   {isVisible("mobile") && <Th>Mobile</Th>}
@@ -134,6 +150,17 @@ export function CustomerListPage() {
                 )}
                 {items.map((c) => (
                   <TableRow key={c.id}>
+                    {del.enabled && (
+                      <Td>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${c.customer_code}`}
+                          className="accent-primary"
+                          checked={del.isSelected(c.id)}
+                          onChange={() => del.toggle(c.id)}
+                        />
+                      </Td>
+                    )}
                     <Td className="whitespace-nowrap">
                       <Link to={`/customers/${c.id}`} className="text-primary font-medium hover:underline">
                         {c.customer_code}
@@ -160,7 +187,10 @@ export function CustomerListPage() {
                       </Td>
                     )}
                     <Td>
-                      <ActionButton to={`/customers/${c.id}`} variant="view" />
+                      <div className="flex items-center gap-1.5">
+                        <ActionButton to={`/customers/${c.id}`} variant="view" />
+                        {del.enabled && <ActionButton variant="delete" onClick={() => del.requestDelete(c.id)} />}
+                      </div>
                     </Td>
                   </TableRow>
                 ))}
@@ -182,6 +212,7 @@ export function CustomerListPage() {
           }}
         />
       </div>
+      {del.dialog}
     </div>
   );
 }

@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/layout/EmptyState";
 import { Pagination } from "@/components/tables/Pagination";
 import { Table, TableBody, TableHead, TableHeadRow, TableRow, Td, Th } from "@/components/tables/DataTable";
 import { useAuth } from "@/features/auth/useAuth";
+import { useListDelete } from "@/features/bin/useListDelete";
 import { getErrorMessage } from "@/features/customer/errors";
 import { Icon, type IconName } from "@/theme/icons";
 
@@ -72,6 +73,7 @@ export function CaseListPage<T extends CaseListItem>({
   rowActions,
   titleOverride,
   descriptionOverride,
+  deleteResourceKey,
 }: {
   icon: IconName;
   entityLabel: string;
@@ -117,9 +119,17 @@ export function CaseListPage<T extends CaseListItem>({
    * computing the title/description exactly as before. */
   titleOverride?: string;
   descriptionOverride?: string;
+  /** Enables Owner-only single + bulk delete into the centralized Bin. The value is the
+   * `DeletableResource.key` for this module ("loan_cases" / "insurance_cases"). Omit to
+   * render no delete affordances at all (the shared component is used in read-only
+   * contexts too). */
+  deleteResourceKey?: string;
 }) {
   const { role } = useAuth();
   const [searchParams] = useSearchParams();
+  const [deleteRefresh, setDeleteRefresh] = useState(0);
+  const del = useListDelete(deleteResourceKey ?? "", () => setDeleteRefresh((k) => k + 1));
+  const deleteEnabled = Boolean(deleteResourceKey) && del.enabled;
   const [items, setItems] = useState<T[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -142,7 +152,7 @@ export function CaseListPage<T extends CaseListItem>({
       return next;
     });
   const isVisible = (key: string) => visibleColumns.has(key);
-  const columnCount = 2 + OPTIONAL_COLUMNS.filter((c) => isVisible(c.key)).length + (extraColumns?.length ?? 0);
+  const columnCount = 2 + (deleteEnabled ? 1 : 0) + OPTIONAL_COLUMNS.filter((c) => isVisible(c.key)).length + (extraColumns?.length ?? 0);
 
   const hasCustomFilters = !fixedStatus && !reEligible;
 
@@ -172,7 +182,7 @@ export function CaseListPage<T extends CaseListItem>({
       })
       .catch((err) => setError(getErrorMessage(err)))
       .finally(() => setIsLoading(false));
-  }, [page, pageSize, search, status, unassignedOnly, reEligible, listFn, refreshToken]);
+  }, [page, pageSize, search, status, unassignedOnly, reEligible, listFn, refreshToken, deleteRefresh]);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -198,6 +208,8 @@ export function CaseListPage<T extends CaseListItem>({
     <div className="min-h-screen bg-background">
       <div className="p-6">
         <ErrorBanner message={error} />
+        <ErrorBanner message={del.error} />
+        {del.bulkBar}
 
         <div className="bg-card border border-border rounded-card shadow-card overflow-hidden">
           <div className="p-6 flex flex-wrap items-start justify-between gap-4">
@@ -268,6 +280,17 @@ export function CaseListPage<T extends CaseListItem>({
             <Table>
               <TableHead>
                 <TableHeadRow>
+                  {deleteEnabled && (
+                    <Th className="w-10">
+                      <input
+                        type="checkbox"
+                        aria-label="Select all"
+                        className="accent-primary"
+                        checked={items.length > 0 && items.every((c) => del.isSelected(c.id))}
+                        onChange={() => del.toggleAll(items.map((c) => c.id))}
+                      />
+                    </Th>
+                  )}
                   <Th>Case Code</Th>
                   {isVisible("customer") && <Th>Customer</Th>}
                   {isVisible("product") && <Th>Product</Th>}
@@ -315,6 +338,17 @@ export function CaseListPage<T extends CaseListItem>({
                 )}
                 {items.map((c) => (
                   <TableRow key={c.id}>
+                    {deleteEnabled && (
+                      <Td>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${c.case_code}`}
+                          className="accent-primary"
+                          checked={del.isSelected(c.id)}
+                          onChange={() => del.toggle(c.id)}
+                        />
+                      </Td>
+                    )}
                     <Td className="whitespace-nowrap">
                       <Link to={`${detailBasePath}/${c.id}`} className="text-primary font-medium hover:underline">
                         {c.case_code}
@@ -334,6 +368,7 @@ export function CaseListPage<T extends CaseListItem>({
                         <ActionButton to={`${detailBasePath}/${c.id}`} variant="view" />
                         {onUpdate && (!canUpdateRow || canUpdateRow(c)) && <ActionButton variant="update" onClick={() => onUpdate(c)} />}
                         {rowActions?.(c)}
+                        {deleteEnabled && <ActionButton variant="delete" onClick={() => del.requestDelete(c.id)} />}
                       </div>
                     </Td>
                   </TableRow>
@@ -358,6 +393,7 @@ export function CaseListPage<T extends CaseListItem>({
           />
         )}
       </div>
+      {del.dialog}
     </div>
   );
 }

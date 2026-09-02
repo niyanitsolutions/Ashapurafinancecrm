@@ -28,6 +28,7 @@ export function InsuranceCaseListPage({ fixedStatus, reEligible }: { fixedStatus
       defaultDescription="Every policy application moving through underwriting to issuance."
       reEligibleDescription="Rejected insurance cases that become eligible to reapply after their cooldown period."
       emptyStateDescription="An insurance case is created automatically once a customer's application is submitted."
+      deleteResourceKey="insurance_cases"
     />
   );
 }

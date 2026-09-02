@@ -26,7 +26,7 @@ import {
 } from "@/features/loan_management/api";
 import { UpdateLoanCaseModal } from "@/features/loan_management/components/UpdateLoanCaseModal";
 import { LOAN_STATUS_LABELS as STATUS_LABELS } from "@/features/loan_management/constants";
-import { formatISTDateTime } from "@/shared/dateFormat";
+import { formatISTDate, formatISTDateTime } from "@/shared/dateFormat";
 import { useDocumentCollectionBackContext } from "@/shared/navigationContext";
 import { HOLD_REASONS } from "@/features/workflow_engine/holdReasons";
 
@@ -54,11 +54,13 @@ export function LoanCaseDetailsPage() {
   const { can } = usePermissions();
   // loan_management:applications's real backend actions: view/edit/approve/reject/
   // assign — no "create" (cases originate from the workflow engine). "edit" covers
-  // every write below except Assign (assign) and Disburse (approve), which are
-  // separately, more coarsely permissioned server-side.
+  // every write below except Assign (assign) and Disburse (approve-or-edit), which are
+  // separately permissioned server-side.
   const canEdit = can("loan_management:applications", "edit");
   const canAssign = can("loan_management:applications", "assign");
-  const canDisburse = can("loan_management:applications", "approve");
+  // Disbursement is available to a case's `approve` holder OR its `edit` holder — mirrors
+  // the backend's `require_any_permission(("approve", "edit"))` on POST /disburse.
+  const canDisburse = can("loan_management:applications", "approve") || canEdit;
   const { caseId } = useParams<{ caseId: string }>();
   // Reached via StaffApplicationDetailsPage's "Manage Status ->" link, which propagates
   // the Document Collection context forward when present — every normal Loan
@@ -143,6 +145,14 @@ export function LoanCaseDetailsPage() {
       {loanCase.rejection_reason && (
         <div className="mb-4 rounded border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
           Rejected — {loanCase.rejection_reason}
+          {status === "rejected" && (
+            <span className="mt-1 block text-danger/80">
+              Re-Eligibility:{" "}
+              {loanCase.loan_details.re_eligible_date
+                ? `Scheduled · ${formatISTDate(loanCase.loan_details.re_eligible_date)}`
+                : "No (never automatically Re-Eligible)"}
+            </span>
+          )}
         </div>
       )}
 

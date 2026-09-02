@@ -20,10 +20,12 @@ import {
   updateLoanCaseStatus,
   type BankOffer,
   type LoanCaseDetail,
+  type ReEligibilitySchedule,
 } from "@/features/loan_management/api";
 import { AdditionalDocumentsPanel } from "@/features/loan_management/components/AdditionalDocumentsPanel";
 import { CreditEvaluationBankOffers } from "@/features/loan_management/components/CreditEvaluationBankOffers";
 import { OfferAcceptancePanel } from "@/features/loan_management/components/OfferAcceptancePanel";
+import { ReEligibilitySchedulingModal, type ReEligibilityRejectPayload } from "@/features/loan_management/components/ReEligibilitySchedulingModal";
 import { TopUpSchedulingModal } from "@/features/loan_management/components/TopUpSchedulingModal";
 import { LOAN_STATUS_LABELS as STATUS_LABELS } from "@/features/loan_management/constants";
 import { getLoanStatusControlInfo, type StatusControlAction } from "@/features/loan_management/statusControl";
@@ -111,7 +113,10 @@ export function UpdateLoanCaseModal({
             <StatusUpdateControl
               actions={getLoanStatusControlInfo(status, loanCase.allowed_next_statuses)}
               labels={STATUS_LABELS}
-              onUpdate={(nextStatus, remarks) => run(() => updateLoanCaseStatus(caseId, nextStatus, remarks), "Status updated.")}
+              caseCode={loanCase.case_code}
+              onUpdate={(nextStatus, remarks, schedule) =>
+                run(() => updateLoanCaseStatus(caseId, nextStatus, remarks, schedule), "Status updated.")
+              }
             />
           </div>
         )}
@@ -200,8 +205,15 @@ export function UpdateLoanCaseModal({
           <div>
             <h3 className="mb-2 text-sm font-semibold text-text/70">Decision Screen — Final Evaluation</h3>
             <DecisionForm
+              caseCode={loanCase.case_code}
               onSubmit={(decision, reason, extra) =>
-                run(() => recordFinalEvaluation(caseId, { remarks: extra.remarks, decision, rejection_reason: reason }), "Final evaluation recorded.")
+                run(
+                  () =>
+                    recordFinalEvaluation(caseId, {
+                      remarks: extra.remarks, decision, rejection_reason: reason, ...extra.schedule,
+                    }),
+                  "Final evaluation recorded.",
+                )
               }
             />
           </div>
@@ -239,17 +251,23 @@ export function UpdateLoanCaseModal({
 function StatusUpdateControl({
   actions,
   labels,
+  caseCode,
   onUpdate,
 }: {
   actions: StatusControlAction[];
   labels: Record<string, string>;
-  onUpdate: (nextStatus: string, remarks?: string) => void;
+  caseCode?: string;
+  onUpdate: (nextStatus: string, remarks?: string, schedule?: ReEligibilitySchedule) => void;
 }) {
   // Decision #132: EVERY simple action requires this same explicit confirm step before
   // calling the backend — not just Reject. Clicking a row's button only reveals the
   // panel; nothing is called until "Confirm"/"Confirm Reject" is clicked, and "Cancel"
   // (or closing the modal) leaves the case completely untouched. This is what closes the
   // "one click, no data, instant transition" bug for every plain move, not only Reject.
+  //
+  // Reject additionally opens the Re-Eligibility scheduling popup (production add-on) —
+  // 3/6/9/12 Months / Custom / No — instead of the plain remarks panel; the chosen
+  // schedule rides along on `onUpdate`'s third argument.
   const [confirmingIndex, setConfirmingIndex] = useState<number | null>(null);
   const [confirmRemarks, setConfirmRemarks] = useState("");
 
@@ -258,6 +276,22 @@ function StatusUpdateControl({
       {actions.map((action, i) => {
         if (action.kind === "simple") {
           const isReject = action.nextStatus === "rejected";
+          if (confirmingIndex === i && isReject) {
+            return (
+              <ReEligibilitySchedulingModal
+                key={i}
+                caseCode={caseCode}
+                onCancel={() => setConfirmingIndex(null)}
+                onConfirm={(payload: ReEligibilityRejectPayload) => {
+                  onUpdate(action.nextStatus, payload.remarks, {
+                    re_eligibility: payload.re_eligibility,
+                    re_eligible_date: payload.re_eligible_date,
+                  });
+                  setConfirmingIndex(null);
+                }}
+              />
+            );
+          }
           if (confirmingIndex === i) {
             return (
               <div key={i} className={`space-y-2 rounded border px-3 py-2 ${isReject ? "border-danger/30 bg-danger/5" : "border-border bg-background/50"}`}>
@@ -435,28 +469,31 @@ function RvOvRefForm({
 }
 
 function DecisionForm({
+  caseCode,
   onSubmit,
 }: {
-  onSubmit: (decision: "approved" | "rejected", rejectionReason: string | undefined, extra: { remarks?: string }) => void;
+  caseCode?: string;
+  onSubmit: (
+    decision: "approved" | "rejected",
+    rejectionReason: string | undefined,
+    extra: { remarks?: string; schedule?: ReEligibilitySchedule },
+  ) => void;
 }) {
   const [decision, setDecision] = useState<"approved" | "rejected">("approved");
   const [remarks, setRemarks] = useState("");
-  const [rejectionReason, setRejectionReason] = useState("");
-  const [confirmReject, setConfirmReject] = useState(false);
-
-  const submit = () => {
-    onSubmit(decision, decision === "rejected" ? rejectionReason : undefined, { remarks: remarks || undefined });
-  };
+  const [scheduleReject, setScheduleReject] = useState(false);
 
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
         if (decision === "rejected") {
-          setConfirmReject(true);
+          // Reject → Re-Eligibility scheduling popup (production add-on): the popup's
+          // mandatory Remarks becomes the rejection reason; the schedule rides along.
+          setScheduleReject(true);
           return;
         }
-        submit();
+        onSubmit("approved", undefined, { remarks: remarks || undefined });
       }}
       className="space-y-3"
     >
@@ -469,23 +506,21 @@ function DecisionForm({
           <input type="radio" checked={decision === "rejected"} onChange={() => setDecision("rejected")} /> Reject
         </label>
       </div>
-      {decision === "rejected" && (
-        <TextareaField label="Rejection reason (mandatory)" value={rejectionReason} onChange={(e) => setRejectionReason(e.target.value)} rows={2} required />
-      )}
       <SubmitButton>Submit Decision</SubmitButton>
 
-      <ConfirmDialog
-        open={confirmReject}
-        title="Reject Case"
-        message="Reject this case? This decision is recorded on the case history and cannot be undone here."
-        confirmLabel="Reject Case"
-        confirmVariant="danger"
-        onConfirm={() => {
-          submit();
-          setConfirmReject(false);
-        }}
-        onClose={() => setConfirmReject(false)}
-      />
+      {scheduleReject && (
+        <ReEligibilitySchedulingModal
+          caseCode={caseCode}
+          onCancel={() => setScheduleReject(false)}
+          onConfirm={(payload: ReEligibilityRejectPayload) => {
+            onSubmit("rejected", payload.remarks, {
+              remarks: remarks || payload.remarks,
+              schedule: { re_eligibility: payload.re_eligibility, re_eligible_date: payload.re_eligible_date },
+            });
+            setScheduleReject(false);
+          }}
+        />
+      )}
     </form>
   );
 }

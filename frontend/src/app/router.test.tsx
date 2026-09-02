@@ -39,7 +39,7 @@ describe("router — Loan/Insurance Management tab routes stay keyed", () => {
     expect(loanManagement).toBeTruthy();
     const tabPaths = [
       "cases", "credit-evaluation", "offer-acceptance", "additional-documents", "rv-ov-ref",
-      "esign-nach-kyc", "final-evaluation", "send-for-disbursement", "disbursements", "on-hold", "re-eligible", "rejected",
+      "esign-nach-kyc", "final-evaluation", "send-for-disbursement", "disbursements", "on-hold", "rejected",
     ];
     const keys = tabPaths.map((path) => {
       const route = findRoute(loanManagement?.children, path);
@@ -59,6 +59,18 @@ describe("router — Loan/Insurance Management tab routes stay keyed", () => {
     const loanManagement = findRouteByPath(router.routes as RouteLike[], "/loan-management");
     expect(loanManagement).toBeTruthy();
     expect(findRoute(loanManagement?.children, "top-up")).toBeUndefined();
+  });
+
+  it("Re-Eligible: moved to /leads/re-eligible; old /loan-management/re-eligible redirects", () => {
+    const leads = findRouteByPath(router.routes as RouteLike[], "/leads");
+    expect(findRoute(leads?.children, "re-eligible")).toBeTruthy();
+
+    const loanManagement = findRouteByPath(router.routes as RouteLike[], "/loan-management");
+    expect(findRoute(loanManagement?.children, "re-eligible")).toBeUndefined();
+
+    // Old URL still resolves — to a redirect element, not a dead layout outlet.
+    const redirect = findRouteByPath(router.routes as RouteLike[], "/loan-management/re-eligible");
+    expect(redirect?.element).toBeTruthy();
   });
 
   it("every /insurance-management tab route's element has a distinct, non-empty key", () => {

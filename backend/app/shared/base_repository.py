@@ -90,3 +90,37 @@ class BaseRepository(Generic[TModel]):
             },
         )
         return result.modified_count == 1
+
+    async def soft_delete_many(self, doc_ids: list[str], *, deleted_by: str | None = None) -> list[str]:
+        """Bulk soft-delete in a single write (used by the centralized Bin's bulk-delete —
+        never an inefficient per-id loop). Returns the ids that were actually flipped
+        (i.e. weren't already deleted)."""
+        object_ids = [to_object_id(i) for i in doc_ids]
+        not_yet_deleted = {
+            str(doc["_id"]) async for doc in self.collection.find({"_id": {"$in": object_ids}, **_NOT_DELETED}, {"_id": 1})
+        }
+        if not not_yet_deleted:
+            return []
+        await self.collection.update_many(
+            {"_id": {"$in": [to_object_id(i) for i in not_yet_deleted]}},
+            {"$set": {"is_deleted": True, "deleted_at": utc_now(), "deleted_by": deleted_by, "status": "deleted"}, "$inc": {"version": 1}},
+        )
+        return [i for i in doc_ids if i in not_yet_deleted]
+
+    async def restore(self, doc_id: str, *, restored_by: str | None = None, restore_status: str | None = None) -> bool:
+        """Reverse of `soft_delete` — clears the soft-delete markers so the record
+        reappears in every normal list. Only affects a currently-deleted row. The
+        record's own domain state (a Lead's `stage`, a case's `current_status`, ...) was
+        never touched by the delete. `soft_delete` overwrote the generic `status` field
+        with "deleted"; `restore_status` (the value captured at delete time) is written
+        back so a model with a constrained `status` (e.g. `Lead`) validates on read."""
+        set_updates: dict[str, Any] = {
+            "is_deleted": False, "deleted_at": None, "deleted_by": None, "updated_at": utc_now(), "updated_by": restored_by,
+        }
+        if restore_status is not None:
+            set_updates["status"] = restore_status
+        result = await self.collection.update_one(
+            {"_id": to_object_id(doc_id), "is_deleted": True},
+            {"$set": set_updates, "$inc": {"version": 1}},
+        )
+        return result.modified_count == 1

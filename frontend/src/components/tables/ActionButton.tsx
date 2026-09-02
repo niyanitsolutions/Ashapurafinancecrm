@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { Icon, type IconName } from "@/theme/icons";
 
-type ActionVariant = "view" | "edit" | "link" | "followup" | "update" | "reject";
+type ActionVariant = "view" | "edit" | "link" | "followup" | "update" | "reject" | "delete";
 
 // "link" (Generate Link) uses Tailwind's stock indigo scale directly rather than a shared
 // theme token — it's a one-off accent for a single row action, not a reusable brand color,
@@ -16,6 +16,7 @@ const VARIANT_CLASSES: Record<ActionVariant, string> = {
   followup: "text-info border-info/25 hover:bg-info/10",
   update: "text-success border-success/25 hover:bg-success/10",
   reject: "text-danger border-danger/25 hover:bg-danger/10",
+  delete: "text-danger border-danger/25 hover:bg-danger/10",
 };
 
 const VARIANT_ICON: Record<ActionVariant, IconName> = {
@@ -25,6 +26,7 @@ const VARIANT_ICON: Record<ActionVariant, IconName> = {
   followup: "clock",
   update: "trending-up",
   reject: "x-circle",
+  delete: "trash",
 };
 
 const VARIANT_LABEL: Record<ActionVariant, string> = {
@@ -34,6 +36,7 @@ const VARIANT_LABEL: Record<ActionVariant, string> = {
   followup: "Follow Up",
   update: "Update",
   reject: "Reject",
+  delete: "Delete",
 };
 
 // Rounded-pill row action button (table Actions column) — white background, tone-colored

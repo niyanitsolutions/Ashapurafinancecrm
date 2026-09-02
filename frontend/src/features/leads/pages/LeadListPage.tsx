@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/layout/EmptyState";
 import { Pagination } from "@/components/tables/Pagination";
 import { Table, TableBody, TableHead, TableHeadRow, TableRow, Td, Th } from "@/components/tables/DataTable";
 import { usePermissions } from "@/features/access_control/usePermissions";
+import { useListDelete } from "@/features/bin/useListDelete";
 import { GenerateLinkModal } from "@/features/leads/components/GenerateLinkModal";
 import { FollowUpModal } from "@/features/leads/components/FollowUpModal";
 import { MoveApplicationToLoanManagementModal } from "@/features/leads/components/MoveApplicationToLoanManagementModal";
@@ -142,6 +143,15 @@ export function LeadListPage({ tab }: { tab: LeadTab }) {
   const canReject = can("leads:leads", "reject");
   const canExport = can("leads:leads", "export");
   const { refreshCounts } = useOutletContext<{ refreshCounts: () => void }>();
+  const [reloadKey, setReloadKey] = useState(0);
+  // Owner-only delete + bulk delete into the centralized Bin. `del.enabled` is false for
+  // every non-Owner, so the checkbox column and Delete buttons never render for them
+  // (and the /bin API 403s them regardless). Lead-less rows (Applications, not Leads)
+  // are excluded — they have no Lead record to delete.
+  const del = useListDelete("leads", () => {
+    setReloadKey((k) => k + 1);
+    refreshCounts();
+  });
   const [items, setItems] = useState<LeadListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -176,6 +186,7 @@ export function LeadListPage({ tab }: { tab: LeadTab }) {
   const isVisible = (key: string) => visibleColumns.has(key);
   const columnCount =
     3 +
+    (del.enabled ? 1 : 0) +
     menuColumns.filter((c) => isVisible(c.key)).length +
     (showNextFollowUp ? 1 : 0) +
     (showRejectedColumns ? 3 : 0) +
@@ -216,7 +227,7 @@ export function LeadListPage({ tab }: { tab: LeadTab }) {
       });
   };
 
-  useEffect(load, [page, pageSize, search, productCategory, sourceId, tab]);
+  useEffect(load, [page, pageSize, search, productCategory, sourceId, tab, reloadKey]);
 
   // New leads (Meta Lead Ads webhooks land server-side, with nothing to push the
   // browser) must appear without a manual refresh — silently re-fetch the current view
@@ -242,6 +253,8 @@ export function LeadListPage({ tab }: { tab: LeadTab }) {
     refreshCounts();
   };
 
+  const deletableIds = items.filter((l) => !l.is_lead_less).map((l) => l.id);
+
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const meta = TAB_META[tab];
 
@@ -249,6 +262,8 @@ export function LeadListPage({ tab }: { tab: LeadTab }) {
     <div className="min-h-screen bg-background">
       <div className="p-6">
         <ErrorBanner message={error} />
+        <ErrorBanner message={del.error} />
+        {del.bulkBar}
 
         <div className="bg-card border border-border rounded-card shadow-card overflow-hidden">
           <div className="p-6 flex flex-wrap items-start justify-between gap-4">
@@ -334,6 +349,17 @@ export function LeadListPage({ tab }: { tab: LeadTab }) {
             <Table>
               <TableHead>
                 <TableHeadRow>
+                  {del.enabled && (
+                    <Th className="w-10">
+                      <input
+                        type="checkbox"
+                        aria-label="Select all"
+                        className="accent-primary"
+                        checked={deletableIds.length > 0 && deletableIds.every((id) => del.isSelected(id))}
+                        onChange={() => del.toggleAll(deletableIds)}
+                      />
+                    </Th>
+                  )}
                   <Th>Code</Th>
                   <Th>Name</Th>
                   {isVisible("mobile") && <Th>Mobile</Th>}
@@ -385,6 +411,19 @@ export function LeadListPage({ tab }: { tab: LeadTab }) {
                   const created = formatDateTime(lead.created_at);
                   return (
                     <TableRow key={lead.id}>
+                      {del.enabled && (
+                        <Td>
+                          {!lead.is_lead_less && (
+                            <input
+                              type="checkbox"
+                              aria-label={`Select ${lead.lead_code}`}
+                              className="accent-primary"
+                              checked={del.isSelected(lead.id)}
+                              onChange={() => del.toggle(lead.id)}
+                            />
+                          )}
+                        </Td>
+                      )}
                       <Td className="whitespace-nowrap">
                         {lead.is_lead_less ? (
                           // Production fix "DC vs LM" — a Lead-less row has no Lead to
@@ -491,6 +530,9 @@ export function LeadListPage({ tab }: { tab: LeadTab }) {
                           {!lead.is_lead_less && canEdit && tab !== "rejected" && (
                             <ActionButton to={`/leads/${lead.id}`} state={{ startEditing: true }} variant="edit" />
                           )}
+                          {del.enabled && !lead.is_lead_less && (
+                            <ActionButton variant="delete" onClick={() => del.requestDelete(lead.id)} />
+                          )}
                         </div>
                       </Td>
                     </TableRow>
@@ -536,6 +578,7 @@ export function LeadListPage({ tab }: { tab: LeadTab }) {
         ) : (
           <UpdateStageModal lead={updateStageLead} onClose={() => setUpdateStageLead(null)} onChanged={refreshAfterAction} />
         ))}
+      {del.dialog}
     </div>
   );
 }

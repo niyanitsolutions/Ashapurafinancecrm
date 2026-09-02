@@ -48,7 +48,7 @@ _LOAN_ROWS = [
     ),
     (LoanStatus.DISBURSED, "Disbursed", 9, [], [], LoanAuditEvent.DISBURSED),
     (LoanStatus.RE_ELIGIBLE, "Re-Eligible", 10, [LoanStatus.CREDIT_EVALUATION, LoanStatus.REJECTED], [], LoanAuditEvent.MARKED_RE_ELIGIBLE),
-    (LoanStatus.REJECTED, "Application Rejected", 11, [], [], LoanAuditEvent.REJECTED),
+    (LoanStatus.REJECTED, "Application Rejected", 11, [LoanStatus.RE_ELIGIBLE], [], LoanAuditEvent.REJECTED),
 ]
 
 
@@ -149,7 +149,7 @@ async def _grant_case_permission(client, owner_headers, employee_id, *, actions)
     assert r.status_code == 200, r.text
 
 
-async def _loan_case_at_new_customer(client, mock_db, owner_headers, master_data, *, mobile_suffix):
+async def _loan_case_at_new_customer(client, mock_db, owner_headers, master_data, *, mobile_suffix, case_actions=("view", "edit", "approve", "assign")):
     await _seed_workflow_definitions(mock_db)
     product = await _seed_product_and_form(mock_db, product_name=f"Redesign Loan {mobile_suffix}")
     customer_headers, application_id = await _submitted_application(client, mock_db, product, mobile=f"96{mobile_suffix}")
@@ -169,7 +169,7 @@ async def _loan_case_at_new_customer(client, mock_db, owner_headers, master_data
     r = await client.get("/api/v1/loan-cases?unassigned_only=true", headers=owner_headers)
     case_id = next(c["id"] for c in r.json()["data"] if c["application_id"] == application_id)
     employee = await _create_employee(client, owner_headers, master_data, mobile=f"97{mobile_suffix}", email=f"redesign{mobile_suffix}@example.com")
-    await _grant_case_permission(client, owner_headers, employee["id"], actions=["view", "edit", "approve", "assign"])
+    await _grant_case_permission(client, owner_headers, employee["id"], actions=list(case_actions))
     r = await client.post(f"/api/v1/loan-cases/{case_id}/assign", json={"employee_id": employee["id"]}, headers=owner_headers)
     assert r.status_code == 200, r.text
     employee_headers = await _login(client, f"97{mobile_suffix}")
@@ -418,6 +418,190 @@ async def test_legacy_case_with_no_bank_offers_still_returns_full_detail(client,
 
 
 # ---------------------------------------------------------------------- Disbursements report
+
+
+async def _advance_to_send_for_disbursement(
+    client, mock_db, owner_headers, master_data, *, mobile_suffix, approved_amount, case_actions=("view", "edit", "approve", "assign")
+):
+    case_id, employee_headers, _c, _a = await _loan_case_at_new_customer(
+        client, mock_db, owner_headers, master_data, mobile_suffix=mobile_suffix, case_actions=case_actions
+    )
+    await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers", json={"bank_name": "HDFC"}, headers=employee_headers)
+    await client.post(f"/api/v1/loan-cases/{case_id}/move-to-credit-evaluation", json={}, headers=employee_headers)
+    offer_id = (await client.get(f"/api/v1/loan-cases/{case_id}/bank-offers", headers=employee_headers)).json()["data"][0]["id"]
+    await client.patch(
+        f"/api/v1/loan-cases/{case_id}/bank-offers/{offer_id}",
+        json={"bank_name": "HDFC", "decision": "approved", "approved_amount": approved_amount, "emi_per_month": 5000},
+        headers=employee_headers,
+    )
+    await client.post(f"/api/v1/loan-cases/{case_id}/bank-offers/{offer_id}/select", headers=employee_headers)
+    await client.post(f"/api/v1/loan-cases/{case_id}/offer-acceptance/confirm", headers=employee_headers)
+    await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "rv_ov_ref"}, headers=employee_headers)
+    await client.post(
+        f"/api/v1/loan-cases/{case_id}/rv-ov-ref",
+        json={
+            "rv_ov_ref_type": "Residence Verification", "rv_ov_ref_status": "completed", "rv_ov_ref_date": "2026-08-01T00:00:00Z",
+            "rv_ov_ref_verified_by": "Field Agent", "rv_ov_ref_result": "positive",
+        },
+        headers=employee_headers,
+    )
+    await client.post(
+        f"/api/v1/loan-cases/{case_id}/esign-nach-kyc", json={"esign_completed": True, "nach_completed": True, "kyc_completed": True},
+        headers=employee_headers,
+    )
+    await client.post(f"/api/v1/loan-cases/{case_id}/final-evaluation", json={"decision": "approved"}, headers=employee_headers)
+    return case_id, employee_headers
+
+
+async def test_authorized_employee_with_edit_only_can_mark_disbursed(client, mock_db, owner_headers, master_data):
+    # Regression for the disbursement-access production fix: an Employee who holds only
+    # `view` + `edit` on loan_management:applications (NO dedicated `approve` grant) can
+    # complete "Mark Disbursed" — the same widened authorization
+    # (`require_any_permission(("approve", "edit"))`) used for Leads' own reject action.
+    case_id, employee_headers = await _advance_to_send_for_disbursement(
+        client, mock_db, owner_headers, master_data, mobile_suffix="10000060", approved_amount=200000, case_actions=("view", "edit"),
+    )
+    r = await client.post(
+        f"/api/v1/loan-cases/{case_id}/disburse", json={"disbursed_amount": 200000, "disbursed_reference": "UTR-EDIT-ONLY"}, headers=employee_headers
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()["data"]
+    assert body["current_status"] == "disbursed"
+    assert body["loan_details"]["disbursed_amount"] == 200000
+    assert body["loan_details"]["disbursed_reference"] == "UTR-EDIT-ONLY"
+    assert body["loan_details"]["disbursed_at"] is not None
+
+
+async def test_employee_without_edit_or_approve_cannot_mark_disbursed(client, mock_db, owner_headers, master_data):
+    # A `view`-only Employee (can open the case, cannot work it) is still refused
+    # disbursement at the API level — frontend hiding is not the only guard.
+    case_id, _employee_headers = await _advance_to_send_for_disbursement(
+        client, mock_db, owner_headers, master_data, mobile_suffix="10000061", approved_amount=200000, case_actions=("view", "edit"),
+    )
+    # Second employee: granted only `view` on the case — holds neither `approve` nor
+    # `edit`, so disbursement must be refused at the API regardless of the UI.
+    viewer = await _create_employee(client, owner_headers, master_data, mobile="9810000061", email="viewer10000061@example.com")
+    await _grant_case_permission(client, owner_headers, viewer["id"], actions=["view"])
+    viewer_headers = await _login(client, "9810000061")
+    r = await client.post(
+        f"/api/v1/loan-cases/{case_id}/disburse", json={"disbursed_amount": 200000, "disbursed_reference": "X"}, headers=viewer_headers
+    )
+    assert r.status_code == 403, r.text
+
+
+async def test_owner_can_mark_disbursed(client, mock_db, owner_headers, master_data):
+    case_id, _employee_headers = await _advance_to_send_for_disbursement(
+        client, mock_db, owner_headers, master_data, mobile_suffix="10000062", approved_amount=200000,
+    )
+    r = await client.post(
+        f"/api/v1/loan-cases/{case_id}/disburse", json={"disbursed_amount": 200000, "disbursed_reference": "UTR-OWNER"}, headers=owner_headers
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["current_status"] == "disbursed"
+
+
+# ---------------------------------------------------------------------- Reject → Re-Eligibility scheduling
+
+
+async def _case_timeline_texts(client, headers, case_id):
+    r = await client.get(f"/api/v1/loan-cases/{case_id}/timeline", headers=headers)
+    assert r.status_code == 200, r.text
+    return [e.get("text") or "" for e in r.json()["data"]]
+
+
+async def test_reject_via_status_control_schedules_re_eligibility_by_month(client, mock_db, owner_headers, master_data):
+    case_id, employee_headers, _c, _a = await _loan_case_at_new_customer(client, mock_db, owner_headers, master_data, mobile_suffix="10000070")
+    r = await client.patch(
+        f"/api/v1/loan-cases/{case_id}/status",
+        json={"status": "rejected", "remarks": "Ineligible now", "re_eligibility": "6_months"}, headers=employee_headers,
+    )
+    assert r.status_code == 200, r.text
+    details = r.json()["data"]["loan_details"]
+    assert r.json()["data"]["current_status"] == "rejected"
+    assert details["re_eligibility_choice"] == "6_months"
+    assert details["re_eligible_date"] is not None
+    assert details["re_eligibility_auto_transitioned"] is False
+    assert any("Re-Eligibility scheduled (6 Months)" in t for t in await _case_timeline_texts(client, employee_headers, case_id))
+
+
+async def test_reject_with_no_never_schedules_re_eligibility(client, mock_db, owner_headers, master_data):
+    case_id, employee_headers, _c, _a = await _loan_case_at_new_customer(client, mock_db, owner_headers, master_data, mobile_suffix="10000071")
+    r = await client.patch(
+        f"/api/v1/loan-cases/{case_id}/status",
+        json={"status": "rejected", "remarks": "Never re-eligible", "re_eligibility": "no"}, headers=employee_headers,
+    )
+    assert r.status_code == 200, r.text
+    details = r.json()["data"]["loan_details"]
+    assert details["re_eligibility_choice"] == "no"
+    assert details["re_eligible_date"] is None
+    assert any("Re-Eligibility: No" in t for t in await _case_timeline_texts(client, employee_headers, case_id))
+
+
+async def test_reject_omitting_re_eligibility_defaults_to_no(client, mock_db, owner_headers, master_data):
+    case_id, employee_headers, _c, _a = await _loan_case_at_new_customer(client, mock_db, owner_headers, master_data, mobile_suffix="10000072")
+    r = await client.patch(
+        f"/api/v1/loan-cases/{case_id}/status", json={"status": "rejected", "remarks": "No schedule sent"}, headers=employee_headers,
+    )
+    assert r.status_code == 200, r.text
+    details = r.json()["data"]["loan_details"]
+    assert details["re_eligibility_choice"] == "no"
+    assert details["re_eligible_date"] is None
+
+
+async def test_reject_custom_date_must_be_in_the_future(client, mock_db, owner_headers, master_data):
+    case_id, employee_headers, _c, _a = await _loan_case_at_new_customer(client, mock_db, owner_headers, master_data, mobile_suffix="10000073")
+    past = await client.patch(
+        f"/api/v1/loan-cases/{case_id}/status",
+        json={"status": "rejected", "remarks": "x", "re_eligibility": "custom", "re_eligible_date": "2020-01-01"}, headers=employee_headers,
+    )
+    assert past.status_code == 422, past.text  # ValidationError -> 422
+
+
+async def test_reject_custom_date_in_future_is_stored(client, mock_db, owner_headers, master_data):
+    case_id, employee_headers, _c, _a = await _loan_case_at_new_customer(client, mock_db, owner_headers, master_data, mobile_suffix="10000074")
+    r = await client.patch(
+        f"/api/v1/loan-cases/{case_id}/status",
+        json={"status": "rejected", "remarks": "x", "re_eligibility": "custom", "re_eligible_date": "2027-12-31"}, headers=employee_headers,
+    )
+    assert r.status_code == 200, r.text
+    details = r.json()["data"]["loan_details"]
+    assert details["re_eligibility_choice"] == "custom"
+    assert details["re_eligible_date"] is not None and "2027-12" in details["re_eligible_date"]
+
+
+async def test_final_evaluation_reject_also_schedules_re_eligibility(client, mock_db, owner_headers, master_data):
+    # Build a case that stops at final_evaluation (never approved), then reject it there.
+    case_id2, emp2, _c, _a = await _loan_case_at_new_customer(client, mock_db, owner_headers, master_data, mobile_suffix="10000076")
+    await client.post(f"/api/v1/loan-cases/{case_id2}/bank-offers", json={"bank_name": "HDFC"}, headers=emp2)
+    await client.post(f"/api/v1/loan-cases/{case_id2}/move-to-credit-evaluation", json={}, headers=emp2)
+    offer_id = (await client.get(f"/api/v1/loan-cases/{case_id2}/bank-offers", headers=emp2)).json()["data"][0]["id"]
+    await client.patch(
+        f"/api/v1/loan-cases/{case_id2}/bank-offers/{offer_id}",
+        json={"bank_name": "HDFC", "decision": "approved", "approved_amount": 200000, "emi_per_month": 5000}, headers=emp2,
+    )
+    await client.post(f"/api/v1/loan-cases/{case_id2}/bank-offers/{offer_id}/select", headers=emp2)
+    await client.post(f"/api/v1/loan-cases/{case_id2}/offer-acceptance/confirm", headers=emp2)
+    await client.patch(f"/api/v1/loan-cases/{case_id2}/status", json={"status": "rv_ov_ref"}, headers=emp2)
+    await client.post(
+        f"/api/v1/loan-cases/{case_id2}/rv-ov-ref",
+        json={
+            "rv_ov_ref_type": "Residence Verification", "rv_ov_ref_status": "completed", "rv_ov_ref_date": "2026-08-01T00:00:00Z",
+            "rv_ov_ref_verified_by": "Field Agent", "rv_ov_ref_result": "positive",
+        },
+        headers=emp2,
+    )
+    await client.post(
+        f"/api/v1/loan-cases/{case_id2}/esign-nach-kyc", json={"esign_completed": True, "nach_completed": True, "kyc_completed": True}, headers=emp2
+    )
+    r = await client.post(
+        f"/api/v1/loan-cases/{case_id2}/final-evaluation",
+        json={"decision": "rejected", "rejection_reason": "Failed final checks", "re_eligibility": "3_months"}, headers=emp2,
+    )
+    assert r.status_code == 200, r.text
+    details = r.json()["data"]["loan_details"]
+    assert r.json()["data"]["current_status"] == "rejected"
+    assert details["re_eligibility_choice"] == "3_months"
+    assert details["re_eligible_date"] is not None
 
 
 async def _disburse_case(client, mock_db, owner_headers, master_data, *, mobile_suffix, approved_amount, disbursed_amount, product_name):

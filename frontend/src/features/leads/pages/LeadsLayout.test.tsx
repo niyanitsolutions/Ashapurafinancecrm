@@ -23,7 +23,7 @@ const getLeadCounts = vi.fn(() =>
 const getLoanCaseCounts = vi.fn(() =>
   Promise.resolve({
     new_customer: 0, credit_evaluation: 0, offer_acceptance: 0, additional_documents: 0, rv_ov_ref: 0, esign_nach_kyc: 0,
-    final_evaluation: 0, send_for_disbursement: 0, disbursed: 0, on_hold: 0, re_eligible: 0, rejected: 0, top_up_eligible: 7,
+    final_evaluation: 0, send_for_disbursement: 0, disbursed: 0, on_hold: 0, re_eligible: 9, rejected: 0, top_up_eligible: 7,
   }),
 );
 
@@ -58,11 +58,20 @@ describe("LeadsLayout — Top Up Loan tab", () => {
     await waitFor(() => expect(screen.getByRole("link", { name: /top up loan/i }).textContent).toContain("7"));
   });
 
-  it("hides Top Up Loan for a user without loan_management:applications view access", async () => {
+  it("hides Top Up Loan and Re-Eligible for a user without loan_management:applications view access", async () => {
     mockCan = () => false;
     renderLayout();
     await screen.findByText("Fresh Leads Page");
     expect(screen.queryByRole("link", { name: /top up loan/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /re-eligible/i })).not.toBeInTheDocument();
+  });
+
+  it("shows Re-Eligible (moved here from Loan Management) with its Loan Management count, gated on the same permission", async () => {
+    mockCan = () => true;
+    renderLayout();
+    const tab = await screen.findByRole("link", { name: /re-eligible/i });
+    expect(tab).toHaveAttribute("href", "/leads/re-eligible");
+    await waitFor(() => expect(screen.getByRole("link", { name: /re-eligible/i }).textContent).toContain("9"));
   });
 
   it("existing Leads tabs (Fresh/My/Document Collection/Rejected/Assigned) are unaffected", async () => {

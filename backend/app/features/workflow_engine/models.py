@@ -95,6 +95,22 @@ class LoanCaseDetails(BaseModel):
 
     final_evaluation_remarks: str | None = None
 
+    # Reject → Re-Eligibility scheduling (production add-on). Set whenever a case enters
+    # `rejected` via the Reject popup (any stage) or Final Evaluation's reject decision —
+    # see `LoanCaseService._apply_re_eligibility_schedule`. `re_eligibility_choice` is a
+    # `ReEligibilityPeriod` value; `"no"` (or None) means "never automatically
+    # Re-Eligible". `re_eligible_date` is UTC-midnight of the IST target date, consumed
+    # by the `auto_transition_re_eligible_cases` worker job which flips the case
+    # `rejected -> re_eligible` on/after that instant and then clears the date.
+    # `re_eligibility_auto_transitioned` records that that automatic move happened (vs a
+    # staff "Mark Re-Eligible"). All optional/default so every case rejected before this
+    # existed is unaffected (never auto Re-Eligible) with no migration.
+    re_eligibility_choice: str | None = None
+    re_eligible_date: datetime | None = None
+    re_eligibility_scheduled_at: datetime | None = None
+    re_eligibility_scheduled_by: str | None = None
+    re_eligibility_auto_transitioned: bool = False
+
     disbursed_amount: float | None = None
     disbursed_at: datetime | None = None
     disbursed_reference: str | None = None

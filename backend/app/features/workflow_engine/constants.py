@@ -11,6 +11,8 @@ was finalized in that same round (decision 064), superseding the draft flagged a
 assumption in decision 057.
 """
 
+from typing import ClassVar
+
 ON_HOLD_STATUS = "on_hold"
 
 
@@ -81,6 +83,26 @@ class TopUpPeriod:
     # Only these three carry a fixed calendar-month offset; NO/CUSTOM compute their
     # eligibility date differently (see schedule_top_up).
     MONTHS_BY_PERIOD = {THREE_MONTHS: 3, SIX_MONTHS: 6, TWELVE_MONTHS: 12}
+
+
+class ReEligibilityPeriod:
+    """Reject → Re-Eligibility scheduling (production add-on to every Loan Management
+    stage that can Reject). Mirrors `TopUpPeriod`'s shape: `THREE/SIX/NINE/TWELVE_MONTHS`
+    are CALENDAR months from the rejection instant (`app.utils.datetime.
+    add_calendar_months`); `CUSTOM` uses a staff-supplied future date; `NO` is an
+    explicit "never automatically become Re-Eligible" — NOT a default duration. A `NO`
+    (or unscheduled) rejected case has `re_eligible_date is None` and the auto-transition
+    worker job never touches it."""
+
+    THREE_MONTHS = "3_months"
+    SIX_MONTHS = "6_months"
+    NINE_MONTHS = "9_months"
+    TWELVE_MONTHS = "12_months"
+    CUSTOM = "custom"
+    NO = "no"
+
+    ALL = (THREE_MONTHS, SIX_MONTHS, NINE_MONTHS, TWELVE_MONTHS, CUSTOM, NO)
+    MONTHS_BY_PERIOD: ClassVar[dict[str, int]] = {THREE_MONTHS: 3, SIX_MONTHS: 6, NINE_MONTHS: 9, TWELVE_MONTHS: 12}
 
 
 class InsuranceStatus:
@@ -213,6 +235,8 @@ class LoanAuditEvent:
     DISBURSED = "loan_case_disbursed"
     REJECTED = "loan_case_rejected"
     MARKED_RE_ELIGIBLE = "loan_case_marked_re_eligible"
+    RE_ELIGIBILITY_SCHEDULED = "loan_case_re_eligibility_scheduled"
+    RE_ELIGIBILITY_AUTO_TRANSITIONED = "loan_case_re_eligibility_auto_transitioned"
     MOVED_TO_LOAN_MANAGEMENT = "loan_case_moved_to_loan_management"
     TOP_UP_SCHEDULED = "loan_case_top_up_scheduled"
     TOP_UP_MOVED_TO_DOCUMENT_COLLECTION = "loan_case_top_up_moved_to_document_collection"

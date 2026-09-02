@@ -8,6 +8,7 @@ import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
 import { Modal } from "@/components/overlays/Modal";
 import { Pagination } from "@/components/tables/Pagination";
 import { usePermissions } from "@/features/access_control/usePermissions";
+import { useListDelete } from "@/features/bin/useListDelete";
 import { getErrorMessage } from "@/features/customer/errors";
 import {
   approveReferralPartner,
@@ -74,6 +75,8 @@ function CreatePartnerModal({ onClose, onSaved }: { onClose: () => void; onSaved
 export function ReferralPartnerListPage() {
   const { can, isOwner } = usePermissions();
   const canCreate = can("referral_partner_management:partners", "create");
+  const [reloadKey, setReloadKey] = useState(0);
+  const del = useListDelete("referral_partners", () => setReloadKey((k) => k + 1));
   const [items, setItems] = useState<ReferralPartner[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -95,7 +98,7 @@ export function ReferralPartnerListPage() {
       .finally(() => setIsLoading(false));
   };
 
-  useEffect(load, [page, approvalStatus]);
+  useEffect(load, [page, approvalStatus, reloadKey]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -119,6 +122,8 @@ export function ReferralPartnerListPage() {
     >
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
       <ErrorBanner message={error} />
+      <ErrorBanner message={del.error} />
+      {del.bulkBar}
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <select value={approvalStatus} onChange={(e) => { setPage(1); setApprovalStatus(e.target.value); }} className="rounded-xl border border-border px-3.5 py-2.5 text-sm bg-card">
@@ -141,6 +146,17 @@ export function ReferralPartnerListPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-text/60">
+                {del.enabled && (
+                  <th className="px-4 py-3 w-10">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all"
+                      className="accent-primary"
+                      checked={items.length > 0 && items.every((p) => del.isSelected(p.id))}
+                      onChange={() => del.toggleAll(items.map((p) => p.id))}
+                    />
+                  </th>
+                )}
                 <th className="px-4 py-3">Code</th>
                 <th className="px-4 py-3">Name</th>
                 <th className="px-4 py-3">Mobile</th>
@@ -150,10 +166,21 @@ export function ReferralPartnerListPage() {
               </tr>
             </thead>
             <tbody>
-              {isLoading && <tr><td colSpan={6} className="px-4 py-6 text-center text-text/50">Loading…</td></tr>}
+              {isLoading && <tr><td colSpan={del.enabled ? 7 : 6} className="px-4 py-6 text-center text-text/50">Loading…</td></tr>}
               {!isLoading &&
                 items.map((partner) => (
                   <tr key={partner.id} className="border-b border-border last:border-0 hover:bg-background">
+                    {del.enabled && (
+                      <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${partner.partner_code}`}
+                          className="accent-primary"
+                          checked={del.isSelected(partner.id)}
+                          onChange={() => del.toggle(partner.id)}
+                        />
+                      </td>
+                    )}
                     <td className="px-4 py-3">{partner.partner_code}</td>
                     <td className="px-4 py-3">{partner.full_name}</td>
                     <td className="px-4 py-3">{partner.mobile}</td>
@@ -170,6 +197,11 @@ export function ReferralPartnerListPage() {
                       {isOwner && partner.approval_status !== "deactivated" && (
                         <button type="button" onClick={() => setDeactivateTarget(partner)} className="text-danger hover:underline text-xs">
                           Deactivate
+                        </button>
+                      )}
+                      {del.enabled && (
+                        <button type="button" onClick={() => del.requestDelete(partner.id)} className="text-danger hover:underline text-xs ml-3">
+                          Delete
                         </button>
                       )}
                       {!isOwner && <span className="text-text/30">—</span>}
@@ -207,6 +239,7 @@ export function ReferralPartnerListPage() {
         }}
         onClose={() => setDeactivateTarget(null)}
       />
+      {del.dialog}
     </SimplePageLayout>
   );
 }

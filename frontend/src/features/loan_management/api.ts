@@ -29,6 +29,15 @@ export interface LoanCaseDetails {
   nach_completed: boolean;
   kyc_completed: boolean;
   final_evaluation_remarks: string | null;
+  // Reject → Re-Eligibility scheduling (production add-on) — set whenever the case is
+  // rejected. `re_eligibility_choice` is "3_months" | "6_months" | "9_months" |
+  // "12_months" | "custom" | "no" ("no" / null = never automatically Re-Eligible);
+  // `re_eligible_date` is the scheduled auto-transition date (null for "no").
+  re_eligibility_choice: string | null;
+  re_eligible_date: string | null;
+  re_eligibility_scheduled_at: string | null;
+  re_eligibility_scheduled_by: string | null;
+  re_eligibility_auto_transitioned: boolean;
   disbursed_amount: number | null;
   disbursed_at: string | null;
   disbursed_reference: string | null;
@@ -244,8 +253,20 @@ export function assignLoanCase(caseId: string, employeeId: string) {
 // every other write here: the backend re-validates the status value against
 // `LoanStatus.ALL` and the existing Workflow Engine transition graph, so this can never
 // persist an Insurance status or an out-of-order jump even if called directly.
-export function updateLoanCaseStatus(caseId: string, status: string, remarks?: string) {
-  return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/status`, { method: "PATCH", body: JSON.stringify({ status, remarks }) });
+// Reject → Re-Eligibility scheduling: the Reject popup always sends `re_eligibility`
+// (including the explicit "no"); every other status transition omits it. `re_eligible_date`
+// (ISO yyyy-mm-dd) is only sent with `re_eligibility === "custom"`.
+export type ReEligibilityChoice = "3_months" | "6_months" | "9_months" | "12_months" | "custom" | "no";
+export interface ReEligibilitySchedule {
+  re_eligibility?: ReEligibilityChoice;
+  re_eligible_date?: string;
+}
+
+export function updateLoanCaseStatus(caseId: string, status: string, remarks?: string, schedule?: ReEligibilitySchedule) {
+  return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/status`, {
+    method: "PATCH",
+    body: JSON.stringify({ status, remarks, ...schedule }),
+  });
 }
 
 export function getLoanCaseCounts() {
@@ -440,7 +461,10 @@ export function recordEsignNachKyc(caseId: string, payload: { esign_completed: b
   return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/esign-nach-kyc`, { method: "POST", body: JSON.stringify(payload) });
 }
 
-export function recordFinalEvaluation(caseId: string, payload: { remarks?: string; decision: "approved" | "rejected"; rejection_reason?: string }) {
+export function recordFinalEvaluation(
+  caseId: string,
+  payload: { remarks?: string; decision: "approved" | "rejected"; rejection_reason?: string } & ReEligibilitySchedule,
+) {
   return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/final-evaluation`, { method: "POST", body: JSON.stringify(payload) });
 }
 
