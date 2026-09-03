@@ -100,6 +100,7 @@ import { DesignationsPage } from "@/features/system_settings/pages/DesignationsP
 import { CommunicationProvidersPage } from "@/features/communication/pages/CommunicationProvidersPage";
 import { DocumentTypesPage } from "@/features/system_settings/pages/DocumentTypesPage";
 import { GeoFencingPage } from "@/features/geo_fencing/pages/GeoFencingPage";
+import { InsuranceCategoriesPage } from "@/features/system_settings/pages/InsuranceCategoriesPage";
 import { InsuranceProductsPage } from "@/features/system_settings/pages/InsuranceProductsPage";
 import { LoanProductsPage } from "@/features/system_settings/pages/LoanProductsPage";
 import { SettingsHomePage } from "@/features/system_settings/pages/SettingsHomePage";
@@ -419,6 +420,7 @@ export const router = createBrowserRouter([
                   { path: "/settings", element: <SettingsHomePage /> },
                   { path: "/settings/lead-sources", element: <LeadSourcesPage /> },
                   { path: "/settings/loan-products", element: <LoanProductsPage /> },
+                  { path: "/settings/insurance-categories", element: <InsuranceCategoriesPage /> },
                   { path: "/settings/insurance-products", element: <InsuranceProductsPage /> },
                   { path: "/settings/document-types", element: <DocumentTypesPage /> },
                   { path: "/settings/geo-fencing", element: <GeoFencingPage /> },

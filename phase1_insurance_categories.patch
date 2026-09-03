@@ -1,0 +1,1105 @@
+diff --git a/backend/app/features/customer/router.py b/backend/app/features/customer/router.py
+index 981d3c8..56b1295 100644
+--- a/backend/app/features/customer/router.py
++++ b/backend/app/features/customer/router.py
+@@ -256,9 +256,10 @@ async def get_form_definition(
+ # reasoning as /leads/lookup above for Employee Create Lead.
+ @router.get("/portal-products")
+ async def list_portal_products(
+-    category: str, service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep
++    category: str, service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep,
++    insurance_category_id: str | None = None,
+ ) -> ApiResponse[list[NamedMasterDataResponse]]:
+-    products = await service.list_active_products(category)
++    products = await service.list_active_products(category, insurance_category_id=insurance_category_id)
+     items = [
+         NamedMasterDataResponse(
+             id=p.require_id(), name=p.name, description=p.description, status=p.status,
+@@ -269,6 +270,23 @@ async def list_portal_products(
+     return ApiResponse[list[NamedMasterDataResponse]].ok(items)
+ 
+ 
++# Insurance Policy Leads redesign — the first step under "Apply for Insurance": pick a
++# category, then the product list is scoped to it via ?insurance_category_id= above.
++@router.get("/portal-insurance-categories")
++async def list_portal_insurance_categories(
++    service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep
++) -> ApiResponse[list[NamedMasterDataResponse]]:
++    categories = await service.list_active_insurance_categories()
++    items = [
++        NamedMasterDataResponse(
++            id=c.require_id(), name=c.name, description=c.description, status=c.status,
++            created_at=c.created_at, updated_at=c.updated_at,
++        )
++        for c in categories
++    ]
++    return ApiResponse[list[NamedMasterDataResponse]].ok(items)
++
++
+ # ---------------------------------------------------------------------- product schema authoring (Owner)
+ 
+ 
+diff --git a/backend/app/features/customer/service.py b/backend/app/features/customer/service.py
+index 02f765c..8ef7a55 100644
+--- a/backend/app/features/customer/service.py
++++ b/backend/app/features/customer/service.py
+@@ -97,6 +97,7 @@ from app.features.reminders.service import RemindersService
+ from app.features.system_settings.constants import MasterDataStatus
+ from app.features.system_settings.repository import (
+     DocumentTypeRepository,
++    InsuranceCategoryRepository,
+     InsuranceProductRepository,
+     LeadSourceRepository,
+     LoanProductRepository,
+@@ -160,6 +161,7 @@ class CustomerService:
+         self._users = UserRepository(db)
+         self._employees = EmployeeRepository(db)
+         self._loan_products = LoanProductRepository(db)
++        self._insurance_categories = InsuranceCategoryRepository(db)
+         self._insurance_products = InsuranceProductRepository(db)
+         self._document_types = DocumentTypeRepository(db)
+         self._auth = AuthService(db, redis)
+@@ -780,18 +782,32 @@ class CustomerService:
+         Employee Create Lead, Referral Partner Add Lead), see Product Schema Engine."""
+         return await self._get_or_error_form_definition(product_category, product_id)
+ 
+-    async def list_active_products(self, category: str) -> list[Any]:
++    async def list_active_products(self, category: str, *, insurance_category_id: str | None = None) -> list[Any]:
+         """Loan/Insurance products for the Customer Portal's "Apply for Loan/Insurance"
+         product picker — owned by Customer (CurrentUserDep + CustomerDep, never
+         `require_permission`), not proxied through `system_settings`'s own
+         CRUD-permission-gated `/loan-products`/`/insurance-products` endpoints, which are
+         Employee/Owner-only and unconditionally deny any Customer role. Same reasoning as
+         `LeadService.get_lookup_data`'s narrower boundary for Create Lead, for a different
+-        audience. Active-only, matching the Product Visibility Rule."""
++        audience. Active-only, matching the Product Visibility Rule.
++
++        Insurance Policy Leads redesign — for `category == "insurance"` the portal first
++        picks an `InsuranceCategory`, then the product; `insurance_category_id` scopes the
++        product list to that category. Ignored for `category == "loan"` (Loan stays flat)."""
+         if category not in ("loan", "insurance"):
+             raise ValidationError("category must be 'loan' or 'insurance'.")
+-        repo = self._loan_products if category == "loan" else self._insurance_products
+-        return await repo.find_many({"status": MasterDataStatus.ACTIVE}, limit=500, sort=[("name", 1)])
++        if category == "loan":
++            return await self._loan_products.find_many({"status": MasterDataStatus.ACTIVE}, limit=500, sort=[("name", 1)])
++        query: dict[str, Any] = {"status": MasterDataStatus.ACTIVE}
++        if insurance_category_id is not None:
++            query["category_id"] = insurance_category_id
++        return await self._insurance_products.find_many(query, limit=500, sort=[("name", 1)])
++
++    async def list_active_insurance_categories(self) -> list[Any]:
++        """Insurance Policy Leads redesign — the Customer Portal's first step under "Apply
++        for Insurance". Active-only, same customer-scoped access posture as
++        `list_active_products`."""
++        return await self._insurance_categories.find_many({"status": MasterDataStatus.ACTIVE}, limit=500, sort=[("name", 1)])
+ 
+     # ================================================================== product schema authoring (Owner)
+ 
+diff --git a/backend/app/features/system_settings/indexes.py b/backend/app/features/system_settings/indexes.py
+index aa971fa..1469061 100644
+--- a/backend/app/features/system_settings/indexes.py
++++ b/backend/app/features/system_settings/indexes.py
+@@ -10,7 +10,9 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
+ async def ensure_system_settings_indexes(db: AsyncIOMotorDatabase[Any]) -> None:
+     await db["lead_sources"].create_index("name", unique=True)
+     await db["loan_products"].create_index("name", unique=True)
++    await db["insurance_categories"].create_index("name", unique=True)
+     await db["insurance_products"].create_index("name", unique=True)
++    await db["insurance_products"].create_index("category_id")
+     await db["document_types"].create_index("name", unique=True)
+     await db["status_masters"].create_index([("category", 1), ("name", 1)], unique=True)
+     await db["notification_templates"].create_index([("channel", 1), ("key", 1)], unique=True)
+diff --git a/backend/app/features/system_settings/mappers.py b/backend/app/features/system_settings/mappers.py
+index 4ceefdd..23ac7eb 100644
+--- a/backend/app/features/system_settings/mappers.py
++++ b/backend/app/features/system_settings/mappers.py
+@@ -5,6 +5,7 @@ from app.features.employee.schemas import AddressSchema, BranchResponse, MasterD
+ from app.features.system_settings.models import (
+     ApiSetting,
+     CompanySettings,
++    InsuranceProduct,
+     NamedMasterData,
+     NotificationTemplate,
+     StatusMaster,
+@@ -13,6 +14,7 @@ from app.features.system_settings.schemas import (
+     ApiSettingResponse,
+     BusinessHourSchema,
+     CompanySettingsResponse,
++    InsuranceProductResponse,
+     NamedMasterDataResponse,
+     NotificationTemplateResponse,
+     StatusMasterResponse,
+@@ -27,6 +29,14 @@ def named_master_data_to_response(doc: NamedMasterData) -> NamedMasterDataRespon
+     )
+ 
+ 
++def insurance_product_to_response(doc: InsuranceProduct, category_name: str | None = None) -> InsuranceProductResponse:
++    return InsuranceProductResponse(
++        id=doc.require_id(), name=doc.name, description=doc.description, status=doc.status,
++        category_id=doc.category_id, category_name=category_name,
++        created_at=doc.created_at, updated_at=doc.updated_at,
++    )
++
++
+ def department_to_response(department: Department) -> MasterDataResponse:
+     return MasterDataResponse(id=department.require_id(), name=department.name, description=department.description, status=department.status)
+ 
+diff --git a/backend/app/features/system_settings/models.py b/backend/app/features/system_settings/models.py
+index 9ec239a..d6c0367 100644
+--- a/backend/app/features/system_settings/models.py
++++ b/backend/app/features/system_settings/models.py
+@@ -42,8 +42,20 @@ class LoanProduct(NamedMasterData):
+     pass
+ 
+ 
++class InsuranceCategory(NamedMasterData):
++    """Insurance Policy Leads redesign — the top level of the Insurance
++    Category -> Product hierarchy (e.g. "Health Insurance", "Life Insurance").
++    Plain name+description+status master data, same generic CRUD path as the other
++    `NamedMasterData` resources. Loan has no equivalent — Loan Products stay flat."""
++
++
+ class InsuranceProduct(NamedMasterData):
+-    pass
++    # Insurance Policy Leads redesign — every Insurance Product now belongs to an
++    # `InsuranceCategory`. Optional/defaulted so every product seeded before this existed
++    # still loads (the migration `migrate_add_insurance_categories.py` backfills it); the
++    # create/update service path rejects a missing/unknown category for new writes, and
++    # `_validate_product_in_category` is the shared gate every downstream reader uses.
++    category_id: str | None = None
+ 
+ 
+ class DocumentType(NamedMasterData):
+diff --git a/backend/app/features/system_settings/repository.py b/backend/app/features/system_settings/repository.py
+index 078bb20..bef35de 100644
+--- a/backend/app/features/system_settings/repository.py
++++ b/backend/app/features/system_settings/repository.py
+@@ -4,6 +4,7 @@ from app.features.system_settings.models import (
+     ApiSetting,
+     CompanySettings,
+     DocumentType,
++    InsuranceCategory,
+     InsuranceProduct,
+     LeadSource,
+     LoanProduct,
+@@ -41,10 +42,27 @@ class LoanProductRepository(_NamedMasterDataRepository[LoanProduct]):
+     model = LoanProduct
+ 
+ 
++class InsuranceCategoryRepository(_NamedMasterDataRepository[InsuranceCategory]):
++    collection_name = "insurance_categories"
++    model = InsuranceCategory
++
++
+ class InsuranceProductRepository(_NamedMasterDataRepository[InsuranceProduct]):
+     collection_name = "insurance_products"
+     model = InsuranceProduct
+ 
++    async def find_many_by_category(self, category_id: str, *, active_only: bool = False) -> list[InsuranceProduct]:
++        query: dict[str, Any] = {"category_id": category_id, "is_deleted": False}
++        if active_only:
++            query["status"] = "active"
++        return await self.find_many(query, limit=500, sort=[("name", 1)])
++
++    async def count_by_category(self, category_id: str, *, active_only: bool = False) -> int:
++        query: dict[str, Any] = {"category_id": category_id, "is_deleted": False}
++        if active_only:
++            query["status"] = "active"
++        return await self.collection.count_documents(query)
++
+ 
+ class DocumentTypeRepository(_NamedMasterDataRepository[DocumentType]):
+     collection_name = "document_types"
+diff --git a/backend/app/features/system_settings/router.py b/backend/app/features/system_settings/router.py
+index b4fdb96..55b045e 100644
+--- a/backend/app/features/system_settings/router.py
++++ b/backend/app/features/system_settings/router.py
+@@ -27,6 +27,9 @@ from app.features.system_settings.schemas import (
+     BranchUpdateRequest,
+     CompanySettingsResponse,
+     ConfirmLogoRequest,
++    InsuranceProductCreateRequest,
++    InsuranceProductResponse,
++    InsuranceProductUpdateRequest,
+     LogoUploadUrlResponse,
+     NamedMasterDataCreateRequest,
+     NamedMasterDataResponse,
+@@ -226,55 +229,118 @@ async def deactivate_loan_product(
+     return ApiResponse[NamedMasterDataResponse].ok(mappers.named_master_data_to_response(item))
+ 
+ 
++# ---------------------------------------------------------------------- insurance categories
++# Insurance Policy Leads redesign — the top of the Category -> Product hierarchy. Plain
++# name+description+status master data, same shape as Lead Sources; Loan has no equivalent.
++
++
++@router.get("/insurance-categories")
++async def list_insurance_categories(
++    service: ServiceDep, actor: Annotated[User, _perm("insurance_categories", "view")]
++) -> ApiResponse[list[NamedMasterDataResponse]]:
++    items = await service.list_insurance_categories()
++    return ApiResponse[list[NamedMasterDataResponse]].ok([mappers.named_master_data_to_response(i) for i in items])
++
++
++@router.post("/insurance-categories")
++async def create_insurance_category(
++    payload: NamedMasterDataCreateRequest, service: ServiceDep, actor: Annotated[User, _perm("insurance_categories", "create")]
++) -> ApiResponse[NamedMasterDataResponse]:
++    item = await service.create_insurance_category(payload, actor)
++    return ApiResponse[NamedMasterDataResponse].ok(mappers.named_master_data_to_response(item))
++
++
++@router.get("/insurance-categories/{insurance_category_id}")
++async def get_insurance_category(
++    insurance_category_id: str, service: ServiceDep, actor: Annotated[User, _perm("insurance_categories", "view")]
++) -> ApiResponse[NamedMasterDataResponse]:
++    item = await service.get_insurance_category(insurance_category_id)
++    return ApiResponse[NamedMasterDataResponse].ok(mappers.named_master_data_to_response(item))
++
++
++@router.patch("/insurance-categories/{insurance_category_id}")
++async def update_insurance_category(
++    insurance_category_id: str, payload: NamedMasterDataUpdateRequest, service: ServiceDep,
++    actor: Annotated[User, _perm("insurance_categories", "edit")],
++) -> ApiResponse[NamedMasterDataResponse]:
++    item = await service.update_insurance_category(insurance_category_id, payload, actor)
++    return ApiResponse[NamedMasterDataResponse].ok(mappers.named_master_data_to_response(item))
++
++
++@router.patch("/insurance-categories/{insurance_category_id}/activate")
++async def activate_insurance_category(
++    insurance_category_id: str, service: ServiceDep, actor: Annotated[User, _perm("insurance_categories", "edit")]
++) -> ApiResponse[NamedMasterDataResponse]:
++    item = await service.activate_insurance_category(insurance_category_id, actor)
++    return ApiResponse[NamedMasterDataResponse].ok(mappers.named_master_data_to_response(item))
++
++
++@router.patch("/insurance-categories/{insurance_category_id}/deactivate")
++async def deactivate_insurance_category(
++    insurance_category_id: str, service: ServiceDep, actor: Annotated[User, _perm("insurance_categories", "edit")]
++) -> ApiResponse[NamedMasterDataResponse]:
++    item = await service.deactivate_insurance_category(insurance_category_id, actor)
++    return ApiResponse[NamedMasterDataResponse].ok(mappers.named_master_data_to_response(item))
++
++
+ # ---------------------------------------------------------------------- insurance products
+ 
+ 
++async def _insurance_product_response(service: SystemSettingsService, item: Any) -> InsuranceProductResponse:
++    name_map = await service.resolve_insurance_category_names([item])
++    return mappers.insurance_product_to_response(item, name_map.get(item.category_id or ""))
++
++
+ @router.get("/insurance-products")
+ async def list_insurance_products(
+     service: ServiceDep, actor: Annotated[User, _perm("insurance_products", "view")]
+-) -> ApiResponse[list[NamedMasterDataResponse]]:
++) -> ApiResponse[list[InsuranceProductResponse]]:
+     items = await service.list_insurance_products()
+-    return ApiResponse[list[NamedMasterDataResponse]].ok([mappers.named_master_data_to_response(i) for i in items])
++    name_map = await service.resolve_insurance_category_names(items)
++    return ApiResponse[list[InsuranceProductResponse]].ok(
++        [mappers.insurance_product_to_response(i, name_map.get(i.category_id or "")) for i in items]
++    )
+ 
+ 
+ @router.post("/insurance-products")
+ async def create_insurance_product(
+-    payload: NamedMasterDataCreateRequest, service: ServiceDep, actor: Annotated[User, _perm("insurance_products", "create")]
+-) -> ApiResponse[NamedMasterDataResponse]:
++    payload: InsuranceProductCreateRequest, service: ServiceDep, actor: Annotated[User, _perm("insurance_products", "create")]
++) -> ApiResponse[InsuranceProductResponse]:
+     item = await service.create_insurance_product(payload, actor)
+-    return ApiResponse[NamedMasterDataResponse].ok(mappers.named_master_data_to_response(item))
++    return ApiResponse[InsuranceProductResponse].ok(await _insurance_product_response(service, item))
+ 
+ 
+ @router.get("/insurance-products/{insurance_product_id}")
+ async def get_insurance_product(
+     insurance_product_id: str, service: ServiceDep, actor: Annotated[User, _perm("insurance_products", "view")]
+-) -> ApiResponse[NamedMasterDataResponse]:
++) -> ApiResponse[InsuranceProductResponse]:
+     item = await service.get_insurance_product(insurance_product_id)
+-    return ApiResponse[NamedMasterDataResponse].ok(mappers.named_master_data_to_response(item))
++    return ApiResponse[InsuranceProductResponse].ok(await _insurance_product_response(service, item))
+ 
+ 
+ @router.patch("/insurance-products/{insurance_product_id}")
+ async def update_insurance_product(
+-    insurance_product_id: str, payload: NamedMasterDataUpdateRequest, service: ServiceDep, actor: Annotated[User, _perm("insurance_products", "edit")]
+-) -> ApiResponse[NamedMasterDataResponse]:
++    insurance_product_id: str, payload: InsuranceProductUpdateRequest, service: ServiceDep,
++    actor: Annotated[User, _perm("insurance_products", "edit")],
++) -> ApiResponse[InsuranceProductResponse]:
+     item = await service.update_insurance_product(insurance_product_id, payload, actor)
+-    return ApiResponse[NamedMasterDataResponse].ok(mappers.named_master_data_to_response(item))
++    return ApiResponse[InsuranceProductResponse].ok(await _insurance_product_response(service, item))
+ 
+ 
+ @router.patch("/insurance-products/{insurance_product_id}/activate")
+ async def activate_insurance_product(
+     insurance_product_id: str, service: ServiceDep, actor: Annotated[User, _perm("insurance_products", "edit")]
+-) -> ApiResponse[NamedMasterDataResponse]:
++) -> ApiResponse[InsuranceProductResponse]:
+     item = await service.activate_insurance_product(insurance_product_id, actor)
+-    return ApiResponse[NamedMasterDataResponse].ok(mappers.named_master_data_to_response(item))
++    return ApiResponse[InsuranceProductResponse].ok(await _insurance_product_response(service, item))
+ 
+ 
+ @router.patch("/insurance-products/{insurance_product_id}/deactivate")
+ async def deactivate_insurance_product(
+     insurance_product_id: str, service: ServiceDep, actor: Annotated[User, _perm("insurance_products", "edit")]
+-) -> ApiResponse[NamedMasterDataResponse]:
++) -> ApiResponse[InsuranceProductResponse]:
+     item = await service.deactivate_insurance_product(insurance_product_id, actor)
+-    return ApiResponse[NamedMasterDataResponse].ok(mappers.named_master_data_to_response(item))
++    return ApiResponse[InsuranceProductResponse].ok(await _insurance_product_response(service, item))
+ 
+ 
+ # ---------------------------------------------------------------------- document types
+diff --git a/backend/app/features/system_settings/schemas.py b/backend/app/features/system_settings/schemas.py
+index d21a138..f70cff7 100644
+--- a/backend/app/features/system_settings/schemas.py
++++ b/backend/app/features/system_settings/schemas.py
+@@ -35,6 +35,35 @@ class NamedMasterDataResponse(BaseModel):
+     updated_at: datetime
+ 
+ 
++# ---------------------------------------------------------------------- insurance products
++# Insurance Policy Leads redesign — Insurance Products carry a `category_id` (the other
++# NamedMasterData resources don't), so they get their own create/update/response schemas
++# instead of the shared Named* ones. Loan Products stay on the shared path, unchanged.
++
++
++class InsuranceProductCreateRequest(BaseModel):
++    name: str
++    category_id: str
++    description: str | None = None
++
++
++class InsuranceProductUpdateRequest(BaseModel):
++    name: str | None = None
++    category_id: str | None = None
++    description: str | None = None
++
++
++class InsuranceProductResponse(BaseModel):
++    id: str
++    name: str
++    description: str | None = None
++    status: str
++    category_id: str | None = None
++    category_name: str | None = None
++    created_at: datetime
++    updated_at: datetime
++
++
+ class BranchUpdateRequest(BaseModel):
+     name: str | None = None
+     code: str | None = None
+diff --git a/backend/app/features/system_settings/service.py b/backend/app/features/system_settings/service.py
+index 6bbe9ba..b07479c 100644
+--- a/backend/app/features/system_settings/service.py
++++ b/backend/app/features/system_settings/service.py
+@@ -30,6 +30,7 @@ from app.features.system_settings.models import (
+     ApiSetting,
+     CompanySettings,
+     DocumentType,
++    InsuranceCategory,
+     InsuranceProduct,
+     LeadSource,
+     LoanProduct,
+@@ -41,6 +42,7 @@ from app.features.system_settings.repository import (
+     ApiSettingRepository,
+     CompanySettingsRepository,
+     DocumentTypeRepository,
++    InsuranceCategoryRepository,
+     InsuranceProductRepository,
+     LeadSourceRepository,
+     LoanProductRepository,
+@@ -51,6 +53,8 @@ from app.features.system_settings.schemas import (
+     ApiSettingCreateRequest,
+     ApiSettingUpdateRequest,
+     BranchUpdateRequest,
++    InsuranceProductCreateRequest,
++    InsuranceProductUpdateRequest,
+     NamedMasterDataCreateRequest,
+     NamedMasterDataUpdateRequest,
+     NotificationTemplateCreateRequest,
+@@ -77,6 +81,7 @@ class SystemSettingsService:
+ 
+         self._lead_sources = LeadSourceRepository(db)
+         self._loan_products = LoanProductRepository(db)
++        self._insurance_categories = InsuranceCategoryRepository(db)
+         self._insurance_products = InsuranceProductRepository(db)
+         self._document_types = DocumentTypeRepository(db)
+         self._status_masters = StatusMasterRepository(db)
+@@ -176,21 +181,96 @@ class SystemSettingsService:
+     async def deactivate_loan_product(self, loan_product_id: str, actor: User) -> LoanProduct:
+         return await self._set_status_named(self._loan_products, loan_product_id, MasterDataStatus.INACTIVE, "deactivated", actor, resource="loan_products")  # type: ignore[return-value]
+ 
+-    # ---- Insurance Products
++    # ---- Insurance Categories (Insurance Policy Leads redesign — top of the Category -> Product hierarchy)
++
++    async def list_insurance_categories(self) -> list[InsuranceCategory]:
++        return await self._list_named(self._insurance_categories)  # type: ignore[return-value]
++
++    async def create_insurance_category(self, payload: NamedMasterDataCreateRequest, actor: User) -> InsuranceCategory:
++        return await self._create_named(self._insurance_categories, payload, actor, resource="insurance_categories")  # type: ignore[return-value]
++
++    async def get_insurance_category(self, insurance_category_id: str) -> InsuranceCategory:
++        return await self._get_named(self._insurance_categories, insurance_category_id)  # type: ignore[return-value]
++
++    async def update_insurance_category(self, insurance_category_id: str, payload: NamedMasterDataUpdateRequest, actor: User) -> InsuranceCategory:
++        return await self._update_named(self._insurance_categories, insurance_category_id, payload, actor, resource="insurance_categories")  # type: ignore[return-value]
++
++    async def activate_insurance_category(self, insurance_category_id: str, actor: User) -> InsuranceCategory:
++        return await self._set_status_named(self._insurance_categories, insurance_category_id, MasterDataStatus.ACTIVE, "activated", actor, resource="insurance_categories")  # type: ignore[return-value]
++
++    async def deactivate_insurance_category(self, insurance_category_id: str, actor: User) -> InsuranceCategory:
++        # A category with active products underneath it can't be deactivated — the portal
++        # and Policy Leads both resolve a product's category, so a hidden category with a
++        # visible product would be an inconsistent tree. Deactivate the products first.
++        if await self._insurance_products.count_by_category(insurance_category_id, active_only=True) > 0:
++            raise ConflictError("Deactivate or reassign this category's active products before deactivating the category.")
++        return await self._set_status_named(self._insurance_categories, insurance_category_id, MasterDataStatus.INACTIVE, "deactivated", actor, resource="insurance_categories")  # type: ignore[return-value]
++
++    # ---- Insurance Products (each belongs to an InsuranceCategory)
++
++    async def _resolve_category_name_map(self, products: list[InsuranceProduct]) -> dict[str, str]:
++        category_ids = {p.category_id for p in products if p.category_id}
++        if not category_ids:
++            return {}
++        categories = await self._insurance_categories.find_many({}, limit=500)
++        return {c.require_id(): c.name for c in categories if c.require_id() in category_ids}
++
++    async def _require_active_category(self, category_id: str) -> InsuranceCategory:
++        category = await self._insurance_categories.find_by_id(category_id)
++        if category is None:
++            raise NotFoundError("Unknown insurance category.")
++        if category.status != MasterDataStatus.ACTIVE:
++            raise ConflictError("That insurance category is inactive.")
++        return category
+ 
+     async def list_insurance_products(self) -> list[InsuranceProduct]:
+         return await self._list_named(self._insurance_products)  # type: ignore[return-value]
+ 
+-    async def create_insurance_product(self, payload: NamedMasterDataCreateRequest, actor: User) -> InsuranceProduct:
+-        return await self._create_named(self._insurance_products, payload, actor, resource="insurance_products")  # type: ignore[return-value]
++    async def resolve_insurance_category_names(self, products: list[InsuranceProduct]) -> dict[str, str]:
++        return await self._resolve_category_name_map(products)
++
++    async def create_insurance_product(self, payload: InsuranceProductCreateRequest, actor: User) -> InsuranceProduct:
++        await self._require_active_category(payload.category_id)
++        if await self._insurance_products.find_by_name(payload.name):
++            raise ConflictError(f"'{payload.name}' already exists.")
++        doc = InsuranceProduct(
++            name=payload.name, description=payload.description, category_id=payload.category_id, created_by=actor.require_id()
++        )
++        doc_id = await self._insurance_products.insert(doc)
++        await write_audit_log(
++            self._db, event_type=AuditEvent.master_data("insurance_products", "created"),
++            user_id=actor.require_id(), metadata={"id": doc_id, "name": payload.name, "category_id": payload.category_id},
++        )
++        return await self._insurance_products.find_by_id(doc_id) or doc
+ 
+     async def get_insurance_product(self, insurance_product_id: str) -> InsuranceProduct:
+         return await self._get_named(self._insurance_products, insurance_product_id)  # type: ignore[return-value]
+ 
+-    async def update_insurance_product(self, insurance_product_id: str, payload: NamedMasterDataUpdateRequest, actor: User) -> InsuranceProduct:
+-        return await self._update_named(self._insurance_products, insurance_product_id, payload, actor, resource="insurance_products")  # type: ignore[return-value]
++    async def update_insurance_product(self, insurance_product_id: str, payload: InsuranceProductUpdateRequest, actor: User) -> InsuranceProduct:
++        doc = await self.get_insurance_product(insurance_product_id)
++        updates: dict[str, Any] = {}
++        if payload.name is not None and payload.name != doc.name:
++            if await self._insurance_products.find_by_name(payload.name, exclude_id=insurance_product_id):
++                raise ConflictError(f"'{payload.name}' already exists.")
++            updates["name"] = payload.name
++        if payload.description is not None:
++            updates["description"] = payload.description
++        if payload.category_id is not None and payload.category_id != doc.category_id:
++            await self._require_active_category(payload.category_id)
++            updates["category_id"] = payload.category_id
++        if not updates:
++            return doc
++        updated = await self._insurance_products.update(insurance_product_id, updates, updated_by=actor.require_id())
++        await write_audit_log(
++            self._db, event_type=AuditEvent.master_data("insurance_products", "updated"),
++            user_id=actor.require_id(), metadata={"id": insurance_product_id, "fields": list(updates.keys())},
++        )
++        return updated or doc
+ 
+     async def activate_insurance_product(self, insurance_product_id: str, actor: User) -> InsuranceProduct:
++        product = await self.get_insurance_product(insurance_product_id)
++        if product.category_id is not None:
++            await self._require_active_category(product.category_id)
+         return await self._set_status_named(self._insurance_products, insurance_product_id, MasterDataStatus.ACTIVE, "activated", actor, resource="insurance_products")  # type: ignore[return-value]
+ 
+     async def deactivate_insurance_product(self, insurance_product_id: str, actor: User) -> InsuranceProduct:
+diff --git a/frontend/src/app/router.tsx b/frontend/src/app/router.tsx
+index 0692fad..7329117 100644
+--- a/frontend/src/app/router.tsx
++++ b/frontend/src/app/router.tsx
+@@ -100,6 +100,7 @@ import { DesignationsPage } from "@/features/system_settings/pages/DesignationsP
+ import { CommunicationProvidersPage } from "@/features/communication/pages/CommunicationProvidersPage";
+ import { DocumentTypesPage } from "@/features/system_settings/pages/DocumentTypesPage";
+ import { GeoFencingPage } from "@/features/geo_fencing/pages/GeoFencingPage";
++import { InsuranceCategoriesPage } from "@/features/system_settings/pages/InsuranceCategoriesPage";
+ import { InsuranceProductsPage } from "@/features/system_settings/pages/InsuranceProductsPage";
+ import { LoanProductsPage } from "@/features/system_settings/pages/LoanProductsPage";
+ import { SettingsHomePage } from "@/features/system_settings/pages/SettingsHomePage";
+@@ -419,6 +420,7 @@ export const router = createBrowserRouter([
+                   { path: "/settings", element: <SettingsHomePage /> },
+                   { path: "/settings/lead-sources", element: <LeadSourcesPage /> },
+                   { path: "/settings/loan-products", element: <LoanProductsPage /> },
++                  { path: "/settings/insurance-categories", element: <InsuranceCategoriesPage /> },
+                   { path: "/settings/insurance-products", element: <InsuranceProductsPage /> },
+                   { path: "/settings/document-types", element: <DocumentTypesPage /> },
+                   { path: "/settings/geo-fencing", element: <GeoFencingPage /> },
+diff --git a/frontend/src/features/system_settings/api.ts b/frontend/src/features/system_settings/api.ts
+index 86c5c7a..5836ad2 100644
+--- a/frontend/src/features/system_settings/api.ts
++++ b/frontend/src/features/system_settings/api.ts
+@@ -105,9 +105,36 @@ function namedMasterDataApi(basePath: string) {
+ 
+ export const leadSourcesApi = namedMasterDataApi("/lead-sources");
+ export const loanProductsApi = namedMasterDataApi("/loan-products");
+-export const insuranceProductsApi = namedMasterDataApi("/insurance-products");
+ export const documentTypesApi = namedMasterDataApi("/document-types");
+ 
++// ---- insurance categories + products (Insurance Policy Leads redesign) ----
++// Insurance Products carry a `category_id` (the other named-master resources don't), so
++// they get their own client here instead of the generic one. Categories are plain named
++// master data.
++
++export const insuranceCategoriesApi = namedMasterDataApi("/insurance-categories");
++
++export interface InsuranceProduct {
++  id: string;
++  name: string;
++  description: string | null;
++  status: string;
++  category_id: string | null;
++  category_name: string | null;
++  created_at: string;
++  updated_at: string;
++}
++
++export const insuranceProductsApi = {
++  list: () => apiRequest<InsuranceProduct[]>("/insurance-products"),
++  create: (payload: { name: string; category_id: string; description?: string }) =>
++    apiRequest<InsuranceProduct>("/insurance-products", { method: "POST", body: JSON.stringify(payload) }),
++  update: (id: string, payload: { name?: string; category_id?: string; description?: string }) =>
++    apiRequest<InsuranceProduct>(`/insurance-products/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
++  activate: (id: string) => apiRequest<InsuranceProduct>(`/insurance-products/${id}/activate`, { method: "PATCH" }),
++  deactivate: (id: string) => apiRequest<InsuranceProduct>(`/insurance-products/${id}/deactivate`, { method: "PATCH" }),
++};
++
+ // ---- departments / designations (Module 2 owns create/list; Module 4 adds edit/activate/deactivate) ----
+ 
+ export function listDepartments() {
+diff --git a/frontend/src/features/system_settings/pages/InsuranceCategoriesPage.tsx b/frontend/src/features/system_settings/pages/InsuranceCategoriesPage.tsx
+new file mode 100644
+index 0000000..a323dd1
+--- /dev/null
++++ b/frontend/src/features/system_settings/pages/InsuranceCategoriesPage.tsx
+@@ -0,0 +1,8 @@
++import { insuranceCategoriesApi } from "@/features/system_settings/api";
++import { NamedMasterDataPage } from "@/features/system_settings/pages/NamedMasterDataPage";
++
++// Insurance Policy Leads redesign — the top of the Insurance Category -> Product
++// hierarchy. Plain name+description+status master data, so it reuses the generic page.
++export function InsuranceCategoriesPage() {
++  return <NamedMasterDataPage title="Insurance Categories" createPlaceholder="e.g. Health Insurance" api={insuranceCategoriesApi} />;
++}
+diff --git a/frontend/src/features/system_settings/pages/InsuranceProductsPage.tsx b/frontend/src/features/system_settings/pages/InsuranceProductsPage.tsx
+index ed310d6..e2720bf 100644
+--- a/frontend/src/features/system_settings/pages/InsuranceProductsPage.tsx
++++ b/frontend/src/features/system_settings/pages/InsuranceProductsPage.tsx
+@@ -1,6 +1,228 @@
+-import { insuranceProductsApi } from "@/features/system_settings/api";
+-import { NamedMasterDataPage } from "@/features/system_settings/pages/NamedMasterDataPage";
++import { useEffect, useMemo, useState } from "react";
++import { Button } from "@/components/buttons/Button";
++import { ErrorBanner } from "@/components/forms/ErrorBanner";
++import { FormField } from "@/components/forms/FormField";
++import { SelectField } from "@/components/forms/SelectField";
++import { SubmitButton } from "@/components/forms/SubmitButton";
++import { EmptyState } from "@/components/layout/EmptyState";
++import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
++import {
++  type InsuranceProduct,
++  type NamedMasterData,
++  insuranceCategoriesApi,
++  insuranceProductsApi,
++} from "@/features/system_settings/api";
++import { getErrorMessage } from "@/features/system_settings/errors";
+ 
++const INLINE_EDIT_INPUT_CLASSES =
++  "w-full rounded-xl border border-border px-3 py-2 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary";
++
++// Insurance Policy Leads redesign — Insurance Products belong to an InsuranceCategory,
++// so this page has a Category selector that the generic NamedMasterDataPage can't
++// provide. Loan Products stay on the generic page.
+ export function InsuranceProductsPage() {
+-  return <NamedMasterDataPage title="Insurance Products" createPlaceholder="e.g. Health" api={insuranceProductsApi} />;
++  const [items, setItems] = useState<InsuranceProduct[]>([]);
++  const [categories, setCategories] = useState<NamedMasterData[]>([]);
++  const [newName, setNewName] = useState("");
++  const [newDescription, setNewDescription] = useState("");
++  const [newCategoryId, setNewCategoryId] = useState("");
++  const [editingId, setEditingId] = useState<string | null>(null);
++  const [editName, setEditName] = useState("");
++  const [editDescription, setEditDescription] = useState("");
++  const [editCategoryId, setEditCategoryId] = useState("");
++  const [error, setError] = useState<string | null>(null);
++  const [isSubmitting, setIsSubmitting] = useState(false);
++
++  const activeCategoryOptions = useMemo(
++    () => categories.filter((c) => c.status === "active").map((c) => ({ value: c.id, label: c.name })),
++    [categories],
++  );
++
++  const load = () => {
++    Promise.all([insuranceProductsApi.list(), insuranceCategoriesApi.list()])
++      .then(([products, cats]) => {
++        setItems(products);
++        setCategories(cats);
++      })
++      .catch((err) => setError(getErrorMessage(err)));
++  };
++
++  useEffect(load, []);
++
++  const onCreate = async (e: React.FormEvent) => {
++    e.preventDefault();
++    if (!newName.trim() || !newCategoryId) return;
++    setError(null);
++    setIsSubmitting(true);
++    try {
++      await insuranceProductsApi.create({
++        name: newName.trim(),
++        category_id: newCategoryId,
++        description: newDescription.trim() || undefined,
++      });
++      setNewName("");
++      setNewDescription("");
++      setNewCategoryId("");
++      load();
++    } catch (err) {
++      setError(getErrorMessage(err));
++    } finally {
++      setIsSubmitting(false);
++    }
++  };
++
++  const startEdit = (item: InsuranceProduct) => {
++    setEditingId(item.id);
++    setEditName(item.name);
++    setEditDescription(item.description ?? "");
++    setEditCategoryId(item.category_id ?? "");
++  };
++
++  const onSaveEdit = async (id: string) => {
++    setError(null);
++    try {
++      await insuranceProductsApi.update(id, {
++        name: editName.trim(),
++        description: editDescription.trim() || undefined,
++        category_id: editCategoryId || undefined,
++      });
++      setEditingId(null);
++      load();
++    } catch (err) {
++      setError(getErrorMessage(err));
++    }
++  };
++
++  const onToggleStatus = async (item: InsuranceProduct) => {
++    setError(null);
++    try {
++      if (item.status === "active") {
++        await insuranceProductsApi.deactivate(item.id);
++      } else {
++        await insuranceProductsApi.activate(item.id);
++      }
++      load();
++    } catch (err) {
++      setError(getErrorMessage(err));
++    }
++  };
++
++  return (
++    <SimplePageLayout title="Insurance Products">
++      <ErrorBanner message={error} />
++
++      {activeCategoryOptions.length === 0 && (
++        <p className="mb-4 text-sm text-textSecondary">
++          Add an active Insurance Category first — every product must belong to one.
++        </p>
++      )}
++
++      <form onSubmit={onCreate} className="mb-6 flex flex-wrap items-end gap-3 max-w-3xl">
++        <div className="flex-1 min-w-[180px]">
++          <FormField label="Name" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. Family Health Plus" />
++        </div>
++        <div className="flex-1 min-w-[180px]">
++          <SelectField
++            label="Category"
++            name="new-category"
++            options={activeCategoryOptions}
++            placeholder="Select a category"
++            value={newCategoryId}
++            onChange={(e) => setNewCategoryId(e.target.value)}
++          />
++        </div>
++        <div className="flex-1 min-w-[180px]">
++          <FormField label="Description (optional)" value={newDescription} onChange={(e) => setNewDescription(e.target.value)} />
++        </div>
++        <div className="mb-4">
++          <SubmitButton isSubmitting={isSubmitting} disabled={!newCategoryId}>
++            Add
++          </SubmitButton>
++        </div>
++      </form>
++
++      <div className="bg-card border border-border rounded-card shadow-card overflow-x-auto">
++        <table className="w-full text-sm">
++          <thead>
++            <tr className="border-b border-border text-left text-text/60">
++              <th className="px-4 py-3">Name</th>
++              <th className="px-4 py-3">Category</th>
++              <th className="px-4 py-3">Description</th>
++              <th className="px-4 py-3">Status</th>
++              <th className="px-4 py-3" />
++            </tr>
++          </thead>
++          <tbody>
++            {items.length === 0 && (
++              <tr>
++                <td colSpan={5}>
++                  <EmptyState icon="insurance" title="Nothing here yet" description="Add the first product using the form above." />
++                </td>
++              </tr>
++            )}
++            {items.map((item) =>
++              editingId === item.id ? (
++                <tr key={item.id} className="border-b border-border last:border-0">
++                  <td className="px-4 py-2">
++                    <input
++                      className={INLINE_EDIT_INPUT_CLASSES}
++                      value={editName}
++                      onChange={(e) => setEditName(e.target.value)}
++                      aria-label="Name"
++                    />
++                  </td>
++                  <td className="px-4 py-2">
++                    <select
++                      className={INLINE_EDIT_INPUT_CLASSES}
++                      value={editCategoryId}
++                      onChange={(e) => setEditCategoryId(e.target.value)}
++                      aria-label="Category"
++                    >
++                      {activeCategoryOptions.map((opt) => (
++                        <option key={opt.value} value={opt.value}>
++                          {opt.label}
++                        </option>
++                      ))}
++                    </select>
++                  </td>
++                  <td className="px-4 py-2">
++                    <input
++                      className={INLINE_EDIT_INPUT_CLASSES}
++                      value={editDescription}
++                      onChange={(e) => setEditDescription(e.target.value)}
++                      aria-label="Description"
++                    />
++                  </td>
++                  <td className="px-4 py-2 capitalize">{item.status}</td>
++                  <td className="px-4 py-2 text-right space-x-2 whitespace-nowrap">
++                    <Button variant="ghost" size="sm" onClick={() => onSaveEdit(item.id)}>
++                      Save
++                    </Button>
++                    <Button variant="ghost" size="sm" onClick={() => setEditingId(null)}>
++                      Cancel
++                    </Button>
++                  </td>
++                </tr>
++              ) : (
++                <tr key={item.id} className="border-b border-border last:border-0 hover:bg-background">
++                  <td className="px-4 py-3">{item.name}</td>
++                  <td className="px-4 py-3">{item.category_name || "—"}</td>
++                  <td className="px-4 py-3">{item.description || "—"}</td>
++                  <td className="px-4 py-3 capitalize">{item.status}</td>
++                  <td className="px-4 py-3 text-right space-x-3 whitespace-nowrap">
++                    <Button variant="ghost" size="sm" onClick={() => startEdit(item)}>
++                      Edit
++                    </Button>
++                    <Button variant="ghost" size="sm" onClick={() => onToggleStatus(item)}>
++                      {item.status === "active" ? "Deactivate" : "Activate"}
++                    </Button>
++                  </td>
++                </tr>
++              ),
++            )}
++          </tbody>
++        </table>
++      </div>
++    </SimplePageLayout>
++  );
+ }
+diff --git a/frontend/src/features/system_settings/pages/SettingsHomePage.tsx b/frontend/src/features/system_settings/pages/SettingsHomePage.tsx
+index 59d3597..fcc3945 100644
+--- a/frontend/src/features/system_settings/pages/SettingsHomePage.tsx
++++ b/frontend/src/features/system_settings/pages/SettingsHomePage.tsx
+@@ -23,7 +23,11 @@ const SECTIONS: SettingsSection[] = [
+     label: "Product Configuration",
+     items: [
+       { to: "/settings/loan-products", icon: "loan", title: "Loan Products", description: "Manage loan products, eligibility and configuration." },
+-      { to: "/settings/insurance-products", icon: "insurance", title: "Insurance Products", description: "Manage insurance products and configuration." },
++      {
++        to: "/settings/insurance-categories", icon: "insurance", title: "Insurance Categories",
++        description: "Manage the top-level insurance categories products are grouped under.",
++      },
++      { to: "/settings/insurance-products", icon: "insurance", title: "Insurance Products", description: "Manage insurance products and the category each belongs to." },
+       { to: "/settings/product-schemas", icon: "edit", title: "Product Schemas", description: "Manage dynamic field schemas for loan and insurance applications." },
+     ],
+   },
+diff --git a/frontend/src/features/system_settings/pages/SettingsLayout.tsx b/frontend/src/features/system_settings/pages/SettingsLayout.tsx
+index 750159b..2e9891d 100644
+--- a/frontend/src/features/system_settings/pages/SettingsLayout.tsx
++++ b/frontend/src/features/system_settings/pages/SettingsLayout.tsx
+@@ -7,6 +7,7 @@ import { ModuleTabs } from "@/components/layout/ModuleTabs";
+ const TABS = [
+   { label: "Master Settings", to: "/settings", matchKey: "settings", exact: true },
+   { label: "Loan Products", to: "/settings/loan-products", matchKey: "settings" },
++  { label: "Insurance Categories", to: "/settings/insurance-categories", matchKey: "settings" },
+   { label: "Insurance Products", to: "/settings/insurance-products", matchKey: "settings" },
+   { label: "Product Schemas", to: "/settings/product-schemas", matchKey: "settings" },
+   { label: "Document Types", to: "/settings/document-types", matchKey: "settings" },
+diff --git a/scripts/migrate_add_insurance_categories.py b/scripts/migrate_add_insurance_categories.py
+new file mode 100644
+index 0000000..e1d46f0
+--- /dev/null
++++ b/scripts/migrate_add_insurance_categories.py
+@@ -0,0 +1,78 @@
++"""Insurance Policy Leads redesign — Phase 1: Insurance Category master + Product link.
++
++Introduces the `insurance_categories` collection and a `category_id` on every
++`insurance_products` row. This script:
++
++  1. Ensures the two baseline categories exist ("Health Insurance", "Life Insurance") —
++     idempotent upsert on `name`, never overwriting an existing row.
++  2. Backfills `category_id` on existing insurance products that don't have one yet:
++       - "Health" (case-insensitive) -> Health Insurance
++       - everything else            -> Life Insurance   (the safe catch-all; an Owner
++                                        can reassign afterwards in Settings)
++  3. Ensures the collection indexes (`insurance_categories.name` unique,
++     `insurance_products.category_id`).
++
++**Safety-first, never destructive**: no product or category row is ever deleted or
++renamed. A product that already has a `category_id` is left untouched. Safe to run
++repeatedly.
++
++Run from repo root: python scripts/migrate_add_insurance_categories.py
++Run from backend/:  python ../scripts/migrate_add_insurance_categories.py
++"""
++
++import asyncio
++import sys
++from pathlib import Path
++
++sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
++
++from app.config.database import get_database
++from app.features.system_settings.models import InsuranceCategory
++
++_BASELINE_CATEGORIES = ("Health Insurance", "Life Insurance")
++
++
++async def main() -> None:
++    db = get_database()
++    categories = db["insurance_categories"]
++    products = db["insurance_products"]
++
++    print(f"Connected to database: {db.name!r}")
++
++    await categories.create_index("name", unique=True)
++    await products.create_index("category_id")
++
++    category_id_by_name: dict[str, str] = {}
++    for name in _BASELINE_CATEGORIES:
++        payload = InsuranceCategory(name=name).model_dump(by_alias=True, exclude={"id"})
++        await categories.update_one({"name": name}, {"$setOnInsert": payload}, upsert=True)
++        row = await categories.find_one({"name": name}, {"_id": 1})
++        assert row is not None
++        category_id_by_name[name] = str(row["_id"])
++    print(f"Baseline categories ensured: {category_id_by_name}")
++
++    health_id = category_id_by_name["Health Insurance"]
++    life_id = category_id_by_name["Life Insurance"]
++
++    unassigned = await products.find(
++        {"$or": [{"category_id": None}, {"category_id": {"$exists": False}}], "is_deleted": False}
++    ).to_list(length=1000)
++
++    if not unassigned:
++        print("No insurance products need a category backfill. Done.")
++        return
++
++    updated = 0
++    for product in unassigned:
++        name = str(product.get("name", ""))
++        target = health_id if "health" in name.lower() else life_id
++        await products.update_one({"_id": product["_id"]}, {"$set": {"category_id": target}})
++        target_name = "Health Insurance" if target == health_id else "Life Insurance"
++        print(f"  {name!r} -> {target_name}")
++        updated += 1
++
++    print(f"\nBackfilled category_id on {updated} insurance product(s). Nothing was deleted or renamed.")
++
++
++if __name__ == "__main__":
++    asyncio.run(main())
+diff --git a/scripts/seed.py b/scripts/seed.py
+index 6ee07c7..fe76b15 100644
+--- a/scripts/seed.py
++++ b/scripts/seed.py
+@@ -81,6 +81,7 @@ from app.features.reporting.constants import ReportCategory, ReportType
+ from app.features.reporting.models import ReportDefinition, ReportDefinitionColumn
+ from app.features.system_settings.models import (
+     DocumentType,
++    InsuranceCategory,
+     InsuranceProduct,
+     LeadSource,
+     LoanProduct,
+@@ -141,6 +142,7 @@ async def seed_permission_catalog() -> None:
+         ("branches", "Branches"),
+         ("lead_sources", "Lead Sources"),
+         ("loan_products", "Loan Products"),
++        ("insurance_categories", "Insurance Categories"),
+         ("insurance_products", "Insurance Products"),
+         ("document_types", "Document Types"),
+         ("status_masters", "Status Masters"),
+@@ -392,10 +394,28 @@ async def seed_settings_master_data() -> None:
+         payload = LoanProduct(name=name).model_dump(by_alias=True, exclude={"id"})
+         await loan_products.update_one({"name": name}, {"$setOnInsert": payload}, upsert=True)
+ 
++    # Insurance Policy Leads redesign — Insurance Products now belong to an
++    # InsuranceCategory. Seed the two example categories and place each seeded product
++    # under one. Idempotent: `$setOnInsert` never overwrites an existing row, and the
++    # product upsert filters on name so a re-run leaves a hand-edited category_id alone.
++    insurance_categories = db["insurance_categories"]
++    category_ids: dict[str, str] = {}
++    for cat_name in ("Health Insurance", "Life Insurance"):
++        payload = InsuranceCategory(name=cat_name).model_dump(by_alias=True, exclude={"id"})
++        await insurance_categories.update_one({"name": cat_name}, {"$setOnInsert": payload}, upsert=True)
++        row = await insurance_categories.find_one({"name": cat_name}, {"_id": 1})
++        assert row is not None
++        category_ids[cat_name] = str(row["_id"])
++
+     insurance_products = db["insurance_products"]
+-    for name in ("Life", "Health"):
+-        payload = InsuranceProduct(name=name).model_dump(by_alias=True, exclude={"id"})
++    for name, cat_name in (("Health", "Health Insurance"), ("Life", "Life Insurance")):
++        payload = InsuranceProduct(name=name, category_id=category_ids[cat_name]).model_dump(by_alias=True, exclude={"id"})
+         await insurance_products.update_one({"name": name}, {"$setOnInsert": payload}, upsert=True)
++        # Backfill category_id on a product that predates this field (older seed run).
++        await insurance_products.update_one(
++            {"name": name, "$or": [{"category_id": None}, {"category_id": {"$exists": False}}]},
++            {"$set": {"category_id": category_ids[cat_name]}},
++        )
+ 
+     document_types = db["document_types"]
+     # "Property Documents" added in Module 6B — the brief's Document Upload section
+diff --git a/tests/api/test_system_settings.py b/tests/api/test_system_settings.py
+index 03325f0..ab084ce 100644
+--- a/tests/api/test_system_settings.py
++++ b/tests/api/test_system_settings.py
+@@ -82,14 +82,84 @@ async def test_loan_product_and_insurance_product_and_document_type_create(clien
+     r = await client.post("/api/v1/loan-products", json={"name": "Personal Loan"}, headers=owner_headers)
+     assert r.status_code == 200, r.text
+ 
+-    r = await client.post("/api/v1/insurance-products", json={"name": "Health"}, headers=owner_headers)
++    r = await client.post("/api/v1/insurance-categories", json={"name": "Health Insurance"}, headers=owner_headers)
+     assert r.status_code == 200, r.text
++    category_id = r.json()["data"]["id"]
++
++    r = await client.post("/api/v1/insurance-products", json={"name": "Health", "category_id": category_id}, headers=owner_headers)
++    assert r.status_code == 200, r.text
++    assert r.json()["data"]["category_id"] == category_id
++    assert r.json()["data"]["category_name"] == "Health Insurance"
+ 
+     r = await client.post("/api/v1/document-types", json={"name": "PAN"}, headers=owner_headers)
+     assert r.status_code == 200, r.text
+     assert r.json()["data"]["supports_password"] is False
+ 
+ 
++# ---------------------------------------------------------------------- insurance categories (Insurance Policy Leads redesign)
++
++
++async def test_insurance_category_crud_and_product_requires_valid_category(client, owner_headers):
++    # A product cannot be created without a category...
++    r = await client.post("/api/v1/insurance-products", json={"name": "Orphan Plan"}, headers=owner_headers)
++    assert r.status_code == 422, r.text
++
++    # ...nor with an unknown one.
++    r = await client.post(
++        "/api/v1/insurance-products", json={"name": "Orphan Plan", "category_id": "0" * 24}, headers=owner_headers
++    )
++    assert r.status_code == 404, r.text
++
++    r = await client.post("/api/v1/insurance-categories", json={"name": "Life Insurance"}, headers=owner_headers)
++    assert r.status_code == 200, r.text
++    category = r.json()["data"]
++
++    r = await client.post("/api/v1/insurance-categories", json={"name": "Life Insurance"}, headers=owner_headers)
++    assert r.status_code == 409, r.text
++
++    r = await client.post(
++        "/api/v1/insurance-products", json={"name": "Term Life", "category_id": category["id"]}, headers=owner_headers
++    )
++    assert r.status_code == 200, r.text
++    product_id = r.json()["data"]["id"]
++
++    # A category with an active product underneath it can't be deactivated.
++    r = await client.patch(f"/api/v1/insurance-categories/{category['id']}/deactivate", headers=owner_headers)
++    assert r.status_code == 409, r.text
++
++    r = await client.patch(f"/api/v1/insurance-products/{product_id}/deactivate", headers=owner_headers)
++    assert r.status_code == 200, r.text
++
++    r = await client.patch(f"/api/v1/insurance-categories/{category['id']}/deactivate", headers=owner_headers)
++    assert r.status_code == 200, r.text
++
++    # A product can't be (re)activated under an inactive category.
++    r = await client.patch(f"/api/v1/insurance-products/{product_id}/activate", headers=owner_headers)
++    assert r.status_code == 409, r.text
++
++    r = await client.patch(f"/api/v1/insurance-categories/{category['id']}/activate", headers=owner_headers)
++    assert r.status_code == 200, r.text
++    r = await client.patch(f"/api/v1/insurance-products/{product_id}/activate", headers=owner_headers)
++    assert r.status_code == 200, r.text
++
++
++async def test_insurance_product_can_be_moved_between_categories(client, owner_headers):
++    r = await client.post("/api/v1/insurance-categories", json={"name": "Health Insurance"}, headers=owner_headers)
++    health_id = r.json()["data"]["id"]
++    r = await client.post("/api/v1/insurance-categories", json={"name": "Life Insurance"}, headers=owner_headers)
++    life_id = r.json()["data"]["id"]
++
++    r = await client.post(
++        "/api/v1/insurance-products", json={"name": "Family Health Plus", "category_id": health_id}, headers=owner_headers
++    )
++    product_id = r.json()["data"]["id"]
++
++    r = await client.patch(f"/api/v1/insurance-products/{product_id}", json={"category_id": life_id}, headers=owner_headers)
++    assert r.status_code == 200, r.text
++    assert r.json()["data"]["category_id"] == life_id
++    assert r.json()["data"]["category_name"] == "Life Insurance"
++
++
+ async def test_document_type_supports_password_flag_create_and_update(client, owner_headers):
+     """Bank Statement password support (Part 1A) — the Owner marks a document type as
+     password-capable once, on the master-data row itself; every product schema

@@ -23,7 +23,11 @@ const SECTIONS: SettingsSection[] = [
     label: "Product Configuration",
     items: [
       { to: "/settings/loan-products", icon: "loan", title: "Loan Products", description: "Manage loan products, eligibility and configuration." },
-      { to: "/settings/insurance-products", icon: "insurance", title: "Insurance Products", description: "Manage insurance products and configuration." },
+      {
+        to: "/settings/insurance-categories", icon: "insurance", title: "Insurance Categories",
+        description: "Manage the top-level insurance categories products are grouped under.",
+      },
+      { to: "/settings/insurance-products", icon: "insurance", title: "Insurance Products", description: "Manage insurance products and the category each belongs to." },
       { to: "/settings/product-schemas", icon: "edit", title: "Product Schemas", description: "Manage dynamic field schemas for loan and insurance applications." },
     ],
   },

@@ -35,6 +35,35 @@ class NamedMasterDataResponse(BaseModel):
     updated_at: datetime
 
 
+# ---------------------------------------------------------------------- insurance products
+# Insurance Policy Leads redesign — Insurance Products carry a `category_id` (the other
+# NamedMasterData resources don't), so they get their own create/update/response schemas
+# instead of the shared Named* ones. Loan Products stay on the shared path, unchanged.
+
+
+class InsuranceProductCreateRequest(BaseModel):
+    name: str
+    category_id: str
+    description: str | None = None
+
+
+class InsuranceProductUpdateRequest(BaseModel):
+    name: str | None = None
+    category_id: str | None = None
+    description: str | None = None
+
+
+class InsuranceProductResponse(BaseModel):
+    id: str
+    name: str
+    description: str | None = None
+    status: str
+    category_id: str | None = None
+    category_name: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class BranchUpdateRequest(BaseModel):
     name: str | None = None
     code: str | None = None

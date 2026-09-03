@@ -105,8 +105,35 @@ function namedMasterDataApi(basePath: string) {
 
 export const leadSourcesApi = namedMasterDataApi("/lead-sources");
 export const loanProductsApi = namedMasterDataApi("/loan-products");
-export const insuranceProductsApi = namedMasterDataApi("/insurance-products");
 export const documentTypesApi = namedMasterDataApi("/document-types");
+
+// ---- insurance categories + products (Insurance Policy Leads redesign) ----
+// Insurance Products carry a `category_id` (the other named-master resources don't), so
+// they get their own client here instead of the generic one. Categories are plain named
+// master data.
+
+export const insuranceCategoriesApi = namedMasterDataApi("/insurance-categories");
+
+export interface InsuranceProduct {
+  id: string;
+  name: string;
+  description: string | null;
+  status: string;
+  category_id: string | null;
+  category_name: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export const insuranceProductsApi = {
+  list: () => apiRequest<InsuranceProduct[]>("/insurance-products"),
+  create: (payload: { name: string; category_id: string; description?: string }) =>
+    apiRequest<InsuranceProduct>("/insurance-products", { method: "POST", body: JSON.stringify(payload) }),
+  update: (id: string, payload: { name?: string; category_id?: string; description?: string }) =>
+    apiRequest<InsuranceProduct>(`/insurance-products/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  activate: (id: string) => apiRequest<InsuranceProduct>(`/insurance-products/${id}/activate`, { method: "PATCH" }),
+  deactivate: (id: string) => apiRequest<InsuranceProduct>(`/insurance-products/${id}/deactivate`, { method: "PATCH" }),
+};
 
 // ---- departments / designations (Module 2 owns create/list; Module 4 adds edit/activate/deactivate) ----
 

@@ -42,8 +42,20 @@ class LoanProduct(NamedMasterData):
     pass
 
 
+class InsuranceCategory(NamedMasterData):
+    """Insurance Policy Leads redesign — the top level of the Insurance
+    Category -> Product hierarchy (e.g. "Health Insurance", "Life Insurance").
+    Plain name+description+status master data, same generic CRUD path as the other
+    `NamedMasterData` resources. Loan has no equivalent — Loan Products stay flat."""
+
+
 class InsuranceProduct(NamedMasterData):
-    pass
+    # Insurance Policy Leads redesign — every Insurance Product now belongs to an
+    # `InsuranceCategory`. Optional/defaulted so every product seeded before this existed
+    # still loads (the migration `migrate_add_insurance_categories.py` backfills it); the
+    # create/update service path rejects a missing/unknown category for new writes, and
+    # `_validate_product_in_category` is the shared gate every downstream reader uses.
+    category_id: str | None = None
 
 
 class DocumentType(NamedMasterData):

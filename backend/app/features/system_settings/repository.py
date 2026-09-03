@@ -4,6 +4,7 @@ from app.features.system_settings.models import (
     ApiSetting,
     CompanySettings,
     DocumentType,
+    InsuranceCategory,
     InsuranceProduct,
     LeadSource,
     LoanProduct,
@@ -41,9 +42,26 @@ class LoanProductRepository(_NamedMasterDataRepository[LoanProduct]):
     model = LoanProduct
 
 
+class InsuranceCategoryRepository(_NamedMasterDataRepository[InsuranceCategory]):
+    collection_name = "insurance_categories"
+    model = InsuranceCategory
+
+
 class InsuranceProductRepository(_NamedMasterDataRepository[InsuranceProduct]):
     collection_name = "insurance_products"
     model = InsuranceProduct
+
+    async def find_many_by_category(self, category_id: str, *, active_only: bool = False) -> list[InsuranceProduct]:
+        query: dict[str, Any] = {"category_id": category_id, "is_deleted": False}
+        if active_only:
+            query["status"] = "active"
+        return await self.find_many(query, limit=500, sort=[("name", 1)])
+
+    async def count_by_category(self, category_id: str, *, active_only: bool = False) -> int:
+        query: dict[str, Any] = {"category_id": category_id, "is_deleted": False}
+        if active_only:
+            query["status"] = "active"
+        return await self.collection.count_documents(query)
 
 
 class DocumentTypeRepository(_NamedMasterDataRepository[DocumentType]):

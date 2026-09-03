@@ -97,6 +97,7 @@ from app.features.reminders.service import RemindersService
 from app.features.system_settings.constants import MasterDataStatus
 from app.features.system_settings.repository import (
     DocumentTypeRepository,
+    InsuranceCategoryRepository,
     InsuranceProductRepository,
     LeadSourceRepository,
     LoanProductRepository,
@@ -160,6 +161,7 @@ class CustomerService:
         self._users = UserRepository(db)
         self._employees = EmployeeRepository(db)
         self._loan_products = LoanProductRepository(db)
+        self._insurance_categories = InsuranceCategoryRepository(db)
         self._insurance_products = InsuranceProductRepository(db)
         self._document_types = DocumentTypeRepository(db)
         self._auth = AuthService(db, redis)
@@ -780,18 +782,32 @@ class CustomerService:
         Employee Create Lead, Referral Partner Add Lead), see Product Schema Engine."""
         return await self._get_or_error_form_definition(product_category, product_id)
 
-    async def list_active_products(self, category: str) -> list[Any]:
+    async def list_active_products(self, category: str, *, insurance_category_id: str | None = None) -> list[Any]:
         """Loan/Insurance products for the Customer Portal's "Apply for Loan/Insurance"
         product picker — owned by Customer (CurrentUserDep + CustomerDep, never
         `require_permission`), not proxied through `system_settings`'s own
         CRUD-permission-gated `/loan-products`/`/insurance-products` endpoints, which are
         Employee/Owner-only and unconditionally deny any Customer role. Same reasoning as
         `LeadService.get_lookup_data`'s narrower boundary for Create Lead, for a different
-        audience. Active-only, matching the Product Visibility Rule."""
+        audience. Active-only, matching the Product Visibility Rule.
+
+        Insurance Policy Leads redesign — for `category == "insurance"` the portal first
+        picks an `InsuranceCategory`, then the product; `insurance_category_id` scopes the
+        product list to that category. Ignored for `category == "loan"` (Loan stays flat)."""
         if category not in ("loan", "insurance"):
             raise ValidationError("category must be 'loan' or 'insurance'.")
-        repo = self._loan_products if category == "loan" else self._insurance_products
-        return await repo.find_many({"status": MasterDataStatus.ACTIVE}, limit=500, sort=[("name", 1)])
+        if category == "loan":
+            return await self._loan_products.find_many({"status": MasterDataStatus.ACTIVE}, limit=500, sort=[("name", 1)])
+        query: dict[str, Any] = {"status": MasterDataStatus.ACTIVE}
+        if insurance_category_id is not None:
+            query["category_id"] = insurance_category_id
+        return await self._insurance_products.find_many(query, limit=500, sort=[("name", 1)])
+
+    async def list_active_insurance_categories(self) -> list[Any]:
+        """Insurance Policy Leads redesign — the Customer Portal's first step under "Apply
+        for Insurance". Active-only, same customer-scoped access posture as
+        `list_active_products`."""
+        return await self._insurance_categories.find_many({"status": MasterDataStatus.ACTIVE}, limit=500, sort=[("name", 1)])
 
     # ================================================================== product schema authoring (Owner)
 

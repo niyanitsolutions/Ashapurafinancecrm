@@ -5,6 +5,7 @@ from app.features.employee.schemas import AddressSchema, BranchResponse, MasterD
 from app.features.system_settings.models import (
     ApiSetting,
     CompanySettings,
+    InsuranceProduct,
     NamedMasterData,
     NotificationTemplate,
     StatusMaster,
@@ -13,6 +14,7 @@ from app.features.system_settings.schemas import (
     ApiSettingResponse,
     BusinessHourSchema,
     CompanySettingsResponse,
+    InsuranceProductResponse,
     NamedMasterDataResponse,
     NotificationTemplateResponse,
     StatusMasterResponse,
@@ -24,6 +26,14 @@ def named_master_data_to_response(doc: NamedMasterData) -> NamedMasterDataRespon
     return NamedMasterDataResponse(
         id=doc.require_id(), name=doc.name, description=doc.description, status=doc.status,
         supports_password=doc.supports_password, created_at=doc.created_at, updated_at=doc.updated_at,
+    )
+
+
+def insurance_product_to_response(doc: InsuranceProduct, category_name: str | None = None) -> InsuranceProductResponse:
+    return InsuranceProductResponse(
+        id=doc.require_id(), name=doc.name, description=doc.description, status=doc.status,
+        category_id=doc.category_id, category_name=category_name,
+        created_at=doc.created_at, updated_at=doc.updated_at,
     )
 
 

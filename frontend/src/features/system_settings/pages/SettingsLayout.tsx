@@ -7,6 +7,7 @@ import { ModuleTabs } from "@/components/layout/ModuleTabs";
 const TABS = [
   { label: "Master Settings", to: "/settings", matchKey: "settings", exact: true },
   { label: "Loan Products", to: "/settings/loan-products", matchKey: "settings" },
+  { label: "Insurance Categories", to: "/settings/insurance-categories", matchKey: "settings" },
   { label: "Insurance Products", to: "/settings/insurance-products", matchKey: "settings" },
   { label: "Product Schemas", to: "/settings/product-schemas", matchKey: "settings" },
   { label: "Document Types", to: "/settings/document-types", matchKey: "settings" },

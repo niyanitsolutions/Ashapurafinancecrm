@@ -27,6 +27,9 @@ from app.features.system_settings.schemas import (
     BranchUpdateRequest,
     CompanySettingsResponse,
     ConfirmLogoRequest,
+    InsuranceProductCreateRequest,
+    InsuranceProductResponse,
+    InsuranceProductUpdateRequest,
     LogoUploadUrlResponse,
     NamedMasterDataCreateRequest,
     NamedMasterDataResponse,
@@ -226,55 +229,118 @@ async def deactivate_loan_product(
     return ApiResponse[NamedMasterDataResponse].ok(mappers.named_master_data_to_response(item))
 
 
+# ---------------------------------------------------------------------- insurance categories
+# Insurance Policy Leads redesign — the top of the Category -> Product hierarchy. Plain
+# name+description+status master data, same shape as Lead Sources; Loan has no equivalent.
+
+
+@router.get("/insurance-categories")
+async def list_insurance_categories(
+    service: ServiceDep, actor: Annotated[User, _perm("insurance_categories", "view")]
+) -> ApiResponse[list[NamedMasterDataResponse]]:
+    items = await service.list_insurance_categories()
+    return ApiResponse[list[NamedMasterDataResponse]].ok([mappers.named_master_data_to_response(i) for i in items])
+
+
+@router.post("/insurance-categories")
+async def create_insurance_category(
+    payload: NamedMasterDataCreateRequest, service: ServiceDep, actor: Annotated[User, _perm("insurance_categories", "create")]
+) -> ApiResponse[NamedMasterDataResponse]:
+    item = await service.create_insurance_category(payload, actor)
+    return ApiResponse[NamedMasterDataResponse].ok(mappers.named_master_data_to_response(item))
+
+
+@router.get("/insurance-categories/{insurance_category_id}")
+async def get_insurance_category(
+    insurance_category_id: str, service: ServiceDep, actor: Annotated[User, _perm("insurance_categories", "view")]
+) -> ApiResponse[NamedMasterDataResponse]:
+    item = await service.get_insurance_category(insurance_category_id)
+    return ApiResponse[NamedMasterDataResponse].ok(mappers.named_master_data_to_response(item))
+
+
+@router.patch("/insurance-categories/{insurance_category_id}")
+async def update_insurance_category(
+    insurance_category_id: str, payload: NamedMasterDataUpdateRequest, service: ServiceDep,
+    actor: Annotated[User, _perm("insurance_categories", "edit")],
+) -> ApiResponse[NamedMasterDataResponse]:
+    item = await service.update_insurance_category(insurance_category_id, payload, actor)
+    return ApiResponse[NamedMasterDataResponse].ok(mappers.named_master_data_to_response(item))
+
+
+@router.patch("/insurance-categories/{insurance_category_id}/activate")
+async def activate_insurance_category(
+    insurance_category_id: str, service: ServiceDep, actor: Annotated[User, _perm("insurance_categories", "edit")]
+) -> ApiResponse[NamedMasterDataResponse]:
+    item = await service.activate_insurance_category(insurance_category_id, actor)
+    return ApiResponse[NamedMasterDataResponse].ok(mappers.named_master_data_to_response(item))
+
+
+@router.patch("/insurance-categories/{insurance_category_id}/deactivate")
+async def deactivate_insurance_category(
+    insurance_category_id: str, service: ServiceDep, actor: Annotated[User, _perm("insurance_categories", "edit")]
+) -> ApiResponse[NamedMasterDataResponse]:
+    item = await service.deactivate_insurance_category(insurance_category_id, actor)
+    return ApiResponse[NamedMasterDataResponse].ok(mappers.named_master_data_to_response(item))
+
+
 # ---------------------------------------------------------------------- insurance products
+
+
+async def _insurance_product_response(service: SystemSettingsService, item: Any) -> InsuranceProductResponse:
+    name_map = await service.resolve_insurance_category_names([item])
+    return mappers.insurance_product_to_response(item, name_map.get(item.category_id or ""))
 
 
 @router.get("/insurance-products")
 async def list_insurance_products(
     service: ServiceDep, actor: Annotated[User, _perm("insurance_products", "view")]
-) -> ApiResponse[list[NamedMasterDataResponse]]:
+) -> ApiResponse[list[InsuranceProductResponse]]:
     items = await service.list_insurance_products()
-    return ApiResponse[list[NamedMasterDataResponse]].ok([mappers.named_master_data_to_response(i) for i in items])
+    name_map = await service.resolve_insurance_category_names(items)
+    return ApiResponse[list[InsuranceProductResponse]].ok(
+        [mappers.insurance_product_to_response(i, name_map.get(i.category_id or "")) for i in items]
+    )
 
 
 @router.post("/insurance-products")
 async def create_insurance_product(
-    payload: NamedMasterDataCreateRequest, service: ServiceDep, actor: Annotated[User, _perm("insurance_products", "create")]
-) -> ApiResponse[NamedMasterDataResponse]:
+    payload: InsuranceProductCreateRequest, service: ServiceDep, actor: Annotated[User, _perm("insurance_products", "create")]
+) -> ApiResponse[InsuranceProductResponse]:
     item = await service.create_insurance_product(payload, actor)
-    return ApiResponse[NamedMasterDataResponse].ok(mappers.named_master_data_to_response(item))
+    return ApiResponse[InsuranceProductResponse].ok(await _insurance_product_response(service, item))
 
 
 @router.get("/insurance-products/{insurance_product_id}")
 async def get_insurance_product(
     insurance_product_id: str, service: ServiceDep, actor: Annotated[User, _perm("insurance_products", "view")]
-) -> ApiResponse[NamedMasterDataResponse]:
+) -> ApiResponse[InsuranceProductResponse]:
     item = await service.get_insurance_product(insurance_product_id)
-    return ApiResponse[NamedMasterDataResponse].ok(mappers.named_master_data_to_response(item))
+    return ApiResponse[InsuranceProductResponse].ok(await _insurance_product_response(service, item))
 
 
 @router.patch("/insurance-products/{insurance_product_id}")
 async def update_insurance_product(
-    insurance_product_id: str, payload: NamedMasterDataUpdateRequest, service: ServiceDep, actor: Annotated[User, _perm("insurance_products", "edit")]
-) -> ApiResponse[NamedMasterDataResponse]:
+    insurance_product_id: str, payload: InsuranceProductUpdateRequest, service: ServiceDep,
+    actor: Annotated[User, _perm("insurance_products", "edit")],
+) -> ApiResponse[InsuranceProductResponse]:
     item = await service.update_insurance_product(insurance_product_id, payload, actor)
-    return ApiResponse[NamedMasterDataResponse].ok(mappers.named_master_data_to_response(item))
+    return ApiResponse[InsuranceProductResponse].ok(await _insurance_product_response(service, item))
 
 
 @router.patch("/insurance-products/{insurance_product_id}/activate")
 async def activate_insurance_product(
     insurance_product_id: str, service: ServiceDep, actor: Annotated[User, _perm("insurance_products", "edit")]
-) -> ApiResponse[NamedMasterDataResponse]:
+) -> ApiResponse[InsuranceProductResponse]:
     item = await service.activate_insurance_product(insurance_product_id, actor)
-    return ApiResponse[NamedMasterDataResponse].ok(mappers.named_master_data_to_response(item))
+    return ApiResponse[InsuranceProductResponse].ok(await _insurance_product_response(service, item))
 
 
 @router.patch("/insurance-products/{insurance_product_id}/deactivate")
 async def deactivate_insurance_product(
     insurance_product_id: str, service: ServiceDep, actor: Annotated[User, _perm("insurance_products", "edit")]
-) -> ApiResponse[NamedMasterDataResponse]:
+) -> ApiResponse[InsuranceProductResponse]:
     item = await service.deactivate_insurance_product(insurance_product_id, actor)
-    return ApiResponse[NamedMasterDataResponse].ok(mappers.named_master_data_to_response(item))
+    return ApiResponse[InsuranceProductResponse].ok(await _insurance_product_response(service, item))
 
 
 # ---------------------------------------------------------------------- document types

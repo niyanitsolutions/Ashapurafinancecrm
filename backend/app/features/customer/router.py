@@ -256,15 +256,33 @@ async def get_form_definition(
 # reasoning as /leads/lookup above for Employee Create Lead.
 @router.get("/portal-products")
 async def list_portal_products(
-    category: str, service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep
+    category: str, service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep,
+    insurance_category_id: str | None = None,
 ) -> ApiResponse[list[NamedMasterDataResponse]]:
-    products = await service.list_active_products(category)
+    products = await service.list_active_products(category, insurance_category_id=insurance_category_id)
     items = [
         NamedMasterDataResponse(
             id=p.require_id(), name=p.name, description=p.description, status=p.status,
             created_at=p.created_at, updated_at=p.updated_at,
         )
         for p in products
+    ]
+    return ApiResponse[list[NamedMasterDataResponse]].ok(items)
+
+
+# Insurance Policy Leads redesign — the first step under "Apply for Insurance": pick a
+# category, then the product list is scoped to it via ?insurance_category_id= above.
+@router.get("/portal-insurance-categories")
+async def list_portal_insurance_categories(
+    service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep
+) -> ApiResponse[list[NamedMasterDataResponse]]:
+    categories = await service.list_active_insurance_categories()
+    items = [
+        NamedMasterDataResponse(
+            id=c.require_id(), name=c.name, description=c.description, status=c.status,
+            created_at=c.created_at, updated_at=c.updated_at,
+        )
+        for c in categories
     ]
     return ApiResponse[list[NamedMasterDataResponse]].ok(items)
 

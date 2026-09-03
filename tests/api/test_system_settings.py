@@ -82,12 +82,82 @@ async def test_loan_product_and_insurance_product_and_document_type_create(clien
     r = await client.post("/api/v1/loan-products", json={"name": "Personal Loan"}, headers=owner_headers)
     assert r.status_code == 200, r.text
 
-    r = await client.post("/api/v1/insurance-products", json={"name": "Health"}, headers=owner_headers)
+    r = await client.post("/api/v1/insurance-categories", json={"name": "Health Insurance"}, headers=owner_headers)
     assert r.status_code == 200, r.text
+    category_id = r.json()["data"]["id"]
+
+    r = await client.post("/api/v1/insurance-products", json={"name": "Health", "category_id": category_id}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["category_id"] == category_id
+    assert r.json()["data"]["category_name"] == "Health Insurance"
 
     r = await client.post("/api/v1/document-types", json={"name": "PAN"}, headers=owner_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["supports_password"] is False
+
+
+# ---------------------------------------------------------------------- insurance categories (Insurance Policy Leads redesign)
+
+
+async def test_insurance_category_crud_and_product_requires_valid_category(client, owner_headers):
+    # A product cannot be created without a category...
+    r = await client.post("/api/v1/insurance-products", json={"name": "Orphan Plan"}, headers=owner_headers)
+    assert r.status_code == 422, r.text
+
+    # ...nor with an unknown one.
+    r = await client.post(
+        "/api/v1/insurance-products", json={"name": "Orphan Plan", "category_id": "0" * 24}, headers=owner_headers
+    )
+    assert r.status_code == 404, r.text
+
+    r = await client.post("/api/v1/insurance-categories", json={"name": "Life Insurance"}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    category = r.json()["data"]
+
+    r = await client.post("/api/v1/insurance-categories", json={"name": "Life Insurance"}, headers=owner_headers)
+    assert r.status_code == 409, r.text
+
+    r = await client.post(
+        "/api/v1/insurance-products", json={"name": "Term Life", "category_id": category["id"]}, headers=owner_headers
+    )
+    assert r.status_code == 200, r.text
+    product_id = r.json()["data"]["id"]
+
+    # A category with an active product underneath it can't be deactivated.
+    r = await client.patch(f"/api/v1/insurance-categories/{category['id']}/deactivate", headers=owner_headers)
+    assert r.status_code == 409, r.text
+
+    r = await client.patch(f"/api/v1/insurance-products/{product_id}/deactivate", headers=owner_headers)
+    assert r.status_code == 200, r.text
+
+    r = await client.patch(f"/api/v1/insurance-categories/{category['id']}/deactivate", headers=owner_headers)
+    assert r.status_code == 200, r.text
+
+    # A product can't be (re)activated under an inactive category.
+    r = await client.patch(f"/api/v1/insurance-products/{product_id}/activate", headers=owner_headers)
+    assert r.status_code == 409, r.text
+
+    r = await client.patch(f"/api/v1/insurance-categories/{category['id']}/activate", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    r = await client.patch(f"/api/v1/insurance-products/{product_id}/activate", headers=owner_headers)
+    assert r.status_code == 200, r.text
+
+
+async def test_insurance_product_can_be_moved_between_categories(client, owner_headers):
+    r = await client.post("/api/v1/insurance-categories", json={"name": "Health Insurance"}, headers=owner_headers)
+    health_id = r.json()["data"]["id"]
+    r = await client.post("/api/v1/insurance-categories", json={"name": "Life Insurance"}, headers=owner_headers)
+    life_id = r.json()["data"]["id"]
+
+    r = await client.post(
+        "/api/v1/insurance-products", json={"name": "Family Health Plus", "category_id": health_id}, headers=owner_headers
+    )
+    product_id = r.json()["data"]["id"]
+
+    r = await client.patch(f"/api/v1/insurance-products/{product_id}", json={"category_id": life_id}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["category_id"] == life_id
+    assert r.json()["data"]["category_name"] == "Life Insurance"
 
 
 async def test_document_type_supports_password_flag_create_and_update(client, owner_headers):

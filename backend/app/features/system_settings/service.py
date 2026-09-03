@@ -30,6 +30,7 @@ from app.features.system_settings.models import (
     ApiSetting,
     CompanySettings,
     DocumentType,
+    InsuranceCategory,
     InsuranceProduct,
     LeadSource,
     LoanProduct,
@@ -41,6 +42,7 @@ from app.features.system_settings.repository import (
     ApiSettingRepository,
     CompanySettingsRepository,
     DocumentTypeRepository,
+    InsuranceCategoryRepository,
     InsuranceProductRepository,
     LeadSourceRepository,
     LoanProductRepository,
@@ -51,6 +53,8 @@ from app.features.system_settings.schemas import (
     ApiSettingCreateRequest,
     ApiSettingUpdateRequest,
     BranchUpdateRequest,
+    InsuranceProductCreateRequest,
+    InsuranceProductUpdateRequest,
     NamedMasterDataCreateRequest,
     NamedMasterDataUpdateRequest,
     NotificationTemplateCreateRequest,
@@ -77,6 +81,7 @@ class SystemSettingsService:
 
         self._lead_sources = LeadSourceRepository(db)
         self._loan_products = LoanProductRepository(db)
+        self._insurance_categories = InsuranceCategoryRepository(db)
         self._insurance_products = InsuranceProductRepository(db)
         self._document_types = DocumentTypeRepository(db)
         self._status_masters = StatusMasterRepository(db)
@@ -176,21 +181,96 @@ class SystemSettingsService:
     async def deactivate_loan_product(self, loan_product_id: str, actor: User) -> LoanProduct:
         return await self._set_status_named(self._loan_products, loan_product_id, MasterDataStatus.INACTIVE, "deactivated", actor, resource="loan_products")  # type: ignore[return-value]
 
-    # ---- Insurance Products
+    # ---- Insurance Categories (Insurance Policy Leads redesign — top of the Category -> Product hierarchy)
+
+    async def list_insurance_categories(self) -> list[InsuranceCategory]:
+        return await self._list_named(self._insurance_categories)  # type: ignore[return-value]
+
+    async def create_insurance_category(self, payload: NamedMasterDataCreateRequest, actor: User) -> InsuranceCategory:
+        return await self._create_named(self._insurance_categories, payload, actor, resource="insurance_categories")  # type: ignore[return-value]
+
+    async def get_insurance_category(self, insurance_category_id: str) -> InsuranceCategory:
+        return await self._get_named(self._insurance_categories, insurance_category_id)  # type: ignore[return-value]
+
+    async def update_insurance_category(self, insurance_category_id: str, payload: NamedMasterDataUpdateRequest, actor: User) -> InsuranceCategory:
+        return await self._update_named(self._insurance_categories, insurance_category_id, payload, actor, resource="insurance_categories")  # type: ignore[return-value]
+
+    async def activate_insurance_category(self, insurance_category_id: str, actor: User) -> InsuranceCategory:
+        return await self._set_status_named(self._insurance_categories, insurance_category_id, MasterDataStatus.ACTIVE, "activated", actor, resource="insurance_categories")  # type: ignore[return-value]
+
+    async def deactivate_insurance_category(self, insurance_category_id: str, actor: User) -> InsuranceCategory:
+        # A category with active products underneath it can't be deactivated — the portal
+        # and Policy Leads both resolve a product's category, so a hidden category with a
+        # visible product would be an inconsistent tree. Deactivate the products first.
+        if await self._insurance_products.count_by_category(insurance_category_id, active_only=True) > 0:
+            raise ConflictError("Deactivate or reassign this category's active products before deactivating the category.")
+        return await self._set_status_named(self._insurance_categories, insurance_category_id, MasterDataStatus.INACTIVE, "deactivated", actor, resource="insurance_categories")  # type: ignore[return-value]
+
+    # ---- Insurance Products (each belongs to an InsuranceCategory)
+
+    async def _resolve_category_name_map(self, products: list[InsuranceProduct]) -> dict[str, str]:
+        category_ids = {p.category_id for p in products if p.category_id}
+        if not category_ids:
+            return {}
+        categories = await self._insurance_categories.find_many({}, limit=500)
+        return {c.require_id(): c.name for c in categories if c.require_id() in category_ids}
+
+    async def _require_active_category(self, category_id: str) -> InsuranceCategory:
+        category = await self._insurance_categories.find_by_id(category_id)
+        if category is None:
+            raise NotFoundError("Unknown insurance category.")
+        if category.status != MasterDataStatus.ACTIVE:
+            raise ConflictError("That insurance category is inactive.")
+        return category
 
     async def list_insurance_products(self) -> list[InsuranceProduct]:
         return await self._list_named(self._insurance_products)  # type: ignore[return-value]
 
-    async def create_insurance_product(self, payload: NamedMasterDataCreateRequest, actor: User) -> InsuranceProduct:
-        return await self._create_named(self._insurance_products, payload, actor, resource="insurance_products")  # type: ignore[return-value]
+    async def resolve_insurance_category_names(self, products: list[InsuranceProduct]) -> dict[str, str]:
+        return await self._resolve_category_name_map(products)
+
+    async def create_insurance_product(self, payload: InsuranceProductCreateRequest, actor: User) -> InsuranceProduct:
+        await self._require_active_category(payload.category_id)
+        if await self._insurance_products.find_by_name(payload.name):
+            raise ConflictError(f"'{payload.name}' already exists.")
+        doc = InsuranceProduct(
+            name=payload.name, description=payload.description, category_id=payload.category_id, created_by=actor.require_id()
+        )
+        doc_id = await self._insurance_products.insert(doc)
+        await write_audit_log(
+            self._db, event_type=AuditEvent.master_data("insurance_products", "created"),
+            user_id=actor.require_id(), metadata={"id": doc_id, "name": payload.name, "category_id": payload.category_id},
+        )
+        return await self._insurance_products.find_by_id(doc_id) or doc
 
     async def get_insurance_product(self, insurance_product_id: str) -> InsuranceProduct:
         return await self._get_named(self._insurance_products, insurance_product_id)  # type: ignore[return-value]
 
-    async def update_insurance_product(self, insurance_product_id: str, payload: NamedMasterDataUpdateRequest, actor: User) -> InsuranceProduct:
-        return await self._update_named(self._insurance_products, insurance_product_id, payload, actor, resource="insurance_products")  # type: ignore[return-value]
+    async def update_insurance_product(self, insurance_product_id: str, payload: InsuranceProductUpdateRequest, actor: User) -> InsuranceProduct:
+        doc = await self.get_insurance_product(insurance_product_id)
+        updates: dict[str, Any] = {}
+        if payload.name is not None and payload.name != doc.name:
+            if await self._insurance_products.find_by_name(payload.name, exclude_id=insurance_product_id):
+                raise ConflictError(f"'{payload.name}' already exists.")
+            updates["name"] = payload.name
+        if payload.description is not None:
+            updates["description"] = payload.description
+        if payload.category_id is not None and payload.category_id != doc.category_id:
+            await self._require_active_category(payload.category_id)
+            updates["category_id"] = payload.category_id
+        if not updates:
+            return doc
+        updated = await self._insurance_products.update(insurance_product_id, updates, updated_by=actor.require_id())
+        await write_audit_log(
+            self._db, event_type=AuditEvent.master_data("insurance_products", "updated"),
+            user_id=actor.require_id(), metadata={"id": insurance_product_id, "fields": list(updates.keys())},
+        )
+        return updated or doc
 
     async def activate_insurance_product(self, insurance_product_id: str, actor: User) -> InsuranceProduct:
+        product = await self.get_insurance_product(insurance_product_id)
+        if product.category_id is not None:
+            await self._require_active_category(product.category_id)
         return await self._set_status_named(self._insurance_products, insurance_product_id, MasterDataStatus.ACTIVE, "activated", actor, resource="insurance_products")  # type: ignore[return-value]
 
     async def deactivate_insurance_product(self, insurance_product_id: str, actor: User) -> InsuranceProduct:

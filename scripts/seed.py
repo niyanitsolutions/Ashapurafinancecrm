@@ -81,6 +81,7 @@ from app.features.reporting.constants import ReportCategory, ReportType
 from app.features.reporting.models import ReportDefinition, ReportDefinitionColumn
 from app.features.system_settings.models import (
     DocumentType,
+    InsuranceCategory,
     InsuranceProduct,
     LeadSource,
     LoanProduct,
@@ -141,6 +142,7 @@ async def seed_permission_catalog() -> None:
         ("branches", "Branches"),
         ("lead_sources", "Lead Sources"),
         ("loan_products", "Loan Products"),
+        ("insurance_categories", "Insurance Categories"),
         ("insurance_products", "Insurance Products"),
         ("document_types", "Document Types"),
         ("status_masters", "Status Masters"),
@@ -392,10 +394,28 @@ async def seed_settings_master_data() -> None:
         payload = LoanProduct(name=name).model_dump(by_alias=True, exclude={"id"})
         await loan_products.update_one({"name": name}, {"$setOnInsert": payload}, upsert=True)
 
+    # Insurance Policy Leads redesign — Insurance Products now belong to an
+    # InsuranceCategory. Seed the two example categories and place each seeded product
+    # under one. Idempotent: `$setOnInsert` never overwrites an existing row, and the
+    # product upsert filters on name so a re-run leaves a hand-edited category_id alone.
+    insurance_categories = db["insurance_categories"]
+    category_ids: dict[str, str] = {}
+    for cat_name in ("Health Insurance", "Life Insurance"):
+        payload = InsuranceCategory(name=cat_name).model_dump(by_alias=True, exclude={"id"})
+        await insurance_categories.update_one({"name": cat_name}, {"$setOnInsert": payload}, upsert=True)
+        row = await insurance_categories.find_one({"name": cat_name}, {"_id": 1})
+        assert row is not None
+        category_ids[cat_name] = str(row["_id"])
+
     insurance_products = db["insurance_products"]
-    for name in ("Life", "Health"):
-        payload = InsuranceProduct(name=name).model_dump(by_alias=True, exclude={"id"})
+    for name, cat_name in (("Health", "Health Insurance"), ("Life", "Life Insurance")):
+        payload = InsuranceProduct(name=name, category_id=category_ids[cat_name]).model_dump(by_alias=True, exclude={"id"})
         await insurance_products.update_one({"name": name}, {"$setOnInsert": payload}, upsert=True)
+        # Backfill category_id on a product that predates this field (older seed run).
+        await insurance_products.update_one(
+            {"name": name, "$or": [{"category_id": None}, {"category_id": {"$exists": False}}]},
+            {"$set": {"category_id": category_ids[cat_name]}},
+        )
 
     document_types = db["document_types"]
     # "Property Documents" added in Module 6B — the brief's Document Upload section
