@@ -739,6 +739,85 @@ class CustomerService:
             product_category=product_category, product_id=product_id, form_definition=form_def, actor=actor,
         )
 
+    async def create_manual_insurance_application(
+        self, *, full_name: str, mobile: str, email: str | None, gender: str | None, age: int | None,
+        profession: str | None, annual_income: float | None, remarks: str | None, product_id: str, actor: User,
+    ) -> tuple[Application, str | None, str | None]:
+        """Staff-initiated Insurance lead — the walk-in / phoned-in counterpart of a
+        customer applying through the portal. Reuses the exact same Lead-less
+        `_create_application` path, so the new application feeds the Insurance Policy
+        Leads pipeline through `InsuranceCaseService.ensure_case_for_application` exactly
+        like a portal submission. NEVER creates a `Lead`.
+
+        Auto-provisions the customer account when the mobile is new (a `role=customer`
+        `User` with a random password + `must_change_password`, mobile unverified, no OTP
+        — the `create_staff_initiated_account` posture), or reuses an existing customer
+        account when one already exists for that mobile. Returns `(application,
+        rollback_user_id, rollback_customer_id)` — the two ids are set only for rows THIS
+        call created, so the caller can undo exactly its own writes if a later stage-move
+        fails.
+
+        Deliberately does NOT run `submit_application`'s required-document gate — a manual
+        lead starts with no documents; the Policy Login transition still enforces
+        verification later."""
+        form_def = await self._get_or_error_form_definition("insurance", product_id)
+
+        existing_user = await self._users.find_by_mobile(mobile)
+        rollback_user_id: str | None = None
+        rollback_customer_id: str | None = None
+        if existing_user is not None:
+            if existing_user.role != CUSTOMER:
+                raise ValidationError("This mobile number belongs to a staff account and cannot be used for a customer lead.")
+            customer = await self._customers.find_by_user_id(existing_user.require_id())
+            if customer is None:
+                customer = await self._create_customer_from_profile(
+                    CompleteProfileRequest(full_name=full_name, email=email, gender=gender),
+                    existing_user, converted_from_lead_id=None,
+                )
+                rollback_customer_id = customer.require_id()
+            customer_user = existing_user
+        else:
+            new_user = User(
+                mobile=mobile, role=CUSTOMER, status=ACCOUNT_STATUS_ACTIVE,
+                password_hash=hash_password(secrets.token_urlsafe(18)),
+                is_mobile_verified=False, must_change_password=True, created_by=actor.require_id(),
+            )
+            user_id = await self._users.insert(new_user)
+            fetched_user = await self._users.find_by_id(user_id)
+            if fetched_user is None:
+                raise NotFoundError("Newly created account could not be read back.")
+            customer_user = fetched_user
+            rollback_user_id = customer_user.require_id()
+            customer = await self._create_customer_from_profile(
+                CompleteProfileRequest(full_name=full_name, email=email, gender=gender),
+                customer_user, converted_from_lead_id=None,
+            )
+            rollback_customer_id = customer.require_id()
+
+        application = await self._create_application(
+            user_id=customer_user.require_id(), customer_id=customer.require_id(), lead_id=None,
+            product_category="insurance", product_id=product_id, form_definition=form_def, actor=actor,
+        )
+        form_data: dict[str, Any] = {}
+        if age is not None:
+            form_data["age"] = age
+        if profession:
+            form_data["profession"] = profession
+        if annual_income is not None:
+            form_data["annual_income"] = annual_income
+        if remarks:
+            form_data["remarks"] = remarks
+        updated = await self._applications.update(
+            application.require_id(),
+            {"status": ApplicationStatus.SUBMITTED, "submitted_at": utc_now(), "form_data": form_data},
+            updated_by=actor.require_id(),
+        )
+        await write_audit_log(
+            self._db, event_type=AuditEvent.APPLICATION_SUBMITTED, user_id=actor.require_id(),
+            metadata={"application_id": application.require_id(), "manual_insurance_lead": True},
+        )
+        return updated or application, rollback_user_id, rollback_customer_id
+
     async def _resolve_initial_assigned_to(self, mobile: str, product_category: str, product_id: str) -> str | None:
         """Seeds a new (Flow 2 / continuing) Application's initial assignment from any
         pre-existing Lead sharing this customer's mobile and product — same

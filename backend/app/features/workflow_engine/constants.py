@@ -269,3 +269,7 @@ class InsuranceAuditEvent:
 
     # Phase 5 — ad-hoc "Add Other Document" (per-case, never a Product Schema change).
     ADDITIONAL_DOCUMENT_REQUESTED = "insurance_case_additional_document_requested"
+
+    # Manual lead creation + staff "Move To" stage movement.
+    MANUAL_CASE_CREATED = "insurance_case_manual_created"
+    STAGE_MOVED = "insurance_case_stage_moved"

@@ -31,6 +31,7 @@ import {
   holdInsuranceCase,
   listInsuranceCaseDocuments,
   moveInsuranceCaseBack,
+  moveInsuranceCaseToStage,
   moveToPolicyDocument,
   moveToPolicyIssued,
   moveToPolicyLogin,
@@ -45,6 +46,10 @@ import {
   type InsuranceCaseDocument,
 } from "@/features/insurance_management/api";
 import { getInsuranceStatusControlInfo, INSURANCE_STATUS_LABELS } from "@/features/insurance_management/statusControl";
+
+// Every stage staff can deliberately "Move To" — the backend still validates the case
+// can legally exist there (documents verified, premium recorded, …).
+const MOVE_TO_STAGES = ["fresh_lead", "policy_document", "policy_login", "policy_issued", "re_eligible", "rejected"];
 import { HOLD_REASONS } from "@/features/workflow_engine/holdReasons";
 import { formatISTDateTime } from "@/shared/dateFormat";
 import { useDocumentCollectionBackContext } from "@/shared/navigationContext";
@@ -94,6 +99,7 @@ export function InsuranceCaseDetailsPage() {
   const [showPolicyLogin, setShowPolicyLogin] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [confirmIssue, setConfirmIssue] = useState(false);
+  const [moveTarget, setMoveTarget] = useState("");
 
   const { data: formDef } = useProductSchema("insurance", insuranceCase?.product_id);
 
@@ -372,6 +378,38 @@ export function InsuranceCaseDetailsPage() {
               ) : (
                 <HoldForm onSubmit={(reason, remarks) => run(() => holdInsuranceCase(caseId, reason, remarks), "Case placed on hold.")} />
               )}
+            </Section>
+          )}
+
+          {canReject && status !== "policy_issued" && status !== "on_hold" && (
+            <Section title="Move To Stage">
+              <p className="text-xs text-text/50">
+                Deliberately send this case to another stage. The system still enforces every gate
+                (documents verified, Premium/PPT/PT recorded).
+              </p>
+              <SelectField
+                label="Target stage"
+                name="move_target"
+                value={moveTarget}
+                onChange={(e) => setMoveTarget(e.target.value)}
+                placeholder="Select a stage"
+                options={MOVE_TO_STAGES.filter((s) => s !== status).map((s) => ({ value: s, label: STATUS_LABELS[s] ?? s }))}
+              />
+              <Button
+                size="sm"
+                className="w-full"
+                disabled={!moveTarget}
+                onClick={() => {
+                  if (moveTarget === "rejected") {
+                    setShowReject(true);
+                  } else {
+                    run(() => moveInsuranceCaseToStage(caseId, { target: moveTarget }), "Case moved.");
+                  }
+                  setMoveTarget("");
+                }}
+              >
+                Move
+              </Button>
             </Section>
           )}
 

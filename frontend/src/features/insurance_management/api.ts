@@ -186,6 +186,45 @@ export function changeInsuranceProduct(caseId: string, productId: string) {
   return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/change-product`, { method: "POST", body: JSON.stringify({ product_id: productId }) });
 }
 
+// ---------------------------------------------------------------- manual lead creation + staff "Move To"
+
+// Stages a manual lead can be created in directly. Policy Login / Policy Issued need
+// documents / premium that only exist after the lead does — reach them via "Move To".
+export const MANUAL_CREATE_STAGES: { value: string; label: string }[] = [
+  { value: "fresh_lead", label: "Fresh Lead" },
+  { value: "policy_document", label: "Policy Document" },
+  { value: "re_eligible", label: "Re-Eligible" },
+  { value: "rejected", label: "Rejected" },
+];
+
+export interface CreateManualInsuranceCasePayload {
+  full_name: string;
+  mobile: string;
+  email?: string;
+  gender?: string;
+  age?: number;
+  profession?: string;
+  annual_income?: number;
+  remarks?: string;
+  insurance_category_id: string;
+  product_id: string;
+  stage: string;
+  reason?: string;
+  re_eligibility?: InsuranceReEligibilityChoice;
+  re_eligible_date?: string;
+}
+
+export function createManualInsuranceCase(payload: CreateManualInsuranceCasePayload) {
+  return apiRequest<InsuranceCaseDetail>("/insurance-cases/manual", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function moveInsuranceCaseToStage(
+  caseId: string,
+  payload: { target: string; reason?: string; re_eligibility?: InsuranceReEligibilityChoice; re_eligible_date?: string },
+) {
+  return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/move-to-stage`, { method: "POST", body: JSON.stringify(payload) });
+}
+
 // ---------------------------------------------------------------- schema documents
 
 export function listInsuranceCaseDocuments(caseId: string) {

@@ -27,11 +27,13 @@ from app.features.insurance_management.schemas import (
     AddOtherDocumentRequest,
     ChangeProductRequest,
     ConfirmOtherDocumentRequest,
+    CreateManualInsuranceCaseRequest,
     InsuranceCaseDetailResponse,
     InsuranceCaseDocumentResponse,
     InsuranceCaseListItem,
     InsuranceStatusUpdateRequest,
     MoveBackRequest,
+    MoveToStageRequest,
     OtherDocumentResponse,
     OtherDocumentUploadUrlRequest,
     OtherDocumentUploadUrlResponse,
@@ -136,6 +138,14 @@ async def list_cases(
         for c in cases
     ]
     return ApiResponse[list[InsuranceCaseListItem]].ok(items, meta=ResponseMeta(pagination=page.build_meta(total)))
+
+
+@router.post("/manual")
+async def create_manual_case(
+    payload: CreateManualInsuranceCaseRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[InsuranceCaseDetailResponse]:
+    case = await service.create_manual_case(payload, actor)
+    return await _detail(service, case.require_id(), actor)
 
 
 @router.get("/{case_id}")
@@ -251,6 +261,18 @@ async def change_product(
     case_id: str, payload: ChangeProductRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
 ) -> ApiResponse[InsuranceCaseDetailResponse]:
     await service.change_product(case_id, payload.product_id, actor)
+    return await _detail(service, case_id, actor)
+
+
+@router.post("/{case_id}/move-to-stage")
+async def move_case_to_stage(
+    case_id: str, payload: MoveToStageRequest, service: ServiceDep,
+    actor: Annotated[User, require_any_permission(_MODULE, _RESOURCE, ("edit", "reject"))],
+) -> ApiResponse[InsuranceCaseDetailResponse]:
+    await service.move_case_to_stage(
+        case_id, payload.target, actor,
+        reason=payload.reason, re_eligibility=payload.re_eligibility, re_eligible_date=payload.re_eligible_date,
+    )
     return await _detail(service, case_id, actor)
 
 

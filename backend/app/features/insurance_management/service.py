@@ -50,6 +50,7 @@ from app.features.insurance_management.models import InsuranceCaseAdditionalDocu
 from app.features.insurance_management.repository import InsuranceCaseAdditionalDocumentRepository
 from app.features.insurance_management.schemas import (
     ConfirmOtherDocumentRequest,
+    CreateManualInsuranceCaseRequest,
     OtherDocumentUploadUrlRequest,
     PolicyLoginUpdateRequest,
 )
@@ -93,6 +94,7 @@ from app.services.storage.client import (
 )
 from app.shared.audit_log import write_audit_log
 from app.utils.datetime import utc_now
+from app.utils.helpers import to_object_id
 from app.utils.id_generator import IdPrefix, generate_id
 
 _NO_ASSIGNMENT_SENTINEL = "___none___"
@@ -374,6 +376,168 @@ class InsuranceCaseService:
                 text=re_eligibility_note_text(choice, re_eligible_date),
             )
         )
+        return updated
+
+    async def mark_re_eligible(self, case_id: str, actor: User) -> ApplicationWorkflow:
+        """Move a `rejected` case straight to `re_eligible` (the seeded `rejected →
+        re_eligible` edge) — the manual equivalent of what the
+        `auto_transition_re_eligible_cases` worker does on the scheduled date."""
+        case = await self.get_case(case_id, actor)
+        if case.current_status != InsuranceStatus.REJECTED:
+            raise ConflictError("Only a Rejected case can be marked Re-Eligible.")
+        details = (case.insurance_details or InsuranceCaseDetails()).model_copy(
+            update={"re_eligible_date": None, "re_eligibility_auto_transitioned": False}
+        )
+        updated = await self._engine.transition(
+            case, InsuranceStatus.RE_ELIGIBLE, actor,
+            updates={"insurance_details": details.model_dump()}, remarks="Manually marked Re-Eligible.",
+        )
+        await write_audit_log(
+            self._db, event_type=InsuranceAuditEvent.MARKED_RE_ELIGIBLE, user_id=actor.require_id(),
+            metadata={"application_workflow_id": case_id},
+        )
+        return updated
+
+    # ---------------------------------------------------------------- manual creation + staff "Move To"
+
+    _STAGE_CHAIN: ClassVar[tuple[str, ...]] = (
+        InsuranceStatus.FRESH_LEAD, InsuranceStatus.POLICY_DOCUMENT,
+        InsuranceStatus.POLICY_LOGIN, InsuranceStatus.POLICY_ISSUED,
+    )
+    _STAGE_LABELS: ClassVar[dict[str, str]] = {
+        InsuranceStatus.FRESH_LEAD: "Fresh Lead", InsuranceStatus.POLICY_DOCUMENT: "Policy Document",
+        InsuranceStatus.POLICY_LOGIN: "Policy Login", InsuranceStatus.POLICY_ISSUED: "Policy Issued",
+        InsuranceStatus.RE_ELIGIBLE: "Re-Eligible", InsuranceStatus.REJECTED: "Rejected",
+    }
+
+    async def _assert_product_in_active_category(self, product_id: str, *, expected_category_id: str | None = None) -> None:
+        product = await self._products.find_by_id(product_id)
+        if product is None:
+            raise ValidationError("Unknown insurance product.")
+        category_id = getattr(product, "category_id", None)
+        if category_id is None:
+            raise ValidationError("That insurance product isn't linked to a category yet.")
+        if expected_category_id is not None and category_id != expected_category_id:
+            raise ValidationError("That product does not belong to the selected Insurance Category.")
+        category = await self._categories.find_by_id(category_id)
+        if category is None or category.status != MasterDataStatus.ACTIVE:
+            raise ConflictError("That insurance product's category is inactive.")
+
+    async def create_manual_case(self, payload: CreateManualInsuranceCaseRequest, actor: User) -> ApplicationWorkflow:
+        """Staff "Add Insurance Lead" — provisions the customer + application (never a
+        `Lead`), creates the workflow at Fresh Lead through the ordinary
+        `ensure_case_for_application` path, then walks it to the requested initial stage
+        with `move_case_to_stage` (every gate enforced). If the walk fails, everything
+        this call created is removed so no half-formed case is left behind."""
+        await self._assert_product_in_active_category(payload.product_id, expected_category_id=payload.insurance_category_id)
+
+        application, rollback_user_id, rollback_customer_id = await self._customer_service().create_manual_insurance_application(
+            full_name=payload.full_name, mobile=payload.mobile, email=payload.email, gender=payload.gender,
+            age=payload.age, profession=payload.profession, annual_income=payload.annual_income,
+            remarks=payload.remarks, product_id=payload.product_id, actor=actor,
+        )
+        case = await self.ensure_case_for_application(application.require_id())
+        assert case is not None
+        case_id = case.require_id()
+
+        # An Employee who creates a lead owns it — otherwise the gated `move_to_*`
+        # transitions in the stage-walk below would 403 on their own not-assigned check.
+        if actor.role == EMPLOYEE:
+            employee_id = await self._acting_employee_id(actor)
+            if employee_id is not None and employee_id != _NO_ASSIGNMENT_SENTINEL:
+                case = await self.assign_case(case_id, employee_id, actor)
+
+        await write_audit_log(
+            self._db, event_type=InsuranceAuditEvent.MANUAL_CASE_CREATED, user_id=actor.require_id(),
+            metadata={
+                "application_workflow_id": case_id, "application_id": application.require_id(), "stage": payload.stage,
+            },
+        )
+        await self._notes.insert(ApplicationNote(
+            application_workflow_id=case_id, created_by=actor.require_id(),
+            text=f"Manually created by staff at stage “{self._STAGE_LABELS.get(payload.stage, payload.stage)}”.",
+        ))
+
+        if payload.stage == InsuranceStatus.FRESH_LEAD:
+            return case
+        try:
+            return await self.move_case_to_stage(
+                case_id, payload.stage, actor,
+                reason=payload.reason, re_eligibility=payload.re_eligibility, re_eligible_date=payload.re_eligible_date,
+            )
+        except Exception:
+            await self._rollback_manual_case(case_id, application.require_id(), rollback_user_id, rollback_customer_id)
+            raise
+
+    async def _rollback_manual_case(
+        self, case_id: str, application_id: str, rollback_user_id: str | None, rollback_customer_id: str | None,
+    ) -> None:
+        """Hard-remove exactly what `create_manual_case` created when its stage-walk
+        fails — a failed creation must never surface as a real lead. Uses the same raw
+        `delete_one` the Bin's purge uses (`bin/service.py`)."""
+        await self._db["application_status_history"].delete_many({"application_workflow_id": case_id})
+        await self._db["application_notes"].delete_many({"application_workflow_id": case_id})
+        await self._db["application_workflows"].delete_one({"_id": to_object_id(case_id)})
+        await self._db["applications"].delete_one({"_id": to_object_id(application_id)})
+        if rollback_customer_id is not None:
+            await self._db["customers"].delete_one({"_id": to_object_id(rollback_customer_id)})
+        if rollback_user_id is not None:
+            await self._db["users"].delete_one({"_id": to_object_id(rollback_user_id)})
+
+    async def move_case_to_stage(
+        self, case_id: str, target: str, actor: User, *,
+        reason: str | None = None, re_eligibility: str | None = None, re_eligible_date: date | None = None,
+    ) -> ApplicationWorkflow:
+        """Staff "Move To" — deliberately send a case to any Policy Leads stage. Every
+        branch delegates to an existing, individually-gated transition; this only picks
+        the right one(s) and, for a multi-step move, walks the chain hop by hop. A gate
+        that blocks a hop (unverified documents, missing Premium/PPT/PT) stops the walk
+        with that gate's own error — the case stays at the furthest stage it legally
+        reached. Never patches `current_status` directly."""
+        case = await self.get_case(case_id, actor)
+        current = case.current_status
+        if target == current:
+            return case
+
+        if target == InsuranceStatus.REJECTED:
+            return await self.reject_case(case_id, reason or "", re_eligibility, re_eligible_date, actor)
+        if target == InsuranceStatus.RE_ELIGIBLE:
+            # `re_eligible` is only reachable from `rejected` (seeded edge). From any other
+            # stage, reject first (staff supplies the reason + schedule) then mark it.
+            if current != InsuranceStatus.REJECTED:
+                await self.reject_case(case_id, reason or "", re_eligibility, re_eligible_date, actor)
+            return await self.mark_re_eligible(case_id, actor)
+        if current == InsuranceStatus.RE_ELIGIBLE and target in (InsuranceStatus.FRESH_LEAD, InsuranceStatus.POLICY_DOCUMENT):
+            return await self.restart_from_re_eligible(case_id, target, actor)
+
+        if current not in self._STAGE_CHAIN or target not in self._STAGE_CHAIN:
+            raise ConflictError(
+                f"A case in '{self._STAGE_LABELS.get(current, current)}' cannot be moved to "
+                f"'{self._STAGE_LABELS.get(target, target)}'."
+            )
+        from_i, to_i = self._STAGE_CHAIN.index(current), self._STAGE_CHAIN.index(target)
+        updated = case
+        if to_i > from_i:
+            forward = (self.move_to_policy_document, self.move_to_policy_login, self.move_to_policy_issued)
+            for step in range(from_i, to_i):
+                updated = await forward[step](case_id, actor)
+        else:
+            for _ in range(from_i - to_i):
+                cur = (await self._workflows.find_by_id(case_id))
+                assert cur is not None
+                updated = await self.move_back(case_id, self._MOVE_BACK_TARGET[cur.current_status], actor)
+
+        await write_audit_log(
+            self._db, event_type=InsuranceAuditEvent.STAGE_MOVED, user_id=actor.require_id(),
+            metadata={"application_workflow_id": case_id, "from": current, "to": target},
+        )
+        await self._notes.insert(ApplicationNote(
+            application_workflow_id=case_id, created_by=actor.require_id(),
+            text=(
+                f"Staff moved this case: {self._STAGE_LABELS.get(current, current)} → "
+                f"{self._STAGE_LABELS.get(target, target)}."
+            ),
+        ))
         return updated
 
     # ---------------------------------------------------------------- policy login / product

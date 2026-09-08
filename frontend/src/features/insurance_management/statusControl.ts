@@ -31,3 +31,13 @@ export const INSURANCE_STATUS_LABELS: Record<string, string> = {
   on_hold: "On Hold",
   rejected: "Rejected",
 };
+
+// Insurance offers 3 / 6 / 12 / Custom / No — no 9-month option (that is loan-only).
+// "No" means "never automatically Re-Eligible".
+export const INSURANCE_RE_ELIGIBILITY_OPTIONS: { value: "3_months" | "6_months" | "12_months" | "custom" | "no"; label: string }[] = [
+  { value: "3_months", label: "3 Months" },
+  { value: "6_months", label: "6 Months" },
+  { value: "12_months", label: "12 Months" },
+  { value: "custom", label: "Custom" },
+  { value: "no", label: "No" },
+];

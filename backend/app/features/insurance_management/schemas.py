@@ -1,9 +1,21 @@
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 from app.features.customer.schemas import ApplicationDocumentResponse
 from app.features.workflow_engine.constants import InsuranceStatus, ReEligibilityPeriod
+
+# Stages an Insurance case can be created in directly from the manual "Add Insurance
+# Lead" form. Policy Login / Policy Issued are deliberately excluded — a brand-new lead
+# has no verified documents / premium, so those stages are only reachable via "Move To".
+_MANUAL_CREATE_STAGES = (
+    InsuranceStatus.FRESH_LEAD,
+    InsuranceStatus.POLICY_DOCUMENT,
+    InsuranceStatus.RE_ELIGIBLE,
+    InsuranceStatus.REJECTED,
+)
+# Every stage "Move To" can target — anything except On Hold (its own Hold/Resume action).
+_MOVE_TO_STAGES = tuple(s for s in InsuranceStatus.ALL if s != InsuranceStatus.ON_HOLD)
 
 _INSURANCE_RE_ELIGIBILITY_OPTIONS = (
     ReEligibilityPeriod.THREE_MONTHS,
@@ -104,6 +116,69 @@ class InsuranceCaseDetailResponse(InsuranceCaseListItem):
     insurance_details: InsuranceCaseDetailsResponse
     required_documents: RequiredDocumentsSummaryResponse
     updated_at: datetime
+
+
+# ---------------------------------------------------------------------- manual lead creation + stage movement
+
+class _ReEligibilityFields(BaseModel):
+    reason: str | None = None
+    re_eligibility: str = Field(default=ReEligibilityPeriod.NO)
+    re_eligible_date: date | None = None
+
+    @field_validator("re_eligibility")
+    @classmethod
+    def _valid_option(cls, value: str) -> str:
+        if value not in _INSURANCE_RE_ELIGIBILITY_OPTIONS:
+            raise ValueError(f"'{value}' is not a valid Re-Eligibility option.")
+        return value
+
+
+class CreateManualInsuranceCaseRequest(_ReEligibilityFields):
+    full_name: str = Field(min_length=1, max_length=200)
+    mobile: str = Field(pattern=r"^[6-9]\d{9}$")
+    email: EmailStr | None = None
+    gender: str | None = None
+    age: int | None = Field(default=None, ge=18, le=120)
+    profession: str | None = None
+    annual_income: float | None = Field(default=None, ge=0)
+    remarks: str | None = None
+    insurance_category_id: str = Field(min_length=1)
+    product_id: str = Field(min_length=1)
+    stage: str = Field(default=InsuranceStatus.FRESH_LEAD)
+
+    @field_validator("stage")
+    @classmethod
+    def _valid_stage(cls, value: str) -> str:
+        if value not in _MANUAL_CREATE_STAGES:
+            raise ValueError(
+                "stage must be one of: "
+                + ", ".join(_MANUAL_CREATE_STAGES)
+                + " (Policy Login / Policy Issued are reachable only via 'Move To')."
+            )
+        return value
+
+    @model_validator(mode="after")
+    def _reason_required_for_rejection(self) -> "CreateManualInsuranceCaseRequest":
+        if self.stage in (InsuranceStatus.REJECTED, InsuranceStatus.RE_ELIGIBLE) and not (self.reason or "").strip():
+            raise ValueError("A rejection reason is required when the initial stage is Rejected or Re-Eligible.")
+        return self
+
+
+class MoveToStageRequest(_ReEligibilityFields):
+    target: str
+
+    @field_validator("target")
+    @classmethod
+    def _valid_target(cls, value: str) -> str:
+        if value not in _MOVE_TO_STAGES:
+            raise ValueError(f"'{value}' is not a stage a case can be moved to.")
+        return value
+
+    @model_validator(mode="after")
+    def _reason_required_for_rejection(self) -> "MoveToStageRequest":
+        if self.target == InsuranceStatus.REJECTED and not (self.reason or "").strip():
+            raise ValueError("A rejection reason is required when moving a case to Rejected.")
+        return self
 
 
 # ---------------------------------------------------------------------- per-document actions

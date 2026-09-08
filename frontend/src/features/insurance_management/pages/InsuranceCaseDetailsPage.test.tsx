@@ -9,6 +9,7 @@ const getInsuranceCase = vi.fn();
 const listInsuranceCaseDocuments = vi.fn();
 const rejectInsuranceCase = vi.fn();
 const moveToPolicyLogin = vi.fn();
+const moveInsuranceCaseToStage = vi.fn();
 
 vi.mock("@/features/insurance_management/api", async () => {
   const actual = await vi.importActual<typeof import("@/features/insurance_management/api")>("@/features/insurance_management/api");
@@ -20,6 +21,7 @@ vi.mock("@/features/insurance_management/api", async () => {
     listOtherDocuments: () => Promise.resolve([]),
     rejectInsuranceCase: (...a: unknown[]) => rejectInsuranceCase(...(a as [])),
     moveToPolicyLogin: (...a: unknown[]) => moveToPolicyLogin(...(a as [])),
+    moveInsuranceCaseToStage: (...a: unknown[]) => moveInsuranceCaseToStage(...(a as [])),
   };
 });
 
@@ -136,5 +138,30 @@ describe("InsuranceCaseDetailsPage", () => {
     expect(screen.getByLabelText("6 Months")).toBeInTheDocument();
     expect(screen.getByLabelText("12 Months")).toBeInTheDocument();
     expect(screen.queryByLabelText("9 Months")).not.toBeInTheDocument();
+  });
+
+  it("the Move To Stage control offers the other stages and moves the case", async () => {
+    getInsuranceCase.mockResolvedValue(baseCase);
+    moveInsuranceCaseToStage.mockResolvedValue(baseCase);
+    renderPage();
+
+    const select = await screen.findByLabelText("Target stage");
+    const labels = Array.from(select.querySelectorAll("option")).map((o) => o.textContent);
+    expect(labels).toContain("Policy Login");
+    expect(labels).not.toContain("Policy Document"); // current stage is excluded
+
+    await userEvent.setup().selectOptions(select, "policy_login");
+    await userEvent.setup().click(screen.getByRole("button", { name: "Move" }));
+    await waitFor(() => expect(moveInsuranceCaseToStage).toHaveBeenCalledWith("c1", { target: "policy_login" }));
+  });
+
+  it("picking Rejected in Move To Stage opens the reject modal", async () => {
+    getInsuranceCase.mockResolvedValue(baseCase);
+    renderPage();
+
+    await userEvent.setup().selectOptions(await screen.findByLabelText("Target stage"), "rejected");
+    await userEvent.setup().click(screen.getByRole("button", { name: "Move" }));
+    expect(await screen.findByText("Reject Insurance Case")).toBeInTheDocument();
+    expect(moveInsuranceCaseToStage).not.toHaveBeenCalled();
   });
 });

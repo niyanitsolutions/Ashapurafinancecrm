@@ -4,19 +4,13 @@ import { FormField } from "@/components/forms/FormField";
 import { TextareaField } from "@/components/forms/TextareaField";
 import { Modal } from "@/components/overlays/Modal";
 import type { InsuranceReEligibilityChoice } from "@/features/insurance_management/api";
+import { INSURANCE_RE_ELIGIBILITY_OPTIONS } from "@/features/insurance_management/statusControl";
 import { todayISTDateString } from "@/shared/dateFormat";
 
 // Reject → Re-Eligibility scheduling for an Insurance Case. Presentational: it collects
 // the reason + schedule and hands them to `onConfirm`; the caller performs the actual
-// `rejectInsuranceCase` call. Insurance offers 3 / 6 / 12 / Custom / No (no 9-month
-// option — that is loan-only). "No" means "never automatically Re-Eligible".
-const OPTIONS: { value: InsuranceReEligibilityChoice; label: string }[] = [
-  { value: "3_months", label: "3 Months" },
-  { value: "6_months", label: "6 Months" },
-  { value: "12_months", label: "12 Months" },
-  { value: "custom", label: "Custom" },
-  { value: "no", label: "No" },
-];
+// `rejectInsuranceCase` call.
+const OPTIONS = INSURANCE_RE_ELIGIBILITY_OPTIONS;
 
 export interface RejectInsuranceCasePayload {
   reason: string;
