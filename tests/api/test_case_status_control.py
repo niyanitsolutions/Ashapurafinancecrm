@@ -46,23 +46,31 @@ _LOAN_ROWS = [
     (LoanStatus.REJECTED, "Application Rejected", 11, [LoanStatus.RE_ELIGIBLE], LoanAuditEvent.REJECTED),
 ]
 _INSURANCE_ROWS = [
-    (InsuranceStatus.APPLICATION_SUBMITTED, "Application Submitted", 1, [InsuranceStatus.DOCUMENTS_PENDING], "insurance_case_created"),
-    (InsuranceStatus.DOCUMENTS_PENDING, "Documents Pending", 2, [InsuranceStatus.UNDERWRITING], "insurance_case_documents_requested"),
-    (InsuranceStatus.UNDERWRITING, "Underwriting", 3, [InsuranceStatus.MEDICAL_VERIFICATION, InsuranceStatus.ADDITIONAL_DOCUMENTS, InsuranceStatus.PREMIUM_ACCEPTANCE, InsuranceStatus.REJECTED], "insurance_case_documents_verified"),
-    (InsuranceStatus.MEDICAL_VERIFICATION, "Medical Verification", 4, [InsuranceStatus.ADDITIONAL_DOCUMENTS, InsuranceStatus.PREMIUM_ACCEPTANCE, InsuranceStatus.REJECTED], "insurance_case_medical_verification_required"),
-    (InsuranceStatus.ADDITIONAL_DOCUMENTS, "Additional Documents", 5, [InsuranceStatus.PREMIUM_ACCEPTANCE], "insurance_case_additional_documents_required"),
-    (InsuranceStatus.PREMIUM_ACCEPTANCE, "Premium Acceptance", 6, [InsuranceStatus.POLICY_GENERATION, InsuranceStatus.REJECTED], "insurance_case_premium_ready"),
-    (InsuranceStatus.POLICY_GENERATION, "Policy Generation", 7, [InsuranceStatus.POLICY_ISSUED], "insurance_case_premium_accepted"),
-    (InsuranceStatus.POLICY_ISSUED, "Policy Issued", 8, [], "insurance_case_policy_issued"),
-    (InsuranceStatus.REJECTED, "Application Rejected", 9, [], "insurance_case_rejected"),
+    (InsuranceStatus.FRESH_LEAD, "Fresh Lead", 1, [InsuranceStatus.POLICY_DOCUMENT, InsuranceStatus.REJECTED], "insurance_case_created"),
+    (InsuranceStatus.POLICY_DOCUMENT, "Policy Document", 2, [InsuranceStatus.POLICY_LOGIN, InsuranceStatus.REJECTED], "insurance_case_policy_document_started"),
+    (InsuranceStatus.POLICY_LOGIN, "Policy Login", 3, [InsuranceStatus.POLICY_ISSUED, InsuranceStatus.REJECTED], "insurance_case_policy_login_started"),
+    (InsuranceStatus.POLICY_ISSUED, "Policy Issued", 4, [], "insurance_case_policy_issued"),
+    (InsuranceStatus.RE_ELIGIBLE, "Re-Eligible", 5, [InsuranceStatus.FRESH_LEAD, InsuranceStatus.POLICY_DOCUMENT, InsuranceStatus.REJECTED], "insurance_case_marked_re_eligible"),
+    (InsuranceStatus.REJECTED, "Application Rejected", 6, [InsuranceStatus.RE_ELIGIBLE], "insurance_case_rejected"),
 ]
+_INSURANCE_ALLOWED_PREVIOUS = {
+    InsuranceStatus.POLICY_DOCUMENT: [InsuranceStatus.FRESH_LEAD],
+    InsuranceStatus.POLICY_LOGIN: [InsuranceStatus.POLICY_DOCUMENT],
+}
 
 
 async def _seed_workflow_definitions(mock_db):
-    for case_type, rows, resumable in ((CaseType.LOAN, _LOAN_ROWS, LoanStatus.RESUMABLE), (CaseType.INSURANCE, _INSURANCE_ROWS, InsuranceStatus.RESUMABLE)):
+    for case_type, rows, resumable, allowed_previous in (
+        (CaseType.LOAN, _LOAN_ROWS, LoanStatus.RESUMABLE, {}),
+        (CaseType.INSURANCE, _INSURANCE_ROWS, InsuranceStatus.RESUMABLE, _INSURANCE_ALLOWED_PREVIOUS),
+    ):
         for status, label, sequence, allowed_next, audit_event in rows:
             full_allowed_next = [*allowed_next, ON_HOLD_STATUS] if status in resumable else allowed_next
-            definition = WorkflowDefinition(case_type=case_type, status=status, label=label, sequence=sequence, allowed_next_statuses=full_allowed_next, audit_event=audit_event)
+            definition = WorkflowDefinition(
+                case_type=case_type, status=status, label=label, sequence=sequence,
+                allowed_next_statuses=full_allowed_next, allowed_previous_statuses=allowed_previous.get(status, []),
+                audit_event=audit_event,
+            )
             await mock_db["workflow_definitions"].insert_one(definition.model_dump(by_alias=True, exclude={"id"}))
         on_hold_definition = WorkflowDefinition(
             case_type=case_type, status=ON_HOLD_STATUS, label="On Hold", sequence=len(rows) + 1,
@@ -242,16 +250,16 @@ async def test_valid_loan_status_update_persists_and_reflects_in_list(client, mo
 async def test_valid_insurance_status_update_persists_and_reflects_in_list(client, mock_db, owner_headers, master_data):
     case_id, employee_headers, _customer_headers, _application_id = await _insurance_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000002")
 
-    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/status", json={"status": "documents_pending"}, headers=employee_headers)
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/status", json={"status": "policy_document"}, headers=employee_headers)
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["current_status"] == "documents_pending"
+    assert r.json()["data"]["current_status"] == "policy_document"
 
     r = await client.get(f"/api/v1/insurance-cases/{case_id}", headers=employee_headers)
-    assert r.json()["data"]["current_status"] == "documents_pending"
+    assert r.json()["data"]["current_status"] == "policy_document"
 
-    r = await client.get("/api/v1/insurance-cases?status=documents_pending", headers=employee_headers)
+    r = await client.get("/api/v1/insurance-cases?status=policy_document", headers=employee_headers)
     assert case_id in [c["id"] for c in r.json()["data"]]
-    r = await client.get("/api/v1/insurance-cases?status=application_submitted", headers=employee_headers)
+    r = await client.get("/api/v1/insurance-cases?status=fresh_lead", headers=employee_headers)
     assert case_id not in [c["id"] for c in r.json()["data"]]
 
 
@@ -260,7 +268,7 @@ async def test_valid_insurance_status_update_persists_and_reflects_in_list(clien
 
 async def test_loan_status_endpoint_rejects_insurance_only_status(client, mock_db, owner_headers, master_data):
     case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000003")
-    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "underwriting"}, headers=employee_headers)
+    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "policy_document"}, headers=employee_headers)
     assert r.status_code == 422, r.text
     # Status must remain untouched.
     r = await client.get(f"/api/v1/loan-cases/{case_id}", headers=employee_headers)
@@ -272,7 +280,7 @@ async def test_insurance_status_endpoint_rejects_loan_only_status(client, mock_d
     r = await client.patch(f"/api/v1/insurance-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=employee_headers)
     assert r.status_code == 422, r.text
     r = await client.get(f"/api/v1/insurance-cases/{case_id}", headers=employee_headers)
-    assert r.json()["data"]["current_status"] == "application_submitted"
+    assert r.json()["data"]["current_status"] == "fresh_lead"
 
 
 async def test_loan_status_endpoint_rejects_nonsense_status_value(client, mock_db, owner_headers, master_data):
@@ -296,7 +304,7 @@ async def test_unauthorized_employee_cannot_update_insurance_status(client, mock
     case_id, _employee_headers, _c, _a = await _insurance_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000007")
     await _create_employee(client, owner_headers, master_data, mobile="9711100007", email="bystander-ins@example.com")
     bystander_headers = await _login(client, "9711100007")
-    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/status", json={"status": "documents_pending"}, headers=bystander_headers)
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/status", json={"status": "policy_document"}, headers=bystander_headers)
     assert r.status_code == 403, r.text
 
 
@@ -309,7 +317,7 @@ async def test_status_update_on_nonexistent_loan_case_returns_404(client, owner_
 
 
 async def test_status_update_on_nonexistent_insurance_case_returns_404(client, owner_headers):
-    r = await client.patch("/api/v1/insurance-cases/000000000000000000000000/status", json={"status": "documents_pending"}, headers=owner_headers)
+    r = await client.patch("/api/v1/insurance-cases/000000000000000000000000/status", json={"status": "policy_document"}, headers=owner_headers)
     assert r.status_code == 404, r.text
 
 
@@ -378,14 +386,14 @@ async def test_customer_portal_reflects_updated_insurance_status(client, mock_db
     case_id, employee_headers, customer_headers, _application_id = await _insurance_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000012")
 
     r = await client.get(f"/api/v1/insurance-cases/mine/{case_id}", headers=customer_headers)
-    assert r.json()["data"]["current_status"] == "application_submitted"
+    assert r.json()["data"]["current_status"] == "fresh_lead"
 
-    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/status", json={"status": "documents_pending"}, headers=employee_headers)
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/status", json={"status": "policy_document"}, headers=employee_headers)
     assert r.status_code == 200, r.text
 
     r = await client.get(f"/api/v1/insurance-cases/mine/{case_id}", headers=customer_headers)
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["current_status"] == "documents_pending"
+    assert r.json()["data"]["current_status"] == "policy_document"
 
 
 async def test_customer_application_timeline_reflects_updated_loan_status(client, mock_db, owner_headers, master_data):

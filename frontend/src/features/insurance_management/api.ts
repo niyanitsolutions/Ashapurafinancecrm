@@ -1,18 +1,40 @@
-import { apiRequest, apiRequestRaw, type PaginationMeta } from "@/shared/api/client";
+import { ApiError, apiRequest, apiRequestRaw, type PaginationMeta } from "@/shared/api/client";
+import type { ApplicationDocument } from "@/features/customer/api";
 import { getCurrentCoordinates } from "@/shared/geolocation";
+
+// Insurance "Policy Leads" pipeline (redesign 2026-09) — the full replacement of the
+// old 6C underwriting/medical/premium flow. New statuses:
+//   fresh_lead -> policy_document -> policy_login -> policy_issued
+// plus re_eligible / rejected / on_hold. Premium / PPT / PT are recorded by staff at
+// Policy Login. Every transition is backend-validated (WorkflowEngine + service gates);
+// nothing here is an enforcement authority.
+
+export type InsuranceStatus =
+  | "fresh_lead"
+  | "policy_document"
+  | "policy_login"
+  | "policy_issued"
+  | "re_eligible"
+  | "on_hold"
+  | "rejected";
 
 export interface InsuranceCaseDetails {
   sum_insured: number | null;
-  underwriting_remarks: string | null;
-  requires_medical: boolean;
-  requires_additional_documents: boolean;
-  medical_verification_outcome: string | null;
-  medical_verification_remarks: string | null;
   premium_amount: number | null;
-  premium_decision: string;
+  ppt: number | null;
+  pt: number | null;
+  policy_login_remarks: string | null;
   policy_number: string | null;
-  policy_generated_at: string | null;
   policy_issued_at: string | null;
+  re_eligibility_choice: string | null;
+  re_eligible_date: string | null;
+  re_eligibility_auto_transitioned: boolean;
+}
+
+export interface RequiredDocumentsSummary {
+  required_total: number;
+  verified_total: number;
+  all_required_verified: boolean;
 }
 
 export interface InsuranceCaseListItem {
@@ -27,13 +49,35 @@ export interface InsuranceCaseListItem {
   assigned_to_name: string | null;
   current_status: string;
   rejection_reason: string | null;
+  next_follow_up_date: string | null;
   created_at: string;
 }
 
 export interface InsuranceCaseDetail extends InsuranceCaseListItem {
-  pending_document_type_ids: string[];
   insurance_details: InsuranceCaseDetails;
+  required_documents: RequiredDocumentsSummary;
   updated_at: string;
+}
+
+// The schema documents on a case's application — `is_in_schema` is false for a document
+// left behind by a `change_product` (shown under "Previously uploaded").
+export interface InsuranceCaseDocument extends ApplicationDocument {
+  is_in_schema: boolean;
+}
+
+export interface OtherDocument {
+  id: string;
+  insurance_case_id: string;
+  name: string;
+  document_status: "requested" | "uploaded";
+  verification_status: "pending" | "verified" | "rejected";
+  rejection_reason: string | null;
+  file_name: string | null;
+  download_url: string | null;
+  attachment_url: string | null;
+  uploaded_at: string | null;
+  verified_at: string | null;
+  created_at: string;
 }
 
 export interface CaseTimelineEntry {
@@ -79,13 +123,6 @@ export function assignInsuranceCase(caseId: string, employeeId: string) {
   return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/assign`, { method: "POST", body: JSON.stringify({ employee_id: employeeId }) });
 }
 
-// Generic Case Status control (Insurance Case detail page) — mirrors
-// `loan_management/api.ts`'s `updateLoanCaseStatus`; the backend validates against
-// `InsuranceStatus.ALL` and its own transition graph, never `LoanStatus`.
-export function updateInsuranceCaseStatus(caseId: string, status: string) {
-  return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
-}
-
 export function holdInsuranceCase(caseId: string, reason: string, remarks?: string) {
   return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/hold`, { method: "POST", body: JSON.stringify({ reason, remarks }) });
 }
@@ -94,42 +131,127 @@ export function resumeInsuranceCase(caseId: string) {
   return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/resume`, { method: "POST" });
 }
 
-export function requestInsuranceCaseDocuments(caseId: string, documentTypeIds: string[]) {
-  return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/documents/request`, { method: "POST", body: JSON.stringify({ document_type_ids: documentTypeIds }) });
+// ---------------------------------------------------------------- pipeline transitions
+
+export function moveToPolicyDocument(caseId: string) {
+  return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/move-to-policy-document`, { method: "POST" });
 }
 
-export async function verifyInsuranceCaseDocuments(caseId: string) {
-  // Best-effort — only checked server-side if a Geo Fence is configured for
-  // document_collection; see @/shared/geolocation.
+export async function moveToPolicyLogin(caseId: string) {
+  // Best-effort coordinates — only checked server-side when a Geo Fence is configured
+  // for document_collection (same as loan's document verification).
   const coords = await getCurrentCoordinates();
-  return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/documents/verify`, {
+  return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/move-to-policy-login`, {
     method: "POST",
     body: JSON.stringify({ latitude: coords?.latitude, longitude: coords?.longitude }),
   });
 }
 
-export function recordUnderwriting(
+export function moveToPolicyIssued(caseId: string) {
+  return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/move-to-policy-issued`, { method: "POST" });
+}
+
+// "Move Back" one stage — the backend derives the single valid target from the
+// transition graph (`policy_login -> policy_document`, `policy_document -> fresh_lead`).
+export function moveInsuranceCaseBack(caseId: string, target: "fresh_lead" | "policy_document") {
+  return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/move-back`, { method: "POST", body: JSON.stringify({ target }) });
+}
+
+export function restartFromReEligible(caseId: string, target: "fresh_lead" | "policy_document") {
+  return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/restart`, { method: "POST", body: JSON.stringify({ target }) });
+}
+
+// Reject popup — insurance offers 3 / 6 / 12 / Custom / No (no 9-month option). "no"
+// means "never automatically Re-Eligible". `re_eligible_date` (yyyy-mm-dd) only with "custom".
+export type InsuranceReEligibilityChoice = "3_months" | "6_months" | "12_months" | "custom" | "no";
+
+export function rejectInsuranceCase(
   caseId: string,
-  payload: {
-    sum_insured?: number; underwriting_remarks?: string; requires_medical: boolean; requires_additional_documents: boolean;
-    decision: "approved" | "rejected"; rejection_reason?: string;
-  }
+  payload: { reason: string; re_eligibility: InsuranceReEligibilityChoice; re_eligible_date?: string },
 ) {
-  return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/underwriting`, { method: "POST", body: JSON.stringify(payload) });
+  return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/reject`, { method: "POST", body: JSON.stringify(payload) });
 }
 
-export function recordMedicalVerification(caseId: string, payload: { outcome: "cleared" | "failed"; medical_remarks?: string; rejection_reason?: string }) {
-  return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/medical-verification`, { method: "POST", body: JSON.stringify(payload) });
+// Policy Login "Update" — Premium / PPT / PT / Remarks / Policy Number, and optionally a
+// product change in the same call (the backend runs `change_product` when `product_id`
+// differs).
+export function updatePolicyLogin(
+  caseId: string,
+  payload: { product_id?: string; premium_amount?: number; ppt?: number; pt?: number; remarks?: string; policy_number?: string },
+) {
+  return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/policy-login`, { method: "PATCH", body: JSON.stringify(payload) });
 }
 
-export function recordPremium(caseId: string, payload: { premium_amount: number }) {
-  return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/premium`, { method: "POST", body: JSON.stringify(payload) });
+export function changeInsuranceProduct(caseId: string, productId: string) {
+  return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/change-product`, { method: "POST", body: JSON.stringify({ product_id: productId }) });
 }
 
-export function generatePolicy(caseId: string, payload: { policy_number: string }) {
-  return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/policy/generate`, { method: "POST", body: JSON.stringify(payload) });
+// ---------------------------------------------------------------- schema documents
+
+export function listInsuranceCaseDocuments(caseId: string) {
+  return apiRequest<InsuranceCaseDocument[]>(`/insurance-cases/${caseId}/documents`);
 }
 
-export function issuePolicy(caseId: string) {
-  return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/policy/issue`, { method: "POST" });
+export function getInsuranceCaseDocumentHistory(caseId: string, documentTypeId: string) {
+  return apiRequest<InsuranceCaseDocument[]>(`/insurance-cases/${caseId}/documents/${documentTypeId}/history`);
+}
+
+export function verifyInsuranceCaseDocument(caseId: string, documentId: string) {
+  return apiRequest<InsuranceCaseDocument>(`/insurance-cases/${caseId}/documents/${documentId}/verify`, { method: "POST" });
+}
+
+export function rejectInsuranceCaseDocument(caseId: string, documentId: string, reason: string) {
+  return apiRequest<InsuranceCaseDocument>(`/insurance-cases/${caseId}/documents/${documentId}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+// ---------------------------------------------------------------- "Add Other Document" (ad-hoc, per-case)
+
+export function listOtherDocuments(caseId: string) {
+  return apiRequest<OtherDocument[]>(`/insurance-cases/${caseId}/other-documents`);
+}
+
+export function addOtherDocument(caseId: string, name: string) {
+  return apiRequest<OtherDocument>(`/insurance-cases/${caseId}/other-documents`, { method: "POST", body: JSON.stringify({ name }) });
+}
+
+export function verifyOtherDocument(caseId: string, docId: string) {
+  return apiRequest<OtherDocument>(`/insurance-cases/${caseId}/other-documents/${docId}/verify`, { method: "POST" });
+}
+
+export function rejectOtherDocument(caseId: string, docId: string, reason: string) {
+  return apiRequest<OtherDocument>(`/insurance-cases/${caseId}/other-documents/${docId}/reject`, { method: "POST", body: JSON.stringify({ reason }) });
+}
+
+export function listOwnOtherDocuments(caseId: string) {
+  return apiRequest<OtherDocument[]>(`/insurance-cases/mine/${caseId}/other-documents`);
+}
+
+async function putOtherDocumentToStorage(uploadUrl: string, file: File): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type || "application/octet-stream" } });
+  } catch (err) {
+    throw new ApiError("document_upload_failed", "Document upload failed. Please try again.", err);
+  }
+  if (!response.ok) {
+    throw new ApiError("document_upload_failed", "Document upload failed. Please try again.", {
+      status: response.status,
+      statusText: response.statusText,
+    });
+  }
+}
+
+export async function uploadOwnOtherDocument(caseId: string, docId: string, file: File): Promise<OtherDocument> {
+  const { upload_url } = await apiRequest<{ upload_url: string; s3_key: string }>(
+    `/insurance-cases/mine/${caseId}/other-documents/${docId}/upload-url`,
+    { method: "POST", body: JSON.stringify({ file_name: file.name, content_type: file.type || undefined }) },
+  );
+  await putOtherDocumentToStorage(upload_url, file);
+  return apiRequest<OtherDocument>(`/insurance-cases/mine/${caseId}/other-documents/${docId}/confirm`, {
+    method: "POST",
+    body: JSON.stringify({ file_name: file.name, content_type: file.type || undefined }),
+  });
 }

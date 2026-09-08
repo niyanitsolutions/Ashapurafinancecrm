@@ -1,78 +1,102 @@
-"""Module 6C — Insurance Case processing pipeline (docs/MODULE_6C_WORKFLOW_PROPOSAL.md).
+"""Module 6C — Insurance "Policy Leads" pipeline.
 
-Finalized lifecycle (decision 064, superseding the draft flagged as an assumption in
-decision 057): Application Submitted -> Documents Pending -> Underwriting -> [Medical
-Verification, optional] -> [Additional Documents, optional] -> Premium Acceptance ->
-Policy Generation -> Policy Issued, with Rejected reachable from Underwriting or Medical
-Verification. Whether Medical Verification and/or Additional Documents are needed is a
-per-case judgment the underwriter records during Underwriting — never a fixed product
-attribute. Policy Generation (the policy number/document is prepared) and Policy Issued
-(terminal) are deliberately two distinct statuses, not one.
+Policy Leads redesign (2026-09-07) — a FULL REPLACE of the decision-064 lifecycle:
 
-Same reuse posture as Loan: Module 6B's `Application`/`ApplicationDocument` are mostly
-read-only. One deliberate, narrow exception: `assign_case` also writes
-`Application.assigned_to` (see that method) — see `loan_management/service.py`'s module
-docstring for the full rationale (Application and its Case each used to carry an
-independently-editable `assigned_to`, which is exactly why Loan/Insurance Management
-could show a case as assigned while Customer Applications showed the same underlying
-application as Unassigned; they're now kept as mirrors of each other).
+    Fresh Lead ─► Policy Document ─► Policy Login ─► Policy Issued
+        │               │                │
+        └──────┬────────┴────────┬───────┘
+               ▼                 ▼
+           Rejected  ◄──────  (any non-terminal stage; + On Hold from any)
+               │
+               ▼
+          Re-Eligible ─► Fresh Lead / Policy Document   (restart)
+
+The underwriting / medical-verification / additional-documents / premium-acceptance /
+policy-generation statuses and the customer premium accept/decline endpoints are gone.
+`Move Back` is wired for insurance (`policy_login → policy_document`,
+`policy_document → fresh_lead`). `Policy Document → Policy Login` is backend-gated on
+**every non-hidden required document of the pinned Product Schema being VERIFIED**
+(front+back needs both sides verified). Premium / PPT / PT are recorded by staff at
+Policy Login (`update_policy_login`), which also allows a product change
+(`change_product` — re-resolves the schema, preserves uploaded documents).
+
+Same reuse posture as Loan for Module 6B's `Application`/`ApplicationDocument`: mostly
+read-only, with two deliberate exceptions — `assign_case` mirrors `Application.
+assigned_to`, and `change_product` mirrors `Application.product_id`/`form_definition_id`
+(so Customer Applications never diverge from the case). See `loan_management/service.py`
+for the full rationale.
 """
 
+from datetime import date
 from typing import Any, ClassVar
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.config.redis import get_redis
 from app.constants.roles import EMPLOYEE, OWNER
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from app.features.auth.models import User
-from app.features.customer.constants import AuditEvent, DocumentAvailabilityStatus
-from app.features.customer.models import Application
+from app.features.customer.constants import AuditEvent, DocumentSide, DocumentVerificationStatus
+from app.features.customer.models import Application, ApplicationDocument
 from app.features.customer.repository import (
     ApplicationDocumentRepository,
+    ApplicationFormDefinitionRepository,
     ApplicationRepository,
     CustomerRepository,
 )
+from app.features.customer.service import CustomerService
 from app.features.employee.repository import EmployeeRepository
+from app.features.insurance_management.models import InsuranceCaseAdditionalDocument
+from app.features.insurance_management.repository import InsuranceCaseAdditionalDocumentRepository
 from app.features.insurance_management.schemas import (
-    GeneratePolicyRequest,
-    MedicalVerificationRequest,
-    PremiumRequest,
-    UnderwritingRequest,
+    ConfirmOtherDocumentRequest,
+    OtherDocumentUploadUrlRequest,
+    PolicyLoginUpdateRequest,
 )
+from app.features.reminders.constants import NotificationType
+from app.features.reminders.service import RemindersService
+from app.features.system_settings.constants import MasterDataStatus
 from app.features.system_settings.repository import (
     DocumentTypeRepository,
+    InsuranceCategoryRepository,
     InsuranceProductRepository,
 )
 from app.features.workflow_engine.constants import (
     CaseType,
-    DecisionOutcome,
-    DecisionType,
+    InsuranceAuditEvent,
     InsuranceStatus,
-    OfferDecision,
+    ReEligibilityPeriod,
     WorkflowAuditEvent,
 )
 from app.features.workflow_engine.engine import WorkflowEngine
 from app.features.workflow_engine.hold import put_on_hold as engine_put_on_hold
 from app.features.workflow_engine.hold import resume_case as engine_resume_case
 from app.features.workflow_engine.models import (
-    ApplicationDecision,
     ApplicationNote,
     ApplicationWorkflow,
     InsuranceCaseDetails,
 )
+from app.features.workflow_engine.re_eligibility import (
+    compute_re_eligible_date,
+    re_eligibility_detail_updates,
+    re_eligibility_note_text,
+)
 from app.features.workflow_engine.repository import (
-    ApplicationDecisionRepository,
     ApplicationNoteRepository,
     ApplicationStatusHistoryRepository,
     ApplicationWorkflowRepository,
+)
+from app.services.storage.client import (
+    generate_presigned_download_url,
+    generate_presigned_upload_url,
+    get_object_size,
 )
 from app.shared.audit_log import write_audit_log
 from app.utils.datetime import utc_now
 from app.utils.id_generator import IdPrefix, generate_id
 
 _NO_ASSIGNMENT_SENTINEL = "___none___"
-_DOCUMENT_REQUEST_STATUSES = (InsuranceStatus.APPLICATION_SUBMITTED, InsuranceStatus.ADDITIONAL_DOCUMENTS)
-_DOCUMENT_VERIFY_STATUSES = (InsuranceStatus.DOCUMENTS_PENDING, InsuranceStatus.ADDITIONAL_DOCUMENTS)
+_PRODUCT_CHANGE_STATUSES = (InsuranceStatus.FRESH_LEAD, InsuranceStatus.POLICY_DOCUMENT, InsuranceStatus.POLICY_LOGIN)
 
 
 class InsuranceCaseService:
@@ -82,13 +106,24 @@ class InsuranceCaseService:
         self._workflows = ApplicationWorkflowRepository(db)
         self._history = ApplicationStatusHistoryRepository(db)
         self._notes = ApplicationNoteRepository(db)
-        self._decisions = ApplicationDecisionRepository(db)
         self._applications = ApplicationRepository(db)
         self._documents = ApplicationDocumentRepository(db)
+        self._form_defs = ApplicationFormDefinitionRepository(db)
         self._customers = CustomerRepository(db)
         self._employees = EmployeeRepository(db)
         self._products = InsuranceProductRepository(db)
+        self._categories = InsuranceCategoryRepository(db)
         self._document_types = DocumentTypeRepository(db)
+        self._other_documents = InsuranceCaseAdditionalDocumentRepository(db)
+        self._reminders = RemindersService(db)
+
+    def _customer_service(self) -> CustomerService:
+        """The per-document verify/reject/history/list logic is product-agnostic and
+        lives in `CustomerService` (Module 6B) — insurance reuses it verbatim behind an
+        `insurance_management:applications`-gated route rather than duplicating it. Redis
+        is only touched by that service's auth/OTP paths, never by the document methods,
+        so a lazily-built client is safe (same pattern as `LoanCaseService`)."""
+        return CustomerService(self._db, get_redis())
 
     # ---------------------------------------------------------------- case sync / lookup
 
@@ -98,12 +133,10 @@ class InsuranceCaseService:
             case_code=case_code, case_type=CaseType.INSURANCE, application_id=application.require_id(),
             customer_id=application.customer_id or "", product_id=application.product_id,
             product_category=application.product_category, assigned_to=application.assigned_to,
-            actor_id=None, initial_status=InsuranceStatus.APPLICATION_SUBMITTED, insurance_details=InsuranceCaseDetails(),
+            actor_id=None, initial_status=InsuranceStatus.FRESH_LEAD, insurance_details=InsuranceCaseDetails(),
         )
 
     async def _sync_new_cases(self) -> None:
-        # `include_deleted=True`: a submitted Application whose case is in the Bin must not
-        # be re-synced (see LoanCaseService._sync_new_cases / the repo method).
         existing = await self._workflows.find_existing_application_ids(CaseType.INSURANCE, include_deleted=True)
         submitted = await self._applications.find_many(
             {"status": "submitted", "product_category": "insurance", "customer_id": {"$ne": None}}, limit=1000
@@ -113,22 +146,22 @@ class InsuranceCaseService:
                 await self._create_case_for_application(application)
 
     async def _get_or_create_for_application_id(self, application_id: str) -> ApplicationWorkflow | None:
-        """See `LoanCaseService._get_or_create_for_application_id`. Returns `None` when the
-        application's case exists but is soft-deleted (in the Bin)."""
         existing = await self._workflows.find_by_application_id(application_id)
         if existing is not None:
             return existing
         if await self._workflows.find_by_application_id(application_id, include_deleted=True) is not None:
             return None
         application = await self._applications.find_by_id(application_id)
-        if application is None or application.status != "submitted" or application.product_category != "insurance" or application.customer_id is None:
+        if (
+            application is None
+            or application.status != "submitted"
+            or application.product_category != "insurance"
+            or application.customer_id is None
+        ):
             raise NotFoundError("No insurance case exists for this application.")
         return await self._create_case_for_application(application)
 
     async def ensure_case_for_application(self, application_id: str) -> ApplicationWorkflow | None:
-        """See the identical method on `LoanCaseService` — public entry point for
-        `CustomerService.submit_application` so case creation happens at submission time
-        instead of being purely lazy. Returns `None` if the case is currently in the Bin."""
         return await self._get_or_create_for_application_id(application_id)
 
     async def _acting_employee_id(self, actor: User) -> str | None:
@@ -181,11 +214,6 @@ class InsuranceCaseService:
         case = await self._workflows.find_by_id(case_id)
         if case is None or case.case_type != CaseType.INSURANCE:
             raise NotFoundError("Insurance case not found.")
-        # See the identical comment in loan_management/service.py::assign_case — an
-        # Employee holding only `assign` could otherwise reassign any already-assigned
-        # case (including a colleague's) to themselves and gain full access via
-        # `get_case`'s `assigned_to` check. Unassigned-case pickup stays self-service;
-        # reassigning someone else's case is an Owner action.
         if actor.role != OWNER and case.assigned_to is not None:
             raise ForbiddenError("Only an Owner can reassign a case that's already assigned to someone.")
         if await self._employees.find_by_id(employee_id) is None:
@@ -198,9 +226,6 @@ class InsuranceCaseService:
             self._db, event_type=WorkflowAuditEvent.CASE_REASSIGNED if is_reassignment else WorkflowAuditEvent.CASE_ASSIGNED,
             user_id=actor.require_id(), metadata={"application_workflow_id": case_id, "employee_id": employee_id},
         )
-        # Assignment-consistency fix — see module docstring. Mirrors this reassignment
-        # onto the Application the case came from, so Customer Applications / the
-        # Customer View can never show a different assignee than this case does.
         if await self._applications.update(case.application_id, {"assigned_to": employee_id}, updated_by=actor.require_id()) is not None:
             await write_audit_log(
                 self._db, event_type=AuditEvent.APPLICATION_ASSIGNED, user_id=actor.require_id(),
@@ -220,189 +245,441 @@ class InsuranceCaseService:
 
     # ---------------------------------------------------------------- generic status control
 
-    # Same posture as `LoanCaseService._SIMPLE_STATUS_TRANSITIONS` — see that constant's
-    # own comment for the full rationale. Underwriting/Medical Verification/Premium/Policy
-    # Generation/Policy Issue all carry mandatory business data (decision+remarks, outcome,
-    # premium amount, policy number, ...) a bare status control can't collect, so they stay
-    # on their existing dedicated actions; only the two document-gated hops need nothing
-    # beyond re-checking already-stored case state.
     _SIMPLE_STATUS_TRANSITIONS: ClassVar[set[tuple[str, str]]] = {
-        (InsuranceStatus.APPLICATION_SUBMITTED, InsuranceStatus.DOCUMENTS_PENDING),
-        (InsuranceStatus.DOCUMENTS_PENDING, InsuranceStatus.UNDERWRITING),
-        (InsuranceStatus.ADDITIONAL_DOCUMENTS, InsuranceStatus.PREMIUM_ACCEPTANCE),
+        (InsuranceStatus.FRESH_LEAD, InsuranceStatus.POLICY_DOCUMENT),
     }
 
     async def update_status(self, case_id: str, new_status: str, actor: User) -> ApplicationWorkflow:
-        """See `LoanCaseService.update_status`'s docstring — identical design, kept as a
-        separate method (not a shared helper) because it dispatches into this pipeline's
-        own `request_documents`/`verify_documents` and validates against
-        `InsuranceStatus`, never `LoanStatus`."""
+        """Generic Case Status control. Only `fresh_lead → policy_document` (no extra
+        data) goes through here; every other move has a dedicated action that collects
+        its mandatory data or enforces its gate."""
         case = await self.get_case(case_id, actor)
         if new_status == case.current_status:
             return case
         await self._engine.assert_transition_allowed(CaseType.INSURANCE, case.current_status, new_status)
-        transition_key = (case.current_status, new_status)
-        if transition_key == (InsuranceStatus.APPLICATION_SUBMITTED, InsuranceStatus.DOCUMENTS_PENDING):
-            return await self.request_documents(case_id, [], actor)
-        if transition_key in self._SIMPLE_STATUS_TRANSITIONS:
-            return await self.verify_documents(case_id, actor)
+        if (case.current_status, new_status) in self._SIMPLE_STATUS_TRANSITIONS:
+            return await self.move_to_policy_document(case_id, actor)
         raise ConflictError(
-            f"Moving this case to '{new_status}' requires additional information — use the dedicated action for this step instead."
+            f"Moving this case to '{new_status}' needs the dedicated action for that step "
+            "(Move to Policy Login, Update, Reject, Move Back, …)."
         )
 
-    # ---------------------------------------------------------------- documents
+    # ---------------------------------------------------------------- pipeline transitions
 
-    async def request_documents(self, case_id: str, document_type_ids: list[str], actor: User) -> ApplicationWorkflow:
+    async def move_to_policy_document(self, case_id: str, actor: User) -> ApplicationWorkflow:
         case = await self.get_case(case_id, actor)
-        if case.current_status not in _DOCUMENT_REQUEST_STATUSES:
-            raise ConflictError("Documents cannot be requested at this stage.")
-        for doc_type_id in document_type_ids:
-            if await self._document_types.find_by_id(doc_type_id) is None:
-                raise ValidationError(f"Unknown document_type_id: {doc_type_id}")
-        merged = sorted(set(case.pending_document_type_ids) | set(document_type_ids))
+        if case.current_status != InsuranceStatus.FRESH_LEAD:
+            raise ConflictError("Only a Fresh Lead can be moved to Policy Document.")
+        return await self._engine.transition(case, InsuranceStatus.POLICY_DOCUMENT, actor)
 
-        updated: ApplicationWorkflow | None
-        if case.current_status == InsuranceStatus.APPLICATION_SUBMITTED:
-            # The first document request is what actually begins "Documents Pending" —
-            # there's no separate manual action between case creation and this.
-            updated = await self._engine.transition(case, InsuranceStatus.DOCUMENTS_PENDING, actor, updates={"pending_document_type_ids": merged})
-        else:
-            updated = await self._workflows.update(case_id, {"pending_document_type_ids": merged}, updated_by=actor.require_id())
-            assert updated is not None
+    async def move_to_policy_login(self, case_id: str, actor: User) -> ApplicationWorkflow:
+        case = await self.get_case(case_id, actor)
+        if case.current_status != InsuranceStatus.POLICY_DOCUMENT:
+            raise ConflictError("Only a Policy Document case can be moved to Policy Login.")
+        all_verified, missing = await self._required_documents_status(case)
+        if not all_verified:
+            names = await self._document_type_name_map(missing)
+            raise ConflictError(
+                "Every required document must be verified before moving to Policy Login. Still outstanding: "
+                + ", ".join(names.get(m, m) for m in missing)
+                + "."
+            )
+        return await self._engine.transition(case, InsuranceStatus.POLICY_LOGIN, actor)
 
+    async def move_to_policy_issued(self, case_id: str, actor: User) -> ApplicationWorkflow:
+        case = await self.get_case(case_id, actor)
+        if case.current_status != InsuranceStatus.POLICY_LOGIN:
+            raise ConflictError("Only a Policy Login case can be moved to Policy Issued.")
+        details = case.insurance_details or InsuranceCaseDetails()
+        if details.premium_amount is None or details.ppt is None or details.pt is None:
+            raise ValidationError("Record Premium, PPT and PT (Policy Login → Update) before issuing the policy.")
+        issued = details.model_copy(update={"policy_issued_at": utc_now()})
+        return await self._engine.transition(case, InsuranceStatus.POLICY_ISSUED, actor, updates={"insurance_details": issued.model_dump()})
+
+    _MOVE_BACK_TARGET: ClassVar[dict[str, str]] = {
+        InsuranceStatus.POLICY_DOCUMENT: InsuranceStatus.FRESH_LEAD,
+        InsuranceStatus.POLICY_LOGIN: InsuranceStatus.POLICY_DOCUMENT,
+    }
+
+    async def move_back(self, case_id: str, target: str, actor: User) -> ApplicationWorkflow:
+        case = await self.get_case(case_id, actor)
+        expected = self._MOVE_BACK_TARGET.get(case.current_status)
+        if expected is None or target != expected:
+            raise ConflictError(f"A case in '{case.current_status}' cannot be moved back to '{target}'.")
+        updated = await self._engine.transition(case, target, actor, remarks="Moved back a stage.")
         await write_audit_log(
-            self._db, event_type=WorkflowAuditEvent.DOCUMENTS_REQUESTED, user_id=actor.require_id(),
-            metadata={"application_workflow_id": case_id, "document_type_ids": document_type_ids},
+            self._db, event_type=InsuranceAuditEvent.MOVED_BACK, user_id=actor.require_id(),
+            metadata={"application_workflow_id": case_id, "from": case.current_status, "to": target},
         )
         return updated
 
-    async def verify_documents(self, case_id: str, actor: User) -> ApplicationWorkflow:
+    async def restart_from_re_eligible(self, case_id: str, target: str, actor: User) -> ApplicationWorkflow:
+        """A Re-Eligible case restarts from Fresh Lead or Policy Document (or is rejected
+        outright). The `re_eligible → …` restart edges are seeded; this just validates
+        and drives the engine."""
         case = await self.get_case(case_id, actor)
-        if case.current_status not in _DOCUMENT_VERIFY_STATUSES:
-            raise ConflictError("This case is not awaiting document verification.")
-        # An empty `pending_document_type_ids` (nothing was actually requested) is
-        # vacuously satisfied, not an error — verify still advances the case.
-        uploaded = await self._documents.find_current_for_application(case.application_id)
-        uploaded_type_ids = {d.document_type_id for d in uploaded if d.document_status == DocumentAvailabilityStatus.UPLOADED}
-        missing = [t for t in case.pending_document_type_ids if t not in uploaded_type_ids]
-        if missing:
-            raise ValidationError("Not all requested documents have been uploaded yet.")
-        next_status = InsuranceStatus.UNDERWRITING if case.current_status == InsuranceStatus.DOCUMENTS_PENDING else InsuranceStatus.PREMIUM_ACCEPTANCE
-        return await self._engine.transition(case, next_status, actor, updates={"pending_document_type_ids": []})
+        if case.current_status != InsuranceStatus.RE_ELIGIBLE:
+            raise ConflictError("This case is not Re-Eligible.")
+        if target not in (InsuranceStatus.FRESH_LEAD, InsuranceStatus.POLICY_DOCUMENT):
+            raise ValidationError("A Re-Eligible case can only restart at Fresh Lead or Policy Document.")
+        return await self._engine.transition(case, target, actor, remarks="Restarted from Re-Eligible.")
 
-    # ---------------------------------------------------------------- decisions
+    # ---------------------------------------------------------------- reject / re-eligibility
 
-    async def underwriting(self, case_id: str, payload: UnderwritingRequest, actor: User) -> ApplicationWorkflow:
+    async def reject_case(
+        self, case_id: str, reason: str, re_eligibility: str | None, re_eligible_date: date | None, actor: User
+    ) -> ApplicationWorkflow:
         case = await self.get_case(case_id, actor)
-        if case.current_status != InsuranceStatus.UNDERWRITING:
-            raise ConflictError("This case is not awaiting underwriting.")
-        assert case.insurance_details is not None
-        details = case.insurance_details.model_copy(
-            update={
-                "sum_insured": payload.sum_insured, "underwriting_remarks": payload.underwriting_remarks,
-                "requires_medical": payload.requires_medical, "requires_additional_documents": payload.requires_additional_documents,
-            }
+        if case.current_status in InsuranceStatus.TERMINAL:
+            raise ConflictError("This case is already closed.")
+        if case.current_status == InsuranceStatus.ON_HOLD:
+            raise ConflictError("Resume the case before rejecting it.")
+        if not (reason or "").strip():
+            raise ValidationError("A rejection reason is mandatory.")
+        # Validate the Re-Eligibility choice/date BEFORE the transition — a bad option
+        # must 422 without leaving the case stranded in `rejected` with no schedule.
+        choice = re_eligibility or ReEligibilityPeriod.NO
+        now = utc_now()
+        computed_date = compute_re_eligible_date(choice, re_eligible_date, now)
+        await self._engine.transition(
+            case, InsuranceStatus.REJECTED, actor, updates={"rejection_reason": reason}, remarks=reason
         )
-        outcome = DecisionOutcome.APPROVED if payload.decision == "approved" else DecisionOutcome.REJECTED
-        await self._decisions.insert(
-            ApplicationDecision(
-                application_workflow_id=case_id, case_type=CaseType.INSURANCE, decision_type=DecisionType.UNDERWRITING,
-                outcome=outcome, remarks=payload.underwriting_remarks, created_by=actor.require_id(),
+        return await self._apply_re_eligibility_schedule(case_id, choice, computed_date, now, actor)
+
+    async def _apply_re_eligibility_schedule(
+        self, case_id: str, choice: str, re_eligible_date: Any, now: Any, actor: User
+    ) -> ApplicationWorkflow:
+        """Records the per-case Re-Eligibility schedule chosen at rejection time. Date
+        math / validation happened in `reject_case` (before the transition); note copy is
+        the shared `workflow_engine/re_eligibility.py` helper. Insurance-side writes only."""
+        case = await self._workflows.find_by_id(case_id)
+        assert case is not None
+        details = case.insurance_details or InsuranceCaseDetails()
+
+        updated_details = details.model_copy(
+            update=re_eligibility_detail_updates(choice, re_eligible_date, actor.require_id(), now)
+        )
+        updated = await self._workflows.update(case_id, {"insurance_details": updated_details.model_dump()}, updated_by=actor.require_id())
+        assert updated is not None
+        await write_audit_log(
+            self._db, event_type=InsuranceAuditEvent.RE_ELIGIBILITY_SCHEDULED, user_id=actor.require_id(),
+            metadata={
+                "application_workflow_id": case_id, "choice": choice,
+                "re_eligible_date": re_eligible_date.isoformat() if re_eligible_date else None,
+            },
+        )
+        await self._notes.insert(
+            ApplicationNote(
+                application_workflow_id=case_id, created_by=actor.require_id(),
+                text=re_eligibility_note_text(choice, re_eligible_date),
             )
         )
-        if payload.decision == "approved":
-            if payload.requires_medical:
-                next_status = InsuranceStatus.MEDICAL_VERIFICATION
-            elif payload.requires_additional_documents:
-                next_status = InsuranceStatus.ADDITIONAL_DOCUMENTS
-            else:
-                next_status = InsuranceStatus.PREMIUM_ACCEPTANCE
-            return await self._engine.transition(case, next_status, actor, updates={"insurance_details": details.model_dump()})
-        if not payload.rejection_reason:
-            raise ValidationError("A rejection reason is mandatory when rejecting an application.")
-        return await self._engine.transition(
-            case, InsuranceStatus.REJECTED, actor,
-            updates={"insurance_details": details.model_dump(), "rejection_reason": payload.rejection_reason}, remarks=payload.rejection_reason,
-        )
+        return updated
 
-    async def medical_verification(self, case_id: str, payload: MedicalVerificationRequest, actor: User) -> ApplicationWorkflow:
-        case = await self.get_case(case_id, actor)
-        if case.current_status != InsuranceStatus.MEDICAL_VERIFICATION:
-            raise ConflictError("This case is not awaiting medical verification.")
-        assert case.insurance_details is not None
-        details = case.insurance_details.model_copy(
-            update={"medical_verification_outcome": payload.outcome, "medical_verification_remarks": payload.medical_remarks}
-        )
-        outcome = DecisionOutcome.CLEARED if payload.outcome == "cleared" else DecisionOutcome.FAILED
-        await self._decisions.insert(
-            ApplicationDecision(
-                application_workflow_id=case_id, case_type=CaseType.INSURANCE, decision_type=DecisionType.MEDICAL_VERIFICATION,
-                outcome=outcome, remarks=payload.medical_remarks, created_by=actor.require_id(),
-            )
-        )
-        if payload.outcome == "cleared":
-            next_status = InsuranceStatus.ADDITIONAL_DOCUMENTS if details.requires_additional_documents else InsuranceStatus.PREMIUM_ACCEPTANCE
-            return await self._engine.transition(case, next_status, actor, updates={"insurance_details": details.model_dump()})
-        if not payload.rejection_reason:
-            raise ValidationError("A rejection reason is mandatory when rejecting an application.")
-        return await self._engine.transition(
-            case, InsuranceStatus.REJECTED, actor,
-            updates={"insurance_details": details.model_dump(), "rejection_reason": payload.rejection_reason}, remarks=payload.rejection_reason,
-        )
+    # ---------------------------------------------------------------- policy login / product
 
-    async def record_premium(self, case_id: str, payload: PremiumRequest, actor: User) -> ApplicationWorkflow:
+    async def update_policy_login(self, case_id: str, payload: PolicyLoginUpdateRequest, actor: User) -> ApplicationWorkflow:
         case = await self.get_case(case_id, actor)
-        if case.current_status != InsuranceStatus.PREMIUM_ACCEPTANCE:
-            raise ConflictError("This case is not awaiting a premium quote.")
-        assert case.insurance_details is not None
-        details = case.insurance_details.model_copy(update={"premium_amount": payload.premium_amount, "premium_decision": OfferDecision.PENDING})
-        updated = await self._workflows.update(case_id, {"insurance_details": details.model_dump()}, updated_by=actor.require_id())
+        if case.current_status != InsuranceStatus.POLICY_LOGIN:
+            raise ConflictError("Policy Login details can only be updated at the Policy Login stage.")
+        if payload.product_id is not None and payload.product_id != case.product_id:
+            case = await self._change_product(case, payload.product_id, actor)
+
+        details = case.insurance_details or InsuranceCaseDetails()
+        updates: dict[str, Any] = {}
+        for field in ("premium_amount", "ppt", "pt"):
+            value = getattr(payload, field)
+            if value is not None:
+                updates[field] = value
+        if payload.remarks is not None:
+            updates["policy_login_remarks"] = payload.remarks.strip() or None
+        if payload.policy_number is not None:
+            updates["policy_number"] = payload.policy_number.strip() or None
+        updated_details = details.model_copy(update=updates)
+        updated = await self._workflows.update(case_id, {"insurance_details": updated_details.model_dump()}, updated_by=actor.require_id())
+        assert updated is not None
+        await write_audit_log(
+            self._db, event_type=InsuranceAuditEvent.POLICY_LOGIN_UPDATED, user_id=actor.require_id(),
+            metadata={"application_workflow_id": case_id, **{k: str(v) for k, v in updates.items()}},
+        )
+        return updated
+
+    async def change_product(self, case_id: str, new_product_id: str, actor: User) -> ApplicationWorkflow:
+        case = await self.get_case(case_id, actor)
+        if case.current_status not in _PRODUCT_CHANGE_STATUSES:
+            raise ConflictError("The product can only be changed before the policy is issued.")
+        return await self._change_product(case, new_product_id, actor)
+
+    async def _change_product(self, case: ApplicationWorkflow, new_product_id: str, actor: User) -> ApplicationWorkflow:
+        if new_product_id == case.product_id:
+            return case
+        product = await self._products.find_by_id(new_product_id)
+        if product is None:
+            raise ValidationError("Unknown insurance product.")
+        category_id = getattr(product, "category_id", None)
+        if category_id is None:
+            raise ValidationError("That insurance product isn't linked to a category yet.")
+        category = await self._categories.find_by_id(category_id)
+        if category is None or category.status != MasterDataStatus.ACTIVE:
+            raise ConflictError("That insurance product's category is inactive.")
+        form_def = await self._form_defs.find_by_product("insurance", new_product_id)
+        if form_def is None:
+            raise ValidationError("That insurance product has no active Product Schema yet.")
+
+        # Deliberate write to the otherwise read-only Application — keeps Customer
+        # Applications' product/schema pin in lockstep with the case. Uploaded
+        # `ApplicationDocument`s are NOT touched (a doc no longer in the new schema
+        # stays as historical — surfaced separately in Phase 5).
+        await self._applications.update(
+            case.application_id, {"product_id": new_product_id, "form_definition_id": form_def.require_id()},
+            updated_by=actor.require_id(),
+        )
+        updated = await self._workflows.update(case.require_id(), {"product_id": new_product_id}, updated_by=actor.require_id())
+        assert updated is not None
+        await write_audit_log(
+            self._db, event_type=InsuranceAuditEvent.PRODUCT_CHANGED, user_id=actor.require_id(),
+            metadata={
+                "application_workflow_id": case.require_id(), "application_id": case.application_id,
+                "from_product_id": case.product_id, "to_product_id": new_product_id,
+                "form_definition_id": form_def.require_id(),
+            },
+        )
+        return updated
+
+    # ---------------------------------------------------------------- documents (read-only helpers)
+
+    async def _document_type_name_map(self, type_ids: list[str]) -> dict[str, str]:
+        if not type_ids:
+            return {}
+        types = await self._document_types.find_many({}, limit=500)
+        wanted = set(type_ids)
+        return {t.require_id(): t.name for t in types if t.require_id() in wanted}
+
+    async def _required_documents_status(self, case: ApplicationWorkflow) -> tuple[bool, list[str]]:
+        """`(all_required_verified, missing_document_type_ids)` for the pinned Product
+        Schema. A `front_back_upload` document needs BOTH sides verified. Optional/hidden
+        documents are ignored (spec §43)."""
+        application = await self._applications.find_by_id(case.application_id)
+        if application is None:
+            return False, []
+        form_def = await self._form_defs.find_by_id(application.form_definition_id)
+        if form_def is None:
+            return True, []
+        current = await self._documents.find_current_for_application(case.application_id)
+        verified = {
+            (d.document_type_id, d.side) for d in current if d.verification_status == DocumentVerificationStatus.VERIFIED
+        }
+        verified_types = {t for (t, _s) in verified}
+        missing: list[str] = []
+        for rd in form_def.required_documents:
+            if not rd.required or rd.hidden:
+                continue
+            if rd.front_back_upload:
+                if (rd.document_type_id, DocumentSide.FRONT) not in verified or (rd.document_type_id, DocumentSide.BACK) not in verified:
+                    missing.append(rd.document_type_id)
+            elif rd.document_type_id not in verified_types:
+                missing.append(rd.document_type_id)
+        return len(missing) == 0, missing
+
+    async def required_documents_summary(self, case: ApplicationWorkflow) -> dict[str, Any]:
+        application = await self._applications.find_by_id(case.application_id)
+        form_def = await self._form_defs.find_by_id(application.form_definition_id) if application else None
+        required_total = (
+            sum(1 for rd in form_def.required_documents if rd.required and not rd.hidden) if form_def else 0
+        )
+        all_verified, missing = await self._required_documents_status(case)
+        return {
+            "required_total": required_total,
+            "verified_total": required_total - len(missing),
+            "all_required_verified": all_verified,
+        }
+
+    # ---------------------------------------------------------------- per-document actions (schema documents)
+
+    async def _schema_document_type_ids(self, case: ApplicationWorkflow) -> set[str]:
+        application = await self._applications.find_by_id(case.application_id)
+        if application is None:
+            return set()
+        form_def = await self._form_defs.find_by_id(application.form_definition_id)
+        if form_def is None:
+            return set()
+        return {rd.document_type_id for rd in form_def.required_documents}
+
+    async def list_case_documents(
+        self, case_id: str, actor: User
+    ) -> tuple[list[ApplicationDocument], set[str]]:
+        case = await self.get_case(case_id, actor)
+        documents = await self._customer_service().list_documents_for_staff(case.application_id, actor)
+        return documents, await self._schema_document_type_ids(case)
+
+    async def case_document_history(self, case_id: str, document_type_id: str, actor: User) -> list[ApplicationDocument]:
+        case = await self.get_case(case_id, actor)
+        return await self._customer_service().get_document_history(case.application_id, document_type_id, actor)
+
+    async def verify_case_document(
+        self, case_id: str, document_id: str, actor: User
+    ) -> tuple[ApplicationDocument, set[str]]:
+        case = await self.get_case(case_id, actor)
+        document = await self._customer_service().verify_document(case.application_id, document_id, actor)
+        return document, await self._schema_document_type_ids(case)
+
+    async def reject_case_document(
+        self, case_id: str, document_id: str, reason: str, actor: User
+    ) -> tuple[ApplicationDocument, set[str]]:
+        case = await self.get_case(case_id, actor)
+        document = await self._customer_service().reject_document(case.application_id, document_id, reason, actor)
+        return document, await self._schema_document_type_ids(case)
+
+    async def resolve_document_type_names(self, documents: list[ApplicationDocument]) -> dict[str, str]:
+        return await self._customer_service().resolve_document_type_names(documents)
+
+    async def resolve_verifier_names(self, documents: list[ApplicationDocument]) -> dict[str, str]:
+        return await self._customer_service().resolve_verifier_names(documents)
+
+    def document_download_url(self, document: ApplicationDocument) -> str | None:
+        return self._customer_service().document_download_url(document)
+
+    def document_attachment_url(self, document: ApplicationDocument) -> str | None:
+        return self._customer_service().document_attachment_url(document)
+
+    # ---------------------------------------------------------------- "Add Other Document" (ad-hoc, per-case)
+
+    _OTHER_DOCUMENT_KEY_PREFIX = "additional"
+    _ADD_OTHER_DOCUMENT_STATUSES: ClassVar[tuple[str, ...]] = (
+        InsuranceStatus.POLICY_DOCUMENT,
+        InsuranceStatus.POLICY_LOGIN,
+    )
+
+    def _other_document_s3_key(self, application_code: str, doc_id: str, file_name: str) -> str:
+        return f"application-documents/{application_code}/{self._OTHER_DOCUMENT_KEY_PREFIX}/{doc_id}/{file_name}"
+
+    async def add_other_document(self, case_id: str, name: str, actor: User) -> InsuranceCaseAdditionalDocument:
+        case = await self.get_case(case_id, actor)
+        if case.current_status not in self._ADD_OTHER_DOCUMENT_STATUSES:
+            raise ConflictError("Other documents can only be requested while the case is at Policy Document or Policy Login.")
+        doc = InsuranceCaseAdditionalDocument(
+            insurance_case_id=case_id, application_id=case.application_id, name=name, created_by=actor.require_id()
+        )
+        doc_id = await self._other_documents.insert(doc)
+        await write_audit_log(
+            self._db, event_type=InsuranceAuditEvent.ADDITIONAL_DOCUMENT_REQUESTED, user_id=actor.require_id(),
+            metadata={"application_workflow_id": case_id, "name": name},
+        )
+        found = await self._other_documents.find_by_id(doc_id)
+        assert found is not None
+        return found
+
+    async def list_other_documents(self, case_id: str, actor: User) -> list[InsuranceCaseAdditionalDocument]:
+        await self.get_case(case_id, actor)
+        return await self._other_documents.find_for_case(case_id)
+
+    async def list_other_documents_own(self, case_id: str, actor: User) -> list[InsuranceCaseAdditionalDocument]:
+        await self.get_own_case(case_id, actor)
+        return await self._other_documents.find_for_case(case_id)
+
+    async def _get_own_other_document(
+        self, case_id: str, doc_id: str, actor: User
+    ) -> tuple[ApplicationWorkflow, InsuranceCaseAdditionalDocument]:
+        case = await self.get_own_case(case_id, actor)
+        doc = await self._other_documents.find_by_id(doc_id)
+        if doc is None or doc.insurance_case_id != case_id:
+            raise NotFoundError("Other document not found.")
+        return case, doc
+
+    async def mint_other_document_upload_url(
+        self, case_id: str, doc_id: str, payload: OtherDocumentUploadUrlRequest, actor: User
+    ) -> tuple[str, str]:
+        case, _doc = await self._get_own_other_document(case_id, doc_id, actor)
+        application = await self._applications.find_by_id(case.application_id)
+        if application is None:
+            raise NotFoundError("Application not found.")
+        s3_key = self._other_document_s3_key(application.application_code, doc_id, payload.file_name)
+        upload_url = generate_presigned_upload_url(s3_key, content_type=payload.content_type)
+        return upload_url, s3_key
+
+    async def confirm_other_document_upload(
+        self, case_id: str, doc_id: str, payload: ConfirmOtherDocumentRequest, actor: User
+    ) -> InsuranceCaseAdditionalDocument:
+        case, doc = await self._get_own_other_document(case_id, doc_id, actor)
+        application = await self._applications.find_by_id(case.application_id)
+        if application is None:
+            raise NotFoundError("Application not found.")
+        # Never trust the client-supplied key — re-derive it exactly as the upload URL was minted.
+        s3_key = self._other_document_s3_key(application.application_code, doc_id, payload.file_name)
+        size = get_object_size(s3_key)
+        if size is None:
+            raise ValidationError("The file hasn't finished uploading yet. Please try again in a moment.")
+        updated = await self._other_documents.update(
+            doc_id,
+            {
+                "document_status": "uploaded", "verification_status": "pending", "rejection_reason": None,
+                "s3_key": s3_key, "file_name": payload.file_name, "content_type": payload.content_type,
+                "file_size_bytes": size, "uploaded_at": utc_now(),
+            },
+            updated_by=actor.require_id(),
+        )
+        assert updated is not None
+        if case.assigned_to:
+            employee = await self._employees.find_by_id(case.assigned_to)
+            if employee is not None:
+                await self._reminders.create_notification(
+                    recipient_user_id=employee.user_id, notification_type=NotificationType.DOCUMENT_UPLOADED,
+                    title="New Other Document", message=f"Customer uploaded: {doc.name}",
+                    entity_type="insurance_case", entity_id=case_id,
+                )
+        else:
+            owners = await self._db["users"].find({"role": OWNER, "is_deleted": False}).to_list(length=50)
+            for owner_doc in owners:
+                await self._reminders.create_notification(
+                    recipient_user_id=str(owner_doc["_id"]), notification_type=NotificationType.DOCUMENT_UPLOADED,
+                    title="New Other Document", message=f"Customer uploaded: {doc.name}",
+                    entity_type="insurance_case", entity_id=case_id,
+                )
+        return updated
+
+    async def verify_other_document(self, case_id: str, doc_id: str, actor: User) -> InsuranceCaseAdditionalDocument:
+        await self.get_case(case_id, actor)
+        doc = await self._other_documents.find_by_id(doc_id)
+        if doc is None or doc.insurance_case_id != case_id:
+            raise NotFoundError("Other document not found.")
+        if doc.document_status != "uploaded":
+            raise ConflictError("This document hasn't been uploaded yet.")
+        updated = await self._other_documents.update(
+            doc_id, {"verification_status": "verified", "rejection_reason": None, "verified_by": actor.require_id(), "verified_at": utc_now()},
+            updated_by=actor.require_id(),
+        )
         assert updated is not None
         return updated
 
-    async def accept_premium(self, case_id: str, actor: User) -> ApplicationWorkflow:
-        case = await self.get_own_case(case_id, actor)
-        if case.current_status != InsuranceStatus.PREMIUM_ACCEPTANCE:
-            raise ConflictError("This case is not awaiting a premium decision.")
-        assert case.insurance_details is not None
-        if case.insurance_details.premium_amount is None:
-            raise ValidationError("No premium quote has been issued for this case yet.")
-        details = case.insurance_details.model_copy(update={"premium_decision": OfferDecision.ACCEPTED})
-        return await self._engine.transition(case, InsuranceStatus.POLICY_GENERATION, actor, updates={"insurance_details": details.model_dump()})
-
-    async def decline_premium(self, case_id: str, actor: User) -> ApplicationWorkflow:
-        case = await self.get_own_case(case_id, actor)
-        if case.current_status != InsuranceStatus.PREMIUM_ACCEPTANCE:
-            raise ConflictError("This case is not awaiting a premium decision.")
-        assert case.insurance_details is not None
-        details = case.insurance_details.model_copy(update={"premium_decision": OfferDecision.DECLINED})
-        reason = "Customer declined the premium quote."
-        return await self._engine.transition(
-            case, InsuranceStatus.REJECTED, actor, updates={"insurance_details": details.model_dump(), "rejection_reason": reason}, remarks=reason
-        )
-
-    async def generate_policy(self, case_id: str, payload: GeneratePolicyRequest, actor: User) -> ApplicationWorkflow:
-        """Policy Generation is its own event, distinct from Policy Issued: records the
-        policy number/document but keeps the case in `policy_generation` — a separate
-        `issue_policy` action moves it to the terminal `policy_issued` status."""
+    async def reject_other_document(self, case_id: str, doc_id: str, reason: str, actor: User) -> InsuranceCaseAdditionalDocument:
         case = await self.get_case(case_id, actor)
-        if case.current_status != InsuranceStatus.POLICY_GENERATION:
-            raise ConflictError("This case is not awaiting policy generation.")
-        assert case.insurance_details is not None
-        details = case.insurance_details.model_copy(update={"policy_number": payload.policy_number, "policy_generated_at": utc_now()})
-        updated = await self._workflows.update(case_id, {"insurance_details": details.model_dump()}, updated_by=actor.require_id())
+        doc = await self._other_documents.find_by_id(doc_id)
+        if doc is None or doc.insurance_case_id != case_id:
+            raise NotFoundError("Other document not found.")
+        if doc.document_status != "uploaded":
+            raise ConflictError("This document hasn't been uploaded yet.")
+        updated = await self._other_documents.update(
+            doc_id, {"verification_status": "rejected", "rejection_reason": reason, "verified_by": actor.require_id(), "verified_at": utc_now()},
+            updated_by=actor.require_id(),
+        )
         assert updated is not None
+        application = await self._applications.find_by_id(case.application_id)
+        if application is not None:
+            await self._reminders.notify(
+                recipient_user_id=application.user_id, notification_type=NotificationType.DOCUMENT_REJECTED,
+                default_title="Document Rejected", default_message=f"Your {doc.name} was rejected. {reason}",
+                variables={"document_name": doc.name, "reason": reason},
+                entity_type="insurance_case", entity_id=case_id,
+            )
         return updated
 
-    async def issue_policy(self, case_id: str, actor: User) -> ApplicationWorkflow:
-        case = await self.get_case(case_id, actor)
-        if case.current_status != InsuranceStatus.POLICY_GENERATION:
-            raise ConflictError("This case is not ready to be issued.")
-        assert case.insurance_details is not None
-        if not case.insurance_details.policy_number:
-            raise ValidationError("Generate the policy number before issuing it.")
-        details = case.insurance_details.model_copy(update={"policy_issued_at": utc_now()})
-        return await self._engine.transition(case, InsuranceStatus.POLICY_ISSUED, actor, updates={"insurance_details": details.model_dump()})
+    def other_document_download_url(self, doc: InsuranceCaseAdditionalDocument) -> str | None:
+        return generate_presigned_download_url(doc.s3_key) if doc.s3_key else None
+
+    def other_document_attachment_url(self, doc: InsuranceCaseAdditionalDocument) -> str | None:
+        if not doc.s3_key or not doc.file_name:
+            return None
+        return generate_presigned_download_url(doc.s3_key, response_content_disposition=f'attachment; filename="{doc.file_name}"')
 
     # ---------------------------------------------------------------- notes / timeline
 

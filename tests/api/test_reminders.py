@@ -606,3 +606,81 @@ async def test_auto_transition_ignores_unrelated_active_cases(mock_db, owner_hea
 
     active = await mock_db["application_workflows"].find_one({"_id": active_id})
     assert active["current_status"] == "credit_evaluation"
+
+
+# ---------------------------------------------------------- Reject → Re-Eligibility auto-transition (Insurance)
+
+
+async def _seed_insurance_reject_re_eligible_defs(mock_db):
+    from app.features.workflow_engine.models import WorkflowDefinition
+
+    for status, label, seq, allowed_next, audit_event in [
+        ("re_eligible", "Re-Eligible", 5, ["fresh_lead", "policy_document", "rejected"], "insurance_case_marked_re_eligible"),
+        ("rejected", "Application Rejected", 6, ["re_eligible"], "insurance_case_rejected"),
+    ]:
+        definition = WorkflowDefinition(
+            case_type="insurance", status=status, label=label, sequence=seq,
+            allowed_next_statuses=allowed_next, audit_event=audit_event,
+        )
+        await mock_db["workflow_definitions"].insert_one(definition.model_dump(by_alias=True, exclude={"id"}))
+
+
+async def _insert_rejected_insurance_case(mock_db, *, case_code, re_eligible_date, choice="6_months"):
+    now = utc_now()
+    result = await mock_db["application_workflows"].insert_one(
+        {
+            "case_code": case_code, "case_type": "insurance", "application_id": f"app-{case_code}",
+            "customer_id": f"cust-{case_code}", "product_id": "prod-1", "product_category": "insurance",
+            "assigned_to": None, "current_status": "rejected", "rejection_reason": "Ineligible",
+            "pending_document_type_ids": [],
+            "insurance_details": {"re_eligibility_choice": choice, "re_eligible_date": re_eligible_date, "re_eligibility_auto_transitioned": False},
+            "is_deleted": False, "status": "active", "created_at": now, "updated_at": now, "version": 1,
+        }
+    )
+    return str(result.inserted_id)
+
+
+async def test_auto_transition_flips_scheduled_rejected_insurance_case(mock_db, owner_headers, monkeypatch):
+    monkeypatch.setattr("app.worker.tasks.reminders.get_database", lambda: mock_db)
+    await _seed_insurance_reject_re_eligible_defs(mock_db)
+    case_id = await _insert_rejected_insurance_case(mock_db, case_code="AFS-INS-RE1", re_eligible_date=utc_now() - timedelta(days=1))
+
+    await auto_transition_re_eligible_cases({})
+
+    case = await mock_db["application_workflows"].find_one({"_id": to_object_id(case_id)})
+    assert case["current_status"] == "re_eligible"
+    assert case["insurance_details"]["re_eligibility_auto_transitioned"] is True
+    assert case["insurance_details"]["re_eligible_date"] is None
+    assert await mock_db["audit_logs"].count_documents({"event_type": "insurance_case_re_eligibility_auto_transitioned"}) == 1
+
+
+async def test_auto_transition_insurance_no_and_future_cases_stay_rejected(mock_db, owner_headers, monkeypatch):
+    monkeypatch.setattr("app.worker.tasks.reminders.get_database", lambda: mock_db)
+    await _seed_insurance_reject_re_eligible_defs(mock_db)
+    no_id = await _insert_rejected_insurance_case(mock_db, case_code="AFS-INS-RE2", re_eligible_date=None, choice="no")
+    future_id = await _insert_rejected_insurance_case(mock_db, case_code="AFS-INS-RE3", re_eligible_date=utc_now() + timedelta(days=30))
+
+    for _ in range(3):
+        await auto_transition_re_eligible_cases({})
+
+    for case_id in (no_id, future_id):
+        case = await mock_db["application_workflows"].find_one({"_id": to_object_id(case_id)})
+        assert case["current_status"] == "rejected"
+
+
+async def test_auto_transition_sweeps_loan_and_insurance_in_one_pass_without_crossover(mock_db, owner_headers, monkeypatch):
+    monkeypatch.setattr("app.worker.tasks.reminders.get_database", lambda: mock_db)
+    await _seed_reject_re_eligible_defs(mock_db)
+    await _seed_insurance_reject_re_eligible_defs(mock_db)
+    loan_id = await _insert_rejected_case(mock_db, case_code="AFS-LOAN-X", re_eligible_date=utc_now() - timedelta(days=1))
+    ins_id = await _insert_rejected_insurance_case(mock_db, case_code="AFS-INS-X", re_eligible_date=utc_now() - timedelta(days=1))
+
+    await auto_transition_re_eligible_cases({})
+
+    loan = await mock_db["application_workflows"].find_one({"_id": to_object_id(loan_id)})
+    ins = await mock_db["application_workflows"].find_one({"_id": to_object_id(ins_id)})
+    assert loan["current_status"] == "re_eligible" and loan["loan_details"]["re_eligibility_auto_transitioned"] is True
+    assert ins["current_status"] == "re_eligible" and ins["insurance_details"]["re_eligibility_auto_transitioned"] is True
+    # The loan case never got an insurance_details written, and vice versa.
+    assert loan.get("insurance_details") is None
+    assert ins.get("loan_details") is None

@@ -671,32 +671,41 @@ async def seed_workflow_definitions() -> None:
         LoanStatus.FINAL_EVALUATION: [LoanStatus.ESIGN_NACH_KYC],
         LoanStatus.SEND_FOR_DISBURSEMENT: [LoanStatus.FINAL_EVALUATION],
     }
+    # Insurance "Policy Leads" redesign (2026-09-07) — FULL REPLACE of the decision-064
+    # pipeline. `fresh_lead -> policy_document -> policy_login -> policy_issued`, with
+    # `rejected` from every non-terminal stage and `re_eligible` from `rejected`. An
+    # already-seeded database needs `scripts/migrate_redesign_insurance_pipeline.py`
+    # (the `$setOnInsert` upsert below only affects a FRESH database).
     insurance_rows = [
-        (InsuranceStatus.APPLICATION_SUBMITTED, "Application Submitted", 1, [InsuranceStatus.DOCUMENTS_PENDING], False, False, InsuranceAuditEvent.CASE_CREATED, "insurance_case.created"),
-        (InsuranceStatus.DOCUMENTS_PENDING, "Documents Pending", 2, [InsuranceStatus.UNDERWRITING], True, True, InsuranceAuditEvent.DOCUMENTS_REQUESTED, "insurance_case.documents_requested"),
         (
-            InsuranceStatus.UNDERWRITING, "Underwriting", 3,
-            [InsuranceStatus.MEDICAL_VERIFICATION, InsuranceStatus.ADDITIONAL_DOCUMENTS, InsuranceStatus.PREMIUM_ACCEPTANCE, InsuranceStatus.REJECTED],
-            False, True, InsuranceAuditEvent.DOCUMENTS_VERIFIED, "insurance_case.documents_verified",
+            InsuranceStatus.FRESH_LEAD, "Fresh Lead", 1,
+            [InsuranceStatus.POLICY_DOCUMENT, InsuranceStatus.REJECTED],
+            False, True, InsuranceAuditEvent.CASE_CREATED, "insurance_case.created",
         ),
         (
-            InsuranceStatus.MEDICAL_VERIFICATION, "Medical Verification", 4,
-            [InsuranceStatus.ADDITIONAL_DOCUMENTS, InsuranceStatus.PREMIUM_ACCEPTANCE, InsuranceStatus.REJECTED],
-            False, True, InsuranceAuditEvent.MEDICAL_VERIFICATION_REQUIRED, "insurance_case.medical_verification_required",
+            InsuranceStatus.POLICY_DOCUMENT, "Policy Document", 2,
+            [InsuranceStatus.POLICY_LOGIN, InsuranceStatus.REJECTED],
+            False, True, InsuranceAuditEvent.POLICY_DOCUMENT_STARTED, "insurance_case.policy_document_started",
         ),
         (
-            InsuranceStatus.ADDITIONAL_DOCUMENTS, "Additional Documents", 5, [InsuranceStatus.PREMIUM_ACCEPTANCE],
-            True, True, InsuranceAuditEvent.ADDITIONAL_DOCUMENTS_REQUIRED, "insurance_case.additional_documents_required",
+            InsuranceStatus.POLICY_LOGIN, "Policy Login", 3,
+            [InsuranceStatus.POLICY_ISSUED, InsuranceStatus.REJECTED],
+            False, True, InsuranceAuditEvent.POLICY_LOGIN_STARTED, "insurance_case.policy_login_started",
         ),
+        (InsuranceStatus.POLICY_ISSUED, "Policy Issued", 4, [], False, False, InsuranceAuditEvent.POLICY_ISSUED, "insurance_case.policy_issued"),
         (
-            InsuranceStatus.PREMIUM_ACCEPTANCE, "Premium Acceptance", 6,
-            [InsuranceStatus.POLICY_GENERATION, InsuranceStatus.REJECTED],
-            True, True, InsuranceAuditEvent.PREMIUM_READY, "insurance_case.premium_ready",
+            InsuranceStatus.RE_ELIGIBLE, "Re-Eligible", 5,
+            [InsuranceStatus.FRESH_LEAD, InsuranceStatus.POLICY_DOCUMENT, InsuranceStatus.REJECTED],
+            False, True, InsuranceAuditEvent.MARKED_RE_ELIGIBLE, "insurance_case.marked_re_eligible",
         ),
-        (InsuranceStatus.POLICY_GENERATION, "Policy Generation", 7, [InsuranceStatus.POLICY_ISSUED], False, True, InsuranceAuditEvent.PREMIUM_ACCEPTED, "insurance_case.premium_accepted"),
-        (InsuranceStatus.POLICY_ISSUED, "Policy Issued", 8, [], False, False, InsuranceAuditEvent.POLICY_ISSUED, "insurance_case.policy_issued"),
-        (InsuranceStatus.REJECTED, "Application Rejected", 9, [], False, False, InsuranceAuditEvent.REJECTED, "insurance_case.rejected"),
+        (InsuranceStatus.REJECTED, "Application Rejected", 6, [InsuranceStatus.RE_ELIGIBLE], False, False, InsuranceAuditEvent.REJECTED, "insurance_case.rejected"),
     ]
+    # "Move Back" — one step back only, matching the "Move Back to X" spec examples.
+    insurance_allowed_previous: dict[str, list[str]] = {
+        InsuranceStatus.POLICY_DOCUMENT: [InsuranceStatus.FRESH_LEAD],
+        InsuranceStatus.POLICY_LOGIN: [InsuranceStatus.POLICY_DOCUMENT],
+    }
+    allowed_previous_by_case = {CaseType.LOAN: loan_allowed_previous, CaseType.INSURANCE: insurance_allowed_previous}
 
     ensured = 0
     for case_type, rows, resumable in ((CaseType.LOAN, loan_rows, LoanStatus.RESUMABLE), (CaseType.INSURANCE, insurance_rows, InsuranceStatus.RESUMABLE)):
@@ -705,7 +714,7 @@ async def seed_workflow_definitions() -> None:
             # Every non-terminal status can also be placed On Hold (Optional Status,
             # decision 064) — appended here rather than duplicated in every row above.
             full_allowed_next = [*allowed_next, ON_HOLD_STATUS] if status in resumable else allowed_next
-            allowed_previous = loan_allowed_previous.get(status, []) if case_type == CaseType.LOAN else []
+            allowed_previous = allowed_previous_by_case[case_type].get(status, [])
             definition = WorkflowDefinition(
                 case_type=case_type, status=status, label=label, sequence=sequence, allowed_next_statuses=full_allowed_next,
                 allowed_previous_statuses=allowed_previous, required_permission=f"{module}:applications:edit",

@@ -1,17 +1,23 @@
-from datetime import datetime
+from datetime import date, datetime
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
-from app.features.workflow_engine.constants import InsuranceStatus
+from app.features.customer.schemas import ApplicationDocumentResponse
+from app.features.workflow_engine.constants import InsuranceStatus, ReEligibilityPeriod
+
+_INSURANCE_RE_ELIGIBILITY_OPTIONS = (
+    ReEligibilityPeriod.THREE_MONTHS,
+    ReEligibilityPeriod.SIX_MONTHS,
+    ReEligibilityPeriod.TWELVE_MONTHS,
+    ReEligibilityPeriod.CUSTOM,
+    ReEligibilityPeriod.NO,
+)
 
 
 class InsuranceStatusUpdateRequest(BaseModel):
-    """Backs the generic Case Status control on the Insurance Case detail page —
-    validated against `InsuranceStatus.ALL` only, so a Loan status value (or any other
-    string) is rejected here at the schema layer, before the service layer even runs the
-    existing `WorkflowEngine` transition-graph check. See
-    `InsuranceCaseService.update_status`'s own docstring for why only some transitions
-    actually succeed through this endpoint."""
+    """Generic Case Status control. Validated against `InsuranceStatus.ALL` first (a
+    Loan status is rejected here at the schema layer); the service then only actually
+    performs `fresh_lead → policy_document` — every other move has a dedicated action."""
 
     status: str
 
@@ -23,41 +29,59 @@ class InsuranceStatusUpdateRequest(BaseModel):
         return value
 
 
-class UnderwritingRequest(BaseModel):
-    sum_insured: float | None = None
-    underwriting_remarks: str | None = None
-    requires_medical: bool = False
-    requires_additional_documents: bool = False
-    decision: str  # "approved" | "rejected"
-    rejection_reason: str | None = None
+class MoveBackRequest(BaseModel):
+    target: str = Field(pattern=f"^({InsuranceStatus.FRESH_LEAD}|{InsuranceStatus.POLICY_DOCUMENT})$")
 
 
-class MedicalVerificationRequest(BaseModel):
-    outcome: str  # "cleared" | "failed"
-    medical_remarks: str | None = None
-    rejection_reason: str | None = None
+class RestartFromReEligibleRequest(BaseModel):
+    target: str = Field(pattern=f"^({InsuranceStatus.FRESH_LEAD}|{InsuranceStatus.POLICY_DOCUMENT})$")
 
 
-class PremiumRequest(BaseModel):
-    premium_amount: float
+class RejectInsuranceCaseRequest(BaseModel):
+    reason: str = Field(min_length=1)
+    # Insurance reject popup shows 3 / 6 / 12 / Custom / No (spec §14); the underlying
+    # `ReEligibilityPeriod` enum also has 9 months (Loan) which insurance doesn't offer.
+    re_eligibility: str = Field(default=ReEligibilityPeriod.NO)
+    re_eligible_date: date | None = None
+
+    @field_validator("re_eligibility")
+    @classmethod
+    def _valid_option(cls, value: str) -> str:
+        if value not in _INSURANCE_RE_ELIGIBILITY_OPTIONS:
+            raise ValueError(f"'{value}' is not a valid Re-Eligibility option.")
+        return value
 
 
-class GeneratePolicyRequest(BaseModel):
-    policy_number: str
+class PolicyLoginUpdateRequest(BaseModel):
+    product_id: str | None = None
+    premium_amount: float | None = Field(default=None, ge=0)
+    ppt: int | None = Field(default=None, ge=1)
+    pt: int | None = Field(default=None, ge=1)
+    remarks: str | None = None
+    policy_number: str | None = None
+
+
+class ChangeProductRequest(BaseModel):
+    product_id: str
 
 
 class InsuranceCaseDetailsResponse(BaseModel):
-    sum_insured: float | None
-    underwriting_remarks: str | None
-    requires_medical: bool
-    requires_additional_documents: bool
-    medical_verification_outcome: str | None
-    medical_verification_remarks: str | None
-    premium_amount: float | None
-    premium_decision: str
-    policy_number: str | None
-    policy_generated_at: datetime | None
-    policy_issued_at: datetime | None
+    sum_insured: float | None = None
+    premium_amount: float | None = None
+    ppt: int | None = None
+    pt: int | None = None
+    policy_login_remarks: str | None = None
+    policy_number: str | None = None
+    policy_issued_at: datetime | None = None
+    re_eligibility_choice: str | None = None
+    re_eligible_date: datetime | None = None
+    re_eligibility_auto_transitioned: bool = False
+
+
+class RequiredDocumentsSummaryResponse(BaseModel):
+    required_total: int
+    verified_total: int
+    all_required_verified: bool
 
 
 class InsuranceCaseListItem(BaseModel):
@@ -72,10 +96,64 @@ class InsuranceCaseListItem(BaseModel):
     assigned_to_name: str | None
     current_status: str
     rejection_reason: str | None
+    next_follow_up_date: datetime | None = None
     created_at: datetime
 
 
 class InsuranceCaseDetailResponse(InsuranceCaseListItem):
-    pending_document_type_ids: list[str]
     insurance_details: InsuranceCaseDetailsResponse
+    required_documents: RequiredDocumentsSummaryResponse
     updated_at: datetime
+
+
+# ---------------------------------------------------------------------- per-document actions
+
+class InsuranceCaseDocumentResponse(ApplicationDocumentResponse):
+    # `False` for a document whose `document_type_id` is no longer in the case's pinned
+    # Product Schema — left in place after a `change_product`, shown as "Previously
+    # uploaded" rather than deleted.
+    is_in_schema: bool = True
+
+
+class RejectCaseDocumentRequest(BaseModel):
+    reason: str = Field(min_length=1)
+
+
+# ---------------------------------------------------------------------- "Add Other Document" (ad-hoc, per-case)
+
+class AddOtherDocumentRequest(BaseModel):
+    name: str = Field(min_length=1)
+
+
+class RejectOtherDocumentRequest(BaseModel):
+    reason: str = Field(min_length=1)
+
+
+class OtherDocumentUploadUrlRequest(BaseModel):
+    file_name: str
+    content_type: str | None = None
+
+
+class OtherDocumentUploadUrlResponse(BaseModel):
+    upload_url: str
+    s3_key: str
+
+
+class ConfirmOtherDocumentRequest(BaseModel):
+    file_name: str
+    content_type: str | None = None
+
+
+class OtherDocumentResponse(BaseModel):
+    id: str
+    insurance_case_id: str
+    name: str
+    document_status: str
+    verification_status: str
+    rejection_reason: str | None
+    file_name: str | None
+    download_url: str | None = None
+    attachment_url: str | None = None
+    uploaded_at: datetime | None
+    verified_at: datetime | None
+    created_at: datetime

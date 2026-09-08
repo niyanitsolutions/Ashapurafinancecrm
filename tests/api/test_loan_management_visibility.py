@@ -41,7 +41,7 @@ _LOAN_ROWS = [
     (LoanStatus.NEW_CUSTOMER, "New Customer", 1, [LoanStatus.CREDIT_EVALUATION], LoanAuditEvent.CASE_CREATED),
 ]
 _INSURANCE_ROWS = [
-    (InsuranceStatus.APPLICATION_SUBMITTED, "Application Submitted", 1, [InsuranceStatus.DOCUMENTS_PENDING], "insurance_case_created"),
+    (InsuranceStatus.FRESH_LEAD, "Fresh Lead", 1, [InsuranceStatus.POLICY_DOCUMENT], "insurance_case_created"),
 ]
 
 

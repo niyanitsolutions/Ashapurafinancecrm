@@ -54,7 +54,12 @@ from app.features.customer.models import (
     FormFieldDefinition,
     RequiredDocumentDefinition,
 )
-from app.features.system_settings.models import DocumentType, InsuranceProduct, LoanProduct
+from app.features.system_settings.models import (
+    DocumentType,
+    InsuranceCategory,
+    InsuranceProduct,
+    LoanProduct,
+)
 
 # --------------------------------------------------------------------------- authoring helpers
 
@@ -1088,8 +1093,13 @@ async def seed_real_product_schemas() -> None:
     db: AsyncIOMotorDatabase = get_database()
     loan_products = db["loan_products"]
     insurance_products = db["insurance_products"]
+    insurance_categories = db["insurance_categories"]
     document_types = db["document_types"]
     form_definitions = db["application_form_definitions"]
+
+    # Insurance Policy Leads redesign — every insurance product belongs to a category.
+    life_category_id = await _upsert_by_name(insurance_categories, "Life Insurance", lambda: InsuranceCategory(name="Life Insurance"))
+    health_category_id = await _upsert_by_name(insurance_categories, "Health Insurance", lambda: InsuranceCategory(name="Health Insurance"))
 
     document_type_ids: dict[str, str] = {}
 
@@ -1098,13 +1108,23 @@ async def seed_real_product_schemas() -> None:
             document_type_ids[name] = await _upsert_by_name(document_types, name, lambda: DocumentType(name=name))
         return document_type_ids[name]
 
-    async def _seed_one(category: str, products_collection, entry: dict) -> tuple[str, int, int, int]:
+    async def _seed_one(
+        category: str, products_collection, entry: dict, *, insurance_category_id: str | None = None
+    ) -> tuple[str, int, int, int]:
         name = entry["name"]
         if category == "loan":
             product_id = await _upsert_by_name(products_collection, name, lambda: LoanProduct(name=name))
         else:
             product_id = await _upsert_by_name(
-                products_collection, name, lambda: InsuranceProduct(name=name, description=entry.get("description"))
+                products_collection,
+                name,
+                lambda: InsuranceProduct(name=name, description=entry.get("description"), category_id=insurance_category_id),
+            )
+            # A product that predates the category link gets it backfilled here too
+            # (scripts/migrate_add_insurance_categories.py is the standalone equivalent).
+            await products_collection.update_one(
+                {"name": name, "is_deleted": False, "category_id": None},
+                {"$set": {"category_id": insurance_category_id}},
             )
 
         fields: list[FormFieldDefinition] = []
@@ -1121,6 +1141,7 @@ async def seed_real_product_schemas() -> None:
         definition = ApplicationFormDefinition(
             product_category=category,
             product_id=product_id,
+            insurance_category_id=insurance_category_id,
             fields=fields,
             required_documents=required_documents,
             status=SchemaStatus.ACTIVE,
@@ -1138,10 +1159,14 @@ async def seed_real_product_schemas() -> None:
         name, sections, field_count, doc_count = await _seed_one("loan", loan_products, entry)
         summary.append(("loan", name, sections, field_count, doc_count))
     for entry in LIFE_INSURANCE_PRODUCTS:
-        name, sections, field_count, doc_count = await _seed_one("insurance", insurance_products, entry)
+        name, sections, field_count, doc_count = await _seed_one(
+            "insurance", insurance_products, entry, insurance_category_id=life_category_id
+        )
         summary.append(("insurance/life", name, sections, field_count, doc_count))
     for entry in HEALTH_INSURANCE_PRODUCTS:
-        name, sections, field_count, doc_count = await _seed_one("insurance", insurance_products, entry)
+        name, sections, field_count, doc_count = await _seed_one(
+            "insurance", insurance_products, entry, insurance_category_id=health_category_id
+        )
         summary.append(("insurance/health", name, sections, field_count, doc_count))
 
     print(f"product schemas: ensured {len(summary)} entries ({len(document_type_ids)} distinct document types)")

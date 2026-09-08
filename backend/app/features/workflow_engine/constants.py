@@ -104,29 +104,34 @@ class ReEligibilityPeriod:
 
 
 class InsuranceStatus:
-    """Finalized lifecycle (decision 064) — supersedes the draft flagged as an
-    assumption in decision 057. Both `medical_verification` and `additional_documents`
-    are optional, per-case branches decided during Underwriting (and, for additional
-    documents, re-checked after Medical Verification clears) — never a fixed product
-    attribute. `policy_generation` (staff prepares the policy) and `policy_issued`
-    (terminal) are kept as two distinct statuses, not one, per explicit instruction.
+    """Insurance "Policy Leads" redesign (2026-09-07) — a FULL REPLACE of the
+    decision-064 lifecycle, superseding it. The new pipeline is
+    `fresh_lead -> policy_document -> policy_login -> policy_issued`, with `rejected`
+    reachable from any non-terminal stage and `re_eligible` reachable from `rejected`
+    (auto-scheduled at rejection time or a manual "Mark Re-Eligible"), and `on_hold`
+    from every non-terminal stage. The old
+    `underwriting`/`medical_verification`/`additional_documents`/`premium_acceptance`/
+    `policy_generation` statuses are gone; live cases were remapped by
+    `scripts/migrate_redesign_insurance_pipeline.py`
+    (documents_pending|underwriting|medical_verification|additional_documents ->
+    policy_document; premium_acceptance|policy_generation -> policy_login).
+
+    "Move Back" is wired for insurance too (`policy_login -> policy_document`,
+    `policy_document -> fresh_lead`) via `WorkflowDefinition.allowed_previous_statuses`.
     """
 
-    APPLICATION_SUBMITTED = "application_submitted"
-    DOCUMENTS_PENDING = "documents_pending"
-    UNDERWRITING = "underwriting"
-    MEDICAL_VERIFICATION = "medical_verification"
-    ADDITIONAL_DOCUMENTS = "additional_documents"
-    PREMIUM_ACCEPTANCE = "premium_acceptance"
-    POLICY_GENERATION = "policy_generation"
+    FRESH_LEAD = "fresh_lead"
+    POLICY_DOCUMENT = "policy_document"
+    POLICY_LOGIN = "policy_login"
     POLICY_ISSUED = "policy_issued"
+    RE_ELIGIBLE = "re_eligible"
     ON_HOLD = ON_HOLD_STATUS
     REJECTED = "rejected"
 
-    RESUMABLE = (
-        APPLICATION_SUBMITTED, DOCUMENTS_PENDING, UNDERWRITING, MEDICAL_VERIFICATION,
-        ADDITIONAL_DOCUMENTS, PREMIUM_ACCEPTANCE, POLICY_GENERATION,
-    )
+    # `re_eligible` is resumable (it can be placed on hold) and deliberately NOT terminal
+    # — a re-eligible case restarts from `fresh_lead`/`policy_document`. `rejected` stays
+    # terminal (see `TERMINAL_STATUSES_BY_CASE_TYPE`'s consumers).
+    RESUMABLE = (FRESH_LEAD, POLICY_DOCUMENT, POLICY_LOGIN, RE_ELIGIBLE)
     ALL = (*RESUMABLE, POLICY_ISSUED, ON_HOLD, REJECTED)
     TERMINAL = (POLICY_ISSUED, REJECTED)
 
@@ -241,6 +246,7 @@ class LoanAuditEvent:
 
 
 class InsuranceAuditEvent:
+    # Kept for historical audit_logs rows; the retired ones are no longer emitted.
     CASE_CREATED = "insurance_case_created"
     DOCUMENTS_REQUESTED = "insurance_case_documents_requested"
     DOCUMENTS_VERIFIED = "insurance_case_documents_verified"
@@ -250,3 +256,16 @@ class InsuranceAuditEvent:
     PREMIUM_ACCEPTED = "insurance_case_premium_accepted"
     POLICY_ISSUED = "insurance_case_policy_issued"
     REJECTED = "insurance_case_rejected"
+
+    # Policy Leads redesign (2026-09-07).
+    POLICY_DOCUMENT_STARTED = "insurance_case_policy_document_started"
+    POLICY_LOGIN_STARTED = "insurance_case_policy_login_started"
+    MOVED_BACK = "insurance_case_moved_back"
+    POLICY_LOGIN_UPDATED = "insurance_case_policy_login_updated"
+    PRODUCT_CHANGED = "insurance_case_product_changed"
+    MARKED_RE_ELIGIBLE = "insurance_case_marked_re_eligible"
+    RE_ELIGIBILITY_SCHEDULED = "insurance_case_re_eligibility_scheduled"
+    RE_ELIGIBILITY_AUTO_TRANSITIONED = "insurance_case_re_eligibility_auto_transitioned"
+
+    # Phase 5 — ad-hoc "Add Other Document" (per-case, never a Product Schema change).
+    ADDITIONAL_DOCUMENT_REQUESTED = "insurance_case_additional_document_requested"

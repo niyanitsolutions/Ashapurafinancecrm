@@ -24,6 +24,7 @@ from app.features.customer.schemas import (
     AssignApplicationRequest,
     CompleteProfileRequest,
     ConfirmDocumentRequest,
+    CreatableProductItem,
     CustomerListItem,
     CustomerResponse,
     DocumentPasswordResponse,
@@ -87,7 +88,8 @@ async def _resolve_form_definition_response(service: CustomerService, form_def: 
     name_map = await service.resolve_document_type_name_map(type_ids)
     password_support_map = await service.resolve_document_type_password_support(type_ids)
     product_name = await service.resolve_product_name(form_def.product_category, form_def.product_id)
-    return mappers.form_definition_to_response(form_def, name_map, product_name, password_support_map)
+    category_name = await service.resolve_insurance_category_name(form_def.insurance_category_id)
+    return mappers.form_definition_to_response(form_def, name_map, product_name, password_support_map, category_name)
 
 
 async def _resolve_application_response(service: CustomerService, application: Application) -> ApplicationDetailResponse:
@@ -323,6 +325,15 @@ async def get_product_schema_audit(
 ) -> ApiResponse[list[SchemaAuditEntryResponse]]:
     result = await service.list_schema_audit_entries(product_category, product_id)
     return ApiResponse[list[SchemaAuditEntryResponse]].ok(result)
+
+
+# Insurance Policy Leads redesign (spec §7) — the "New Schema" picker: active products
+# that have no schema yet. Literal segment, so registered ahead of `{form_definition_id}`.
+@router.get("/product-schemas/creatable-products")
+async def list_creatable_products(
+    product_category: str, service: ServiceDep, actor: Annotated[User, _schema_perm("view")]
+) -> ApiResponse[list[CreatableProductItem]]:
+    return ApiResponse[list[CreatableProductItem]].ok(await service.list_creatable_products(product_category))
 
 
 @router.get("/product-schemas/{form_definition_id}")

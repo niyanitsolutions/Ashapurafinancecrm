@@ -1,22 +1,26 @@
 import { Outlet, useLocation } from "react-router-dom";
 import { ModuleTabs } from "@/components/layout/ModuleTabs";
 
-// Insurance Management now hosts two distinct workflows: the existing policy-case
-// pipeline ("Policy Leads") and Advisor Recruitment ("Recruitment Leads"). The top
-// strip switches between them; the policy sub-tabs render underneath only while a
-// Policy Leads route is open (Recruitment renders its own sub-tabs).
+// Insurance Management hosts three workflows: the "Policy Leads" pipeline, Advisor
+// Recruitment ("Recruitment Leads"), and Advisor Management. The top strip switches
+// between them; the Policy Leads sub-tabs render underneath only while a Policy Leads
+// route is open (Recruitment / Advisors render their own sub-tabs).
+const POLICY_LEADS_PREFIXES = [
+  "/insurance-management/fresh-leads",
+  "/insurance-management/policy-document",
+  "/insurance-management/policy-login",
+  "/insurance-management/policy-issued",
+  "/insurance-management/re-eligible",
+  "/insurance-management/rejected",
+];
+
 const TOP_TABS = [
   { label: "Recruitment Leads", to: "/insurance-management/recruitment", matchKey: "recruitment_leads" },
   {
     label: "Policy Leads",
-    to: "/insurance-management/cases",
+    to: "/insurance-management/fresh-leads",
     matchKey: "insurance_cases",
-    activePrefixes: [
-      "/insurance-management/cases",
-      "/insurance-management/policies-issued",
-      "/insurance-management/re-eligible",
-      "/insurance-management/rejected",
-    ],
+    activePrefixes: POLICY_LEADS_PREFIXES,
   },
   {
     label: "Advisors",
@@ -26,21 +30,25 @@ const TOP_TABS = [
   },
 ];
 
+// The pipeline stages, plus a link out to the single source of truth for what each
+// insurance product asks for (the category-aware Product Schema Engine).
 const POLICY_TABS = [
-  { label: "Insurance Cases", to: "/insurance-management/cases" },
-  { label: "Policies Issued", to: "/insurance-management/policies-issued" },
+  { label: "Fresh Leads", to: "/insurance-management/fresh-leads" },
+  { label: "Policy Document", to: "/insurance-management/policy-document" },
+  { label: "Policy Login", to: "/insurance-management/policy-login" },
+  { label: "Policy Issued", to: "/insurance-management/policy-issued" },
   { label: "Re-Eligible", to: "/insurance-management/re-eligible" },
   { label: "Rejected", to: "/insurance-management/rejected" },
+  { label: "Settings", to: "/settings/product-schemas?category=insurance" },
 ];
 
 export function InsuranceManagementLayout() {
   const { pathname } = useLocation();
-  const onOwnSubTabs =
-    pathname.startsWith("/insurance-management/recruitment") || pathname.startsWith("/insurance-management/advisors");
+  const onPolicyLeads = POLICY_LEADS_PREFIXES.some((prefix) => pathname.startsWith(prefix));
   return (
     <>
       <ModuleTabs tabs={TOP_TABS} />
-      {!onOwnSubTabs && <ModuleTabs tabs={POLICY_TABS} />}
+      {onPolicyLeads && <ModuleTabs tabs={POLICY_TABS} />}
       <Outlet />
     </>
   );

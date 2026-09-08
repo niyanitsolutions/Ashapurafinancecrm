@@ -67,6 +67,12 @@ def _stub_document_object_size(monkeypatch):
 
     monkeypatch.setattr(recruitment_service, "get_object_size", lambda key: 1024)
 
+    # `InsuranceCaseService.confirm_other_document_upload` does the same real S3 HEAD
+    # for the same reason — same stub, same invariant.
+    from app.features.insurance_management import service as insurance_management_service
+
+    monkeypatch.setattr(insurance_management_service, "get_object_size", lambda key: 1024)
+
 
 @pytest.fixture
 async def client(mock_db, mock_redis):

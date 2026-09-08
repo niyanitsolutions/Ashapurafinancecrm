@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Button } from "@/components/buttons/Button";
-import { CheckboxField } from "@/components/forms/CheckboxField";
 import { EmployeeSelect } from "@/components/forms/EmployeeSelect";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
@@ -11,45 +10,53 @@ import { TextareaField } from "@/components/forms/TextareaField";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
 import { usePermissions } from "@/features/access_control/usePermissions";
+import type { ApplicationDocument } from "@/features/customer/api";
+import { DocumentChecklist } from "@/features/customer/components/DocumentChecklist";
 import { getErrorMessage } from "@/features/customer/errors";
+import { useProductSchema } from "@/features/customer/useProductSchema";
+import { AddOtherDocumentPanel } from "@/features/insurance_management/components/AddOtherDocumentPanel";
+import {
+  PolicyLoginUpdateModal,
+  type PolicyLoginUpdatePayload,
+} from "@/features/insurance_management/components/PolicyLoginUpdateModal";
+import {
+  RejectInsuranceCaseModal,
+  type RejectInsuranceCasePayload,
+} from "@/features/insurance_management/components/RejectInsuranceCaseModal";
 import {
   addInsuranceCaseNote,
   assignInsuranceCase,
-  generatePolicy,
   getInsuranceCase,
   getInsuranceCaseTimeline,
   holdInsuranceCase,
-  issuePolicy,
-  recordMedicalVerification,
-  recordPremium,
-  recordUnderwriting,
-  requestInsuranceCaseDocuments,
+  listInsuranceCaseDocuments,
+  moveInsuranceCaseBack,
+  moveToPolicyDocument,
+  moveToPolicyIssued,
+  moveToPolicyLogin,
+  rejectInsuranceCase,
+  rejectInsuranceCaseDocument,
+  restartFromReEligible,
   resumeInsuranceCase,
-  updateInsuranceCaseStatus,
-  verifyInsuranceCaseDocuments,
+  updatePolicyLogin,
+  verifyInsuranceCaseDocument,
   type CaseTimelineEntry,
   type InsuranceCaseDetail,
+  type InsuranceCaseDocument,
 } from "@/features/insurance_management/api";
-import { getInsuranceStatusControlInfo, type StatusControlInfo } from "@/features/insurance_management/statusControl";
-import { documentTypesApi, type NamedMasterData } from "@/features/system_settings/api";
+import { getInsuranceStatusControlInfo, INSURANCE_STATUS_LABELS } from "@/features/insurance_management/statusControl";
+import { HOLD_REASONS } from "@/features/workflow_engine/holdReasons";
 import { formatISTDateTime } from "@/shared/dateFormat";
 import { useDocumentCollectionBackContext } from "@/shared/navigationContext";
-import { HOLD_REASONS } from "@/features/workflow_engine/holdReasons";
 
-const STATUS_LABELS: Record<string, string> = {
-  application_submitted: "Application Submitted",
-  documents_pending: "Documents Pending",
-  underwriting: "Underwriting",
-  medical_verification: "Medical Verification",
-  additional_documents: "Additional Documents",
-  premium_acceptance: "Premium Acceptance",
-  policy_generation: "Policy Generation",
-  policy_issued: "Policy Issued",
-  on_hold: "On Hold",
-  rejected: "Rejected",
-};
+const STATUS_LABELS = INSURANCE_STATUS_LABELS;
 
-function Field({ label, value }: { label: string; value: string | number | boolean | null | undefined }) {
+function formatINR(value: number | null | undefined): string {
+  if (value == null) return "—";
+  return `₹${value.toLocaleString("en-IN")}`;
+}
+
+function Field({ label, value }: { label: string; value: string | number | null | undefined }) {
   return (
     <div>
       <div className="text-xs text-text/50">{label}</div>
@@ -69,35 +76,37 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 export function InsuranceCaseDetailsPage() {
   const { can } = usePermissions();
-  // insurance_management:applications's real backend actions: view/edit/approve/
-  // reject/assign — same pattern as Loan Management's mirror page. "edit" covers every
-  // write below except Assign (assign) and Issue Policy (approve).
   const canEdit = can("insurance_management:applications", "edit");
   const canAssign = can("insurance_management:applications", "assign");
   const canIssuePolicy = can("insurance_management:applications", "approve");
+  const canReject = canEdit || can("insurance_management:applications", "reject");
   const { caseId } = useParams<{ caseId: string }>();
-  // Reached via StaffApplicationDetailsPage's "Manage Status ->" link, which propagates
-  // the Document Collection context forward when present — every normal Insurance
-  // Management -> Insurance Cases -> View entry point keeps the original default.
-  const { backTo, backLabel } = useDocumentCollectionBackContext("/insurance-cases");
+  const { backTo, backLabel } = useDocumentCollectionBackContext("/insurance-management/fresh-leads");
+
   const [insuranceCase, setInsuranceCase] = useState<InsuranceCaseDetail | null>(null);
   const [timeline, setTimeline] = useState<CaseTimelineEntry[]>([]);
-  const [documentTypes, setDocumentTypes] = useState<NamedMasterData[]>([]);
+  const [documents, setDocuments] = useState<InsuranceCaseDocument[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [confirmVerify, setConfirmVerify] = useState(false);
+  const [rejectingDoc, setRejectingDoc] = useState<ApplicationDocument | null>(null);
+  const [rejectDocReason, setRejectDocReason] = useState("");
+  const [showReject, setShowReject] = useState(false);
+  const [showPolicyLogin, setShowPolicyLogin] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [confirmIssue, setConfirmIssue] = useState(false);
+
+  const { data: formDef } = useProductSchema("insurance", insuranceCase?.product_id);
 
   const load = () => {
     if (!caseId) return;
-    getInsuranceCase(caseId).then(setInsuranceCase).catch((err) => setError(getErrorMessage(err)));
+    getInsuranceCase(caseId)
+      .then(setInsuranceCase)
+      .catch((err) => setError(getErrorMessage(err)));
     getInsuranceCaseTimeline(caseId).then(setTimeline).catch(() => setTimeline([]));
+    listInsuranceCaseDocuments(caseId).then(setDocuments).catch(() => setDocuments([]));
   };
 
   useEffect(load, [caseId]);
-  useEffect(() => {
-    documentTypesApi.list().then(setDocumentTypes).catch(() => setDocumentTypes([]));
-  }, []);
 
   if (!caseId) return null;
 
@@ -130,15 +139,73 @@ export function InsuranceCaseDetailsPage() {
 
   const status = insuranceCase.current_status;
   const details = insuranceCase.insurance_details;
+  const docSummary = insuranceCase.required_documents;
+  const control = getInsuranceStatusControlInfo(status);
+  const orphanDocs = documents.filter((d) => !d.is_in_schema);
+  const premiumReady = details.premium_amount != null && details.ppt != null && details.pt != null;
+
+  const onVerifyDoc = (documentId: string) => run(() => verifyInsuranceCaseDocument(caseId, documentId), "Document verified.");
+  const onRejectDoc = async () => {
+    if (!rejectingDoc || !rejectDocReason.trim()) return;
+    await run(() => rejectInsuranceCaseDocument(caseId, rejectingDoc.id, rejectDocReason.trim()), "Document rejected.");
+    setRejectingDoc(null);
+    setRejectDocReason("");
+  };
+
+  const documentExtraActions = (doc: ApplicationDocument) =>
+    canEdit && doc.verification_status === "pending" && doc.document_status === "uploaded" ? (
+      <>
+        <button type="button" onClick={() => onVerifyDoc(doc.id)} className="text-xs font-medium text-success hover:underline">
+          Verify
+        </button>
+        <button type="button" onClick={() => setRejectingDoc(doc)} className="text-xs font-medium text-danger hover:underline">
+          Reject
+        </button>
+      </>
+    ) : null;
+
+  const doReject = async (payload: RejectInsuranceCasePayload) => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      await rejectInsuranceCase(caseId, payload);
+      setShowReject(false);
+      setMessage("Case rejected.");
+      load();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const doPolicyLogin = async (payload: PolicyLoginUpdatePayload) => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      await updatePolicyLogin(caseId, payload);
+      setShowPolicyLogin(false);
+      setMessage("Policy Login updated.");
+      load();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <SimplePageLayout title={`${insuranceCase.case_code} — ${STATUS_LABELS[status] ?? status}`} backTo={backTo} backLabel={backLabel}>
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
       <ErrorBanner message={error} />
 
-      {insuranceCase.rejection_reason && (
+      {status === "rejected" && insuranceCase.rejection_reason && (
         <div className="mb-4 rounded border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
           Rejected — {insuranceCase.rejection_reason}
+          {details.re_eligibility_choice && details.re_eligibility_choice !== "no" && details.re_eligible_date && (
+            <> · Re-Eligible from {formatISTDateTime(details.re_eligible_date)}</>
+          )}
+          {details.re_eligibility_choice === "no" && <> · Not scheduled to become Re-Eligible</>}
         </div>
       )}
 
@@ -148,87 +215,131 @@ export function InsuranceCaseDetailsPage() {
             <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
               <Field label="Customer" value={insuranceCase.customer_name} />
               <Field label="Product" value={insuranceCase.product_name} />
+              <Field label="Category" value={formDef?.insurance_category_name} />
               <Field label="Assigned To" value={insuranceCase.assigned_to_name} />
               <Field label="Status" value={STATUS_LABELS[status] ?? status} />
+              <Field label="Created" value={formatISTDateTime(insuranceCase.created_at)} />
             </div>
           </Section>
 
-          {canEdit && (
-            <Section title="Case Status">
-              <p className="text-sm text-text">
-                Current Status: <span className="font-medium">{STATUS_LABELS[status] ?? status}</span>
-              </p>
-              <StatusUpdateControl
-                info={getInsuranceStatusControlInfo(status)}
-                labels={STATUS_LABELS}
-                onUpdate={(nextStatus) => run(() => updateInsuranceCaseStatus(caseId, nextStatus), "Status updated.")}
-              />
-            </Section>
-          )}
-
-          {canEdit && (status === "application_submitted" || status === "documents_pending" || status === "additional_documents") && (
-            <Section title="Document Verification">
-              <p className="text-xs text-text/50">Pending: {insuranceCase.pending_document_type_ids.length === 0 ? "none requested" : insuranceCase.pending_document_type_ids.length}</p>
-              <RequestDocumentsForm documentTypes={documentTypes} onSubmit={(ids) => run(() => requestInsuranceCaseDocuments(caseId, ids), "Documents requested.")} />
-              {status !== "application_submitted" && (
-                <Button size="sm" onClick={() => setConfirmVerify(true)}>
-                  Verify Documents
-                </Button>
-              )}
-            </Section>
-          )}
-
-          {canEdit && status === "underwriting" && (
-            <Section title="Decision Screen — Underwriting">
-              <UnderwritingForm onSubmit={(payload) => run(() => recordUnderwriting(caseId, payload), "Underwriting recorded.")} />
-            </Section>
-          )}
-
-          {canEdit && status === "medical_verification" && (
-            <Section title="Decision Screen — Medical Verification">
-              <MedicalVerificationForm onSubmit={(payload) => run(() => recordMedicalVerification(caseId, payload), "Medical verification recorded.")} />
-            </Section>
-          )}
-
-          {status === "premium_acceptance" && (
-            <Section title="Premium Quote">
-              {details.premium_amount == null ? (
-                canEdit ? (
-                  <PremiumForm onSubmit={(payload) => run(() => recordPremium(caseId, payload), "Premium quote issued.")} />
-                ) : (
-                  <p className="text-sm text-text/40">No premium quote issued yet.</p>
-                )
-              ) : (
-                <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
-                  <Field label="Premium Amount" value={details.premium_amount} />
-                  <Field label="Customer Decision" value={details.premium_decision} />
+          {canEdit && status !== "policy_issued" && status !== "rejected" && status !== "on_hold" && (
+            <Section title="Move Case Forward">
+              {status === "fresh_lead" && control.kind === "simple" && (
+                <div className="flex items-center justify-between gap-3 rounded border border-border bg-background/50 px-3 py-2">
+                  <span className="text-sm text-text/70">Next: <span className="font-medium text-text">Policy Document</span></span>
+                  <Button size="sm" onClick={() => run(() => moveToPolicyDocument(caseId), "Moved to Policy Document.")}>
+                    Move to Policy Document
+                  </Button>
                 </div>
               )}
-              <p className="text-xs text-text/40">Awaiting the Customer's own accept/decline action.</p>
+
+              {status === "policy_document" && (
+                <div className="space-y-2">
+                  <p className="text-sm text-text/70">
+                    {docSummary.verified_total} / {docSummary.required_total} required documents verified.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      disabled={!docSummary.all_required_verified}
+                      onClick={() => run(() => moveToPolicyLogin(caseId), "Moved to Policy Login.")}
+                    >
+                      Move to Policy Login
+                    </Button>
+                    <Button size="sm" variant="secondary" onClick={() => run(() => moveInsuranceCaseBack(caseId, "fresh_lead"), "Moved back to Fresh Lead.")}>
+                      Move Back to Fresh Lead
+                    </Button>
+                  </div>
+                  {!docSummary.all_required_verified && (
+                    <p className="text-xs text-text/50">Every required document must be verified before moving to Policy Login.</p>
+                  )}
+                </div>
+              )}
+
+              {status === "policy_login" && (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
+                    <Field label="Premium" value={formatINR(details.premium_amount)} />
+                    <Field label="Policy Number" value={details.policy_number} />
+                    <Field label="PPT (years)" value={details.ppt} />
+                    <Field label="PT (years)" value={details.pt} />
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" onClick={() => setShowPolicyLogin(true)}>
+                      Update Premium / PPT / PT
+                    </Button>
+                    {canIssuePolicy && (
+                      <Button size="sm" disabled={!premiumReady} onClick={() => setConfirmIssue(true)}>
+                        Move to Policy Issued
+                      </Button>
+                    )}
+                    <Button size="sm" variant="secondary" onClick={() => run(() => moveInsuranceCaseBack(caseId, "policy_document"), "Moved back to Policy Document.")}>
+                      Move Back to Policy Document
+                    </Button>
+                  </div>
+                  {!premiumReady && <p className="text-xs text-text/50">Record Premium, PPT and PT before issuing the policy.</p>}
+                </div>
+              )}
+
+              {status === "re_eligible" && (
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" onClick={() => run(() => restartFromReEligible(caseId, "fresh_lead"), "Restarted at Fresh Lead.")}>
+                    Restart at Fresh Lead
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => run(() => restartFromReEligible(caseId, "policy_document"), "Restarted at Policy Document.")}>
+                    Restart at Policy Document
+                  </Button>
+                </div>
+              )}
+
+              {canReject && status !== "re_eligible" && (
+                <div className="pt-1">
+                  <Button size="sm" variant="danger" onClick={() => setShowReject(true)}>
+                    Reject Case
+                  </Button>
+                </div>
+              )}
             </Section>
           )}
 
-          {status === "policy_generation" && (
-            <Section title="Policy Generation">
-              {details.policy_number == null ? (
-                canEdit ? (
-                  <GeneratePolicyForm onSubmit={(payload) => run(() => generatePolicy(caseId, payload), "Policy number generated.")} />
-                ) : (
-                  <p className="text-sm text-text/40">No policy number generated yet.</p>
-                )
+          {(status === "policy_document" || status === "policy_login" || status === "policy_issued") && (
+            <Section title="Documents">
+              {formDef ? (
+                <DocumentChecklist
+                  requiredDocuments={formDef.required_documents}
+                  uploadedDocuments={documents}
+                  onUpload={() => undefined}
+                  uploadingFor={null}
+                  disabled
+                  extraActions={documentExtraActions}
+                />
               ) : (
-                <>
-                  <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
-                    <Field label="Policy Number" value={details.policy_number} />
-                    <Field label="Generated At" value={details.policy_generated_at ? formatISTDateTime(details.policy_generated_at) : null} />
-                  </div>
-                  {canIssuePolicy && (
-                    <Button size="sm" onClick={() => setConfirmIssue(true)}>
-                      Issue Policy
-                    </Button>
-                  )}
-                </>
+                <p className="text-sm text-text/50">Loading…</p>
               )}
+
+              {orphanDocs.length > 0 && (
+                <div className="mt-4 border-t border-border pt-3">
+                  <h4 className="text-xs font-semibold text-text/50">Previously Uploaded (not in the current product's schema)</h4>
+                  <ul className="mt-2 space-y-1">
+                    {orphanDocs.map((d) => (
+                      <li key={d.id} className="flex items-center gap-2 text-sm">
+                        <span className="text-text">{d.document_type_name}</span>
+                        {d.download_url && (
+                          <a href={d.download_url} target="_blank" rel="noreferrer" className="text-primary hover:underline text-xs">
+                            Preview
+                          </a>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </Section>
+          )}
+
+          {canEdit && (status === "policy_document" || status === "policy_login") && (
+            <Section title="Other Documents">
+              <AddOtherDocumentPanel caseId={caseId} canEdit={canEdit} />
             </Section>
           )}
 
@@ -236,6 +347,9 @@ export function InsuranceCaseDetailsPage() {
             <Section title="Policy">
               <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
                 <Field label="Policy Number" value={details.policy_number} />
+                <Field label="Premium" value={formatINR(details.premium_amount)} />
+                <Field label="PPT (years)" value={details.ppt} />
+                <Field label="PT (years)" value={details.pt} />
                 <Field label="Issued At" value={details.policy_issued_at ? formatISTDateTime(details.policy_issued_at) : null} />
               </div>
             </Section>
@@ -284,69 +398,70 @@ export function InsuranceCaseDetailsPage() {
         </div>
       </div>
 
-      <ConfirmDialog
-        open={confirmVerify}
-        title="Verify Documents"
-        message="Mark all requested documents as verified for this case? This moves the case to the next stage."
-        confirmLabel="Verify Documents"
-        onConfirm={async () => {
-          await run(() => verifyInsuranceCaseDocuments(caseId), "Documents verified.");
-          setConfirmVerify(false);
-        }}
-        onClose={() => setConfirmVerify(false)}
-      />
+      {rejectingDoc && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-card bg-card p-6 shadow-card space-y-3">
+            <h3 className="text-sm font-semibold text-text">Reject {rejectingDoc.document_type_name}</h3>
+            <TextareaField
+              label="Reason (mandatory)"
+              name="doc_reject_reason"
+              value={rejectDocReason}
+              onChange={(e) => setRejectDocReason(e.target.value)}
+              rows={3}
+              required
+            />
+            <div className="flex gap-2">
+              <Button size="sm" variant="danger" disabled={!rejectDocReason.trim()} onClick={onRejectDoc}>
+                Confirm Reject
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  setRejectingDoc(null);
+                  setRejectDocReason("");
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showReject && (
+        <RejectInsuranceCaseModal
+          caseCode={insuranceCase.case_code}
+          submitting={submitting}
+          error={error}
+          onCancel={() => setShowReject(false)}
+          onConfirm={doReject}
+        />
+      )}
+
+      {showPolicyLogin && (
+        <PolicyLoginUpdateModal
+          detail={insuranceCase}
+          submitting={submitting}
+          error={error}
+          onCancel={() => setShowPolicyLogin(false)}
+          onConfirm={doPolicyLogin}
+        />
+      )}
+
       <ConfirmDialog
         open={confirmIssue}
-        title="Issue Policy"
-        message="Issue this policy? Once issued, the case moves to Policy Issued and this cannot be undone here."
-        confirmLabel="Issue Policy"
+        title="Move to Policy Issued"
+        message="Issue this policy? Once issued, the case is closed and this cannot be undone here."
+        confirmLabel="Move to Policy Issued"
         onConfirm={async () => {
-          await run(() => issuePolicy(caseId), "Policy issued.");
+          await run(() => moveToPolicyIssued(caseId), "Policy issued.");
           setConfirmIssue(false);
         }}
         onClose={() => setConfirmIssue(false)}
       />
     </SimplePageLayout>
   );
-}
-
-// See LoanCaseDetailsPage.tsx's own `StatusUpdateControl` — identical shape, kept as a
-// separate copy (not shared) since Loan and Insurance stay independent modules. The
-// backend (WorkflowEngine + InsuranceCaseService.update_status) still independently
-// validates and enforces every one of these rules regardless of what this shows.
-function StatusUpdateControl({
-  info,
-  labels,
-  onUpdate,
-}: {
-  info: StatusControlInfo;
-  labels: Record<string, string>;
-  onUpdate: (nextStatus: string) => void;
-}) {
-  if (info.kind === "simple") {
-    return (
-      <div className="flex items-center justify-between gap-3 rounded border border-border bg-background/50 px-3 py-2">
-        <span className="text-sm text-text/70">
-          Next: <span className="font-medium text-text">{labels[info.nextStatus] ?? info.nextStatus}</span>
-        </span>
-        <Button size="sm" onClick={() => onUpdate(info.nextStatus)}>
-          Update Status
-        </Button>
-      </div>
-    );
-  }
-  if (info.kind === "dedicated") {
-    return (
-      <p className="text-xs text-text/50">
-        This status requires additional information. Please use the existing{" "}
-        <span className="font-medium text-text">{info.actionLabel}</span> action{info.actionLabel === "Resume" ? "" : " below"}.
-      </p>
-    );
-  }
-  if (info.kind === "customerOnly") {
-    return <p className="text-xs text-text/50">{info.note}</p>;
-  }
-  return <p className="text-xs text-text/50">No direct status update is available from the current status. Please use the appropriate case action.</p>;
 }
 
 function AssignForm({ currentName, onSubmit }: { currentName: string | null; onSubmit: (employeeId: string) => void }) {
@@ -404,180 +519,6 @@ function NoteForm({ onSubmit }: { onSubmit: (text: string) => void }) {
       </div>
       <div className="mb-4">
         <SubmitButton>Add</SubmitButton>
-      </div>
-    </form>
-  );
-}
-
-function RequestDocumentsForm({ documentTypes, onSubmit }: { documentTypes: NamedMasterData[]; onSubmit: (ids: string[]) => void }) {
-  const [selected, setSelected] = useState<string[]>([]);
-  return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap gap-3">
-        {documentTypes.map((dt) => (
-          <CheckboxField
-            key={dt.id}
-            label={dt.name}
-            checked={selected.includes(dt.id)}
-            onChange={(e) => setSelected((prev) => (e.target.checked ? [...prev, dt.id] : prev.filter((id) => id !== dt.id)))}
-          />
-        ))}
-      </div>
-      <Button variant="secondary" size="sm" disabled={selected.length === 0} onClick={() => onSubmit(selected)}>
-        Request Selected Documents
-      </Button>
-    </div>
-  );
-}
-
-function UnderwritingForm({
-  onSubmit,
-}: {
-  onSubmit: (payload: {
-    sum_insured?: number; underwriting_remarks?: string; requires_medical: boolean; requires_additional_documents: boolean;
-    decision: "approved" | "rejected"; rejection_reason?: string;
-  }) => void;
-}) {
-  const [sumInsured, setSumInsured] = useState("");
-  const [remarks, setRemarks] = useState("");
-  const [requiresMedical, setRequiresMedical] = useState(false);
-  const [requiresAdditionalDocuments, setRequiresAdditionalDocuments] = useState(false);
-  const [decision, setDecision] = useState<"approved" | "rejected">("approved");
-  const [rejectionReason, setRejectionReason] = useState("");
-  const [confirmReject, setConfirmReject] = useState(false);
-
-  const submit = () => {
-    onSubmit({
-      sum_insured: sumInsured ? Number(sumInsured) : undefined, underwriting_remarks: remarks || undefined,
-      requires_medical: requiresMedical, requires_additional_documents: requiresAdditionalDocuments,
-      decision, rejection_reason: decision === "rejected" ? rejectionReason : undefined,
-    });
-  };
-
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (decision === "rejected") {
-          setConfirmReject(true);
-          return;
-        }
-        submit();
-      }}
-      className="space-y-3"
-    >
-      <FormField label="Sum Insured" type="number" value={sumInsured} onChange={(e) => setSumInsured(e.target.value)} />
-      <TextareaField label="Remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={2} />
-      <CheckboxField label="Requires medical verification" checked={requiresMedical} onChange={(e) => setRequiresMedical(e.target.checked)} />
-      <CheckboxField label="Requires additional documents" checked={requiresAdditionalDocuments} onChange={(e) => setRequiresAdditionalDocuments(e.target.checked)} />
-      <div className="flex items-center gap-4 text-sm">
-        <label className="flex items-center gap-2"><input type="radio" checked={decision === "approved"} onChange={() => setDecision("approved")} /> Approve</label>
-        <label className="flex items-center gap-2"><input type="radio" checked={decision === "rejected"} onChange={() => setDecision("rejected")} /> Reject</label>
-      </div>
-      {decision === "rejected" && (
-        <TextareaField label="Rejection reason (mandatory)" value={rejectionReason} onChange={(e) => setRejectionReason(e.target.value)} rows={2} required />
-      )}
-      <SubmitButton>Submit Decision</SubmitButton>
-
-      <ConfirmDialog
-        open={confirmReject}
-        title="Reject Case"
-        message="Reject this case at underwriting? This decision is recorded on the case history and cannot be undone here."
-        confirmLabel="Reject Case"
-        confirmVariant="danger"
-        onConfirm={() => {
-          submit();
-          setConfirmReject(false);
-        }}
-        onClose={() => setConfirmReject(false)}
-      />
-    </form>
-  );
-}
-
-function MedicalVerificationForm({ onSubmit }: { onSubmit: (payload: { outcome: "cleared" | "failed"; medical_remarks?: string; rejection_reason?: string }) => void }) {
-  const [outcome, setOutcome] = useState<"cleared" | "failed">("cleared");
-  const [remarks, setRemarks] = useState("");
-  const [rejectionReason, setRejectionReason] = useState("");
-  const [confirmFail, setConfirmFail] = useState(false);
-
-  const submit = () => {
-    onSubmit({ outcome, medical_remarks: remarks || undefined, rejection_reason: outcome === "failed" ? rejectionReason : undefined });
-  };
-
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (outcome === "failed") {
-          setConfirmFail(true);
-          return;
-        }
-        submit();
-      }}
-      className="space-y-3"
-    >
-      <TextareaField label="Remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={2} />
-      <div className="flex items-center gap-4 text-sm">
-        <label className="flex items-center gap-2"><input type="radio" checked={outcome === "cleared"} onChange={() => setOutcome("cleared")} /> Cleared</label>
-        <label className="flex items-center gap-2"><input type="radio" checked={outcome === "failed"} onChange={() => setOutcome("failed")} /> Failed</label>
-      </div>
-      {outcome === "failed" && (
-        <TextareaField label="Rejection reason (mandatory)" value={rejectionReason} onChange={(e) => setRejectionReason(e.target.value)} rows={2} required />
-      )}
-      <SubmitButton>Submit Decision</SubmitButton>
-
-      <ConfirmDialog
-        open={confirmFail}
-        title="Mark Medical Verification Failed"
-        message="Mark this case as failed medical verification and reject it? This is recorded on the case history and cannot be undone here."
-        confirmLabel="Confirm Failed"
-        confirmVariant="danger"
-        onConfirm={() => {
-          submit();
-          setConfirmFail(false);
-        }}
-        onClose={() => setConfirmFail(false)}
-      />
-    </form>
-  );
-}
-
-function PremiumForm({ onSubmit }: { onSubmit: (payload: { premium_amount: number }) => void }) {
-  const [amount, setAmount] = useState("");
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSubmit({ premium_amount: Number(amount) });
-      }}
-      className="flex items-end gap-3"
-    >
-      <div className="flex-1">
-        <FormField label="Premium Amount" type="number" value={amount} onChange={(e) => setAmount(e.target.value)} required />
-      </div>
-      <div className="mb-4">
-        <SubmitButton>Issue Premium Quote</SubmitButton>
-      </div>
-    </form>
-  );
-}
-
-function GeneratePolicyForm({ onSubmit }: { onSubmit: (payload: { policy_number: string }) => void }) {
-  const [policyNumber, setPolicyNumber] = useState("");
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSubmit({ policy_number: policyNumber });
-      }}
-      className="flex items-end gap-3"
-    >
-      <div className="flex-1">
-        <FormField label="Policy Number" value={policyNumber} onChange={(e) => setPolicyNumber(e.target.value)} required />
-      </div>
-      <div className="mb-4">
-        <SubmitButton>Generate Policy</SubmitButton>
       </div>
     </form>
   );

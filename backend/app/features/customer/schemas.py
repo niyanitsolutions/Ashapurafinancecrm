@@ -243,6 +243,9 @@ class FormDefinitionResponse(BaseModel):
     product_category: str
     product_id: str
     product_name: str = ""
+    # Insurance Policy Leads redesign — populated for insurance schemas only.
+    insurance_category_id: str | None = None
+    insurance_category_name: str | None = None
     fields: list[FormFieldResponse]
     required_documents: list[RequiredDocumentResponse]
     repeatable_groups: list[RepeatableGroupResponse] = Field(default_factory=list)
@@ -354,6 +357,17 @@ class FreezeFormDefinitionRequest(BaseModel):
     freeze's audit-log entry purely for traceability (ask #9), not re-validated here."""
 
     confirmed_checklist: list[str] = Field(default_factory=list)
+
+
+class CreatableProductItem(BaseModel):
+    """A product that has no Product Schema yet — the "New Schema" picker's options.
+    Insurance Policy Leads redesign: the schema-creation UI (spec §7)."""
+
+    id: str
+    name: str
+    product_category: str
+    category_id: str | None = None
+    category_name: str | None = None
 
 
 class SchemaFieldDiffEntry(BaseModel):

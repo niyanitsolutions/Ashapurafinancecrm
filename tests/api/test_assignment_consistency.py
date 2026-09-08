@@ -25,8 +25,8 @@ async def _seed_workflow_definitions(mock_db):
     )
     await mock_db["workflow_definitions"].insert_one(loan_definition.model_dump(by_alias=True, exclude={"id"}))
     insurance_definition = WorkflowDefinition(
-        case_type=CaseType.INSURANCE, status=InsuranceStatus.APPLICATION_SUBMITTED, label="Application Submitted", sequence=1,
-        allowed_next_statuses=[InsuranceStatus.DOCUMENTS_PENDING], audit_event=InsuranceAuditEvent.CASE_CREATED,
+        case_type=CaseType.INSURANCE, status=InsuranceStatus.FRESH_LEAD, label="Fresh Lead", sequence=1,
+        allowed_next_statuses=[InsuranceStatus.POLICY_DOCUMENT], audit_event=InsuranceAuditEvent.CASE_CREATED,
     )
     await mock_db["workflow_definitions"].insert_one(insurance_definition.model_dump(by_alias=True, exclude={"id"}))
 

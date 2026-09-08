@@ -42,32 +42,33 @@ _LOAN_ROWS = [
     (LoanStatus.REJECTED, "Application Rejected", 11, [LoanStatus.RE_ELIGIBLE], LoanAuditEvent.REJECTED),
 ]
 _INSURANCE_ROWS = [
-    (InsuranceStatus.APPLICATION_SUBMITTED, "Application Submitted", 1, [InsuranceStatus.DOCUMENTS_PENDING], InsuranceAuditEvent.CASE_CREATED),
-    (InsuranceStatus.DOCUMENTS_PENDING, "Documents Pending", 2, [InsuranceStatus.UNDERWRITING], InsuranceAuditEvent.DOCUMENTS_REQUESTED),
-    (
-        InsuranceStatus.UNDERWRITING, "Underwriting", 3,
-        [InsuranceStatus.MEDICAL_VERIFICATION, InsuranceStatus.ADDITIONAL_DOCUMENTS, InsuranceStatus.PREMIUM_ACCEPTANCE, InsuranceStatus.REJECTED],
-        InsuranceAuditEvent.DOCUMENTS_VERIFIED,
-    ),
-    (
-        InsuranceStatus.MEDICAL_VERIFICATION, "Medical Verification", 4,
-        [InsuranceStatus.ADDITIONAL_DOCUMENTS, InsuranceStatus.PREMIUM_ACCEPTANCE, InsuranceStatus.REJECTED], InsuranceAuditEvent.MEDICAL_VERIFICATION_REQUIRED,
-    ),
-    (InsuranceStatus.ADDITIONAL_DOCUMENTS, "Additional Documents", 5, [InsuranceStatus.PREMIUM_ACCEPTANCE], InsuranceAuditEvent.ADDITIONAL_DOCUMENTS_REQUIRED),
-    (InsuranceStatus.PREMIUM_ACCEPTANCE, "Premium Acceptance", 6, [InsuranceStatus.POLICY_GENERATION, InsuranceStatus.REJECTED], InsuranceAuditEvent.PREMIUM_READY),
-    (InsuranceStatus.POLICY_GENERATION, "Policy Generation", 7, [InsuranceStatus.POLICY_ISSUED], InsuranceAuditEvent.PREMIUM_ACCEPTED),
-    (InsuranceStatus.POLICY_ISSUED, "Policy Issued", 8, [], InsuranceAuditEvent.POLICY_ISSUED),
-    (InsuranceStatus.REJECTED, "Application Rejected", 9, [], InsuranceAuditEvent.REJECTED),
+    (InsuranceStatus.FRESH_LEAD, "Fresh Lead", 1, [InsuranceStatus.POLICY_DOCUMENT, InsuranceStatus.REJECTED], InsuranceAuditEvent.CASE_CREATED),
+    (InsuranceStatus.POLICY_DOCUMENT, "Policy Document", 2, [InsuranceStatus.POLICY_LOGIN, InsuranceStatus.REJECTED], InsuranceAuditEvent.POLICY_DOCUMENT_STARTED),
+    (InsuranceStatus.POLICY_LOGIN, "Policy Login", 3, [InsuranceStatus.POLICY_ISSUED, InsuranceStatus.REJECTED], InsuranceAuditEvent.POLICY_LOGIN_STARTED),
+    (InsuranceStatus.POLICY_ISSUED, "Policy Issued", 4, [], InsuranceAuditEvent.POLICY_ISSUED),
+    (InsuranceStatus.RE_ELIGIBLE, "Re-Eligible", 5, [InsuranceStatus.FRESH_LEAD, InsuranceStatus.POLICY_DOCUMENT, InsuranceStatus.REJECTED], InsuranceAuditEvent.MARKED_RE_ELIGIBLE),
+    (InsuranceStatus.REJECTED, "Application Rejected", 6, [InsuranceStatus.RE_ELIGIBLE], InsuranceAuditEvent.REJECTED),
 ]
+_INSURANCE_ALLOWED_PREVIOUS = {
+    InsuranceStatus.POLICY_DOCUMENT: [InsuranceStatus.FRESH_LEAD],
+    InsuranceStatus.POLICY_LOGIN: [InsuranceStatus.POLICY_DOCUMENT],
+}
 
 
 async def _seed_workflow_definitions(mock_db):
     # Mirrors scripts/seed.py:seed_workflow_definitions — tests run against a fresh
     # mongomock database, not the seed script, so this data must be inserted directly.
-    for case_type, rows, resumable in ((CaseType.LOAN, _LOAN_ROWS, LoanStatus.RESUMABLE), (CaseType.INSURANCE, _INSURANCE_ROWS, InsuranceStatus.RESUMABLE)):
+    for case_type, rows, resumable, allowed_previous in (
+        (CaseType.LOAN, _LOAN_ROWS, LoanStatus.RESUMABLE, {}),
+        (CaseType.INSURANCE, _INSURANCE_ROWS, InsuranceStatus.RESUMABLE, _INSURANCE_ALLOWED_PREVIOUS),
+    ):
         for status, label, sequence, allowed_next, audit_event in rows:
             full_allowed_next = [*allowed_next, ON_HOLD_STATUS] if status in resumable else allowed_next
-            definition = WorkflowDefinition(case_type=case_type, status=status, label=label, sequence=sequence, allowed_next_statuses=full_allowed_next, audit_event=audit_event)
+            definition = WorkflowDefinition(
+                case_type=case_type, status=status, label=label, sequence=sequence,
+                allowed_next_statuses=full_allowed_next, allowed_previous_statuses=allowed_previous.get(status, []),
+                audit_event=audit_event,
+            )
             await mock_db["workflow_definitions"].insert_one(definition.model_dump(by_alias=True, exclude={"id"}))
         on_hold_definition = WorkflowDefinition(
             case_type=case_type, status=ON_HOLD_STATUS, label="On Hold", sequence=len(rows) + 1,
@@ -390,114 +391,120 @@ async def test_loan_all_banks_rejected_moves_case_to_rejected(client, mock_db, o
     assert r.json()["data"]["rejection_reason"] == "All banks declined"
 
 
-# ---------------------------------------------------------------------- Insurance: without and with medical
+# ---------------------------------------------------------------------- Insurance: Policy Leads pipeline
 
 
-async def test_insurance_pipeline_without_medical_or_additional_docs_to_policy_issued(client, mock_db, owner_headers):
+async def _verify_all_current_documents(client, owner_headers, application_id):
+    """Owner verifies every current document on the application (per-document verify is
+    the existing customer endpoint; Phase 5 adds insurance-scoped wrappers)."""
+    docs = (await client.get(f"/api/v1/applications/{application_id}/documents", headers=owner_headers)).json()["data"]
+    for doc in docs:
+        r = await client.patch(f"/api/v1/applications/{application_id}/documents/{doc['id']}/verify", headers=owner_headers)
+        assert r.status_code == 200, r.text
+
+
+async def test_insurance_pipeline_fresh_lead_to_policy_issued(client, mock_db, owner_headers):
     await _seed_workflow_definitions(mock_db)
     product = await _seed_product_and_form(mock_db, category="insurance", product_name="Term Life")
-    customer_headers, application_id = await _submitted_application(client, mock_db, product, mobile="9600000004")
+    _customer_headers, application_id = await _submitted_application(client, mock_db, product, mobile="9600000004")
 
     r = await client.get("/api/v1/insurance-cases", headers=owner_headers)
     assert r.status_code == 200, r.text
     case_id = next(c["id"] for c in r.json()["data"] if c["application_id"] == application_id)
-    assert next(c for c in r.json()["data"] if c["id"] == case_id)["current_status"] == "application_submitted"
+    assert next(c for c in r.json()["data"] if c["id"] == case_id)["current_status"] == "fresh_lead"
 
-    r = await client.post(f"/api/v1/insurance-cases/{case_id}/documents/request", json={"document_type_ids": []}, headers=owner_headers)
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-document", headers=owner_headers)
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["current_status"] == "documents_pending"
+    assert r.json()["data"]["current_status"] == "policy_document"
 
-    r = await client.post(f"/api/v1/insurance-cases/{case_id}/documents/verify", headers=owner_headers)
+    # Gate: required documents must be VERIFIED before Policy Login.
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-login", headers=owner_headers)
+    assert r.status_code == 409, r.text
+
+    await _verify_all_current_documents(client, owner_headers, application_id)
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-login", headers=owner_headers)
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["current_status"] == "underwriting"
+    assert r.json()["data"]["current_status"] == "policy_login"
+    assert r.json()["data"]["required_documents"]["all_required_verified"] is True
 
-    r = await client.post(
-        f"/api/v1/insurance-cases/{case_id}/underwriting",
-        json={"sum_insured": 500000, "requires_medical": False, "requires_additional_documents": False, "decision": "approved"}, headers=owner_headers,
+    # Policy Issued is gated on Premium / PPT / PT.
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-issued", headers=owner_headers)
+    assert r.status_code == 422, r.text
+
+    r = await client.patch(
+        f"/api/v1/insurance-cases/{case_id}/policy-login",
+        json={"premium_amount": 25000, "ppt": 10, "pt": 20, "remarks": "Family plan"}, headers=owner_headers,
     )
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["current_status"] == "premium_acceptance"  # both optional stages skipped
+    assert r.json()["data"]["insurance_details"]["premium_amount"] == 25000
+    assert r.json()["data"]["insurance_details"]["ppt"] == 10
 
-    r = await client.post(f"/api/v1/insurance-cases/{case_id}/premium", json={"premium_amount": 5000}, headers=owner_headers)
-    assert r.status_code == 200, r.text
-
-    r = await client.post(f"/api/v1/insurance-cases/{case_id}/premium/accept", headers=customer_headers)
-    assert r.status_code == 200, r.text
-    assert r.json()["data"]["current_status"] == "policy_generation"
-
-    r = await client.post(f"/api/v1/insurance-cases/{case_id}/policy/generate", json={"policy_number": "POL-0001"}, headers=owner_headers)
-    assert r.status_code == 200, r.text
-    assert r.json()["data"]["current_status"] == "policy_generation"  # generating doesn't itself issue
-    assert r.json()["data"]["insurance_details"]["policy_number"] == "POL-0001"
-
-    r = await client.post(f"/api/v1/insurance-cases/{case_id}/policy/issue", headers=owner_headers)
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-issued", headers=owner_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["current_status"] == "policy_issued"
     assert r.json()["data"]["insurance_details"]["policy_issued_at"] is not None
 
+    # The same underlying case throughout — never a duplicate.
+    r = await client.get("/api/v1/insurance-cases", headers=owner_headers)
+    assert sum(1 for c in r.json()["data"] if c["application_id"] == application_id) == 1
 
-async def test_insurance_pipeline_with_medical_and_additional_docs(client, mock_db, owner_headers):
+
+async def test_insurance_move_back_and_reject_with_re_eligibility(client, mock_db, owner_headers):
     await _seed_workflow_definitions(mock_db)
     product = await _seed_product_and_form(mock_db, category="insurance", product_name="Health Cover")
-    customer_headers, application_id = await _submitted_application(client, mock_db, product, mobile="9600000005")
+    _customer_headers, application_id = await _submitted_application(client, mock_db, product, mobile="9600000005")
+    case_id = next(
+        c["id"] for c in (await client.get("/api/v1/insurance-cases", headers=owner_headers)).json()["data"]
+        if c["application_id"] == application_id
+    )
 
-    r = await client.get("/api/v1/insurance-cases", headers=owner_headers)
-    case_id = next(c["id"] for c in r.json()["data"] if c["application_id"] == application_id)
-    await client.post(f"/api/v1/insurance-cases/{case_id}/documents/request", json={"document_type_ids": []}, headers=owner_headers)
-    await client.post(f"/api/v1/insurance-cases/{case_id}/documents/verify", headers=owner_headers)
+    await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-document", headers=owner_headers)
+    await _verify_all_current_documents(client, owner_headers, application_id)
+    await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-login", headers=owner_headers)
 
+    # Move Back one step.
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-back", json={"target": "policy_document"}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["current_status"] == "policy_document"
+
+    # Illegal jump-back is refused.
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-back", json={"target": "fresh_lead"}, headers=owner_headers)
+    assert r.status_code == 200  # policy_document -> fresh_lead IS allowed (one step)
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-back", json={"target": "fresh_lead"}, headers=owner_headers)
+    assert r.status_code == 409
+
+    # Reject with a 6-month Re-Eligibility schedule.
     r = await client.post(
-        f"/api/v1/insurance-cases/{case_id}/underwriting",
-        json={"sum_insured": 2000000, "requires_medical": True, "requires_additional_documents": True, "decision": "approved"}, headers=owner_headers,
+        f"/api/v1/insurance-cases/{case_id}/reject",
+        json={"reason": "Customer unreachable", "re_eligibility": "6_months"}, headers=owner_headers,
     )
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["current_status"] == "medical_verification"
-
-    additional_doc = DocumentType(name="Additional KYC Doc")
-    additional_doc_id = str((await mock_db["document_types"].insert_one(additional_doc.model_dump(by_alias=True, exclude={"id"}))).inserted_id)
-
-    r = await client.post(f"/api/v1/insurance-cases/{case_id}/medical-verification", json={"outcome": "cleared"}, headers=owner_headers)
-    assert r.status_code == 200, r.text
-    assert r.json()["data"]["current_status"] == "additional_documents"  # cleared, but additional docs were also flagged
-
-    r = await client.post(f"/api/v1/insurance-cases/{case_id}/documents/request", json={"document_type_ids": [additional_doc_id]}, headers=owner_headers)
-    assert r.status_code == 200, r.text
-    assert r.json()["data"]["current_status"] == "additional_documents"  # already there — no transition, just tracked
-
-    upload = await client.post(
-        f"/api/v1/applications/{application_id}/documents/upload-url", json={"document_type_id": additional_doc_id, "file_name": "kyc.pdf"}, headers=customer_headers
-    )
-    s3_key = upload.json()["data"]["s3_key"]
-    await client.post(
-        f"/api/v1/applications/{application_id}/documents", json={"document_type_id": additional_doc_id, "file_name": "kyc.pdf", "s3_key": s3_key}, headers=customer_headers
-    )
-
-    r = await client.post(f"/api/v1/insurance-cases/{case_id}/documents/verify", headers=owner_headers)
-    assert r.status_code == 200, r.text
-    assert r.json()["data"]["current_status"] == "premium_acceptance"
+    assert r.json()["data"]["current_status"] == "rejected"
+    assert r.json()["data"]["rejection_reason"] == "Customer unreachable"
+    assert r.json()["data"]["insurance_details"]["re_eligibility_choice"] == "6_months"
+    assert r.json()["data"]["insurance_details"]["re_eligible_date"] is not None
 
 
-async def test_insurance_medical_verification_failure_rejects_case(client, mock_db, owner_headers):
+async def test_insurance_reject_with_no_re_eligibility_never_schedules(client, mock_db, owner_headers):
     await _seed_workflow_definitions(mock_db)
     product = await _seed_product_and_form(mock_db, category="insurance", product_name="Critical Illness Cover")
     _customer_headers, application_id = await _submitted_application(client, mock_db, product, mobile="9600000015")
-
-    r = await client.get("/api/v1/insurance-cases", headers=owner_headers)
-    case_id = next(c["id"] for c in r.json()["data"] if c["application_id"] == application_id)
-    await client.post(f"/api/v1/insurance-cases/{case_id}/documents/request", json={"document_type_ids": []}, headers=owner_headers)
-    await client.post(f"/api/v1/insurance-cases/{case_id}/documents/verify", headers=owner_headers)
+    case_id = next(
+        c["id"] for c in (await client.get("/api/v1/insurance-cases", headers=owner_headers)).json()["data"]
+        if c["application_id"] == application_id
+    )
 
     r = await client.post(
-        f"/api/v1/insurance-cases/{case_id}/underwriting",
-        json={"sum_insured": 2000000, "requires_medical": True, "requires_additional_documents": False, "decision": "approved"}, headers=owner_headers,
+        f"/api/v1/insurance-cases/{case_id}/reject", json={"reason": "Ineligible", "re_eligibility": "no"}, headers=owner_headers
     )
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["current_status"] == "medical_verification"
-
-    r = await client.post(f"/api/v1/insurance-cases/{case_id}/medical-verification", json={"outcome": "failed", "rejection_reason": "Health risk too high"}, headers=owner_headers)
-    assert r.status_code == 200, r.text
     assert r.json()["data"]["current_status"] == "rejected"
-    assert r.json()["data"]["rejection_reason"] == "Health risk too high"
+    assert r.json()["data"]["insurance_details"]["re_eligible_date"] is None
+    assert r.json()["data"]["insurance_details"]["re_eligibility_choice"] == "no"
+
+    # A loan-only status is still rejected at the schema layer.
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/status", json={"status": "credit_evaluation"}, headers=owner_headers)
+    assert r.status_code == 422
 
 
 # ---------------------------------------------------------------------- On Hold / Resume (both pipelines)

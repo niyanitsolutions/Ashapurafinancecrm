@@ -150,6 +150,9 @@ export interface FormDefinition {
   product_category: string;
   product_id: string;
   product_name: string;
+  // Insurance Policy Leads redesign — populated for insurance schemas only.
+  insurance_category_id: string | null;
+  insurance_category_name: string | null;
   fields: FormField[];
   required_documents: RequiredDocument[];
   repeatable_groups: RepeatableGroup[];
@@ -441,11 +444,31 @@ export function getFormDefinition(productCategory: string, productId: string) {
 
 // ---- active products (Customer Portal's own read — never system_settings' employee-gated endpoints) ----
 
-export function listPortalProducts(category: "loan" | "insurance") {
-  return apiRequest<NamedMasterData[]>(`/portal-products?category=${category}`);
+export function listPortalProducts(category: "loan" | "insurance", opts?: { insuranceCategoryId?: string }) {
+  const qs = new URLSearchParams({ category });
+  if (opts?.insuranceCategoryId) qs.set("insurance_category_id", opts.insuranceCategoryId);
+  return apiRequest<NamedMasterData[]>(`/portal-products?${qs.toString()}`);
+}
+
+// Insurance Policy Leads redesign — the first step under "Apply for Insurance".
+export function listPortalInsuranceCategories() {
+  return apiRequest<NamedMasterData[]>("/portal-insurance-categories");
 }
 
 // ---- product schema authoring (Owner) ----
+
+export interface CreatableProduct {
+  id: string;
+  name: string;
+  product_category: string;
+  category_id: string | null;
+  category_name: string | null;
+}
+
+// Insurance Policy Leads redesign (spec §7) — products with no schema yet, for "New Schema".
+export function listCreatableProducts(productCategory: "loan" | "insurance") {
+  return apiRequest<CreatableProduct[]>(`/product-schemas/creatable-products?product_category=${productCategory}`);
+}
 
 export function listProductSchemas() {
   return apiRequest<FormDefinition[]>("/product-schemas");

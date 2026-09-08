@@ -97,7 +97,7 @@ def required_document_to_response(
 
 def form_definition_to_response(
     form_def: ApplicationFormDefinition, document_type_names: dict[str, str] | None = None, product_name: str = "",
-    document_type_password_support: dict[str, bool] | None = None,
+    document_type_password_support: dict[str, bool] | None = None, insurance_category_name: str | None = None,
 ) -> FormDefinitionResponse:
     names = document_type_names or {}
     return FormDefinitionResponse(
@@ -105,6 +105,8 @@ def form_definition_to_response(
         product_category=form_def.product_category,
         product_id=form_def.product_id,
         product_name=product_name,
+        insurance_category_id=form_def.insurance_category_id,
+        insurance_category_name=insurance_category_name,
         fields=[field_to_response(f) for f in form_def.fields],
         required_documents=[required_document_to_response(d, names, document_type_password_support) for d in form_def.required_documents],
         repeatable_groups=[

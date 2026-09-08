@@ -254,6 +254,12 @@ class RepeatableGroupDefinition(BaseModel):
 class ApplicationFormDefinition(BaseDocument):
     product_category: str  # "loan" | "insurance" — reuses Module 6A's ProductCategory values
     product_id: str  # ref: system_settings.loan_products or .insurance_products
+    # Insurance Policy Leads redesign — the InsuranceCategory this product belongs to,
+    # denormalized onto the schema so category-scoped reads (the Settings list filter,
+    # the portal's category-first picker) need no product lookup. `None` for every loan
+    # schema and for any insurance schema created before this field existed (backfilled
+    # by scripts/migrate_backfill_schema_insurance_category.py).
+    insurance_category_id: str | None = None
     fields: list[FormFieldDefinition] = Field(default_factory=list)
     required_documents: list[RequiredDocumentDefinition] = Field(default_factory=list)
     repeatable_groups: list[RepeatableGroupDefinition] = Field(default_factory=list)

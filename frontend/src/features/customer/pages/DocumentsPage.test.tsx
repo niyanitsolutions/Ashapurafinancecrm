@@ -45,6 +45,8 @@ const mockFormDef: FormDefinition = {
   product_category: "loan",
   product_id: "prod-1",
   product_name: "Personal Loan",
+  insurance_category_id: null,
+  insurance_category_name: null,
   fields: [],
   required_documents: [bankStatementDoc],
   repeatable_groups: [],

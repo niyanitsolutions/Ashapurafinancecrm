@@ -80,6 +80,11 @@ from app.features.workflow_engine.models import (
     ApplicationWorkflow,
     LoanCaseDetails,
 )
+from app.features.workflow_engine.re_eligibility import (
+    compute_re_eligible_date,
+    re_eligibility_detail_updates,
+    re_eligibility_note_text,
+)
 from app.features.workflow_engine.repository import (
     ApplicationDecisionRepository,
     ApplicationNoteRepository,
@@ -734,21 +739,6 @@ class LoanCaseService:
 
     # ---------------------------------------------------------------- Reject → Re-Eligibility scheduling
 
-    _RE_ELIGIBILITY_LABELS: ClassVar[dict[str, str]] = {
-        ReEligibilityPeriod.THREE_MONTHS: "3 Months", ReEligibilityPeriod.SIX_MONTHS: "6 Months",
-        ReEligibilityPeriod.NINE_MONTHS: "9 Months", ReEligibilityPeriod.TWELVE_MONTHS: "12 Months",
-        ReEligibilityPeriod.CUSTOM: "Custom",
-    }
-    # A custom Re-Eligible date more than this far out is almost certainly a typo.
-    _MAX_RE_ELIGIBILITY_MONTHS: ClassVar[int] = 60
-
-    @staticmethod
-    def _re_eligibility_note_text(choice: str, re_eligible_date: Any) -> str:
-        if choice == ReEligibilityPeriod.NO:
-            return "Rejected — Re-Eligibility: No (this case will never automatically become Re-Eligible)."
-        label = LoanCaseService._RE_ELIGIBILITY_LABELS.get(choice, choice)
-        return f"Rejected — Re-Eligibility scheduled ({label}); eligible from {to_ist(re_eligible_date).strftime('%d %b %Y')}."
-
     async def _apply_re_eligibility_schedule(
         self, case_id: str, choice: str, custom_date: date | None, actor: User
     ) -> ApplicationWorkflow:
@@ -757,33 +747,18 @@ class LoanCaseService:
         Final Evaluation's reject decision). `choice == "no"` stores an explicit "never"
         (`re_eligible_date` stays None) — the `auto_transition_re_eligible_cases` worker
         job only ever selects cases with a non-null `re_eligible_date`, so a "No" case
-        provably never auto-transitions. The eligibility date is always computed from the
-        rejection instant (`utc_now()`), same calendar-month math Top Up already uses."""
-        if choice not in ReEligibilityPeriod.ALL:
-            raise ValidationError(f"'{choice}' is not a valid Re-Eligibility option.")
+        provably never auto-transitions.
+
+        Date math / validation / note copy live in the shared
+        `workflow_engine/re_eligibility.py` (Insurance uses the identical helpers); this
+        method only does the Loan-side writes (`loan_details`, Loan audit event)."""
         case = await self._workflows.find_by_id(case_id)
         assert case is not None and case.loan_details is not None
         now = utc_now()
-
-        if choice == ReEligibilityPeriod.NO:
-            re_eligible_date: Any = None
-        elif choice == ReEligibilityPeriod.CUSTOM:
-            if custom_date is None:
-                raise ValidationError("A Re-Eligible date is required when the Re-Eligibility option is 'custom'.")
-            re_eligible_date = ist_date_to_utc_midnight(custom_date)
-            if re_eligible_date <= now:
-                raise ValidationError("The custom Re-Eligible date must be in the future.")
-            if re_eligible_date > add_calendar_months(now, self._MAX_RE_ELIGIBILITY_MONTHS):
-                raise ValidationError("The custom Re-Eligible date is too far in the future.")
-        else:
-            re_eligible_date = add_calendar_months(now, ReEligibilityPeriod.MONTHS_BY_PERIOD[choice])
+        re_eligible_date = compute_re_eligible_date(choice, custom_date, now)
 
         details = case.loan_details.model_copy(
-            update={
-                "re_eligibility_choice": choice, "re_eligible_date": re_eligible_date,
-                "re_eligibility_scheduled_at": now, "re_eligibility_scheduled_by": actor.require_id(),
-                "re_eligibility_auto_transitioned": False,
-            }
+            update=re_eligibility_detail_updates(choice, re_eligible_date, actor.require_id(), now)
         )
         updated = await self._workflows.update(case_id, {"loan_details": details.model_dump()}, updated_by=actor.require_id())
         assert updated is not None
@@ -797,7 +772,7 @@ class LoanCaseService:
         await self._notes.insert(
             ApplicationNote(
                 application_workflow_id=case_id, created_by=actor.require_id(),
-                text=self._re_eligibility_note_text(choice, re_eligible_date),
+                text=re_eligibility_note_text(choice, re_eligible_date),
             )
         )
         return updated

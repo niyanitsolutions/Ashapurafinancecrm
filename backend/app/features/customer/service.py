@@ -67,6 +67,7 @@ from app.features.customer.schemas import (
     CompleteDirectRegistrationRequest,
     CompleteProfileRequest,
     ConfirmDocumentRequest,
+    CreatableProductItem,
     DocumentGroupPreview,
     DocumentPreviewItem,
     FormDefinitionCreateRequest,
@@ -842,6 +843,52 @@ class CustomerService:
     async def list_form_definitions(self) -> list[ApplicationFormDefinition]:
         return await self._form_defs.find_many({}, limit=500, sort=[("product_category", 1)])
 
+    async def resolve_insurance_category_name(self, category_id: str | None) -> str | None:
+        if not category_id:
+            return None
+        category = await self._insurance_categories.find_by_id(category_id)
+        return category.name if category else None
+
+    async def _resolve_schema_insurance_category(self, product_id: str) -> str:
+        """The category an insurance product's schema belongs to — required (a product
+        must belong to a category), and the category must be active. Insurance Policy
+        Leads redesign: keeps Product Schemas category-aware / a single source of truth."""
+        product = await self._insurance_products.find_by_id(product_id)
+        if product is None or product.category_id is None:
+            raise ValidationError(
+                "This insurance product isn't linked to a category yet — assign it one in "
+                "Settings → Insurance Products first."
+            )
+        category = await self._insurance_categories.find_by_id(product.category_id)
+        if category is None or category.status != MasterDataStatus.ACTIVE:
+            raise ConflictError("This insurance product's category is inactive.")
+        return product.category_id
+
+    async def list_creatable_products(self, product_category: str) -> list[CreatableProductItem]:
+        """Active products of a category that have no Product Schema yet — the "New
+        Schema" picker (spec §7: add a product + configure its documents with no code
+        change)."""
+        if product_category not in ("loan", "insurance"):
+            raise ValidationError("product_category must be 'loan' or 'insurance'.")
+        repo = self._loan_products if product_category == "loan" else self._insurance_products
+        products = await repo.find_many({"status": MasterDataStatus.ACTIVE}, limit=500, sort=[("name", 1)])
+        category_names: dict[str, str] = {}
+        if product_category == "insurance":
+            categories = await self._insurance_categories.find_many({}, limit=500)
+            category_names = {c.require_id(): c.name for c in categories}
+        items: list[CreatableProductItem] = []
+        for product in products:
+            if await self._form_defs.find_any_by_product(product_category, product.require_id()) is not None:
+                continue
+            category_id: str | None = getattr(product, "category_id", None)
+            items.append(
+                CreatableProductItem(
+                    id=product.require_id(), name=product.name, product_category=product_category,
+                    category_id=category_id, category_name=category_names.get(category_id or ""),
+                )
+            )
+        return items
+
     async def get_form_definition_by_id(self, form_definition_id: str) -> ApplicationFormDefinition:
         form_def = await self._form_defs.find_by_id(form_definition_id)
         if form_def is None:
@@ -979,11 +1026,17 @@ class CustomerService:
         self._validate_schema_status(payload.status)
         if await self._form_defs.find_any_by_product(payload.product_category, payload.product_id) is not None:
             raise ConflictError("A product schema already exists for this product — edit it instead of creating another.")
+        insurance_category_id = (
+            await self._resolve_schema_insurance_category(payload.product_id)
+            if payload.product_category == "insurance"
+            else None
+        )
         required_documents = self._required_documents_from_payload(payload.required_documents)
         self._validate_required_documents(required_documents)
         form_def = ApplicationFormDefinition(
             product_category=payload.product_category,
             product_id=payload.product_id,
+            insurance_category_id=insurance_category_id,
             fields=self._fields_from_payload(payload.fields),
             required_documents=required_documents,
             repeatable_groups=self._repeatable_groups_from_payload(payload.repeatable_groups),
@@ -1099,6 +1152,7 @@ class CustomerService:
         new_def = ApplicationFormDefinition(
             product_category=form_def.product_category,
             product_id=form_def.product_id,
+            insurance_category_id=form_def.insurance_category_id,
             fields=[f.model_copy() for f in form_def.fields],
             required_documents=[d.model_copy() for d in form_def.required_documents],
             repeatable_groups=[g.model_copy(deep=True) for g in form_def.repeatable_groups],
@@ -1853,11 +1907,12 @@ class CustomerService:
         "final_evaluation": "Your application is under final review",
         "send_for_disbursement": "Your loan is being processed for disbursement",
         "disbursed": "Your loan has been disbursed",
-        "underwriting": "Your application is under underwriting review",
-        "medical_verification": "Complete your medical verification",
-        "premium_acceptance": "Review and accept your premium",
-        "policy_generation": "Your policy is being generated",
+        # Insurance Policy Leads pipeline (2026-09-07 redesign).
+        "fresh_lead": "Your insurance application has been received",
+        "policy_document": "We're collecting and verifying your policy documents",
+        "policy_login": "Your policy is being logged in with the insurer",
         "policy_issued": "Your policy has been issued",
+        "re_eligible": "Your application is eligible to be re-processed",
         "rejected": "Contact support for more information",
         "on_hold": "Your application is on hold — we'll be in touch",
     }

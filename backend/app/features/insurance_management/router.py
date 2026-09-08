@@ -1,6 +1,8 @@
-"""Module 6C — Insurance Case processing pipeline routes. Same gating pattern as
-`loan_management.router` (`require_permission("insurance_management", "applications",
-action)`, no new authorization mechanism)."""
+"""Module 6C — Insurance "Policy Leads" pipeline routes.
+
+Same gating as `loan_management.router` (`require_permission("insurance_management",
+"applications", action)`). Every workflow transition is backend-validated in the service.
+"""
 
 from typing import Annotated, Any
 
@@ -10,7 +12,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.config.database import get_database
 from app.core.pagination import PageParams, page_params
 from app.core.response import ApiResponse, ResponseMeta
-from app.features.access_control.permission_engine import require_permission
+from app.features.access_control.permission_engine import require_any_permission, require_permission
 from app.features.auth.models import User
 from app.features.geo_fencing.constants import GeoActivity
 from app.features.geo_fencing.enforcement import enforce_geo_fence
@@ -22,13 +24,22 @@ from app.features.insurance_management.dependencies import (
     get_insurance_case_service,
 )
 from app.features.insurance_management.schemas import (
-    GeneratePolicyRequest,
+    AddOtherDocumentRequest,
+    ChangeProductRequest,
+    ConfirmOtherDocumentRequest,
     InsuranceCaseDetailResponse,
+    InsuranceCaseDocumentResponse,
     InsuranceCaseListItem,
     InsuranceStatusUpdateRequest,
-    MedicalVerificationRequest,
-    PremiumRequest,
-    UnderwritingRequest,
+    MoveBackRequest,
+    OtherDocumentResponse,
+    OtherDocumentUploadUrlRequest,
+    OtherDocumentUploadUrlResponse,
+    PolicyLoginUpdateRequest,
+    RejectCaseDocumentRequest,
+    RejectInsuranceCaseRequest,
+    RejectOtherDocumentRequest,
+    RestartFromReEligibleRequest,
 )
 from app.features.insurance_management.service import InsuranceCaseService
 from app.features.workflow_engine.schemas import (
@@ -37,7 +48,6 @@ from app.features.workflow_engine.schemas import (
     CaseNoteResponse,
     CaseTimelineEntryResponse,
     HoldCaseRequest,
-    RequestDocumentsRequest,
 )
 
 router = APIRouter(prefix="/insurance-cases", tags=["insurance-management"])
@@ -56,8 +66,12 @@ def _perm(action: str) -> Any:
 async def _detail(service: InsuranceCaseService, case_id: str, actor: User, *, own: bool = False) -> ApiResponse[InsuranceCaseDetailResponse]:
     case = await (service.get_own_case(case_id, actor) if own else service.get_case(case_id, actor))
     customer_map, product_map, employee_map = await service.resolve_names([case])
+    summary = await service.required_documents_summary(case)
     return ApiResponse[InsuranceCaseDetailResponse].ok(
-        mappers.to_detail_response(case, customer_map.get(case.customer_id), product_map.get(case.product_id, ""), employee_map.get(case.assigned_to or ""))
+        mappers.to_detail_response(
+            case, customer_map.get(case.customer_id), product_map.get(case.product_id, ""),
+            employee_map.get(case.assigned_to or ""), summary,
+        )
     )
 
 
@@ -80,16 +94,28 @@ async def get_own_case(case_id: str, service: ServiceDep, current_user: CurrentU
     return await _detail(service, case_id, current_user, own=True)
 
 
-@router.post("/{case_id}/premium/accept")
-async def accept_premium(case_id: str, service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep) -> ApiResponse[InsuranceCaseDetailResponse]:
-    await service.accept_premium(case_id, current_user)
-    return await _detail(service, case_id, current_user, own=True)
+@router.get("/mine/{case_id}/other-documents")
+async def list_own_other_documents(
+    case_id: str, service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep
+) -> ApiResponse[list[OtherDocumentResponse]]:
+    docs = await service.list_other_documents_own(case_id, current_user)
+    return ApiResponse[list[OtherDocumentResponse]].ok([mappers.other_document_to_response(d) for d in docs])
 
 
-@router.post("/{case_id}/premium/decline")
-async def decline_premium(case_id: str, service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep) -> ApiResponse[InsuranceCaseDetailResponse]:
-    await service.decline_premium(case_id, current_user)
-    return await _detail(service, case_id, current_user, own=True)
+@router.post("/mine/{case_id}/other-documents/{doc_id}/upload-url")
+async def mint_own_other_document_upload_url(
+    case_id: str, doc_id: str, payload: OtherDocumentUploadUrlRequest, service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep
+) -> ApiResponse[OtherDocumentUploadUrlResponse]:
+    upload_url, s3_key = await service.mint_other_document_upload_url(case_id, doc_id, payload, current_user)
+    return ApiResponse[OtherDocumentUploadUrlResponse].ok(OtherDocumentUploadUrlResponse(upload_url=upload_url, s3_key=s3_key))
+
+
+@router.post("/mine/{case_id}/other-documents/{doc_id}/confirm")
+async def confirm_own_other_document_upload(
+    case_id: str, doc_id: str, payload: ConfirmOtherDocumentRequest, service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep
+) -> ApiResponse[OtherDocumentResponse]:
+    doc = await service.confirm_other_document_upload(case_id, doc_id, payload, current_user)
+    return ApiResponse[OtherDocumentResponse].ok(mappers.other_document_to_response(doc))
 
 
 # ---------------------------------------------------------------------- Staff (Owner/Employee)
@@ -157,60 +183,182 @@ async def resume_case(case_id: str, service: ServiceDep, actor: Annotated[User, 
     return await _detail(service, case_id, actor)
 
 
-@router.post("/{case_id}/documents/request")
-async def request_documents(
-    case_id: str, payload: RequestDocumentsRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+# ---------------------------------------------------------------------- pipeline transitions
+
+
+@router.post("/{case_id}/move-to-policy-document")
+async def move_to_policy_document(
+    case_id: str, service: ServiceDep, actor: Annotated[User, _perm("edit")]
 ) -> ApiResponse[InsuranceCaseDetailResponse]:
-    await service.request_documents(case_id, payload.document_type_ids, actor)
+    await service.move_to_policy_document(case_id, actor)
     return await _detail(service, case_id, actor)
 
 
-@router.post("/{case_id}/documents/verify")
-async def verify_documents(
-    case_id: str, service: ServiceDep, actor: Annotated[User, _perm("edit")], db: DbDep, payload: GeoCoordinatesRequest | None = None
+@router.post("/{case_id}/move-to-policy-login")
+async def move_to_policy_login(
+    case_id: str, service: ServiceDep, actor: Annotated[User, _perm("edit")], db: DbDep,
+    payload: GeoCoordinatesRequest | None = None,
 ) -> ApiResponse[InsuranceCaseDetailResponse]:
-    # Additive geo-fencing check (see app/features/geo_fencing/enforcement.py) — a no-op
-    # unless an active Geo Fence is configured for document_collection, so existing
-    # callers that send no body (or one with no coordinates) are unaffected.
     coords = payload or GeoCoordinatesRequest()
     await enforce_geo_fence(db, actor=actor, activity=GeoActivity.DOCUMENT_COLLECTION, latitude=coords.latitude, longitude=coords.longitude)
-    await service.verify_documents(case_id, actor)
+    await service.move_to_policy_login(case_id, actor)
     return await _detail(service, case_id, actor)
 
 
-@router.post("/{case_id}/underwriting")
-async def underwriting(
-    case_id: str, payload: UnderwritingRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+@router.post("/{case_id}/move-to-policy-issued")
+async def move_to_policy_issued(
+    case_id: str, service: ServiceDep, actor: Annotated[User, _perm("approve")]
 ) -> ApiResponse[InsuranceCaseDetailResponse]:
-    await service.underwriting(case_id, payload, actor)
+    await service.move_to_policy_issued(case_id, actor)
     return await _detail(service, case_id, actor)
 
 
-@router.post("/{case_id}/medical-verification")
-async def medical_verification(
-    case_id: str, payload: MedicalVerificationRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+@router.post("/{case_id}/move-back")
+async def move_back(
+    case_id: str, payload: MoveBackRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
 ) -> ApiResponse[InsuranceCaseDetailResponse]:
-    await service.medical_verification(case_id, payload, actor)
+    await service.move_back(case_id, payload.target, actor)
     return await _detail(service, case_id, actor)
 
 
-@router.post("/{case_id}/premium")
-async def record_premium(
-    case_id: str, payload: PremiumRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+@router.post("/{case_id}/restart")
+async def restart_from_re_eligible(
+    case_id: str, payload: RestartFromReEligibleRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
 ) -> ApiResponse[InsuranceCaseDetailResponse]:
-    await service.record_premium(case_id, payload, actor)
+    await service.restart_from_re_eligible(case_id, payload.target, actor)
     return await _detail(service, case_id, actor)
 
 
-@router.post("/{case_id}/policy/generate")
-async def generate_policy(
-    case_id: str, payload: GeneratePolicyRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+@router.post("/{case_id}/reject")
+async def reject_case(
+    case_id: str, payload: RejectInsuranceCaseRequest, service: ServiceDep,
+    actor: Annotated[User, require_any_permission(_MODULE, _RESOURCE, ("edit", "reject"))],
 ) -> ApiResponse[InsuranceCaseDetailResponse]:
-    await service.generate_policy(case_id, payload, actor)
+    await service.reject_case(case_id, payload.reason, payload.re_eligibility, payload.re_eligible_date, actor)
     return await _detail(service, case_id, actor)
 
 
-@router.post("/{case_id}/policy/issue")
-async def issue_policy(case_id: str, service: ServiceDep, actor: Annotated[User, _perm("approve")]) -> ApiResponse[InsuranceCaseDetailResponse]:
-    await service.issue_policy(case_id, actor)
+@router.patch("/{case_id}/policy-login")
+async def update_policy_login(
+    case_id: str, payload: PolicyLoginUpdateRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[InsuranceCaseDetailResponse]:
+    await service.update_policy_login(case_id, payload, actor)
     return await _detail(service, case_id, actor)
+
+
+@router.post("/{case_id}/change-product")
+async def change_product(
+    case_id: str, payload: ChangeProductRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[InsuranceCaseDetailResponse]:
+    await service.change_product(case_id, payload.product_id, actor)
+    return await _detail(service, case_id, actor)
+
+
+# ---------------------------------------------------------------------- per-document actions (schema documents)
+
+
+async def _document_response(
+    service: InsuranceCaseService, document: Any, schema_type_ids: set[str]
+) -> InsuranceCaseDocumentResponse:
+    type_names = await service.resolve_document_type_names([document])
+    verifier_names = await service.resolve_verifier_names([document])
+    return mappers.case_document_to_response(
+        document, type_names.get(document.document_type_id, ""), service.document_download_url(document),
+        verifier_names.get(document.verified_by or ""), attachment_url=service.document_attachment_url(document),
+        is_in_schema=document.document_type_id in schema_type_ids,
+    )
+
+
+@router.get("/{case_id}/documents")
+async def list_case_documents(
+    case_id: str, service: ServiceDep, actor: Annotated[User, _perm("view")]
+) -> ApiResponse[list[InsuranceCaseDocumentResponse]]:
+    documents, schema_type_ids = await service.list_case_documents(case_id, actor)
+    type_names = await service.resolve_document_type_names(documents)
+    verifier_names = await service.resolve_verifier_names(documents)
+    items = [
+        mappers.case_document_to_response(
+            d, type_names.get(d.document_type_id, ""), service.document_download_url(d),
+            verifier_names.get(d.verified_by or ""), attachment_url=service.document_attachment_url(d),
+            is_in_schema=d.document_type_id in schema_type_ids,
+        )
+        for d in documents
+    ]
+    return ApiResponse[list[InsuranceCaseDocumentResponse]].ok(items)
+
+
+@router.get("/{case_id}/documents/{document_type_id}/history")
+async def case_document_history(
+    case_id: str, document_type_id: str, service: ServiceDep, actor: Annotated[User, _perm("view")]
+) -> ApiResponse[list[InsuranceCaseDocumentResponse]]:
+    documents = await service.case_document_history(case_id, document_type_id, actor)
+    type_names = await service.resolve_document_type_names(documents)
+    verifier_names = await service.resolve_verifier_names(documents)
+    items = [
+        mappers.case_document_to_response(
+            d, type_names.get(d.document_type_id, ""), service.document_download_url(d),
+            verifier_names.get(d.verified_by or ""), attachment_url=service.document_attachment_url(d),
+        )
+        for d in documents
+    ]
+    return ApiResponse[list[InsuranceCaseDocumentResponse]].ok(items)
+
+
+@router.post("/{case_id}/documents/{document_id}/verify")
+async def verify_case_document(
+    case_id: str, document_id: str, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[InsuranceCaseDocumentResponse]:
+    document, schema_type_ids = await service.verify_case_document(case_id, document_id, actor)
+    return ApiResponse[InsuranceCaseDocumentResponse].ok(await _document_response(service, document, schema_type_ids))
+
+
+@router.post("/{case_id}/documents/{document_id}/reject")
+async def reject_case_document(
+    case_id: str, document_id: str, payload: RejectCaseDocumentRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[InsuranceCaseDocumentResponse]:
+    document, schema_type_ids = await service.reject_case_document(case_id, document_id, payload.reason, actor)
+    return ApiResponse[InsuranceCaseDocumentResponse].ok(await _document_response(service, document, schema_type_ids))
+
+
+# ---------------------------------------------------------------------- "Add Other Document" (ad-hoc, per-case)
+
+
+@router.get("/{case_id}/other-documents")
+async def list_other_documents(
+    case_id: str, service: ServiceDep, actor: Annotated[User, _perm("view")]
+) -> ApiResponse[list[OtherDocumentResponse]]:
+    docs = await service.list_other_documents(case_id, actor)
+    return ApiResponse[list[OtherDocumentResponse]].ok(
+        [
+            mappers.other_document_to_response(d, service.other_document_download_url(d), service.other_document_attachment_url(d))
+            for d in docs
+        ]
+    )
+
+
+@router.post("/{case_id}/other-documents")
+async def add_other_document(
+    case_id: str, payload: AddOtherDocumentRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[OtherDocumentResponse]:
+    doc = await service.add_other_document(case_id, payload.name, actor)
+    return ApiResponse[OtherDocumentResponse].ok(mappers.other_document_to_response(doc))
+
+
+@router.post("/{case_id}/other-documents/{doc_id}/verify")
+async def verify_other_document(
+    case_id: str, doc_id: str, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[OtherDocumentResponse]:
+    doc = await service.verify_other_document(case_id, doc_id, actor)
+    return ApiResponse[OtherDocumentResponse].ok(
+        mappers.other_document_to_response(doc, service.other_document_download_url(doc), service.other_document_attachment_url(doc))
+    )
+
+
+@router.post("/{case_id}/other-documents/{doc_id}/reject")
+async def reject_other_document(
+    case_id: str, doc_id: str, payload: RejectOtherDocumentRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[OtherDocumentResponse]:
+    doc = await service.reject_other_document(case_id, doc_id, payload.reason, actor)
+    return ApiResponse[OtherDocumentResponse].ok(
+        mappers.other_document_to_response(doc, service.other_document_download_url(doc), service.other_document_attachment_url(doc))
+    )

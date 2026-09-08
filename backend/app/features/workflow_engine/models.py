@@ -137,26 +137,46 @@ class LoanCaseDetails(BaseModel):
 
 class InsuranceCaseDetails(BaseModel):
     """Insurance-specific fields, embedded on `ApplicationWorkflow` when
-    `case_type="insurance"`. `requires_medical`/`requires_additional_documents` are
-    per-case judgment calls recorded by the underwriter during Underwriting (not fixed
-    product attributes) — see docs/decisions/DECISIONS.md, since Module 4's
-    `InsuranceProduct` (frozen) is not modified to carry either flag. `policy_number`/
-    `policy_generated_at` (Policy Generation) and `policy_issued_at` (Policy Issued) are
-    deliberately two distinct events, not one — decision 064."""
+    `case_type="insurance"`.
+
+    Policy Leads redesign (2026-09-07): `premium_amount`/`ppt`/`pt`/`policy_login_remarks`
+    are recorded by staff at the Policy Login stage (the customer premium accept/decline
+    flow is gone). The `underwriting_*`/`requires_*`/`medical_verification_*`/
+    `premium_decision`/`policy_generated_at` fields are RETIRED — kept defined-but-unused
+    so a historical case document still validates, never written by the new pipeline.
+    The `re_eligibility_*` block mirrors `LoanCaseDetails` (Reject → Re-Eligibility
+    scheduling)."""
 
     sum_insured: float | None = None
+
+    premium_amount: float | None = None
+    ppt: int | None = None  # premium paying term, whole years
+    pt: int | None = None  # policy term, whole years
+    policy_login_remarks: str | None = None
+
+    policy_number: str | None = None
+    policy_issued_at: datetime | None = None
+
+    # Reject → Re-Eligibility scheduling — same semantics as LoanCaseDetails' block:
+    # `re_eligibility_choice` is a `ReEligibilityPeriod`; `"no"`/None means "never
+    # automatically Re-Eligible"; `re_eligible_date` (UTC-midnight of the IST target) is
+    # consumed by the `auto_transition_re_eligible_cases` worker (Phase 4) which flips
+    # the case `rejected -> re_eligible` on/after that instant and clears the date.
+    re_eligibility_choice: str | None = None
+    re_eligible_date: datetime | None = None
+    re_eligibility_scheduled_at: datetime | None = None
+    re_eligibility_scheduled_by: str | None = None
+    re_eligibility_auto_transitioned: bool = False
+
+    # --- retired (decision-064 pipeline) — never written by the new flow, kept for
+    # backward compatibility with historical case documents ---
     underwriting_remarks: str | None = None
     requires_medical: bool = False
     requires_additional_documents: bool = False
-    medical_verification_outcome: str | None = None  # "cleared" | "failed"
+    medical_verification_outcome: str | None = None
     medical_verification_remarks: str | None = None
-
-    premium_amount: float | None = None
     premium_decision: str = Field(default=OfferDecision.PENDING, pattern=f"^({'|'.join(OfferDecision.ALL)})$")
-
-    policy_number: str | None = None
     policy_generated_at: datetime | None = None
-    policy_issued_at: datetime | None = None
 
 
 class ApplicationWorkflow(BaseDocument):

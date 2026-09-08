@@ -285,14 +285,20 @@ export const router = createBrowserRouter([
             path: "/insurance-management",
             element: <InsuranceManagementLayout />,
             children: [
-              { index: true, element: <Navigate to="/insurance-management/cases" replace /> },
-              // Same shared <CaseListPage> component/bug as Loan Management above — see
-              // the comment there. Keyed identically so tab-to-tab navigation here also
-              // forces a real remount instead of reusing stale filter state.
-              { path: "cases", element: <InsuranceCaseListPage key="cases" /> },
-              { path: "policies-issued", element: <InsuranceCaseListPage key="policy_issued" fixedStatus="policy_issued" /> },
-              { path: "re-eligible", element: <InsuranceCaseListPage key="re_eligible" reEligible /> },
+              { index: true, element: <Navigate to="/insurance-management/fresh-leads" replace /> },
+              // Policy Leads pipeline (redesign) — one tab per stage. Same shared
+              // <CaseListPage> component/bug as Loan Management above; keyed per stage so
+              // tab-to-tab navigation forces a real remount instead of reusing stale
+              // filter state.
+              { path: "fresh-leads", element: <InsuranceCaseListPage key="fresh_lead" fixedStatus="fresh_lead" /> },
+              { path: "policy-document", element: <InsuranceCaseListPage key="policy_document" fixedStatus="policy_document" /> },
+              { path: "policy-login", element: <InsuranceCaseListPage key="policy_login" fixedStatus="policy_login" /> },
+              { path: "policy-issued", element: <InsuranceCaseListPage key="policy_issued" fixedStatus="policy_issued" /> },
+              { path: "re-eligible", element: <InsuranceCaseListPage key="re_eligible" fixedStatus="re_eligible" /> },
               { path: "rejected", element: <InsuranceCaseListPage key="rejected" fixedStatus="rejected" /> },
+              // Bookmark/deep-link safety for the pre-redesign tab URLs.
+              { path: "cases", element: <Navigate to="/insurance-management/fresh-leads" replace /> },
+              { path: "policies-issued", element: <Navigate to="/insurance-management/policy-issued" replace /> },
               // Insurance Advisor Recruitment (Phase 1) — a second workflow inside the
               // same module. Own sub-tab layout; keyed per stage for the same remount
               // reason as the case tabs above.

@@ -21,8 +21,14 @@ import {
   type SchemaAuditEntry,
 } from "@/features/customer/api";
 import { getErrorMessage } from "@/features/customer/errors";
+import { documentTypesApi } from "@/features/system_settings/api";
 import { formatISTDateTime } from "@/shared/dateFormat";
 import { Icon } from "@/theme/icons";
+
+interface DocTypeOption {
+  id: string;
+  name: string;
+}
 
 // Governance round — the Owner-facing schema editor (replaces the read-only table's
 // dead end). Field/document lists are edited as a whole local copy and saved via the
@@ -89,6 +95,24 @@ export function SchemaEditorPage() {
   const [checkedItems, setCheckedItems] = useState<Set<string>>(new Set());
   const [auditEntries, setAuditEntries] = useState<SchemaAuditEntry[] | null>(null);
   const [previewValues, setPreviewValues] = useState<Record<string, unknown>>({});
+  // Insurance Policy Leads redesign (spec §7) — the Documents tab picks a document type
+  // from the master list (or adds a new one inline), instead of typing a raw id.
+  const [docTypes, setDocTypes] = useState<DocTypeOption[]>([]);
+
+  const loadDocTypes = () => {
+    documentTypesApi
+      .list()
+      .then((rows) => setDocTypes(rows.map((r) => ({ id: r.id, name: r.name }))))
+      .catch(() => undefined);
+  };
+  useEffect(loadDocTypes, []);
+
+  const createDocType = async (name: string): Promise<DocTypeOption> => {
+    const created = await documentTypesApi.create(name);
+    const option = { id: created.id, name: created.name };
+    setDocTypes((prev) => [...prev, option]);
+    return option;
+  };
 
   const load = () => {
     if (!schemaId) return;
@@ -269,7 +293,13 @@ export function SchemaEditorPage() {
         <FieldsTab fields={fields} setFields={setFields} disabled={isLocked} />
       )}
       {tab === "documents" && (
-        <DocumentsTab documents={documents} setDocuments={setDocuments} disabled={isLocked} />
+        <DocumentsTab
+          documents={documents}
+          setDocuments={setDocuments}
+          disabled={isLocked}
+          docTypes={docTypes}
+          onCreateDocType={createDocType}
+        />
       )}
       {tab === "preview" && (
         <div className="bg-card border border-border rounded-card shadow-card p-6 max-w-3xl">
@@ -613,15 +643,40 @@ function DocumentsTab({
   documents,
   setDocuments,
   disabled,
+  docTypes,
+  onCreateDocType,
 }: {
   documents: RequiredDocument[];
   setDocuments: (docs: RequiredDocument[]) => void;
   disabled: boolean;
+  docTypes: DocTypeOption[];
+  onCreateDocType: (name: string) => Promise<DocTypeOption>;
 }) {
+  const [creatingFor, setCreatingFor] = useState<number | null>(null);
+  const [newTypeName, setNewTypeName] = useState("");
+
   const update = (index: number, patch: Partial<RequiredDocument>) => {
     setDocuments(documents.map((d, i) => (i === index ? { ...d, ...patch } : d)));
   };
   const remove = (index: number) => setDocuments(documents.filter((_, i) => i !== index));
+
+  const pickType = (index: number, value: string) => {
+    if (value === "__new__") {
+      setCreatingFor(index);
+      setNewTypeName("");
+      return;
+    }
+    const opt = docTypes.find((t) => t.id === value);
+    update(index, { document_type_id: value, document_type_name: opt?.name ?? "" });
+  };
+
+  const confirmNewType = async (index: number) => {
+    const name = newTypeName.trim();
+    if (!name) return;
+    const created = await onCreateDocType(name);
+    update(index, { document_type_id: created.id, document_type_name: created.name });
+    setCreatingFor(null);
+  };
 
   return (
     <div className="space-y-3 max-w-4xl">
@@ -652,15 +707,44 @@ function DocumentsTab({
                     className="mt-1 w-full rounded border border-border px-2.5 py-1.5 text-sm disabled:bg-background"
                   />
                 </label>
+              ) : creatingFor === index ? (
+                <label className="text-xs text-text/60">
+                  New Document Type Name
+                  <div className="mt-1 flex gap-1.5">
+                    <input
+                      value={newTypeName}
+                      autoFocus
+                      disabled={disabled}
+                      onChange={(e) => setNewTypeName(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && confirmNewType(index)}
+                      placeholder="e.g. Family Member Proof"
+                      className="w-full rounded border border-border px-2.5 py-1.5 text-sm disabled:bg-background"
+                    />
+                    <button type="button" onClick={() => confirmNewType(index)} className="rounded bg-primary px-2 text-xs font-semibold text-white">
+                      Add
+                    </button>
+                    <button type="button" onClick={() => setCreatingFor(null)} className="rounded border border-border px-2 text-xs">
+                      Cancel
+                    </button>
+                  </div>
+                </label>
               ) : (
                 <label className="text-xs text-text/60">
-                  Document Type ID
-                  <input
+                  Document Type
+                  <select
                     value={doc.document_type_id}
                     disabled={disabled}
-                    onChange={(e) => update(index, { document_type_id: e.target.value.trim() })}
+                    onChange={(e) => pickType(index, e.target.value)}
                     className="mt-1 w-full rounded border border-border px-2.5 py-1.5 text-sm disabled:bg-background"
-                  />
+                  >
+                    <option value="">Select a document type…</option>
+                    {docTypes.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                    <option value="__new__">+ Add a new document type…</option>
+                  </select>
                 </label>
               )}
               <label className="text-xs text-text/60">

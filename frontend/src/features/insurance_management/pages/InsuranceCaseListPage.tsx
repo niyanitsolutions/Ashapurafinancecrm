@@ -1,33 +1,22 @@
 import { CaseListPage } from "@/components/pages/CaseListPage";
 import { listInsuranceCases } from "@/features/insurance_management/api";
+import { INSURANCE_STATUS_LABELS } from "@/features/insurance_management/statusControl";
 
-const STATUS_LABELS: Record<string, string> = {
-  application_submitted: "Application Submitted",
-  documents_pending: "Documents Pending",
-  underwriting: "Underwriting",
-  medical_verification: "Medical Verification",
-  additional_documents: "Additional Documents",
-  premium_acceptance: "Premium Acceptance",
-  policy_generation: "Policy Generation",
-  policy_issued: "Policy Issued",
-  on_hold: "On Hold",
-  rejected: "Rejected",
-};
-
-export function InsuranceCaseListPage({ fixedStatus, reEligible }: { fixedStatus?: string; reEligible?: boolean } = {}) {
+export function InsuranceCaseListPage({ fixedStatus }: { fixedStatus?: string } = {}) {
+  const isReEligible = fixedStatus === "re_eligible";
   return (
     <CaseListPage
       icon="insurance"
       entityLabel="Insurance"
-      itemLabel="insurance case"
+      itemLabel="policy lead"
       detailBasePath="/insurance-cases"
-      statusLabels={STATUS_LABELS}
+      statusLabels={INSURANCE_STATUS_LABELS}
       fixedStatus={fixedStatus}
-      reEligible={reEligible}
+      showFollowUp={isReEligible}
       listFn={listInsuranceCases}
-      defaultDescription="Every policy application moving through underwriting to issuance."
-      reEligibleDescription="Rejected insurance cases that become eligible to reapply after their cooldown period."
-      emptyStateDescription="An insurance case is created automatically once a customer's application is submitted."
+      defaultDescription="Every insurance application moving from Fresh Lead through Policy Login to Policy Issued."
+      reEligibleDescription="Rejected insurance cases that have become eligible to restart after their cooldown period."
+      emptyStateDescription="A policy lead is created automatically once a customer's insurance application is submitted."
       deleteResourceKey="insurance_cases"
     />
   );
