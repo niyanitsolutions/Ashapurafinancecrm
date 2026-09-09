@@ -65,12 +65,26 @@ _ALLOWED_PREVIOUS = {
     InsuranceStatus.POLICY_LOGIN: [InsuranceStatus.POLICY_DOCUMENT],
 }
 
+# `fresh_lead` / `policy_document` / `policy_login` / `re_eligible` are BRAND-NEW statuses
+# with no pre-existing row, so this migration's `$set` upsert *creates* them. Every
+# lookup in the app (`WorkflowDefinitionRepository.find_by_case_type_status`, the same
+# `{"is_deleted": False}` convention `BaseRepository` uses everywhere) filters on the
+# soft-delete fields — an upserted row that omits them is invisible, and
+# `WorkflowEngine.get_definition` then 404s on every transition. So the payload must
+# carry the full `BaseDocument` lifecycle shape, exactly like a `WorkflowDefinition`
+# inserted by `scripts/seed.py` does.
+_BASE_DOCUMENT_FIELDS: dict[str, object] = {
+    "is_deleted": False, "deleted_at": None, "deleted_by": None,
+    "version": 1, "created_by": None, "updated_by": None,
+}
+
 
 async def _rewrite_definitions(db) -> None:
     definitions = db["workflow_definitions"]
     for status, label, sequence, allowed_next, audit_event, notification_key in _INSURANCE_ROWS:
         full_next = [*allowed_next, ON_HOLD_STATUS] if status in InsuranceStatus.RESUMABLE else allowed_next
         payload = {
+            **_BASE_DOCUMENT_FIELDS,
             "case_type": "insurance", "status": status, "label": label, "sequence": sequence,
             "allowed_next_statuses": full_next, "allowed_previous_statuses": _ALLOWED_PREVIOUS.get(status, []),
             "required_permission": "insurance_management:applications:edit", "customer_editable": False,
@@ -82,6 +96,7 @@ async def _rewrite_definitions(db) -> None:
     await definitions.update_one(
         {"case_type": "insurance", "status": ON_HOLD_STATUS},
         {"$set": {
+            **_BASE_DOCUMENT_FIELDS,
             "case_type": "insurance", "status": ON_HOLD_STATUS, "label": "On Hold", "sequence": len(_INSURANCE_ROWS) + 1,
             "allowed_next_statuses": list(InsuranceStatus.RESUMABLE), "allowed_previous_statuses": [],
             "required_permission": "insurance_management:applications:edit", "customer_editable": False,
