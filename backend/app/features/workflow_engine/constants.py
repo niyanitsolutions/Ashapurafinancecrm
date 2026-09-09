@@ -243,6 +243,8 @@ class LoanAuditEvent:
     MOVED_TO_LOAN_MANAGEMENT = "loan_case_moved_to_loan_management"
     TOP_UP_SCHEDULED = "loan_case_top_up_scheduled"
     TOP_UP_MOVED_TO_DOCUMENT_COLLECTION = "loan_case_top_up_moved_to_document_collection"
+    # Deliberate administrative "Staff Override — Skip Stage Validations" stage move.
+    STAFF_OVERRIDE_STAGE_MOVE = "loan_case_staff_override_stage_move"
 
 
 class InsuranceAuditEvent:

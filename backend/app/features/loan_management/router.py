@@ -50,6 +50,7 @@ from app.features.loan_management.schemas import (
     LoanFollowUpRequest,
     LoanStatusUpdateRequest,
     NewCustomerDetailsRequest,
+    OverrideStageRequest,
     RejectAdditionalDocumentRequest,
     RvOvRefRequest,
     ScheduleTopUpRequest,
@@ -278,6 +279,17 @@ async def update_status(
         case_id, payload.status, actor, remarks=payload.remarks,
         re_eligibility=payload.re_eligibility, re_eligible_date=payload.re_eligible_date,
     )
+    return await _detail(service, case_id, actor)
+
+
+@router.post("/{case_id}/override-stage")
+async def override_stage(
+    case_id: str, payload: OverrideStageRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[LoanCaseDetailResponse]:
+    """"Staff Override — Skip Stage Validations" — same `loan_management:applications:edit`
+    gate as `update_status`; the service force-moves the case and records the override in
+    audit/history."""
+    await service.override_move_to_stage(case_id, payload.status, actor, reason=payload.reason)
     return await _detail(service, case_id, actor)
 
 

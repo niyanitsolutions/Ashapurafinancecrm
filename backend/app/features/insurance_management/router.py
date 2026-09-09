@@ -31,6 +31,7 @@ from app.features.insurance_management.schemas import (
     InsuranceCaseDetailResponse,
     InsuranceCaseDocumentResponse,
     InsuranceCaseListItem,
+    InsuranceLookupItem,
     InsuranceStatusUpdateRequest,
     MoveBackRequest,
     MoveToStageRequest,
@@ -146,6 +147,25 @@ async def create_manual_case(
 ) -> ApiResponse[InsuranceCaseDetailResponse]:
     case = await service.create_manual_case(payload, actor)
     return await _detail(service, case.require_id(), actor)
+
+
+# "Add Insurance Lead" form pickers — staff-facing (the Customer Portal's own
+# /customer/portal-* category/product reads are Customer-only). Registered before
+# "/{case_id}" so "lookup" is never captured as a case id.
+@router.get("/lookup/categories")
+async def lookup_categories(
+    service: ServiceDep, actor: Annotated[User, _perm("view")]
+) -> ApiResponse[list[InsuranceLookupItem]]:
+    categories = await service.lookup_insurance_categories()
+    return ApiResponse[list[InsuranceLookupItem]].ok([InsuranceLookupItem(id=c.require_id(), name=c.name) for c in categories])
+
+
+@router.get("/lookup/products")
+async def lookup_products(
+    service: ServiceDep, actor: Annotated[User, _perm("view")], insurance_category_id: str | None = None
+) -> ApiResponse[list[InsuranceLookupItem]]:
+    products = await service.lookup_insurance_products(insurance_category_id)
+    return ApiResponse[list[InsuranceLookupItem]].ok([InsuranceLookupItem(id=p.require_id(), name=p.name) for p in products])
 
 
 @router.get("/{case_id}")

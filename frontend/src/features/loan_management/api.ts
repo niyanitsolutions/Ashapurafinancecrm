@@ -285,6 +285,18 @@ export function getLoanCaseCounts() {
   return apiRequest<LoanCaseCounts>("/loan-cases/counts");
 }
 
+// "Staff Override — Skip Stage Validations" — a deliberate administrative move to any
+// Loan stage, bypassing normal stage/business validations only. Same
+// loan_management:applications:edit gate as updateLoanCaseStatus; the backend records
+// the override in audit + history. Never the default path — normal Move-to-Next is
+// unchanged.
+export function overrideLoanCaseStage(caseId: string, status: string, reason?: string) {
+  return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/override-stage`, {
+    method: "POST",
+    body: JSON.stringify({ status, reason }),
+  });
+}
+
 export function holdLoanCase(caseId: string, reason: string, remarks?: string) {
   return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/hold`, { method: "POST", body: JSON.stringify({ reason, remarks }) });
 }

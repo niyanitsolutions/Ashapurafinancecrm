@@ -28,10 +28,11 @@ export function LoginPage() {
   const returnTo = searchParams.get("return");
   const returnQuery = returnTo ? `?return=${encodeURIComponent(returnTo)}` : "";
   const infoMessage = (location.state as { message?: string } | null)?.message ?? null;
-  // A secure application link (/apply/:secureCode) only ever sends a Customer here —
-  // defaulting to the Employee/Partner tab in that case means every customer opening their
-  // application link has to notice and switch tabs before they can log in at all.
-  const [activeTab, setActiveTab] = useState<LoginTabKey>(() => (returnTo?.startsWith("/apply/") ? "customer" : "internal"));
+  // Customer is the default tab: the overwhelming majority of logins are customers, and a
+  // secure application link (/apply/:secureCode) only ever sends a Customer here. Staff
+  // switch to "Employee / Partner" once; the tab switcher keeps whatever each form already
+  // has typed (hidden via CSS, never unmounted).
+  const [activeTab, setActiveTab] = useState<LoginTabKey>("customer");
 
   return (
     <AuthPageLayout>

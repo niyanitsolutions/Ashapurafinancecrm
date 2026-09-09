@@ -18,6 +18,7 @@ const getLoanCase = vi.fn((_id: string) =>
 );
 const listBankOffers = vi.fn(() => Promise.resolve([] as unknown[]));
 const selectBankOffer = vi.fn((_caseId: string, _offerId: string) => Promise.resolve({ current_status: "offer_acceptance" }));
+const overrideLoanCaseStage = vi.fn(() => Promise.resolve({ current_status: "disbursed" }));
 
 vi.mock("@/features/loan_management/api", async () => {
   const actual = await vi.importActual<typeof import("@/features/loan_management/api")>("@/features/loan_management/api");
@@ -30,6 +31,7 @@ vi.mock("@/features/loan_management/api", async () => {
     moveToCreditEvaluation: (...args: unknown[]) => moveToCreditEvaluation(...(args as [])),
     moveLoanCaseBack: (...args: unknown[]) => moveLoanCaseBack(...(args as [])),
     disburseLoanCase: (id: string, payload: Record<string, unknown>) => disburseLoanCase(id, payload),
+    overrideLoanCaseStage: (...args: unknown[]) => overrideLoanCaseStage(...(args as [])),
     getLoanCase: (id: string) => getLoanCase(id),
   };
 });
@@ -287,5 +289,51 @@ describe("UpdateLoanCaseModal never mutates without an explicit Save/Confirm", (
       re_eligibility: "no",
       re_eligible_date: undefined,
     });
+  });
+});
+
+describe("UpdateLoanCaseModal — Staff Override — Skip Stage Validations", () => {
+  it("is OFF by default: the checkbox is unchecked and the Move To Stage dropdown is hidden", async () => {
+    renderModal("new_customer", ["credit_evaluation", "rejected"]);
+    const checkbox = await screen.findByRole("checkbox", { name: /Staff Override — Skip Stage Validations/i });
+    expect(checkbox).not.toBeChecked();
+    expect(screen.queryByLabelText("Move To Stage")).not.toBeInTheDocument();
+    // The normal Move-to-Next action is untouched and present.
+    expect(screen.getByRole("button", { name: "Move to Credit Evaluation" })).toBeInTheDocument();
+  });
+
+  it("checking it reveals the stage dropdown (current stage + on_hold excluded); a non-adjacent stage moves via overrideLoanCaseStage after Confirm", async () => {
+    const user = userEvent.setup();
+    overrideLoanCaseStage.mockClear();
+    overrideLoanCaseStage.mockResolvedValueOnce({ current_status: "esign_nach_kyc" });
+    renderModal("new_customer", ["credit_evaluation", "rejected"]);
+
+    await user.click(await screen.findByRole("checkbox", { name: /Staff Override/i }));
+    const select = await screen.findByLabelText("Move To Stage");
+    const options = Array.from(select.querySelectorAll("option")).map((o) => o.textContent);
+    expect(options).toContain("eSign / NACH / KYC");
+    expect(options).not.toContain("New Customer"); // current stage excluded
+    expect(options).not.toContain("On Hold"); // has its own Hold/Resume action
+
+    await user.selectOptions(select, "esign_nach_kyc");
+    await user.click(screen.getByRole("button", { name: "Move to Selected Stage" }));
+    // Nothing fired yet — only the confirm step appeared.
+    expect(overrideLoanCaseStage).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Confirm Override" }));
+    expect(overrideLoanCaseStage).toHaveBeenCalledWith("case-1", "esign_nach_kyc", undefined);
+  });
+
+  it("passes the optional reason through", async () => {
+    const user = userEvent.setup();
+    overrideLoanCaseStage.mockClear();
+    overrideLoanCaseStage.mockResolvedValueOnce({ current_status: "offer_acceptance" });
+    renderModal("new_customer", ["credit_evaluation", "rejected"]);
+
+    await user.click(await screen.findByRole("checkbox", { name: /Staff Override/i }));
+    await user.selectOptions(await screen.findByLabelText("Move To Stage"), "offer_acceptance");
+    await user.type(screen.getByLabelText("Reason (optional)"), "Management approved");
+    await user.click(screen.getByRole("button", { name: "Move to Selected Stage" }));
+    await user.click(screen.getByRole("button", { name: "Confirm Override" }));
+    expect(overrideLoanCaseStage).toHaveBeenCalledWith("case-1", "offer_acceptance", "Management approved");
   });
 });

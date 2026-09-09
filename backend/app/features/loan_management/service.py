@@ -429,6 +429,66 @@ class LoanCaseService:
             f"Moving this case to '{new_status}' requires additional information — use the dedicated action for this step instead."
         )
 
+    # ---------------------------------------------------------------- staff override — skip stage validations
+
+    # Every stage a "Staff Override" can move a case to. `on_hold` is excluded — it has
+    # its own Hold/Resume actions and needs `on_hold_previous_status` set so Resume works;
+    # a raw force-transition into it would break that.
+    _OVERRIDE_TARGET_STATUSES: ClassVar[tuple[str, ...]] = tuple(s for s in LoanStatus.ALL if s != LoanStatus.ON_HOLD)
+
+    async def override_move_to_stage(
+        self, case_id: str, target: str, actor: User, *, reason: str | None = None
+    ) -> ApplicationWorkflow:
+        """Deliberate administrative override — moves the case straight to `target`,
+        skipping ONLY the normal stage/business validations (transition graph, required
+        bank offers, incomplete previous-stage data, document/premium gates). Everything
+        else is unchanged: the actor is still authenticated + `loan_management:applications:edit`
+        gated at the router, `get_case` still enforces the assigned-Employee IDOR rule,
+        and the move still goes through `WorkflowEngine.transition` (DB write +
+        `ApplicationStatusHistory` + append-only `audit_logs` + status-changed event) —
+        just with `force=True`. An extra `STAFF_OVERRIDE_STAGE_MOVE` audit row and a case
+        note record that stage validations were skipped, by whom, and why.
+
+        Normal-mode `update_status` and every dedicated stage action are untouched — this
+        is a separate, additional capability, not a replacement."""
+        case = await self.get_case(case_id, actor)
+        if target not in self._OVERRIDE_TARGET_STATUSES:
+            raise ValidationError(
+                f"'{target}' is not a Loan stage a Staff Override can move a case to."
+            )
+        if target == case.current_status:
+            return case
+        # Confirms `target` is a real, seeded Loan status (raises NotFoundError otherwise)
+        # before we force the move.
+        await self._engine.get_definition(CaseType.LOAN, target)
+
+        from_status = case.current_status
+        clean_reason = (reason or "").strip() or None
+        updates: dict[str, Any] = {}
+        if target == LoanStatus.REJECTED:
+            updates["rejection_reason"] = clean_reason or "Staff override — no reason recorded."
+        remark = "Staff override — stage validations skipped." + (f" {clean_reason}" if clean_reason else "")
+        updated = await self._engine.transition(
+            case, target, actor, updates=updates or None, remarks=remark, force=True
+        )
+        await write_audit_log(
+            self._db, event_type=LoanAuditEvent.STAFF_OVERRIDE_STAGE_MOVE, user_id=actor.require_id(),
+            metadata={
+                "application_workflow_id": case_id, "from_status": from_status, "to_status": target,
+                "override": True, "reason": clean_reason,
+            },
+        )
+        await self._notes.insert(
+            ApplicationNote(
+                application_workflow_id=case_id, created_by=actor.require_id(),
+                text=(
+                    f"Staff override: moved {from_status} → {target} (stage validations skipped)."
+                    + (f" Reason: {clean_reason}" if clean_reason else "")
+                ),
+            )
+        )
+        return updated
+
     # ---------------------------------------------------------------- documents
 
     async def request_documents(self, case_id: str, document_type_ids: list[str], actor: User) -> ApplicationWorkflow:

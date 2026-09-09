@@ -4,15 +4,16 @@ import { FormField } from "@/components/forms/FormField";
 import { SelectField } from "@/components/forms/SelectField";
 import { TextareaField } from "@/components/forms/TextareaField";
 import { Modal } from "@/components/overlays/Modal";
-import { listPortalInsuranceCategories, listPortalProducts } from "@/features/customer/api";
 import { getErrorMessage } from "@/features/customer/errors";
 import {
   createManualInsuranceCase,
+  listInsuranceLookupCategories,
+  listInsuranceLookupProducts,
   MANUAL_CREATE_STAGES,
   type InsuranceCaseDetail,
+  type InsuranceLookupItem,
 } from "@/features/insurance_management/api";
 import { INSURANCE_RE_ELIGIBILITY_OPTIONS } from "@/features/insurance_management/statusControl";
-import type { NamedMasterData } from "@/features/system_settings/api";
 import { todayISTDateString } from "@/shared/dateFormat";
 
 type ReChoice = (typeof INSURANCE_RE_ELIGIBILITY_OPTIONS)[number]["value"] | "";
@@ -27,10 +28,11 @@ export function AddInsuranceLeadModal({
   onClose: () => void;
   onCreated: (created: InsuranceCaseDetail) => void;
 }) {
-  const [categories, setCategories] = useState<NamedMasterData[]>([]);
-  const [products, setProducts] = useState<NamedMasterData[]>([]);
+  const [categories, setCategories] = useState<InsuranceLookupItem[]>([]);
+  const [products, setProducts] = useState<InsuranceLookupItem[]>([]);
   const [categoryId, setCategoryId] = useState("");
   const [productId, setProductId] = useState("");
+  const [productsLoading, setProductsLoading] = useState(false);
 
   const [fullName, setFullName] = useState("");
   const [mobile, setMobile] = useState("");
@@ -49,16 +51,20 @@ export function AddInsuranceLeadModal({
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    listPortalInsuranceCategories().then(setCategories).catch((e) => setError(getErrorMessage(e)));
+    listInsuranceLookupCategories()
+      .then(setCategories)
+      .catch((e) => setError(getErrorMessage(e)));
   }, []);
 
   useEffect(() => {
     setProductId("");
     setProducts([]);
     if (!categoryId) return;
-    listPortalProducts("insurance", { insuranceCategoryId: categoryId })
+    setProductsLoading(true);
+    listInsuranceLookupProducts(categoryId)
       .then(setProducts)
-      .catch((e) => setError(getErrorMessage(e)));
+      .catch((e) => setError(getErrorMessage(e)))
+      .finally(() => setProductsLoading(false));
   }, [categoryId]);
 
   const needsReEligibility = stage === "rejected" || stage === "re_eligible";
@@ -150,9 +156,12 @@ export function AddInsuranceLeadModal({
             label="Insurance Product"
             name="product_id"
             required
+            disabled={!categoryId || productsLoading}
             value={productId}
             onChange={(e) => setProductId(e.target.value)}
-            placeholder={categoryId ? "Select a product" : "Select a category first"}
+            placeholder={
+              !categoryId ? "Select a category first" : productsLoading ? "Loading products…" : "Select a product"
+            }
             options={products.map((p) => ({ value: p.id, label: p.name }))}
           />
         </div>

@@ -13,6 +13,7 @@ import {
   disburseLoanCase,
   moveLoanCaseBack,
   moveToCreditEvaluation,
+  overrideLoanCaseStage,
   recordCreditEvaluation,
   recordEsignNachKyc,
   recordFinalEvaluation,
@@ -27,7 +28,7 @@ import { CreditEvaluationBankOffers } from "@/features/loan_management/component
 import { OfferAcceptancePanel } from "@/features/loan_management/components/OfferAcceptancePanel";
 import { ReEligibilitySchedulingModal, type ReEligibilityRejectPayload } from "@/features/loan_management/components/ReEligibilitySchedulingModal";
 import { TopUpSchedulingModal } from "@/features/loan_management/components/TopUpSchedulingModal";
-import { LOAN_STATUS_LABELS as STATUS_LABELS } from "@/features/loan_management/constants";
+import { LOAN_STATUS_LABELS as STATUS_LABELS, LOAN_STATUS_TAB_ORDER } from "@/features/loan_management/constants";
 import { getLoanStatusControlInfo, type StatusControlAction } from "@/features/loan_management/statusControl";
 
 // Decision #130: the ONE canonical stage-update flow. Opened from either the Loan
@@ -236,8 +237,90 @@ export function UpdateLoanCaseModal({
             />
           </div>
         )}
+
+        {canEdit && (
+          <StaffOverridePanel
+            currentStatus={status}
+            onOverride={(target, reason) => run(() => overrideLoanCaseStage(caseId, target, reason), "Stage overridden.")}
+          />
+        )}
       </div>
     </Modal>
+  );
+}
+
+// "Staff Override — Skip Stage Validations" (this enhancement) — a SEPARATE, additional
+// administrative capability, never the default. The checkbox is OFF by default; the
+// normal Select-Status / dedicated-action flow above is completely untouched. When ON,
+// staff can send the case to ANY Loan stage; the backend still authenticates, authorizes
+// (loan_management:applications:edit), and records the override in audit + history — it
+// only skips the normal stage/business validations.
+function StaffOverridePanel({
+  currentStatus,
+  onOverride,
+}: {
+  currentStatus: string;
+  onOverride: (targetStatus: string, reason?: string) => void;
+}) {
+  const [enabled, setEnabled] = useState(false);
+  const [target, setTarget] = useState("");
+  const [reason, setReason] = useState("");
+  const [confirming, setConfirming] = useState(false);
+
+  const targets = LOAN_STATUS_TAB_ORDER.filter((s) => s !== "on_hold" && s !== currentStatus);
+
+  return (
+    <div className="rounded border border-border/60 bg-background/40 p-3">
+      <CheckboxField
+        label="Staff Override — Skip Stage Validations"
+        checked={enabled}
+        onChange={(e) => {
+          setEnabled(e.target.checked);
+          if (!e.target.checked) {
+            setTarget("");
+            setReason("");
+            setConfirming(false);
+          }
+        }}
+      />
+      {enabled && (
+        <div className="mt-2 space-y-2">
+          <SelectField
+            label="Move To Stage"
+            name="override_target"
+            value={target}
+            onChange={(e) => setTarget(e.target.value)}
+            placeholder="Select a stage"
+            options={targets.map((s) => ({ value: s, label: STATUS_LABELS[s] ?? s }))}
+          />
+          <TextareaField label="Reason (optional)" name="override_reason" value={reason} onChange={(e) => setReason(e.target.value)} rows={2} />
+          {confirming ? (
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="danger"
+                onClick={() => {
+                  onOverride(target, reason.trim() || undefined);
+                  setConfirming(false);
+                }}
+              >
+                Confirm Override
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => setConfirming(false)}>
+                Cancel
+              </Button>
+            </div>
+          ) : (
+            <Button size="sm" variant="secondary" disabled={!target} onClick={() => setConfirming(true)}>
+              Move to Selected Stage
+            </Button>
+          )}
+          <p className="text-xs text-text/40">
+            This skips normal stage/business validations for this move only. It is recorded as an override in the case history.
+          </p>
+        </div>
+      )}
+    </div>
   );
 }
 

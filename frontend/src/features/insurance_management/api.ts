@@ -218,6 +218,23 @@ export function createManualInsuranceCase(payload: CreateManualInsuranceCasePayl
   return apiRequest<InsuranceCaseDetail>("/insurance-cases/manual", { method: "POST", body: JSON.stringify(payload) });
 }
 
+export interface InsuranceLookupItem {
+  id: string;
+  name: string;
+}
+
+// Staff-facing Category / Product pickers for "Add Insurance Lead" — the Customer
+// Portal's own /customer/portal-* reads are Customer-only and 403 for staff.
+export function listInsuranceLookupCategories() {
+  return apiRequest<InsuranceLookupItem[]>("/insurance-cases/lookup/categories");
+}
+
+export function listInsuranceLookupProducts(insuranceCategoryId: string) {
+  return apiRequest<InsuranceLookupItem[]>(
+    `/insurance-cases/lookup/products?insurance_category_id=${encodeURIComponent(insuranceCategoryId)}`,
+  );
+}
+
 export function moveInsuranceCaseToStage(
   caseId: string,
   payload: { target: string; reason?: string; re_eligibility?: InsuranceReEligibilityChoice; re_eligible_date?: string },

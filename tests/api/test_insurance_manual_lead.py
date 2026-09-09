@@ -284,3 +284,39 @@ async def test_move_to_stage_unauthorized_employee(client, mock_db, owner_header
         f"/api/v1/insurance-cases/{case_id}/move-to-stage", json={"target": "policy_document"}, headers=employee_headers
     )
     assert r.status_code == 403
+
+
+# ---------------------------------------------------------------- Add Insurance Lead pickers (staff lookup)
+
+
+async def test_lookup_categories_and_products_are_staff_accessible(client, mock_db, owner_headers):
+    await _seed_workflow_definitions(mock_db)
+    health = await _insurance_product_with_schema(mock_db, product_name="Family Health Plus", category_name="Health Insurance", docs=["PAN"])
+    await _insurance_product_with_schema(mock_db, product_name="Term Life", category_name="Life Insurance", docs=["PAN"])
+
+    cats = (await client.get("/api/v1/insurance-cases/lookup/categories", headers=owner_headers)).json()["data"]
+    names = {c["name"] for c in cats}
+    assert {"Health Insurance", "Life Insurance"}.issubset(names)
+
+    prods = (
+        await client.get(
+            f"/api/v1/insurance-cases/lookup/products?insurance_category_id={health['category_id']}", headers=owner_headers
+        )
+    ).json()["data"]
+    assert [p["name"] for p in prods] == ["Family Health Plus"]
+
+
+async def test_lookup_excludes_inactive_categories(client, mock_db, owner_headers):
+    await _seed_workflow_definitions(mock_db)
+    product = await _insurance_product_with_schema(mock_db, product_name="Plan", docs=["PAN"])
+    await mock_db["insurance_categories"].update_one(
+        {"_id": ObjectId(product["category_id"])}, {"$set": {"status": "inactive"}}
+    )
+    cats = (await client.get("/api/v1/insurance-cases/lookup/categories", headers=owner_headers)).json()["data"]
+    assert product["category_id"] not in {c["id"] for c in cats}
+
+
+async def test_lookup_requires_view_permission(client, mock_db, employee_headers):
+    await _seed_workflow_definitions(mock_db)
+    r = await client.get("/api/v1/insurance-cases/lookup/categories", headers=employee_headers)
+    assert r.status_code == 403

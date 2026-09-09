@@ -26,6 +26,16 @@ _INSURANCE_RE_ELIGIBILITY_OPTIONS = (
 )
 
 
+class InsuranceLookupItem(BaseModel):
+    """Minimal {id, name} row for the "Add Insurance Lead" Category / Product pickers —
+    a staff-facing read gated by `insurance_management:applications:view`, so an Employee
+    with only that grant can populate the form (the Customer Portal's own
+    `/customer/portal-*` endpoints are Customer-only and 403 for staff)."""
+
+    id: str
+    name: str
+
+
 class InsuranceStatusUpdateRequest(BaseModel):
     """Generic Case Status control. Validated against `InsuranceStatus.ALL` first (a
     Loan status is rejected here at the schema layer); the service then only actually

@@ -3,22 +3,18 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AddInsuranceLeadModal } from "./AddInsuranceLeadModal";
 
-const listPortalInsuranceCategories = vi.fn();
-const listPortalProducts = vi.fn();
+const listInsuranceLookupCategories = vi.fn();
+const listInsuranceLookupProducts = vi.fn();
 const createManualInsuranceCase = vi.fn();
-
-vi.mock("@/features/customer/api", async () => {
-  const actual = await vi.importActual<typeof import("@/features/customer/api")>("@/features/customer/api");
-  return {
-    ...actual,
-    listPortalInsuranceCategories: (...a: unknown[]) => listPortalInsuranceCategories(...(a as [])),
-    listPortalProducts: (...a: unknown[]) => listPortalProducts(...(a as [])),
-  };
-});
 
 vi.mock("@/features/insurance_management/api", async () => {
   const actual = await vi.importActual<typeof import("@/features/insurance_management/api")>("@/features/insurance_management/api");
-  return { ...actual, createManualInsuranceCase: (...a: unknown[]) => createManualInsuranceCase(...(a as [])) };
+  return {
+    ...actual,
+    listInsuranceLookupCategories: (...a: unknown[]) => listInsuranceLookupCategories(...(a as [])),
+    listInsuranceLookupProducts: (...a: unknown[]) => listInsuranceLookupProducts(...(a as [])),
+    createManualInsuranceCase: (...a: unknown[]) => createManualInsuranceCase(...(a as [])),
+  };
 });
 
 function renderModal() {
@@ -34,19 +30,45 @@ async function fillCustomer(user: ReturnType<typeof userEvent.setup>) {
 describe("AddInsuranceLeadModal", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    listPortalInsuranceCategories.mockResolvedValue([{ id: "cat-1", name: "Health Insurance" }]);
-    listPortalProducts.mockResolvedValue([{ id: "prod-1", name: "Family Health Plus" }]);
+    listInsuranceLookupCategories.mockResolvedValue([{ id: "cat-1", name: "Health Insurance" }]);
+    listInsuranceLookupProducts.mockResolvedValue([{ id: "prod-1", name: "Family Health Plus" }]);
   });
 
-  it("loads products only after a category is chosen, scoped to that category", async () => {
+  it("loads categories from the staff lookup, and products only after a category is chosen", async () => {
     const user = userEvent.setup();
     renderModal();
     await screen.findByRole("option", { name: "Health Insurance" });
+    expect(listInsuranceLookupCategories).toHaveBeenCalled();
 
-    expect(listPortalProducts).not.toHaveBeenCalled();
+    expect(listInsuranceLookupProducts).not.toHaveBeenCalled();
     await user.selectOptions(screen.getByLabelText("Insurance Category"), "cat-1");
-    await waitFor(() => expect(listPortalProducts).toHaveBeenCalledWith("insurance", { insuranceCategoryId: "cat-1" }));
+    await waitFor(() => expect(listInsuranceLookupProducts).toHaveBeenCalledWith("cat-1"));
     await screen.findByRole("option", { name: "Family Health Plus" });
+  });
+
+  it("changing the category resets the product and reloads", async () => {
+    const user = userEvent.setup();
+    listInsuranceLookupCategories.mockResolvedValue([
+      { id: "cat-1", name: "Health Insurance" },
+      { id: "cat-2", name: "Life Insurance" },
+    ]);
+    listInsuranceLookupProducts.mockImplementation((id: string) =>
+      Promise.resolve(id === "cat-1" ? [{ id: "p1", name: "Family Health Plus" }] : [{ id: "p2", name: "Term Life" }]),
+    );
+    renderModal();
+    await user.selectOptions(await screen.findByLabelText("Insurance Category"), "cat-1");
+    await screen.findByRole("option", { name: "Family Health Plus" });
+    await user.selectOptions(screen.getByLabelText("Insurance Product"), "p1");
+    await user.selectOptions(screen.getByLabelText("Insurance Category"), "cat-2");
+    await waitFor(() => expect(listInsuranceLookupProducts).toHaveBeenLastCalledWith("cat-2"));
+    expect((screen.getByLabelText("Insurance Product") as HTMLSelectElement).value).toBe("");
+    await screen.findByRole("option", { name: "Term Life" });
+  });
+
+  it("shows an error when category loading fails", async () => {
+    listInsuranceLookupCategories.mockRejectedValue(new Error("boom"));
+    renderModal();
+    expect(await screen.findByText("Something went wrong. Please try again.")).toBeInTheDocument();
   });
 
   it("the Initial Stage dropdown offers only Fresh Lead / Policy Document / Re-Eligible / Rejected", async () => {

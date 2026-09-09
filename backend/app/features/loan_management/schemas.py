@@ -55,6 +55,22 @@ class LoanStatusUpdateRequest(_ReEligibilitySchedulingFields):
         return value
 
 
+class OverrideStageRequest(BaseModel):
+    """"Staff Override — Skip Stage Validations": a deliberate administrative move to any
+    Loan stage (except `on_hold`, which has its own Hold/Resume actions). `reason` is
+    optional — the audit trail records the override either way."""
+
+    status: str
+    reason: str | None = None
+
+    @field_validator("status")
+    @classmethod
+    def _valid_override_target(cls, value: str) -> str:
+        if value not in LoanStatus.ALL or value == LoanStatus.ON_HOLD:
+            raise ValueError(f"'{value}' is not a Loan stage a Staff Override can move a case to.")
+        return value
+
+
 class NewCustomerDetailsRequest(BaseModel):
     """New Customer's bank/branch/loan-type/amount preferences — captured only while the
     case is at `new_customer`; recording it always advances the case to

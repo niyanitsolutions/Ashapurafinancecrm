@@ -64,10 +64,19 @@ class WorkflowEngine:
         return current
 
     async def transition(
-        self, workflow: ApplicationWorkflow, to_status: str, actor: User, *, updates: dict[str, Any] | None = None, remarks: str | None = None
+        self, workflow: ApplicationWorkflow, to_status: str, actor: User, *,
+        updates: dict[str, Any] | None = None, remarks: str | None = None, force: bool = False,
     ) -> ApplicationWorkflow:
+        """`force=True` skips ONLY the transition-graph check (`assert_transition_allowed`)
+        — used exclusively by Loan Management's deliberate "Staff Override — Skip Stage
+        Validations" action (`LoanCaseService.override_move_to_stage`). Everything else the
+        engine does — the DB write, the `ApplicationStatusHistory` row, the append-only
+        `audit_logs` entry, the status-changed event — still happens identically, so an
+        override move is just as recorded and just as much the single source of truth as a
+        normal one. Default `False`: every existing caller is byte-for-byte unchanged."""
         from_status = workflow.current_status
-        await self.assert_transition_allowed(workflow.case_type, from_status, to_status)
+        if not force:
+            await self.assert_transition_allowed(workflow.case_type, from_status, to_status)
         target_definition = await self.get_definition(workflow.case_type, to_status)
 
         set_updates: dict[str, Any] = {**(updates or {}), "current_status": to_status}

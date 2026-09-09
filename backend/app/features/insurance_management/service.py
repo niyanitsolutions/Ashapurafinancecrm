@@ -864,6 +864,21 @@ class InsuranceCaseService:
         combined.sort(key=lambda entry: entry[1].created_at, reverse=True)
         return combined
 
+    # ---------------------------------------------------------------- Add Insurance Lead pickers
+
+    async def lookup_insurance_categories(self) -> list[Any]:
+        """Active Insurance Categories for the "Add Insurance Lead" Category picker —
+        the staff-facing read (gated `insurance_management:applications:view` at the
+        router). Same active-only master data the Customer Portal's own
+        `list_active_insurance_categories` returns, just reachable by staff."""
+        return await self._categories.find_many({"status": MasterDataStatus.ACTIVE}, limit=500, sort=[("name", 1)])
+
+    async def lookup_insurance_products(self, insurance_category_id: str | None) -> list[Any]:
+        query: dict[str, Any] = {"status": MasterDataStatus.ACTIVE}
+        if insurance_category_id:
+            query["category_id"] = insurance_category_id
+        return await self._products.find_many(query, limit=500, sort=[("name", 1)])
+
     # ---------------------------------------------------------------- name resolution
 
     async def resolve_names(self, cases: list[ApplicationWorkflow]) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:

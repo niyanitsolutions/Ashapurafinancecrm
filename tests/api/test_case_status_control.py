@@ -835,3 +835,73 @@ async def test_offer_acceptance_badge_matches_list_exactly(client, mock_db, owne
     body = r.json()
     assert len(body["data"]) == 0
     assert body["meta"]["pagination"]["total"] == 0
+
+
+# ---------------------------------------------------------------------- Staff Override — Skip Stage Validations (Loan only)
+
+
+async def test_staff_override_moves_loan_case_to_any_stage_skipping_gates(client, mock_db, owner_headers, master_data):
+    # A brand-new case sits at `new_customer` with no bank offer, no documents, no
+    # credit evaluation — every normal gate to Offer Acceptance / eSign is unmet.
+    case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000020")
+
+    # Normal control still refuses the non-adjacent jump.
+    r = await client.patch(f"/api/v1/loan-cases/{case_id}/status", json={"status": "esign_nach_kyc"}, headers=employee_headers)
+    assert r.status_code in (409, 422)
+
+    # Staff Override moves it straight there.
+    r = await client.post(
+        f"/api/v1/loan-cases/{case_id}/override-stage",
+        json={"status": "esign_nach_kyc", "reason": "Management approved direct movement"},
+        headers=employee_headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["current_status"] == "esign_nach_kyc"
+
+    # Audit + history record the override.
+    timeline = (await client.get(f"/api/v1/loan-cases/{case_id}/timeline", headers=employee_headers)).json()["data"]
+    assert any(e.get("to_status") == "esign_nach_kyc" for e in timeline)
+    assert any("Staff override" in (e.get("text") or "") for e in timeline)
+    audit = [
+        d async for d in mock_db["audit_logs"].find({"event_type": "loan_case_staff_override_stage_move"})
+    ]
+    assert len(audit) == 1
+    assert audit[0]["metadata"]["override"] is True
+    assert audit[0]["metadata"]["from_status"] == "new_customer"
+    assert audit[0]["metadata"]["to_status"] == "esign_nach_kyc"
+
+
+async def test_staff_override_reason_is_optional_and_reject_sets_rejection_reason(client, mock_db, owner_headers, master_data):
+    case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000021")
+
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/override-stage", json={"status": "disbursed"}, headers=employee_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["current_status"] == "disbursed"
+
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/override-stage", json={"status": "rejected"}, headers=employee_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["rejection_reason"]  # a placeholder reason is recorded
+
+
+async def test_staff_override_rejects_on_hold_and_bad_status(client, mock_db, owner_headers, master_data):
+    case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000022")
+
+    for bad in ("on_hold", "policy_document", "not_a_status"):
+        r = await client.post(f"/api/v1/loan-cases/{case_id}/override-stage", json={"status": bad}, headers=employee_headers)
+        assert r.status_code == 422, (bad, r.text)
+
+
+async def test_staff_override_requires_edit_permission(client, mock_db, owner_headers, master_data):
+    case_id, _employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000023")
+    await _create_employee(client, owner_headers, master_data, mobile="9711100023", email="bystander-ovr@example.com")
+    bystander_headers = await _login(client, "9711100023")
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/override-stage", json={"status": "disbursed"}, headers=bystander_headers)
+    assert r.status_code == 403, r.text
+
+
+async def test_staff_override_does_not_change_normal_flow(client, mock_db, owner_headers, master_data):
+    # The normal adjacent move + its gate are completely unaffected by the new endpoint.
+    case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000024")
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/new-customer-details", json={}, headers=employee_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["current_status"] == "credit_evaluation"
