@@ -25,6 +25,12 @@ vi.mock("@/features/insurance_management/api", async () => {
   };
 });
 
+const uploadApplicationDocument = vi.fn();
+vi.mock("@/features/customer/api", async () => {
+  const actual = await vi.importActual<typeof import("@/features/customer/api")>("@/features/customer/api");
+  return { ...actual, uploadApplicationDocument: (...a: unknown[]) => uploadApplicationDocument(...(a as [])) };
+});
+
 vi.mock("@/features/access_control/usePermissions", () => ({
   usePermissions: () => ({ isOwner: true, loading: false, can: () => true }),
 }));
@@ -163,5 +169,42 @@ describe("InsuranceCaseDetailsPage", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: "Move" }));
     expect(await screen.findByText("Reject Insurance Case")).toBeInTheDocument();
     expect(moveInsuranceCaseToStage).not.toHaveBeenCalled();
+  });
+
+  it("at Policy Document, an un-uploaded required document shows an upload control wired to the staff upload endpoint", async () => {
+    getInsuranceCase.mockResolvedValue(baseCase);
+    listInsuranceCaseDocuments.mockResolvedValue([]); // nothing uploaded yet
+    uploadApplicationDocument.mockResolvedValue({ id: "d1" });
+    const { container } = renderPage();
+    await screen.findByRole("button", { name: "Move to Policy Login" });
+
+    expect(screen.getByText(/choose a file/i)).toBeInTheDocument();
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    await userEvent.setup().upload(input, new File(["x"], "pan.pdf", { type: "application/pdf" }));
+    await waitFor(() =>
+      expect(uploadApplicationDocument).toHaveBeenCalledWith("app-1", "dt-pan", expect.any(File), undefined, undefined),
+    );
+  });
+
+  it("at Policy Document, a rejected required document shows its reason and a re-upload control", async () => {
+    getInsuranceCase.mockResolvedValue(baseCase);
+    listInsuranceCaseDocuments.mockResolvedValue([
+      { ...pendingDoc, verification_status: "rejected", rejection_reason: "Blurry scan" },
+    ]);
+    const { container } = renderPage();
+    await screen.findByRole("button", { name: "Move to Policy Login" });
+
+    expect(screen.getByText(/Blurry scan/)).toBeInTheDocument();
+    // A rejected doc keeps a re-upload dropzone even though a version already exists.
+    expect(container.querySelector('input[type="file"]')).not.toBeNull();
+  });
+
+  it("at Policy Issued the checklist is read-only (no upload control)", async () => {
+    getInsuranceCase.mockResolvedValue({ ...baseCase, current_status: "policy_issued" });
+    listInsuranceCaseDocuments.mockResolvedValue([]);
+    const { container } = renderPage();
+    await screen.findByText("Policy");
+    expect(container.querySelector('input[type="file"]')).toBeNull();
   });
 });

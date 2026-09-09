@@ -10,7 +10,7 @@ import { TextareaField } from "@/components/forms/TextareaField";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
 import { usePermissions } from "@/features/access_control/usePermissions";
-import type { ApplicationDocument } from "@/features/customer/api";
+import { uploadApplicationDocument, type ApplicationDocument } from "@/features/customer/api";
 import { DocumentChecklist } from "@/features/customer/components/DocumentChecklist";
 import { getErrorMessage } from "@/features/customer/errors";
 import { useProductSchema } from "@/features/customer/useProductSchema";
@@ -100,6 +100,7 @@ export function InsuranceCaseDetailsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [confirmIssue, setConfirmIssue] = useState(false);
   const [moveTarget, setMoveTarget] = useState("");
+  const [uploadingFor, setUploadingFor] = useState<string | null>(null);
 
   const { data: formDef } = useProductSchema("insurance", insuranceCase?.product_id);
 
@@ -149,6 +150,28 @@ export function InsuranceCaseDetailsPage() {
   const control = getInsuranceStatusControlInfo(status);
   const orphanDocs = documents.filter((d) => !d.is_in_schema);
   const premiumReady = details.premium_amount != null && details.ppt != null && details.pt != null;
+
+  // Staff-side document upload / re-upload for the pinned Product Schema checklist —
+  // reuses the exact same product-agnostic endpoint the Staff Application view already
+  // uses (`POST /applications/{id}/documents/upload-url` + confirm, staff-authorised via
+  // `get_application_for_staff`). `confirm_document` supersedes any prior version
+  // (`replaces_document_id` + `is_current`), so a re-upload after a rejection keeps the
+  // rejected one in history and makes the new file the current, pending-review one.
+  const onUploadDocument = async (documentTypeId: string, file: File, password?: string, side?: string) => {
+    if (!insuranceCase) return;
+    setError(null);
+    setMessage(null);
+    setUploadingFor(documentTypeId);
+    try {
+      await uploadApplicationDocument(insuranceCase.application_id, documentTypeId, file, password, side);
+      setMessage("Document uploaded.");
+      load();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setUploadingFor(null);
+    }
+  };
 
   const onVerifyDoc = (documentId: string) => run(() => verifyInsuranceCaseDocument(caseId, documentId), "Document verified.");
   const onRejectDoc = async () => {
@@ -314,9 +337,12 @@ export function InsuranceCaseDetailsPage() {
                 <DocumentChecklist
                   requiredDocuments={formDef.required_documents}
                   uploadedDocuments={documents}
-                  onUpload={() => undefined}
-                  uploadingFor={null}
-                  disabled
+                  onUpload={onUploadDocument}
+                  uploadingFor={uploadingFor}
+                  // Upload / re-upload is a Policy Document-stage action. At Policy Login /
+                  // Policy Issued the checklist is read-only (Verify/Reject still available
+                  // via extraActions for anything still pending).
+                  disabled={!canEdit || status !== "policy_document"}
                   extraActions={documentExtraActions}
                 />
               ) : (
