@@ -15,13 +15,13 @@ const POLICY_LEADS_PREFIXES = [
 ];
 
 const TOP_TABS = [
-  { label: "Recruitment Leads", to: "/insurance-management/recruitment", matchKey: "recruitment_leads" },
   {
     label: "Policy Leads",
     to: "/insurance-management/fresh-leads",
     matchKey: "insurance_cases",
     activePrefixes: POLICY_LEADS_PREFIXES,
   },
+  { label: "Recruitment Leads", to: "/insurance-management/recruitment", matchKey: "recruitment_leads" },
   {
     label: "Advisors",
     to: "/insurance-management/advisors",

@@ -117,6 +117,14 @@ export function DocumentCollectionPanel({ lead }: { lead: RecruitmentLeadDetail 
             }
           />
           <InfoRow label="Documents ready" value={lead.documents_ready ? "Yes" : "No"} />
+          <InfoRow
+            label="Exam fee"
+            value={
+              lead.exam_fee_paid
+                ? `Paid${lead.exam_fee_reference ? ` · ${lead.exam_fee_reference}` : ""}`
+                : "Not recorded"
+            }
+          />
         </>
       ) : (
         <p className="text-sm text-textSecondary">No documents collected yet.</p>

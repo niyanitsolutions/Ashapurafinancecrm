@@ -30,8 +30,10 @@ export const NOMINEE_RELATIONSHIP_LABELS: Record<string, string> = {
 export const STAGE_LABELS: Record<RecruitmentStage, string> = {
   fresh: "Fresh Leads",
   bop: "BOP",
-  doc_collection_examination: "Document Collection — Examination",
-  doc_collection_re_examination: "Document Collection — Re-Examination",
+  doc_collection: "Doc Collection",
+  exam_fee_status: "Exam Fee Status",
+  examination: "Examination",
+  re_examination: "Re-Examination",
   advisor: "Advisor",
   rejected: "Rejected",
 };
@@ -73,6 +75,7 @@ export function activityLabel(eventType: string | null): string {
     back_to_fresh: "Moved back to Fresh",
     moved_to_doc_collection: "Moved to Document Collection",
     documents_saved: "Documents saved",
+    exam_fee_recorded: "Exam fee recorded",
     examination_recorded: "Examination recorded",
     moved_to_advisor: "Promoted to Advisor",
     rejected: "Rejected",

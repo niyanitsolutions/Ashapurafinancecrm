@@ -57,7 +57,7 @@ import { InsuranceManagementLayout } from "@/features/insurance_management/pages
 import { AdvisorDetailsPage } from "@/features/recruitment/pages/AdvisorDetailsPage";
 import { AdvisorListPage } from "@/features/recruitment/pages/AdvisorListPage";
 import { AdvisorsLayout } from "@/features/recruitment/pages/AdvisorsLayout";
-import { DocCollectionLayout } from "@/features/recruitment/pages/DocCollectionLayout";
+import { AgencyCodeListPage } from "@/features/recruitment/pages/AgencyCodeListPage";
 import { RecruitmentDetailsPage } from "@/features/recruitment/pages/RecruitmentDetailsPage";
 import { RecruitmentLayout } from "@/features/recruitment/pages/RecruitmentLayout";
 import { RecruitmentListPage } from "@/features/recruitment/pages/RecruitmentListPage";
@@ -307,19 +307,20 @@ export const router = createBrowserRouter([
                 element: <RecruitmentLayout />,
                 children: [
                   { index: true, element: <Navigate to="/insurance-management/recruitment/fresh" replace /> },
+                  // 2026 redesign: one flat tab per recruitment stage (Doc Collection is no
+                  // longer a parent). Keyed per stage for a real remount on tab switch.
                   { path: "fresh", element: <RecruitmentListPage key="rec_fresh" variant="fresh" /> },
                   { path: "bop", element: <RecruitmentListPage key="rec_bop" variant="bop" /> },
-                  {
-                    path: "doc-collection",
-                    element: <DocCollectionLayout />,
-                    children: [
-                      { index: true, element: <Navigate to="/insurance-management/recruitment/doc-collection/examination" replace /> },
-                      { path: "examination", element: <RecruitmentListPage key="rec_exam" variant="examination" /> },
-                      { path: "re-examination", element: <RecruitmentListPage key="rec_reexam" variant="re_examination" /> },
-                      { path: "agency-code", element: <RecruitmentListPage key="rec_agency" variant="agency_code" /> },
-                    ],
-                  },
+                  { path: "doc-collection", element: <RecruitmentListPage key="rec_doc" variant="doc_collection" /> },
+                  { path: "exam-fee-status", element: <RecruitmentListPage key="rec_examfee" variant="exam_fee_status" /> },
+                  { path: "examination", element: <RecruitmentListPage key="rec_exam" variant="examination" /> },
+                  { path: "re-examination", element: <RecruitmentListPage key="rec_reexam" variant="re_examination" /> },
+                  { path: "agency-code", element: <AgencyCodeListPage key="rec_agency" /> },
                   { path: "rejected", element: <RecruitmentListPage key="rec_rejected" variant="rejected" /> },
+                  // Bookmark/deep-link safety for the pre-redesign nested Doc Collection URLs.
+                  { path: "doc-collection/examination", element: <Navigate to="/insurance-management/recruitment/examination" replace /> },
+                  { path: "doc-collection/re-examination", element: <Navigate to="/insurance-management/recruitment/re-examination" replace /> },
+                  { path: "doc-collection/agency-code", element: <Navigate to="/insurance-management/recruitment/agency-code" replace /> },
                 ],
               },
               { path: "recruitment/:recruitmentId", element: <RecruitmentDetailsPage /> },

@@ -15,6 +15,7 @@ from app.features.recruitment.constants import (
     RecruitmentStage,
     SignatureMethod,
 )
+from app.security.password import PasswordStr
 
 _MOBILE = r"^[6-9]\d{9}$"
 
@@ -119,6 +120,12 @@ class SaveRecruitmentDocumentsRequest(BaseModel):
     signature: SignatureInput | None = None
 
 
+class RecordExamFeeRequest(BaseModel):
+    """Exam Fee Status → Examination. `reference` is an optional payment reference/UTR."""
+
+    reference: str | None = None
+
+
 class RecordExaminationRequest(BaseModel):
     result: str = Field(pattern=f"^({'|'.join(ExaminationOutcome.ALL)})$")
     remarks: str | None = None
@@ -207,6 +214,9 @@ class RecruitmentLeadDetailResponse(RecruitmentLeadListItem):
     updated_at: datetime
     assigned_by: str | None
     assigned_at: datetime | None
+    exam_fee_paid: bool = False
+    exam_fee_paid_at: datetime | None = None
+    exam_fee_reference: str | None = None
     documents: RecruitmentDocumentsResponse | None = None
     examinations: list[ExaminationResultResponse] = Field(default_factory=list)
 
@@ -215,10 +225,11 @@ class RecruitmentCountsResponse(BaseModel):
     fresh: int
     bop: int
     doc_collection: int
-    rejected: int
+    exam_fee_status: int
     examination: int
     re_examination: int
     agency_code: int
+    rejected: int
 
 
 class RecruitmentTimelineEntryResponse(BaseModel):
@@ -247,6 +258,7 @@ class AdvisorSummaryResponse(BaseModel):
     email: str | None
     channel: str
     agency_code: str | None
+    agent_code: str | None
     status: str
     created_at: datetime
 
@@ -264,13 +276,21 @@ class RecruitmentLookupResponse(BaseModel):
 
 
 class UpdateAdvisorRequest(BaseModel):
-    # `None` for a field = "leave unchanged". To clear the agency code, send "" (empty
-    # string) explicitly — which also flips the advisor back to Non-QR.
+    # `None` for a field = "leave unchanged". Send `agency_code=""` to clear it.
+    # 2026 redesign: `channel` (QR / Non-QR) is now an explicit choice, no longer derived
+    # from `agency_code`. `password` is write-only — set the advisor-portal credential;
+    # the plaintext is hashed and never returned or logged.
     agency_code: str | None = None
+    agent_code: str | None = None
+    channel: str | None = Field(default=None, pattern=f"^({'|'.join(AdvisorChannel.ALL)})$")
+    password: PasswordStr | None = None
     status: str | None = Field(default=None, pattern=f"^({'|'.join(AdvisorStatus.ALL)})$")
 
 
 class AddAdvisorBusinessRequest(BaseModel):
+    customer_name: str | None = None
+    customer_mobile: str | None = Field(default=None, pattern=_MOBILE)
+    policy_number: str | None = None
     product_category: str = Field(pattern=f"^({'|'.join(AdvisorProductCategory.ALL)})$")
     custom_category: str | None = None
     product_name: str = Field(min_length=1)
@@ -292,6 +312,9 @@ class AddAdvisorBusinessRequest(BaseModel):
 class AdvisorBusinessResponse(BaseModel):
     id: str
     advisor_id: str
+    customer_name: str | None
+    customer_mobile: str | None
+    policy_number: str | None
     product_category: str
     custom_category: str | None
     product_name: str
@@ -312,6 +335,7 @@ class AdvisorListItem(BaseModel):
     email: str | None
     channel: str
     agency_code: str | None
+    agent_code: str | None
     status: str
     is_employee: bool
     no_of_policies: int

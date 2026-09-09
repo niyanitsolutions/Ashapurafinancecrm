@@ -26,6 +26,7 @@ const advisor: AdvisorListItem = {
   email: null,
   channel: "non_qr",
   agency_code: null,
+  agent_code: null,
   status: "active",
   is_employee: false,
   no_of_policies: 3,

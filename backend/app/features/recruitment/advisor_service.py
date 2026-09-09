@@ -30,6 +30,7 @@ from app.features.recruitment.repository import (
 )
 from app.features.recruitment.schemas import AddAdvisorBusinessRequest, UpdateAdvisorRequest
 from app.features.recruitment.service import RecruitmentService
+from app.security.password import hash_password
 from app.shared.audit_log import write_audit_log
 from app.utils.datetime import ist_date_to_utc_midnight
 
@@ -154,21 +155,32 @@ class AdvisorService:
         updates: dict[str, Any] = {}
 
         if payload.agency_code is not None:
-            code = payload.agency_code.strip() or None
-            updates["agency_code"] = code
-            # QR is derived from the agency code — keep the stored `channel` in lockstep.
-            updates["channel"] = AdvisorChannel.QR if code else AdvisorChannel.NON_QR
+            updates["agency_code"] = payload.agency_code.strip() or None
+        if payload.agent_code is not None:
+            updates["agent_code"] = payload.agent_code.strip() or None
+        # 2026 redesign: QR / Non-QR is an explicit choice, NOT derived from `agency_code`.
+        if payload.channel is not None:
+            updates["channel"] = payload.channel
         if payload.status is not None:
             updates["status"] = payload.status
+        if payload.password is not None:
+            # Write-only: store the hash, never echo the plaintext (or the hash) anywhere.
+            updates["password_hash"] = hash_password(payload.password)
 
         if not updates:
             return advisor
 
         updated = await self._advisors.update(advisor_id, updates, updated_by=actor.require_id())
         assert updated is not None
+        audit_meta: dict[str, Any] = {"advisor_id": advisor_id}
+        for key in ("agency_code", "agent_code", "channel", "status"):
+            if key in updates:
+                audit_meta[key] = updates[key]
+        if "password_hash" in updates:
+            audit_meta["password_changed"] = True  # never the value
         await write_audit_log(
             self._db, event_type=RecruitmentAuditEvent.ADVISOR_UPDATED, user_id=actor.require_id(),
-            metadata={"advisor_id": advisor_id, **updates},
+            metadata=audit_meta,
         )
         return updated
 
@@ -176,6 +188,9 @@ class AdvisorService:
         await self.get_advisor(advisor_id)
         business = AdvisorBusiness(
             advisor_id=advisor_id,
+            customer_name=(payload.customer_name or "").strip() or None,
+            customer_mobile=payload.customer_mobile or None,
+            policy_number=(payload.policy_number or "").strip() or None,
             product_category=payload.product_category,
             custom_category=payload.custom_category if payload.product_category == AdvisorProductCategory.CUSTOM else None,
             product_name=payload.product_name.strip(),

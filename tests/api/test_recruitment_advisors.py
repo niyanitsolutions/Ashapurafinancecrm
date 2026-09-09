@@ -45,6 +45,7 @@ async def _promote_advisor(client, headers, mock_db, *, mobile="9876543210") -> 
         "mobile": mobile,
     }
     assert (await client.put(f"{RECRUIT}/{lid}/documents", json=docs, headers=headers)).status_code == 200
+    assert (await client.post(f"{RECRUIT}/{lid}/exam-fee", json={}, headers=headers)).status_code == 200
     r = await client.post(f"{RECRUIT}/{lid}/examination", json={"result": "pass"}, headers=headers)
     assert r.status_code == 200, r.text
     advisor = (await client.get(f"{RECRUIT}/{lid}/advisor", headers=headers)).json()["data"]
@@ -80,24 +81,73 @@ async def test_advisor_detail_includes_linked_recruitment(client, mock_db, owner
     assert data["businesses"] == []
 
 
-# ---------------------------------------------------------------- QR derivation
+# ---------------------------------------------------------------- explicit QR / Non-QR type
 
 
-async def test_agency_code_makes_advisor_qr_and_back(client, mock_db, owner_headers):
+async def test_type_is_explicit_and_decoupled_from_agency_code(client, mock_db, owner_headers):
+    """Brief §2/§6: QR vs Non-QR ("Type") is an explicit staff choice on the Agency Code
+    edit form — NOT derived from the agency code. Editing the Type re-classifies the same
+    advisor without minting a duplicate."""
     advisor = await _promote_advisor(client, owner_headers, mock_db)
     aid = advisor["id"]
 
-    r = await client.patch(f"{ADV}/{aid}", json={"agency_code": "AG-1001"}, headers=owner_headers)
+    # Setting an agency code alone does NOT flip the channel.
+    r = await client.patch(f"{ADV}/{aid}", json={"agency_code": "AG-1001", "agent_code": "AGT-9"}, headers=owner_headers)
     assert r.status_code == 200
-    assert r.json()["data"]["channel"] == "qr"
+    assert r.json()["data"]["channel"] == "non_qr"
     assert r.json()["data"]["agency_code"] == "AG-1001"
+    assert r.json()["data"]["agent_code"] == "AGT-9"
+
+    # Explicitly choosing QR moves the advisor to the QR roster.
+    r = await client.patch(f"{ADV}/{aid}", json={"channel": "qr"}, headers=owner_headers)
+    assert r.json()["data"]["channel"] == "qr"
     assert aid in [a["id"] for a in (await client.get(f"{ADV}?channel=qr", headers=owner_headers)).json()["data"]]
     assert aid not in [a["id"] for a in (await client.get(f"{ADV}?channel=non_qr", headers=owner_headers)).json()["data"]]
 
-    # Clearing the agency code flips it back to Non-QR.
-    r = await client.patch(f"{ADV}/{aid}", json={"agency_code": ""}, headers=owner_headers)
+    # Flipping back to Non-QR keeps the same advisor id (no duplicate).
+    r = await client.patch(f"{ADV}/{aid}", json={"channel": "non_qr"}, headers=owner_headers)
     assert r.json()["data"]["channel"] == "non_qr"
-    assert r.json()["data"]["agency_code"] is None
+    assert r.json()["data"]["id"] == aid
+    assert await mock_db["advisors"].count_documents({"recruitment_lead_id": advisor["recruitment_lead_id"]}) == 1
+
+    # A QR advisor may still carry no agency code, and a Non-QR advisor may keep one.
+    assert (await client.patch(f"{ADV}/{aid}", json={"channel": "qr", "agency_code": ""}, headers=owner_headers)).json()["data"]["channel"] == "qr"
+
+
+async def test_agent_code_and_password_are_write_safe(client, mock_db, owner_headers):
+    """Password is hashed, never returned in any response, and never written in plaintext
+    to the audit log."""
+    advisor = await _promote_advisor(client, owner_headers, mock_db)
+    aid = advisor["id"]
+
+    r = await client.patch(f"{ADV}/{aid}", json={"agent_code": "AGT-777", "password": "S3cretPass!"}, headers=owner_headers)
+    assert r.status_code == 200
+    body = r.json()["data"]
+    assert body["agent_code"] == "AGT-777"
+    assert "password" not in body
+    assert "password_hash" not in body
+
+    # Detail + list + summary never leak the field either.
+    for payload in (
+        (await client.get(f"{ADV}/{aid}", headers=owner_headers)).json()["data"],
+        next(a for a in (await client.get(ADV, headers=owner_headers)).json()["data"] if a["id"] == aid),
+    ):
+        assert "password" not in payload and "password_hash" not in payload
+
+    stored = await mock_db["advisors"].find_one({"_id": __import__("bson").ObjectId(aid)})
+    assert stored["password_hash"] and stored["password_hash"] != "S3cretPass!"
+
+    audits = await mock_db["audit_logs"].find({"event_type": "recruitment_advisor_updated"}).to_list(length=50)
+    assert audits
+    for a in audits:
+        assert "S3cretPass!" not in str(a)
+        assert "password_hash" not in a.get("metadata", {})
+
+
+async def test_weak_password_rejected(client, mock_db, owner_headers):
+    advisor = await _promote_advisor(client, owner_headers, mock_db)
+    r = await client.patch(f"{ADV}/{advisor['id']}", json={"password": "short"}, headers=owner_headers)
+    assert r.status_code == 422
 
 
 async def test_status_inactive_and_filter(client, mock_db, owner_headers):
@@ -150,6 +200,46 @@ async def _add_business(client, headers, aid, **overrides):
     }
     body.update(overrides)
     return await client.post(f"{ADV}/{aid}/business", json=body, headers=headers)
+
+
+async def test_business_customer_fields_persist_and_old_rows_load(client, mock_db, owner_headers):
+    """Brief §11-13: Add Business gains Customer Name / Customer Mobile / Policy Number.
+    They persist and show in the list/detail after a refresh; pre-redesign rows (without
+    the fields) still load and render as null."""
+    advisor = await _promote_advisor(client, owner_headers, mock_db)
+    aid = advisor["id"]
+
+    r = await _add_business(
+        client, owner_headers, aid,
+        customer_name="Anita Rao", customer_mobile="9812345678", policy_number="POL-42",
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["customer_name"] == "Anita Rao"
+    assert r.json()["data"]["customer_mobile"] == "9812345678"
+    assert r.json()["data"]["policy_number"] == "POL-42"
+
+    # Insert a legacy business row with none of the new fields.
+    from app.features.recruitment.models import AdvisorBusiness
+
+    legacy = AdvisorBusiness(
+        advisor_id=aid, product_category="savings", product_name="Legacy Plan",
+        premium=1000, ppt=5, pt=10,
+        policy_issue_date=__import__("datetime").datetime(2025, 1, 1, tzinfo=__import__("datetime").UTC),
+    )
+    doc = legacy.model_dump(by_alias=True, exclude={"id"})
+    doc.pop("customer_name", None)
+    doc.pop("customer_mobile", None)
+    doc.pop("policy_number", None)
+    await mock_db["advisor_business"].insert_one(doc)
+
+    listed = (await client.get(f"{ADV}/{aid}/business", headers=owner_headers)).json()["data"]
+    assert len(listed) == 2
+    legacy_row = next(b for b in listed if b["product_name"] == "Legacy Plan")
+    assert legacy_row["customer_name"] is None
+    assert legacy_row["policy_number"] is None
+
+    detail = (await client.get(f"{ADV}/{aid}", headers=owner_headers)).json()["data"]
+    assert {b["customer_name"] for b in detail["businesses"]} == {"Anita Rao", None}
 
 
 async def test_add_business_and_single_aggregate(client, mock_db, owner_headers):

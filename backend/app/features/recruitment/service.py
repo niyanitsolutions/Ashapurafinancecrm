@@ -46,6 +46,7 @@ from app.features.recruitment.repository import (
 from app.features.recruitment.schemas import (
     ConfirmedFile,
     CreateRecruitmentLeadRequest,
+    RecordExamFeeRequest,
     RecordExaminationRequest,
     SaveRecruitmentDocumentsRequest,
     SignatureInput,
@@ -156,17 +157,12 @@ class RecruitmentService:
     ) -> tuple[list[RecruitmentLead], int]:
         scope_user_id, scope_employee_id = await self._scope(actor)
         stage_value: str | None = stage
-        stage_in: tuple[str, ...] | None = None
-        # The "Doc Collection" tab (no exact sub-stage) spans both doc-collection stages.
-        if stage == "doc_collection":
-            stage_value, stage_in = None, RecruitmentStage.DOC_COLLECTION
-        # The "Agency Code" sub-tab lists candidates who cleared the examination and were
-        # promoted — the point at which an agency code is assigned (assignment itself is
-        # Phase 2 / Advisor Management).
-        elif stage == "agency_code":
+        # Every recruitment tab is now its own real stage. "Agency Code" is the promoted
+        # roster (assignment of the agency code happens in Advisor Management).
+        if stage == "agency_code":
             stage_value = RecruitmentStage.ADVISOR
         return await self._leads.search_and_filter(
-            search=search, stage=stage_value, stage_in=stage_in, assigned_to=assigned_to,
+            search=search, stage=stage_value, stage_in=None, assigned_to=assigned_to,
             scope_user_id=scope_user_id, scope_employee_id=scope_employee_id, skip=skip, limit=limit, sort=sort,
         )
 
@@ -181,11 +177,12 @@ class RecruitmentService:
         return {
             "fresh": await n(stage=RecruitmentStage.FRESH),
             "bop": await n(stage=RecruitmentStage.BOP),
-            "doc_collection": await n(stage_in=RecruitmentStage.DOC_COLLECTION),
-            "rejected": await n(stage=RecruitmentStage.REJECTED),
-            "examination": await n(stage=RecruitmentStage.DOC_COLLECTION_EXAMINATION),
-            "re_examination": await n(stage=RecruitmentStage.DOC_COLLECTION_RE_EXAMINATION),
+            "doc_collection": await n(stage=RecruitmentStage.DOC_COLLECTION),
+            "exam_fee_status": await n(stage=RecruitmentStage.EXAM_FEE_STATUS),
+            "examination": await n(stage=RecruitmentStage.EXAMINATION),
+            "re_examination": await n(stage=RecruitmentStage.RE_EXAMINATION),
             "agency_code": await n(stage=RecruitmentStage.ADVISOR),
+            "rejected": await n(stage=RecruitmentStage.REJECTED),
         }
 
     # ---------------------------------------------------------------- create / update
@@ -284,7 +281,7 @@ class RecruitmentService:
         if lead.stage != RecruitmentStage.BOP:
             raise ConflictError("Only a BOP recruitment lead can be moved to Document Collection.")
         return await self._transition(
-            lead, RecruitmentStage.DOC_COLLECTION_EXAMINATION, actor, RecruitmentActivityType.MOVED_TO_DOC_COLLECTION
+            lead, RecruitmentStage.DOC_COLLECTION, actor, RecruitmentActivityType.MOVED_TO_DOC_COLLECTION
         )
 
     async def reject(self, lead_id: str, reason: str, actor: User) -> RecruitmentLead:
@@ -306,7 +303,7 @@ class RecruitmentService:
 
     async def generate_document_upload_url(self, lead_id: str, slot: str, file_name: str, content_type: str | None, actor: User) -> tuple[str, str]:
         lead = await self.get_lead_scoped(lead_id, actor)
-        if lead.stage not in RecruitmentStage.DOC_COLLECTION:
+        if lead.stage != RecruitmentStage.DOC_COLLECTION:
             raise ConflictError("Documents can only be uploaded while the lead is in Document Collection.")
         s3_key = self._s3_key(lead, slot, file_name)
         url = generate_presigned_upload_url(s3_key, expires_in=_UPLOAD_URL_EXPIRE_SECONDS, content_type=content_type)
@@ -338,7 +335,7 @@ class RecruitmentService:
 
     async def save_documents(self, lead_id: str, payload: SaveRecruitmentDocumentsRequest, actor: User) -> RecruitmentLead:
         lead = await self.get_lead_scoped(lead_id, actor)
-        if lead.stage not in RecruitmentStage.DOC_COLLECTION:
+        if lead.stage != RecruitmentStage.DOC_COLLECTION:
             raise ConflictError("Documents can only be saved while the lead is in Document Collection.")
 
         docs = lead.documents.model_copy(deep=True) if lead.documents is not None else RecruitmentDocuments()
@@ -372,11 +369,40 @@ class RecruitmentService:
         if payload.signature is not None:
             docs.signature = await self._materialise_signature(lead, payload.signature, actor)
 
-        updated = await self._leads.update(lead_id, {"documents": docs.model_dump(mode="json")}, updated_by=actor.require_id())
+        # Backend gate (brief §3/§14): the candidate cannot be saved / completed in
+        # Document Collection until EVERY required document is present. Same completeness
+        # definition the examination-PASS gate uses (`_documents_ready`).
+        merged = lead.model_copy(update={"documents": docs})
+        if not self._documents_ready(merged):
+            raise ValidationError("Please upload all required documents before saving.")
+
+        updated = await self._leads.update(
+            lead_id,
+            {"documents": docs.model_dump(mode="json"), "stage": RecruitmentStage.EXAM_FEE_STATUS},
+            updated_by=actor.require_id(),
+        )
         assert updated is not None
-        await self._log(lead_id, RecruitmentActivityType.DOCUMENTS_SAVED, actor)
+        await self._log(lead_id, RecruitmentActivityType.DOCUMENTS_SAVED, actor,
+                        {"from": lead.stage, "to": RecruitmentStage.EXAM_FEE_STATUS})
         await self._audit(RecruitmentAuditEvent.DOCUMENTS_SAVED, actor, lead_id)
+        await self._audit(RecruitmentAuditEvent.STAGE_CHANGED, actor, lead_id,
+                          {"from": lead.stage, "to": RecruitmentStage.EXAM_FEE_STATUS})
         return updated
+
+    # ---------------------------------------------------------------- exam fee
+
+    async def record_exam_fee(self, lead_id: str, payload: RecordExamFeeRequest, actor: User) -> RecruitmentLead:
+        lead = await self.get_lead_scoped(lead_id, actor)
+        if lead.stage != RecruitmentStage.EXAM_FEE_STATUS:
+            raise ConflictError("The exam fee can only be recorded while the lead is at Exam Fee Status.")
+        return await self._transition(
+            lead, RecruitmentStage.EXAMINATION, actor, RecruitmentActivityType.EXAM_FEE_RECORDED,
+            extra_updates={
+                "exam_fee_paid": True,
+                "exam_fee_paid_at": utc_now(),
+                "exam_fee_reference": (payload.reference or "").strip() or None,
+            },
+        )
 
     # ---------------------------------------------------------------- examination
 
@@ -388,8 +414,8 @@ class RecruitmentService:
 
     async def record_examination(self, lead_id: str, payload: RecordExaminationRequest, actor: User) -> RecruitmentLead:
         lead = await self.get_lead_scoped(lead_id, actor)
-        if lead.stage not in RecruitmentStage.DOC_COLLECTION:
-            raise ConflictError("An examination result can only be recorded for a lead in Document Collection.")
+        if lead.stage not in RecruitmentStage.EXAM_STAGES:
+            raise ConflictError("An examination result can only be recorded for a lead at Examination or Re-Examination.")
 
         attempt = len(lead.examinations) + 1
         entry = ExaminationResult(
@@ -406,8 +432,9 @@ class RecruitmentService:
             await self._audit(RecruitmentAuditEvent.EXAMINATION_RECORDED, actor, lead_id, {"result": payload.result})
             return await self._promote_to_advisor(updated, actor)
 
-        # FAIL / ABSENT → Re-Examination.
-        target = RecruitmentStage.DOC_COLLECTION_RE_EXAMINATION
+        # FAIL / ABSENT → Re-Examination (a lead already at Re-Examination stays put,
+        # attempt count incremented).
+        target = RecruitmentStage.RE_EXAMINATION
         updated = await self._leads.update(
             lead_id, {"examinations": examinations, "stage": target}, updated_by=actor.require_id()
         )
@@ -424,8 +451,8 @@ class RecruitmentService:
         lead = await self.get_lead_scoped(lead_id, actor)
         if lead.advisor_id is not None:
             return lead
-        if lead.stage not in RecruitmentStage.DOC_COLLECTION:
-            raise ConflictError("Only a lead in Document Collection can be moved to Advisor.")
+        if lead.stage not in RecruitmentStage.EXAM_STAGES:
+            raise ConflictError("Only a lead at Examination or Re-Examination can be moved to Advisor.")
         latest = self._latest_examination(lead)
         if latest is None or latest.result != ExaminationOutcome.PASS:
             raise ConflictError("A lead can only be moved to Advisor after passing the examination.")

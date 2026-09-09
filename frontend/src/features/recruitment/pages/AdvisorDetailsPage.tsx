@@ -70,6 +70,7 @@ export function AdvisorDetailsPage() {
           <InfoRow label="Email" value={advisor.email} />
           <InfoRow label="Channel" value={ADVISOR_CHANNEL_LABELS[advisor.channel]} />
           <InfoRow label="Agency code" value={advisor.agency_code} />
+          <InfoRow label="Agent code" value={advisor.agent_code} />
           <InfoRow label="Status" value={ADVISOR_STATUS_LABELS[advisor.status]} />
           <InfoRow label="No. of Policies" value={advisor.no_of_policies} />
           <InfoRow label="Premium Amount" value={formatINR(advisor.total_premium)} />
@@ -112,6 +113,9 @@ export function AdvisorDetailsPage() {
               <Table>
                 <TableHead>
                   <TableHeadRow>
+                    <Th>Customer Name</Th>
+                    <Th>Customer Mobile</Th>
+                    <Th>Policy Number</Th>
                     <Th>Product Category</Th>
                     <Th>Product Name</Th>
                     <Th>Premium</Th>
@@ -124,6 +128,9 @@ export function AdvisorDetailsPage() {
                 <TableBody>
                   {advisor.businesses.map((b) => (
                     <TableRow key={b.id}>
+                      <Td>{b.customer_name ?? "—"}</Td>
+                      <Td>{b.customer_mobile ?? "—"}</Td>
+                      <Td>{b.policy_number ?? "—"}</Td>
                       <Td>{businessCategoryLabel(b.product_category, b.custom_category)}</Td>
                       <Td className="font-medium text-text">{b.product_name}</Td>
                       <Td>{formatINR(b.premium)}</Td>

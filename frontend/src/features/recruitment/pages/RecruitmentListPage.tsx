@@ -16,6 +16,7 @@ import {
 } from "@/features/recruitment/api";
 import { DocumentCollectionModal } from "@/features/recruitment/components/DocumentCollectionModal";
 import { ExaminationModal } from "@/features/recruitment/components/ExaminationModal";
+import { ExamFeeModal } from "@/features/recruitment/components/ExamFeeModal";
 import { RecruitmentLeadModal } from "@/features/recruitment/components/RecruitmentLeadModal";
 import { EXAM_LABELS, professionLabel } from "@/features/recruitment/labels";
 import type { RecruitmentOutletContext } from "@/features/recruitment/pages/RecruitmentLayout";
@@ -25,15 +26,16 @@ import { formatISTDate } from "@/shared/dateFormat";
 const PAGE_SIZE = 20;
 const POLL_INTERVAL_MS = 15_000;
 
-type Variant = "fresh" | "bop" | "examination" | "re_examination" | "rejected" | "agency_code";
+type Variant = "fresh" | "bop" | "doc_collection" | "exam_fee_status" | "examination" | "re_examination" | "rejected";
 
 const VARIANT_STAGE: Record<Variant, string> = {
   fresh: "fresh",
   bop: "bop",
-  examination: "doc_collection_examination",
-  re_examination: "doc_collection_re_examination",
+  doc_collection: "doc_collection",
+  exam_fee_status: "exam_fee_status",
+  examination: "examination",
+  re_examination: "re_examination",
   rejected: "rejected",
-  agency_code: "agency_code", // server maps this to promoted (advisor-stage) candidates
 };
 
 const META: Record<Variant, { title: string; description: string; empty: string }> = {
@@ -47,9 +49,19 @@ const META: Record<Variant, { title: string; description: string; empty: string 
     description: "Recruitment leads currently in the Business Opportunity Presentation stage.",
     empty: "No recruitment leads in BOP.",
   },
+  doc_collection: {
+    title: "Doc Collection",
+    description: "Candidates whose required documents are being collected. All documents must be uploaded before the candidate can move on.",
+    empty: "No candidates in document collection.",
+  },
+  exam_fee_status: {
+    title: "Exam Fee Status",
+    description: "Candidates with documents complete, awaiting the examination fee to be recorded.",
+    empty: "No candidates awaiting an exam fee.",
+  },
   examination: {
     title: "Examination",
-    description: "Candidates whose documents are being collected and who are ready for examination.",
+    description: "Candidates whose exam fee is recorded and who are ready for their examination.",
     empty: "No candidates awaiting examination.",
   },
   re_examination: {
@@ -61,11 +73,6 @@ const META: Record<Variant, { title: string; description: string; empty: string 
     title: "Rejected",
     description: "Recruitment leads that were rejected, kept for reporting and audit.",
     empty: "No rejected recruitment leads.",
-  },
-  agency_code: {
-    title: "Agency Code",
-    description: "Candidates who have passed the examination and are ready for an agency code.",
-    empty: "No candidates ready for an agency code.",
   },
 };
 
@@ -83,7 +90,7 @@ export function RecruitmentListPage({ variant }: { variant: Variant }) {
 
   const [modal, setModal] = useState<
     | { kind: "create" }
-    | { kind: "fresh" | "bop" | "documents" | "examination"; lead: RecruitmentLeadDetail }
+    | { kind: "fresh" | "bop" | "documents" | "examfee" | "examination"; lead: RecruitmentLeadDetail }
     | null
   >(null);
 
@@ -106,7 +113,7 @@ export function RecruitmentListPage({ variant }: { variant: Variant }) {
     return () => window.clearInterval(interval);
   }, [load]);
 
-  const openWithLead = async (id: string, kind: "fresh" | "bop" | "documents" | "examination") => {
+  const openWithLead = async (id: string, kind: "fresh" | "bop" | "documents" | "examfee" | "examination") => {
     try {
       const lead = await getRecruitmentLead(id);
       setModal({ kind, lead });
@@ -186,11 +193,14 @@ export function RecruitmentListPage({ variant }: { variant: Variant }) {
                       {variant === "bop" && canEdit && (
                         <ActionButton variant="update" onClick={() => openWithLead(row.id, "bop")} />
                       )}
+                      {variant === "doc_collection" && canEdit && (
+                        <ActionButton variant="edit" onClick={() => openWithLead(row.id, "documents")} />
+                      )}
+                      {variant === "exam_fee_status" && canEdit && (
+                        <ActionButton variant="update" onClick={() => openWithLead(row.id, "examfee")} />
+                      )}
                       {(variant === "examination" || variant === "re_examination") && canEdit && (
-                        <>
-                          <ActionButton variant="edit" onClick={() => openWithLead(row.id, "documents")} />
-                          <ActionButton variant="update" onClick={() => openWithLead(row.id, "examination")} />
-                        </>
+                        <ActionButton variant="update" onClick={() => openWithLead(row.id, "examination")} />
                       )}
                     </div>
                   </Td>
@@ -218,6 +228,9 @@ export function RecruitmentListPage({ variant }: { variant: Variant }) {
       )}
       {modal?.kind === "documents" && (
         <DocumentCollectionModal lead={modal.lead} onClose={() => setModal(null)} onSaved={onSaved} />
+      )}
+      {modal?.kind === "examfee" && (
+        <ExamFeeModal lead={modal.lead} onClose={() => setModal(null)} onSaved={onSaved} />
       )}
       {modal?.kind === "examination" && (
         <ExaminationModal lead={modal.lead} onClose={() => setModal(null)} onSaved={onSaved} />

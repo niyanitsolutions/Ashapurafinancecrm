@@ -26,7 +26,7 @@ const lead: RecruitmentLeadDetail = {
   profession: "salaried",
   other_profession: null,
   remarks: null,
-  stage: "doc_collection_examination",
+  stage: "examination",
   assigned_to: null,
   assigned_to_name: null,
   latest_examination_result: null,
@@ -38,6 +38,9 @@ const lead: RecruitmentLeadDetail = {
   updated_at: "2026-09-01T10:00:00Z",
   assigned_by: null,
   assigned_at: null,
+  exam_fee_paid: true,
+  exam_fee_paid_at: "2026-09-01T10:00:00Z",
+  exam_fee_reference: null,
   documents: null,
   examinations: [],
 };

@@ -14,6 +14,9 @@ import { ADVISOR_PRODUCT_CATEGORY_LABELS } from "@/features/recruitment/labels";
 import { getErrorMessage } from "@/shared/api/errors";
 
 const EMPTY = {
+  customer_name: "",
+  customer_mobile: "",
+  policy_number: "",
   product_category: "",
   custom_category: "",
   product_name: "",
@@ -61,6 +64,9 @@ export function AddBusinessModal({
         policy_issue_date: form.policy_issue_date,
       };
       if (form.product_category === "custom") payload.custom_category = form.custom_category.trim();
+      if (form.customer_name.trim()) payload.customer_name = form.customer_name.trim();
+      if (form.customer_mobile.trim()) payload.customer_mobile = form.customer_mobile.trim();
+      if (form.policy_number.trim()) payload.policy_number = form.policy_number.trim();
       if (form.comment.trim()) payload.comment = form.comment.trim();
 
       await addAdvisorBusiness(advisorId, payload);
@@ -90,6 +96,27 @@ export function AddBusinessModal({
       {error && <ErrorBanner message={error} />}
 
       <div className="grid gap-x-4 sm:grid-cols-2">
+        <FormField
+          id="biz-customer-name"
+          name="customer_name"
+          label="Customer Name"
+          value={form.customer_name}
+          onChange={(e) => set("customer_name", e.target.value)}
+        />
+        <FormField
+          id="biz-customer-mobile"
+          name="customer_mobile"
+          label="Customer Mobile"
+          value={form.customer_mobile}
+          onChange={(e) => set("customer_mobile", e.target.value)}
+        />
+        <FormField
+          id="biz-policy-number"
+          name="policy_number"
+          label="Policy Number"
+          value={form.policy_number}
+          onChange={(e) => set("policy_number", e.target.value)}
+        />
         <SelectField
           id="biz-category"
           label="Product Category"

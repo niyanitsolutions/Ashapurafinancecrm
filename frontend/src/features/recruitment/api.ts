@@ -6,8 +6,10 @@ import { apiRequest, apiRequestRaw, type PaginationMeta } from "@/shared/api/cli
 export type RecruitmentStage =
   | "fresh"
   | "bop"
-  | "doc_collection_examination"
-  | "doc_collection_re_examination"
+  | "doc_collection"
+  | "exam_fee_status"
+  | "examination"
+  | "re_examination"
   | "advisor"
   | "rejected";
 
@@ -88,6 +90,9 @@ export interface RecruitmentLeadDetail extends RecruitmentLeadListItem {
   updated_at: string;
   assigned_by: string | null;
   assigned_at: string | null;
+  exam_fee_paid: boolean;
+  exam_fee_paid_at: string | null;
+  exam_fee_reference: string | null;
   documents: RecruitmentDocuments | null;
   examinations: ExaminationResult[];
 }
@@ -96,10 +101,11 @@ export interface RecruitmentCounts {
   fresh: number;
   bop: number;
   doc_collection: number;
-  rejected: number;
+  exam_fee_status: number;
   examination: number;
   re_examination: number;
   agency_code: number;
+  rejected: number;
 }
 
 export interface RecruitmentTimelineEntry {
@@ -120,6 +126,7 @@ export interface AdvisorSummary {
   email: string | null;
   channel: string;
   agency_code: string | null;
+  agent_code: string | null;
   status: string;
   created_at: string;
 }
@@ -195,6 +202,9 @@ export const assignRecruitmentLead = (id: string, employeeId: string) => post(id
 export const recordRecruitmentExamination = (id: string, payload: { result: ExaminationOutcome; remarks?: string }) =>
   post(id, "examination", payload);
 
+export const recordRecruitmentExamFee = (id: string, payload: { reference?: string }) =>
+  post(id, "exam-fee", payload);
+
 export function getRecruitmentDocumentUploadUrl(
   id: string,
   payload: { slot: DocumentSlot; file_name: string; content_type?: string },
@@ -258,6 +268,7 @@ export interface AdvisorListItem {
   email: string | null;
   channel: "qr" | "non_qr";
   agency_code: string | null;
+  agent_code: string | null;
   status: "active" | "inactive";
   is_employee: boolean;
   no_of_policies: number;
@@ -268,6 +279,9 @@ export interface AdvisorListItem {
 export interface AdvisorBusinessRecord {
   id: string;
   advisor_id: string;
+  customer_name: string | null;
+  customer_mobile: string | null;
+  policy_number: string | null;
   product_category: AdvisorProductCategory;
   custom_category: string | null;
   product_name: string;
@@ -319,7 +333,16 @@ export function getAdvisor(id: string) {
   return apiRequest<AdvisorDetail>(`/advisors/${id}`);
 }
 
-export function updateAdvisor(id: string, payload: { agency_code?: string; status?: "active" | "inactive" }) {
+export function updateAdvisor(
+  id: string,
+  payload: {
+    agency_code?: string;
+    agent_code?: string;
+    channel?: "qr" | "non_qr";
+    password?: string;
+    status?: "active" | "inactive";
+  },
+) {
   return apiRequest<AdvisorDetail>(`/advisors/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
 }
 
@@ -328,6 +351,9 @@ export function listAdvisorBusiness(id: string) {
 }
 
 export interface AddBusinessPayload {
+  customer_name?: string;
+  customer_mobile?: string;
+  policy_number?: string;
   product_category: AdvisorProductCategory;
   custom_category?: string;
   product_name: string;

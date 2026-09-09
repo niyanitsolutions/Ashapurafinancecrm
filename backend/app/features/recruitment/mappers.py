@@ -110,6 +110,9 @@ def to_detail(
         updated_at=lead.updated_at,
         assigned_by=lead.assigned_by,
         assigned_at=lead.assigned_at,
+        exam_fee_paid=lead.exam_fee_paid,
+        exam_fee_paid_at=lead.exam_fee_paid_at,
+        exam_fee_reference=lead.exam_fee_reference,
         documents=_documents_response(lead.documents, download_url),
         examinations=[
             ExaminationResultResponse(
@@ -145,6 +148,7 @@ def advisor_to_summary(advisor: Advisor) -> AdvisorSummaryResponse:
         email=advisor.email,
         channel=advisor.channel,
         agency_code=advisor.agency_code,
+        agent_code=advisor.agent_code,
         status=advisor.status,
         created_at=advisor.created_at,
     )
@@ -157,6 +161,9 @@ def business_to_response(business: AdvisorBusiness) -> AdvisorBusinessResponse:
     return AdvisorBusinessResponse(
         id=business.require_id(),
         advisor_id=business.advisor_id,
+        customer_name=business.customer_name,
+        customer_mobile=business.customer_mobile,
+        policy_number=business.policy_number,
         product_category=business.product_category,
         custom_category=business.custom_category,
         product_name=business.product_name,
@@ -179,6 +186,7 @@ def advisor_to_list_item(advisor: Advisor, is_employee: bool, no_of_policies: in
         email=advisor.email,
         channel=advisor.channel,
         agency_code=advisor.agency_code,
+        agent_code=advisor.agent_code,
         status=advisor.status,
         is_employee=is_employee,
         no_of_policies=no_of_policies,

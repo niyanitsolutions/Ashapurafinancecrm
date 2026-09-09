@@ -7,48 +7,63 @@ portal, no `CaseType`), and NOT customer document collection. A recruitment lead
 person applying to *become* an insurance advisor.
 
 `RecruitmentStage` is an explicit, service-enforced state machine (same posture as
-`LeadService.set_stage` — no `workflow_engine` involvement):
+`LeadService.set_stage` — no `workflow_engine` involvement). 2026 redesign: the old
+`doc_collection_examination` / `doc_collection_re_examination` umbrella was split into
+flat stages so each recruitment tab is its own real stage:
 
-    FRESH ─┬─ save ──────────────► FRESH
-           ├─ move_to_bop ───────► BOP
+    FRESH ─┬─ move_to_bop ───────► BOP
            └─ reject ────────────► REJECTED
 
     BOP ───┬─ back_to_fresh ─────► FRESH
            ├─ reject ────────────► REJECTED
-           └─ move_to_doc_collection ► DOC_COLLECTION_EXAMINATION
+           └─ move_to_doc_collection ► DOC_COLLECTION
 
-    DOC_COLLECTION_EXAMINATION ─┬─ examination PASS ────► ADVISOR (+ Advisor record)
-                                └─ examination FAIL/ABSENT ► DOC_COLLECTION_RE_EXAMINATION
+    DOC_COLLECTION ─ save_documents (ALL required docs present) ─► EXAM_FEE_STATUS
+    EXAM_FEE_STATUS ─ record_exam_fee ─► EXAMINATION
 
-    DOC_COLLECTION_RE_EXAMINATION ─┬─ examination PASS ──► ADVISOR (+ Advisor record)
-                                   └─ examination FAIL/ABSENT ► (stays, attempt++)
+    EXAMINATION ─┬─ examination PASS ────► ADVISOR (+ Advisor record)
+                 └─ examination FAIL/ABSENT ► RE_EXAMINATION
 
-The "Doc Collection" tab shows both `DOC_COLLECTION_*` stages; its Examination /
-Re-Examination sub-tabs filter on the exact stage. The Agency Code sub-tab is a
-read-only bookkeeping view of doc-collection leads whose latest exam is PASS but who are
-not yet promoted — no business rules are invented for it.
+    RE_EXAMINATION ─┬─ examination PASS ──► ADVISOR (+ Advisor record)
+                    └─ examination FAIL/ABSENT ► (stays, attempt++)
+
+    (any non-terminal stage) ─ reject ─► REJECTED
+
+The "Agency Code" tab is the promoted-advisor roster (`stage == ADVISOR`). Legacy stage
+values `doc_collection_examination` / `doc_collection_re_examination` are kept as
+constants for `scripts/migrate_recruitment_stage_split.py` + historical audit strings.
 """
 
 
 class RecruitmentStage:
     FRESH = "fresh"
     BOP = "bop"
-    DOC_COLLECTION_EXAMINATION = "doc_collection_examination"
-    DOC_COLLECTION_RE_EXAMINATION = "doc_collection_re_examination"
+    DOC_COLLECTION = "doc_collection"
+    EXAM_FEE_STATUS = "exam_fee_status"
+    EXAMINATION = "examination"
+    RE_EXAMINATION = "re_examination"
     ADVISOR = "advisor"
     REJECTED = "rejected"
 
     ALL = (
         FRESH,
         BOP,
-        DOC_COLLECTION_EXAMINATION,
-        DOC_COLLECTION_RE_EXAMINATION,
+        DOC_COLLECTION,
+        EXAM_FEE_STATUS,
+        EXAMINATION,
+        RE_EXAMINATION,
         ADVISOR,
         REJECTED,
     )
-    # Both stages that render under the "Doc Collection" tab.
-    DOC_COLLECTION = (DOC_COLLECTION_EXAMINATION, DOC_COLLECTION_RE_EXAMINATION)
+    # The two stages that record an examination result.
+    EXAM_STAGES = (EXAMINATION, RE_EXAMINATION)
     TERMINAL = (ADVISOR, REJECTED)
+
+    # Pre-split values — no new lead ever enters these; retained so
+    # `scripts/migrate_recruitment_stage_split.py` and old audit-log rows resolve.
+    LEGACY_DOC_COLLECTION_EXAMINATION = "doc_collection_examination"
+    LEGACY_DOC_COLLECTION_RE_EXAMINATION = "doc_collection_re_examination"
+    ALL_INCLUDING_LEGACY = (*ALL, LEGACY_DOC_COLLECTION_EXAMINATION, LEGACY_DOC_COLLECTION_RE_EXAMINATION)
 
 
 class Gender:
@@ -169,6 +184,7 @@ class RecruitmentActivityType:
     BACK_TO_FRESH = "back_to_fresh"
     MOVED_TO_DOC_COLLECTION = "moved_to_doc_collection"
     DOCUMENTS_SAVED = "documents_saved"
+    EXAM_FEE_RECORDED = "exam_fee_recorded"
     EXAMINATION_RECORDED = "examination_recorded"
     MOVED_TO_ADVISOR = "moved_to_advisor"
     REJECTED = "rejected"
@@ -182,6 +198,7 @@ class RecruitmentActivityType:
         BACK_TO_FRESH,
         MOVED_TO_DOC_COLLECTION,
         DOCUMENTS_SAVED,
+        EXAM_FEE_RECORDED,
         EXAMINATION_RECORDED,
         MOVED_TO_ADVISOR,
         REJECTED,
@@ -195,6 +212,7 @@ class RecruitmentAuditEvent:
     LEAD_UPDATED = "recruitment_lead_updated"
     STAGE_CHANGED = "recruitment_stage_changed"
     DOCUMENTS_SAVED = "recruitment_documents_saved"
+    EXAM_FEE_RECORDED = "recruitment_exam_fee_recorded"
     EXAMINATION_RECORDED = "recruitment_examination_recorded"
     ADVISOR_CREATED = "recruitment_advisor_created"
     ADVISOR_UPDATED = "recruitment_advisor_updated"

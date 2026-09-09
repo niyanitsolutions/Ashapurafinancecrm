@@ -96,11 +96,21 @@ class RecruitmentLead(BaseDocument):
 
     remarks: str | None = None
 
-    stage: str = Field(default=RecruitmentStage.FRESH, pattern=f"^({'|'.join(RecruitmentStage.ALL)})$")
+    # `ALL_INCLUDING_LEGACY` — an un-migrated `doc_collection_examination` /
+    # `doc_collection_re_examination` row must still load (it 500s the list otherwise);
+    # `scripts/migrate_recruitment_stage_split.py` remaps them and no NEW lead ever uses
+    # a legacy value.
+    stage: str = Field(default=RecruitmentStage.FRESH, pattern=f"^({'|'.join(RecruitmentStage.ALL_INCLUDING_LEGACY)})$")
 
     assigned_to: str | None = None  # ref: employees, nullable
     assigned_by: str | None = None  # actor User id
     assigned_at: datetime | None = None
+
+    # Exam Fee Status stage — a small bookkeeping step between Document Collection and the
+    # first Examination. Backward-compatible defaults so pre-redesign rows load unchanged.
+    exam_fee_paid: bool = False
+    exam_fee_paid_at: datetime | None = None
+    exam_fee_reference: str | None = None
 
     rejected_reason: str | None = None
     rejected_by: str | None = None
@@ -133,12 +143,18 @@ class Advisor(BaseDocument):
     mobile: str
     email: str | None = None
 
-    # `channel` is DERIVED from `agency_code` (Phase 2 decision): an advisor is "qr" once
-    # an agency code is assigned, "non_qr" until then. Kept as a stored field, always
-    # written in lockstep with `agency_code` (see AdvisorService.update_advisor), so the
-    # QR / Non-QR tabs stay a plain indexed query.
+    # QR / Non-QR classification. 2026 redesign: `channel` is now an EXPLICIT staff choice
+    # on the Agency Code edit form (`AdvisorService.update_advisor`) — no longer
+    # auto-derived from `agency_code`. Stored + indexed so the QR / Non-QR tabs stay a
+    # plain query. Defaults to Non-QR at promotion.
     channel: str = "non_qr"  # AdvisorChannel.ALL
     agency_code: str | None = None
+    agent_code: str | None = None
+    # Optional advisor-portal credential — set by staff on the Agency Code edit form,
+    # hashed via `app.security.password.hash_password`. NEVER included in any response
+    # schema/mapper (`AdvisorListItem` / `AdvisorDetailResponse` / `AdvisorSummary` have
+    # no such field) and never written to an audit-log payload.
+    password_hash: str | None = None
     # `status` ("active" default) comes from BaseDocument; "inactive" is also supported.
     # No stored policy count / premium total — aggregated from `advisor_business` records
     # (brief §37: prefer reliable aggregation over denormalized totals).
@@ -149,6 +165,12 @@ class AdvisorBusiness(BaseDocument):
     and total premium are always aggregated from these — never stored on `Advisor`."""
 
     advisor_id: str
+
+    # Optional customer identity for the policy. Backward-compatible defaults so
+    # pre-redesign business rows load unchanged (rendered as "—").
+    customer_name: str | None = None
+    customer_mobile: str | None = None
+    policy_number: str | None = None
 
     product_category: str  # AdvisorProductCategory.ALL
     # Free-text category name, required iff product_category == "custom".

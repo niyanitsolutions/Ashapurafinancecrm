@@ -22,6 +22,7 @@ from app.features.recruitment.schemas import (
     AssignRecruitmentLeadRequest,
     CreateRecruitmentLeadRequest,
     LookupItem,
+    RecordExamFeeRequest,
     RecordExaminationRequest,
     RecruitmentCountsResponse,
     RecruitmentDocumentUploadUrlRequest,
@@ -158,6 +159,17 @@ async def save_documents(
     lead_id: str, payload: SaveRecruitmentDocumentsRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
 ) -> ApiResponse[RecruitmentLeadDetailResponse]:
     await service.save_documents(lead_id, payload, actor)
+    return await _detail(service, lead_id, actor)
+
+
+# ---------------------------------------------------------------- exam fee
+
+
+@router.post("/{lead_id}/exam-fee")
+async def record_exam_fee(
+    lead_id: str, payload: RecordExamFeeRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[RecruitmentLeadDetailResponse]:
+    await service.record_exam_fee(lead_id, payload, actor)
     return await _detail(service, lead_id, actor)
 
 

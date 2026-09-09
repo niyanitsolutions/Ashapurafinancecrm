@@ -60,4 +60,28 @@ describe("AddBusinessModal", () => {
     );
     expect(onSaved).toHaveBeenCalled();
   });
+
+  it("includes Customer Name / Customer Mobile / Policy Number in the payload", async () => {
+    const user = userEvent.setup();
+    render(<AddBusinessModal advisorId="a1" onClose={vi.fn()} onSaved={vi.fn()} />);
+    await user.type(screen.getByLabelText("Customer Name"), "Anita Rao");
+    await user.type(screen.getByLabelText("Customer Mobile"), "9812345678");
+    await user.type(screen.getByLabelText("Policy Number"), "POL-42");
+    await fill(user);
+
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+    await waitFor(() =>
+      expect(addAdvisorBusiness).toHaveBeenCalledWith("a1", {
+        customer_name: "Anita Rao",
+        customer_mobile: "9812345678",
+        policy_number: "POL-42",
+        product_category: "savings",
+        product_name: "ABC Guaranteed Savings",
+        premium: 50000,
+        ppt: 10,
+        pt: 20,
+        policy_issue_date: "2026-09-01",
+      }),
+    );
+  });
 });

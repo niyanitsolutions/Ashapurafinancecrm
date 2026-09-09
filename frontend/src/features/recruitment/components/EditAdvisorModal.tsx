@@ -7,6 +7,8 @@ import { Modal } from "@/components/overlays/Modal";
 import { updateAdvisor, type AdvisorDetail } from "@/features/recruitment/api";
 import { getErrorMessage } from "@/shared/api/errors";
 
+type Channel = "qr" | "non_qr";
+
 export function EditAdvisorModal({
   advisor,
   onClose,
@@ -17,6 +19,9 @@ export function EditAdvisorModal({
   onSaved: () => void;
 }) {
   const [agencyCode, setAgencyCode] = useState(advisor.agency_code ?? "");
+  const [agentCode, setAgentCode] = useState(advisor.agent_code ?? "");
+  const [channel, setChannel] = useState<Channel>(advisor.channel);
+  const [password, setPassword] = useState("");
   const [status, setStatus] = useState<"active" | "inactive">(advisor.status);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -25,7 +30,15 @@ export function EditAdvisorModal({
     setBusy(true);
     setError(null);
     try {
-      await updateAdvisor(advisor.id, { agency_code: agencyCode.trim(), status });
+      // Send only the fields the staff member actually changed.
+      const payload: Parameters<typeof updateAdvisor>[1] = {};
+      if (agencyCode.trim() !== (advisor.agency_code ?? "")) payload.agency_code = agencyCode.trim();
+      if (agentCode.trim() !== (advisor.agent_code ?? "")) payload.agent_code = agentCode.trim();
+      if (channel !== advisor.channel) payload.channel = channel;
+      if (status !== advisor.status) payload.status = status;
+      if (password) payload.password = password;
+
+      await updateAdvisor(advisor.id, payload);
       onSaved();
       onClose();
     } catch (err) {
@@ -40,7 +53,7 @@ export function EditAdvisorModal({
       open
       onClose={onClose}
       title="Edit Advisor"
-      description={`${advisor.advisor_code} — an agency code assigns the advisor to the QR channel`}
+      description={`${advisor.advisor_code} — Type controls the advisor's QR / Non QR channel`}
       footer={
         <>
           <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>
@@ -54,14 +67,53 @@ export function EditAdvisorModal({
     >
       {error && <ErrorBanner message={error} />}
       <FormField
+        id="advisor-name"
+        name="full_name"
+        label="Name"
+        value={advisor.full_name}
+        disabled
+        readOnly
+      />
+      <FormField
         id="advisor-agency-code"
+        name="agency_code"
         label="Agency Code"
         value={agencyCode}
         onChange={(e) => setAgencyCode(e.target.value)}
-        placeholder="Leave blank for Non QR"
+        placeholder="Agency code"
+      />
+      <FormField
+        id="advisor-agent-code"
+        name="agent_code"
+        label="Agent Code"
+        value={agentCode}
+        onChange={(e) => setAgentCode(e.target.value)}
+        placeholder="Agent code"
+      />
+      <FormField
+        id="advisor-password"
+        name="password"
+        label="Password"
+        type="password"
+        autoComplete="new-password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        placeholder="Leave blank to keep the current password"
+      />
+      <SelectField
+        id="advisor-channel"
+        name="channel"
+        label="Type"
+        value={channel}
+        onChange={(e) => setChannel(e.target.value as Channel)}
+        options={[
+          { value: "qr", label: "QR" },
+          { value: "non_qr", label: "Non QR" },
+        ]}
       />
       <SelectField
         id="advisor-status"
+        name="status"
         label="Status"
         value={status}
         onChange={(e) => setStatus(e.target.value as "active" | "inactive")}

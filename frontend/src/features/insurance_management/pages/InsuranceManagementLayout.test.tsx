@@ -41,4 +41,15 @@ describe("InsuranceManagementLayout", () => {
     renderAt("/insurance-management/recruitment");
     expect(screen.queryByRole("link", { name: "Policy Document" })).not.toBeInTheDocument();
   });
+
+  it("orders the top tabs Policy Leads, Recruitment Leads, Advisors", () => {
+    renderAt("/insurance-management/recruitment");
+    const top = ["Policy Leads", "Recruitment Leads", "Advisors"].map(
+      (label) => screen.getByRole("link", { name: label }),
+    );
+    expect(top.map((el) => el.textContent)).toEqual(["Policy Leads", "Recruitment Leads", "Advisors"]);
+    // DOM order matches.
+    expect(top[0].compareDocumentPosition(top[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(top[1].compareDocumentPosition(top[2]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
 });

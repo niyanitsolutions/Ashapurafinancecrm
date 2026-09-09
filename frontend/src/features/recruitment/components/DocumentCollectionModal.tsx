@@ -105,6 +105,17 @@ export function DocumentCollectionModal({
   const onFileUploaded = (slot: FileSlot, file: Confirmed) =>
     setFiles((prev) => ({ ...prev, [slot]: file }));
 
+  // The backend rejects the save (422) unless every required document is present. Mirror
+  // that check here so Save is disabled and the reason is visible before the round trip.
+  const hasFile = (slot: FileSlot) => Boolean(files[slot] ?? docs?.[slot]);
+  const hasSignature = Boolean(signature ?? docs?.signature);
+  const missing: string[] = [];
+  for (const { slot, label } of REQUIRED_DOCS) if (!hasFile(slot)) missing.push(label);
+  if (!hasFile("photo")) missing.push("Passport Size Photo");
+  if (!hasSignature) missing.push("Signature");
+  if (bankProofType === "cheque" && !chequeNameConfirmed) missing.push("Cheque printed-name confirmation");
+  const complete = missing.length === 0;
+
   const onSave = async () => {
     setBusy(true);
     setError(null);
@@ -158,7 +169,13 @@ export function DocumentCollectionModal({
       <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>
         Close
       </Button>
-      <Button size="sm" onClick={onSave} loading={busy}>
+      <Button
+        size="sm"
+        onClick={onSave}
+        loading={busy}
+        disabled={!complete}
+        title={complete ? undefined : "Please upload all required documents before saving."}
+      >
         Save
       </Button>
     </>
@@ -169,11 +186,17 @@ export function DocumentCollectionModal({
       open
       onClose={onClose}
       title="Document Collection"
-      description={`${lead.recruitment_code} · Stage: Examination`}
+      description={`${lead.recruitment_code} · Stage: Doc Collection`}
       size="lg"
       footer={footer}
     >
       {error && <ErrorBanner message={error} />}
+
+      {!complete && (
+        <p className="mb-3 rounded-lg bg-warning/10 px-3 py-2 text-2xs text-warning">
+          Please upload all required documents before saving. Missing: {missing.join(", ")}.
+        </p>
+      )}
 
       <p className="mb-2 text-2xs font-semibold uppercase tracking-wide text-textSecondary">Required documents</p>
       <div className="space-y-2">

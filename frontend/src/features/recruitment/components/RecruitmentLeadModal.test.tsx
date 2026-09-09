@@ -29,6 +29,14 @@ function fill(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("RecruitmentLeadModal", () => {
+  it("offers exactly the five profession options", async () => {
+    render(<RecruitmentLeadModal mode="create" lead={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await screen.findByLabelText("Source");
+    const profession = screen.getByLabelText("Profession") as HTMLSelectElement;
+    const labels = [...profession.options].filter((o) => o.value !== "").map((o) => o.textContent);
+    expect(labels).toEqual(["House Wife", "Retired", "Self Employed", "Salaried", "Other"]);
+  });
+
   it("shows the Other Profession field only when profession is Other", async () => {
     const user = userEvent.setup();
     render(<RecruitmentLeadModal mode="create" lead={null} onClose={vi.fn()} onSaved={vi.fn()} />);

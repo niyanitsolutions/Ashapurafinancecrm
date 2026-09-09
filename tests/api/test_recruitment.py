@@ -1,12 +1,12 @@
-"""End-to-end tests for Insurance Advisor Recruitment (Phase 1).
+"""End-to-end tests for Insurance Advisor Recruitment.
 
-Covers the recruitment stage machine (Fresh / BOP / Doc Collection / Rejected + the
-Examination / Re-Examination sub-stages), document collection (four required docs,
-cheque printed-name attestation, nominee, photo, all three signature methods),
-examination outcomes (PASS -> Advisor, FAIL/ABSENT -> Re-Examination, remarks required),
-duplicate-transition prevention (a PASS or manual Move to Advisor never mints two
-Advisor records), the tab counts endpoint, and permission gating on
-insurance_management:recruitment.
+Covers the 2026 flat recruitment stage machine (Fresh / BOP / Doc Collection / Exam Fee
+Status / Examination / Re-Examination / Agency Code / Rejected), document collection with
+a backend-enforced completeness gate (Doc Collection cannot be saved / completed until
+every required document is present — brief §3/§14), the Exam Fee Status -> Examination
+step, examination outcomes (PASS -> Advisor, FAIL/ABSENT -> Re-Examination, remarks
+required), duplicate-transition prevention, the tab counts endpoint, the Profession
+dropdown values, and permission gating on insurance_management:recruitment.
 """
 
 import pytest
@@ -51,8 +51,22 @@ async def _to_doc_collection(client, headers, source_id, **overrides):
     assert (await client.post(f"{API}/{lid}/move-to-bop", headers=headers)).status_code == 200
     r = await client.post(f"{API}/{lid}/move-to-doc-collection", headers=headers)
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["stage"] == "doc_collection_examination"
+    assert r.json()["data"]["stage"] == "doc_collection"
     return lid
+
+
+async def _pay_exam_fee(client, headers, lid, **body):
+    r = await client.post(f"{API}/{lid}/exam-fee", json=body, headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["stage"] == "examination"
+    return lid
+
+
+async def _to_examination(client, headers, source_id, **overrides):
+    """Fresh -> BOP -> Doc Collection -> (all docs saved) -> Exam Fee Status -> Examination."""
+    lid = await _to_doc_collection(client, headers, source_id, **overrides)
+    await _collect_full_documents(client, headers, lid)
+    return await _pay_exam_fee(client, headers, lid)
 
 
 async def _upload(client, headers, lid, slot, file_name="file.pdf"):
@@ -78,6 +92,8 @@ async def _collect_full_documents(client, headers, lid, *, bank_proof_type="cheq
     }
     r = await client.put(f"{API}/{lid}/documents", json=body, headers=headers)
     assert r.status_code == 200, r.text
+    # A complete document set completes Doc Collection and advances to Exam Fee Status.
+    assert r.json()["data"]["stage"] == "exam_fee_status"
     return r.json()["data"]
 
 
@@ -99,6 +115,21 @@ async def test_create_requires_other_profession_when_other(client, mock_db, owne
     r = await client.post(API, json=_payload(source_id, profession="other", other_profession="Farmer"), headers=owner_headers)
     assert r.status_code == 200
     assert r.json()["data"]["other_profession"] == "Farmer"
+
+
+async def test_profession_dropdown_values(client, mock_db, owner_headers):
+    """Brief §8-10: Profession is House Wife / Retired / Self Employed / Salaried / Other —
+    a separate concept from the advisor QR/Non-QR channel, stored and echoed verbatim."""
+    source_id = await _source_id(mock_db)
+    for i, profession in enumerate(["house_wife", "retired", "self_employed", "salaried"]):
+        r = await client.post(
+            API, json=_payload(source_id, mobile=f"980000200{i}", profession=profession), headers=owner_headers
+        )
+        assert r.status_code == 200, (profession, r.text)
+        assert r.json()["data"]["profession"] == profession
+    # The Individual/Employee advisor classification is NOT a valid profession.
+    r = await client.post(API, json=_payload(source_id, profession="employee"), headers=owner_headers)
+    assert r.status_code == 422
 
 
 async def test_create_rejects_bad_enums_and_missing_fields(client, mock_db, owner_headers):
@@ -210,20 +241,48 @@ async def test_document_collection_full_roundtrip(client, mock_db, owner_headers
     assert data["documents_ready"] is True
 
 
-async def test_cheque_without_name_confirmation_blocks_pass(client, mock_db, owner_headers):
+async def test_incomplete_documents_block_save(client, mock_db, owner_headers):
+    """Brief §3/§14: the backend must refuse to save/complete Doc Collection until every
+    required document is present — an API client cannot bypass the gate."""
     source_id = await _source_id(mock_db)
     lid = await _to_doc_collection(client, owner_headers, source_id)
-    await _collect_full_documents(client, owner_headers, lid, bank_proof_type="cheque")
-    # Explicitly unset the attestation.
-    await client.put(f"{API}/{lid}/documents", json={"cheque_name_confirmed": False}, headers=owner_headers)
-    r = await client.post(f"{API}/{lid}/examination", json={"result": "pass"}, headers=owner_headers)
+    r = await client.put(
+        f"{API}/{lid}/documents",
+        json={"pan": await _upload(client, owner_headers, lid, "pan", "pan.jpg"), "mobile": "9876543210"},
+        headers=owner_headers,
+    )
     assert r.status_code == 422
+    assert "all required documents" in r.text.lower()
+    # The lead never left Doc Collection.
+    assert (await client.get(f"{API}/{lid}", headers=owner_headers)).json()["data"]["stage"] == "doc_collection"
+
+
+async def test_cheque_without_name_confirmation_blocks_save(client, mock_db, owner_headers):
+    source_id = await _source_id(mock_db)
+    lid = await _to_doc_collection(client, owner_headers, source_id)
+    body = {
+        "pan": await _upload(client, owner_headers, lid, "pan", "pan.jpg"),
+        "aadhaar": await _upload(client, owner_headers, lid, "aadhaar", "aadhaar.jpg"),
+        "bank_proof": await _upload(client, owner_headers, lid, "bank_proof", "cheque.jpg"),
+        "qualification": await _upload(client, owner_headers, lid, "qualification", "degree.pdf"),
+        "photo": await _upload(client, owner_headers, lid, "photo", "photo.jpg"),
+        "bank_proof_type": "cheque",
+        "cheque_name_confirmed": False,
+        "signature": {"method": "type", "value": "Ravi Kumar"},
+    }
+    r = await client.put(f"{API}/{lid}/documents", json=body, headers=owner_headers)
+    assert r.status_code == 422
+    body["cheque_name_confirmed"] = True
+    r = await client.put(f"{API}/{lid}/documents", json=body, headers=owner_headers)
+    assert r.status_code == 200
+    assert r.json()["data"]["stage"] == "exam_fee_status"
 
 
 async def test_passbook_proof_needs_no_cheque_attestation(client, mock_db, owner_headers):
     source_id = await _source_id(mock_db)
     lid = await _to_doc_collection(client, owner_headers, source_id)
     await _collect_full_documents(client, owner_headers, lid, bank_proof_type="passbook")
+    await _pay_exam_fee(client, owner_headers, lid)
     r = await client.post(f"{API}/{lid}/examination", json={"result": "pass"}, headers=owner_headers)
     assert r.status_code == 200
     assert r.json()["data"]["stage"] == "advisor"
@@ -268,10 +327,24 @@ async def test_documents_cannot_be_saved_outside_doc_collection(client, mock_db,
 # ---------------------------------------------------------------- examination
 
 
-async def test_examination_pass_promotes_to_advisor_once(client, mock_db, owner_headers):
+async def test_exam_fee_advances_doc_complete_lead(client, mock_db, owner_headers):
     source_id = await _source_id(mock_db)
     lid = await _to_doc_collection(client, owner_headers, source_id)
     await _collect_full_documents(client, owner_headers, lid)
+    # Guarded before Exam Fee Status.
+    dc = await _to_doc_collection(client, owner_headers, source_id, mobile="9800001111")
+    assert (await client.post(f"{API}/{dc}/exam-fee", json={}, headers=owner_headers)).status_code == 409
+
+    r = await client.post(f"{API}/{lid}/exam-fee", json={"reference": "UTR-77"}, headers=owner_headers)
+    assert r.status_code == 200
+    assert r.json()["data"]["stage"] == "examination"
+    assert r.json()["data"]["exam_fee_paid"] is True
+    assert r.json()["data"]["exam_fee_reference"] == "UTR-77"
+
+
+async def test_examination_pass_promotes_to_advisor_once(client, mock_db, owner_headers):
+    source_id = await _source_id(mock_db)
+    lid = await _to_examination(client, owner_headers, source_id)
 
     r = await client.post(f"{API}/{lid}/examination", json={"result": "pass"}, headers=owner_headers)
     assert r.status_code == 200
@@ -284,38 +357,37 @@ async def test_examination_pass_promotes_to_advisor_once(client, mock_db, owner_
     assert advisor.json()["data"]["advisor_code"].startswith("AFS-ADV-")
 
 
-async def test_pass_blocked_without_complete_documents(client, mock_db, owner_headers):
+async def test_examination_cannot_be_recorded_before_examination_stage(client, mock_db, owner_headers):
     source_id = await _source_id(mock_db)
     lid = await _to_doc_collection(client, owner_headers, source_id)
     r = await client.post(f"{API}/{lid}/examination", json={"result": "pass"}, headers=owner_headers)
-    assert r.status_code == 422
+    assert r.status_code == 409
 
 
 async def test_examination_fail_requires_remarks_and_moves_to_re_examination(client, mock_db, owner_headers):
     source_id = await _source_id(mock_db)
-    lid = await _to_doc_collection(client, owner_headers, source_id)
+    lid = await _to_examination(client, owner_headers, source_id)
     r = await client.post(f"{API}/{lid}/examination", json={"result": "fail"}, headers=owner_headers)
     assert r.status_code == 422
     r = await client.post(f"{API}/{lid}/examination", json={"result": "fail", "remarks": "did not clear"}, headers=owner_headers)
     assert r.status_code == 200
-    assert r.json()["data"]["stage"] == "doc_collection_re_examination"
+    assert r.json()["data"]["stage"] == "re_examination"
     assert r.json()["data"]["examinations"][-1]["remarks"] == "did not clear"
 
 
 async def test_examination_absent_requires_remarks_and_moves_to_re_examination(client, mock_db, owner_headers):
     source_id = await _source_id(mock_db)
-    lid = await _to_doc_collection(client, owner_headers, source_id)
+    lid = await _to_examination(client, owner_headers, source_id)
     r = await client.post(f"{API}/{lid}/examination", json={"result": "absent"}, headers=owner_headers)
     assert r.status_code == 422
     r = await client.post(f"{API}/{lid}/examination", json={"result": "absent", "remarks": "not present"}, headers=owner_headers)
     assert r.status_code == 200
-    assert r.json()["data"]["stage"] == "doc_collection_re_examination"
+    assert r.json()["data"]["stage"] == "re_examination"
 
 
 async def test_re_examination_pass_promotes_to_advisor(client, mock_db, owner_headers):
     source_id = await _source_id(mock_db)
-    lid = await _to_doc_collection(client, owner_headers, source_id)
-    await _collect_full_documents(client, owner_headers, lid)
+    lid = await _to_examination(client, owner_headers, source_id)
     await client.post(f"{API}/{lid}/examination", json={"result": "fail", "remarks": "retry"}, headers=owner_headers)
     r = await client.post(f"{API}/{lid}/examination", json={"result": "pass"}, headers=owner_headers)
     assert r.status_code == 200
@@ -324,10 +396,17 @@ async def test_re_examination_pass_promotes_to_advisor(client, mock_db, owner_he
     assert await mock_db["advisors"].count_documents({"recruitment_lead_id": lid}) == 1
 
 
+async def test_reject_allowed_from_mid_stages(client, mock_db, owner_headers):
+    source_id = await _source_id(mock_db)
+    lid = await _to_examination(client, owner_headers, source_id)
+    r = await client.post(f"{API}/{lid}/reject", json={"reason": "withdrew"}, headers=owner_headers)
+    assert r.status_code == 200
+    assert r.json()["data"]["stage"] == "rejected"
+
+
 async def test_duplicate_pass_and_manual_move_never_duplicate_advisor(client, mock_db, owner_headers):
     source_id = await _source_id(mock_db)
-    lid = await _to_doc_collection(client, owner_headers, source_id)
-    await _collect_full_documents(client, owner_headers, lid)
+    lid = await _to_examination(client, owner_headers, source_id)
     await client.post(f"{API}/{lid}/examination", json={"result": "pass"}, headers=owner_headers)
 
     # Manual move after auto-promotion is a no-op, not a second advisor.
@@ -341,8 +420,7 @@ async def test_duplicate_pass_and_manual_move_never_duplicate_advisor(client, mo
 
 async def test_manual_move_to_advisor_requires_pass(client, mock_db, owner_headers):
     source_id = await _source_id(mock_db)
-    lid = await _to_doc_collection(client, owner_headers, source_id)
-    await _collect_full_documents(client, owner_headers, lid)
+    lid = await _to_examination(client, owner_headers, source_id)
     r = await client.post(f"{API}/{lid}/move-to-advisor", headers=owner_headers)
     assert r.status_code == 409
     await client.post(f"{API}/{lid}/examination", json={"result": "pass"}, headers=owner_headers)
@@ -359,21 +437,24 @@ async def test_counts_reflect_stage_distribution(client, mock_db, owner_headers)
     await _create(client, owner_headers, source_id, mobile="9800000001")
     bop = await _create(client, owner_headers, source_id, mobile="9800000002")
     await client.post(f"{API}/{bop['id']}/move-to-bop", headers=owner_headers)
-    dc = await _to_doc_collection(client, owner_headers, source_id, mobile="9800000003")
-    await client.post(f"{API}/{dc}/examination", json={"result": "fail", "remarks": "x"}, headers=owner_headers)
+    await _to_doc_collection(client, owner_headers, source_id, mobile="9800000003")
+    fee = await _to_doc_collection(client, owner_headers, source_id, mobile="9800000004")
+    await _collect_full_documents(client, owner_headers, fee)  # -> exam_fee_status
+    reexam = await _to_examination(client, owner_headers, source_id, mobile="9800000005")
+    await client.post(f"{API}/{reexam}/examination", json={"result": "fail", "remarks": "x"}, headers=owner_headers)
 
     counts = (await client.get(f"{API}/counts", headers=owner_headers)).json()["data"]
     assert counts["fresh"] == 1
     assert counts["bop"] == 1
     assert counts["doc_collection"] == 1
-    assert counts["re_examination"] == 1
+    assert counts["exam_fee_status"] == 1
     assert counts["examination"] == 0
+    assert counts["re_examination"] == 1
 
 
 async def test_agency_code_tab_lists_promoted_candidates(client, mock_db, owner_headers):
     source_id = await _source_id(mock_db)
-    lid = await _to_doc_collection(client, owner_headers, source_id)
-    await _collect_full_documents(client, owner_headers, lid)
+    lid = await _to_examination(client, owner_headers, source_id)
     await client.post(f"{API}/{lid}/examination", json={"result": "pass"}, headers=owner_headers)
 
     listed = await client.get(f"{API}?stage=agency_code", headers=owner_headers)
