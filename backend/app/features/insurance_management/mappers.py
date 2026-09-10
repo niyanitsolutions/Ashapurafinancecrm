@@ -4,6 +4,7 @@ from app.features.customer.mappers import document_to_response
 from app.features.customer.models import ApplicationDocument
 from app.features.insurance_management.models import InsuranceCaseAdditionalDocument
 from app.features.insurance_management.schemas import (
+    InsuranceApplicantDetailsResponse,
     InsuranceCaseDetailResponse,
     InsuranceCaseDetailsResponse,
     InsuranceCaseDocumentResponse,
@@ -34,15 +35,26 @@ def to_list_item(case: ApplicationWorkflow, customer_name: str | None, product_n
     )
 
 
+_APPLICANT_FIELDS = set(InsuranceApplicantDetailsResponse.model_fields)
+
+
+def _applicant_response(form_data: dict[str, Any] | None) -> InsuranceApplicantDetailsResponse:
+    data = {k: v for k, v in (form_data or {}).items() if k in _APPLICANT_FIELDS}
+    return InsuranceApplicantDetailsResponse.model_validate(data)
+
+
 def to_detail_response(
     case: ApplicationWorkflow, customer_name: str | None, product_name: str, assigned_to_name: str | None,
-    documents_summary: dict[str, Any],
+    documents_summary: dict[str, Any], applicant_form_data: dict[str, Any] | None = None,
 ) -> InsuranceCaseDetailResponse:
     return InsuranceCaseDetailResponse(
         **to_list_item(case, customer_name, product_name, assigned_to_name).model_dump(),
         insurance_details=_details_response(case),
         required_documents=RequiredDocumentsSummaryResponse(**documents_summary),
         updated_at=case.updated_at,
+        on_hold_reason=case.on_hold_reason,
+        on_hold_other_reason=case.on_hold_other_reason,
+        applicant=_applicant_response(applicant_form_data),
     )
 
 
@@ -62,6 +74,7 @@ def other_document_to_response(
         verification_status=doc.verification_status, rejection_reason=doc.rejection_reason, file_name=doc.file_name,
         download_url=download_url, attachment_url=attachment_url, uploaded_at=doc.uploaded_at,
         verified_at=doc.verified_at, created_at=doc.created_at,
+        is_current=doc.is_current, doc_version=doc.doc_version,
     )
 
 

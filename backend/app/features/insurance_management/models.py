@@ -35,3 +35,13 @@ class InsuranceCaseAdditionalDocument(BaseDocument):
 
     verified_by: str | None = None
     verified_at: datetime | None = None
+
+    # Re-upload/versioning — mirrors `ApplicationDocument`'s supersede model so a replaced
+    # file is never overwritten or deleted, only marked historical. A re-upload inserts a
+    # NEW row (`replaces_document_id` -> the old one, `doc_version` incremented) and flips
+    # the previous row's `is_current` to False. `find_for_case` returns only current rows;
+    # the history endpoint returns every version. Defaults reproduce prior behaviour for
+    # rows written before this existed — no migration needed.
+    is_current: bool = True
+    doc_version: int = 1
+    replaces_document_id: str | None = None

@@ -18,12 +18,18 @@ from app.shared.audit_log import write_audit_log
 from app.utils.datetime import utc_now
 
 
-async def put_on_hold(engine: WorkflowEngine, case: ApplicationWorkflow, reason: str, actor: User, *, remarks: str | None = None) -> ApplicationWorkflow:
+async def put_on_hold(
+    engine: WorkflowEngine, case: ApplicationWorkflow, reason: str, actor: User, *,
+    remarks: str | None = None, other_reason: str | None = None,
+) -> ApplicationWorkflow:
     if case.current_status == ON_HOLD_STATUS:
         raise ConflictError("This case is already on hold.")
     return await engine.transition(
         case, ON_HOLD_STATUS, actor,
-        updates={"on_hold_previous_status": case.current_status, "on_hold_reason": reason, "on_hold_since": utc_now()},
+        updates={
+            "on_hold_previous_status": case.current_status, "on_hold_reason": reason,
+            "on_hold_other_reason": other_reason, "on_hold_since": utc_now(),
+        },
         remarks=remarks,
     )
 
@@ -36,7 +42,10 @@ async def resume_case(engine: WorkflowEngine, case: ApplicationWorkflow, actor: 
         raise ValidationError("No previous status was recorded to resume into.")
     resumed = await engine.transition(
         case, previous_status, actor,
-        updates={"on_hold_previous_status": None, "on_hold_reason": None, "on_hold_since": None},
+        updates={
+            "on_hold_previous_status": None, "on_hold_reason": None,
+            "on_hold_other_reason": None, "on_hold_since": None,
+        },
     )
     await write_audit_log(
         engine.db, event_type=WorkflowAuditEvent.CASE_RESUMED, user_id=actor.require_id(),

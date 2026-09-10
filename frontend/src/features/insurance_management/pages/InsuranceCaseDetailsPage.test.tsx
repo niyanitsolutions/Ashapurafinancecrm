@@ -10,6 +10,8 @@ const listInsuranceCaseDocuments = vi.fn();
 const rejectInsuranceCase = vi.fn();
 const moveToPolicyLogin = vi.fn();
 const moveInsuranceCaseToStage = vi.fn();
+const assignInsuranceCase = vi.fn();
+const holdInsuranceCase = vi.fn();
 
 vi.mock("@/features/insurance_management/api", async () => {
   const actual = await vi.importActual<typeof import("@/features/insurance_management/api")>("@/features/insurance_management/api");
@@ -22,7 +24,15 @@ vi.mock("@/features/insurance_management/api", async () => {
     rejectInsuranceCase: (...a: unknown[]) => rejectInsuranceCase(...(a as [])),
     moveToPolicyLogin: (...a: unknown[]) => moveToPolicyLogin(...(a as [])),
     moveInsuranceCaseToStage: (...a: unknown[]) => moveInsuranceCaseToStage(...(a as [])),
+    assignInsuranceCase: (...a: unknown[]) => assignInsuranceCase(...(a as [])),
+    holdInsuranceCase: (...a: unknown[]) => holdInsuranceCase(...(a as [])),
   };
+});
+
+const listAdvisors = vi.fn();
+vi.mock("@/features/recruitment/api", async () => {
+  const actual = await vi.importActual<typeof import("@/features/recruitment/api")>("@/features/recruitment/api");
+  return { ...actual, listAdvisors: (...a: unknown[]) => listAdvisors(...(a as [])) };
 });
 
 const uploadApplicationDocument = vi.fn();
@@ -67,6 +77,13 @@ const baseCase: InsuranceCaseDetail = {
     re_eligibility_auto_transitioned: false,
   },
   required_documents: { required_total: 1, verified_total: 0, all_required_verified: false },
+  on_hold_reason: null,
+  on_hold_other_reason: null,
+  applicant: {
+    age: null, profession: null, annual_income: null, alternate_mobile: null, height: null, weight: null,
+    mother_name: null, father_name: null, education: null, company_name: null, designation: null,
+    nominee_name: null, nominee_dob: null, nominee_relationship: null, remarks: null,
+  },
 };
 
 const pendingDoc: InsuranceCaseDocument = {
@@ -107,6 +124,78 @@ describe("InsuranceCaseDetailsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     listInsuranceCaseDocuments.mockResolvedValue([pendingDoc]);
+    listAdvisors.mockResolvedValue({
+      data: [
+        { id: "adv-1", full_name: "Ravi Kumar", channel: "qr", status: "active" },
+        { id: "adv-2", full_name: "Suresh", channel: "non_qr", status: "active" },
+      ],
+      pagination: null,
+    });
+  });
+
+  it("assigns the case to an ACTIVE advisor (QR / Non QR shown), never a bare employee list", async () => {
+    getInsuranceCase.mockResolvedValue(baseCase);
+    assignInsuranceCase.mockResolvedValue(baseCase);
+    renderPage();
+
+    const select = await screen.findByLabelText("Advisor");
+    await waitFor(() => expect(listAdvisors).toHaveBeenCalledWith(expect.objectContaining({ status: "active" })));
+    const labels = Array.from(select.querySelectorAll("option")).map((o) => o.textContent);
+    expect(labels).toEqual(expect.arrayContaining(["Ravi Kumar — QR", "Suresh — Non QR"]));
+
+    await userEvent.setup().selectOptions(select, "adv-1");
+    await userEvent.setup().click(screen.getByRole("button", { name: "Assign" }));
+    await waitFor(() => expect(assignInsuranceCase).toHaveBeenCalledWith("c1", "adv-1"));
+  });
+
+  it("hold form uses the insurance reasons and requires 'Other Hold Reason' when Other is picked", async () => {
+    getInsuranceCase.mockResolvedValue(baseCase);
+    holdInsuranceCase.mockResolvedValue(baseCase);
+    const user = userEvent.setup();
+    renderPage();
+
+    const reason = await screen.findByLabelText("Hold Reason");
+    const options = Array.from(reason.querySelectorAll("option")).map((o) => o.textContent);
+    expect(options).toEqual(["Underwriting Issues", "Medical Pending", "Document Not Clear", "Payment Pending", "Document Pending", "Other"]);
+
+    await user.selectOptions(reason, "other");
+    const placeOnHold = screen.getByRole("button", { name: "Place On Hold" });
+    expect(placeOnHold).toBeDisabled();
+
+    await user.type(screen.getByLabelText("Other Hold Reason"), "Customer requested callback tomorrow");
+    expect(placeOnHold).toBeEnabled();
+    await user.click(placeOnHold);
+    await waitFor(() =>
+      expect(holdInsuranceCase).toHaveBeenCalledWith("c1", {
+        reason: "other",
+        other_reason: "Customer requested callback tomorrow",
+        remarks: undefined,
+      }),
+    );
+  });
+
+  it("shows the hold reason (incl. the Other free text) while a case is on hold", async () => {
+    getInsuranceCase.mockResolvedValue({
+      ...baseCase,
+      current_status: "on_hold",
+      on_hold_reason: "other",
+      on_hold_other_reason: "Customer requested callback tomorrow",
+    });
+    renderPage();
+    expect(await screen.findByText(/Other — Customer requested callback tomorrow/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Resume" })).toBeInTheDocument();
+  });
+
+  it("renders the extended applicant details, dashes for missing values", async () => {
+    getInsuranceCase.mockResolvedValue({
+      ...baseCase,
+      applicant: { ...baseCase.applicant, height: 172, mother_name: "Lakshmi", nominee_name: "Priya Kumar" },
+    });
+    renderPage();
+    await screen.findByText("Applicant Details");
+    expect(screen.getByText("172")).toBeInTheDocument();
+    expect(screen.getByText("Lakshmi")).toBeInTheDocument();
+    expect(screen.getByText("Priya Kumar")).toBeInTheDocument();
   });
 
   it("keeps Move to Policy Login disabled until every required document is verified", async () => {

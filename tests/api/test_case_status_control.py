@@ -206,17 +206,45 @@ async def _loan_case(client, mock_db, owner_headers, master_data, *, mobile_suff
 
 
 async def _insurance_case(client, mock_db, owner_headers, master_data, *, mobile_suffix):
+    """Policy Leads are assigned to Advisors now (not staff users), so an Employee's
+    insurance visibility is by authorship: this helper has the employee create the lead
+    via "+ Add Insurance Lead" so they own it. The customer registered by
+    `_submitted_application` is reused (same mobile) so the portal `mine` view still works.
+    """
+    from bson import ObjectId
+
+    from app.features.system_settings.models import InsuranceCategory
+
     await _seed_workflow_definitions(mock_db)
     product = await _seed_product_and_form(mock_db, category="insurance", product_name=f"Insurance {mobile_suffix}")
-    customer_headers, application_id = await _submitted_application(client, mock_db, product, mobile=f"96{mobile_suffix}")
-    r = await client.get("/api/v1/insurance-cases?unassigned_only=true", headers=owner_headers)
-    case_id = next(c["id"] for c in r.json()["data"] if c["application_id"] == application_id)
+    cat_id = str(
+        (await mock_db["insurance_categories"].insert_one(
+            InsuranceCategory(name=f"Cat {mobile_suffix}").model_dump(by_alias=True, exclude={"id"})
+        )).inserted_id
+    )
+    await mock_db["insurance_products"].update_one(
+        {"_id": ObjectId(product["product_id"])}, {"$set": {"category_id": cat_id}}
+    )
+    await mock_db["application_form_definitions"].update_one(
+        {"product_id": product["product_id"]}, {"$set": {"insurance_category_id": cat_id}}
+    )
+    customer_headers, _portal_application_id = await _submitted_application(client, mock_db, product, mobile=f"96{mobile_suffix}")
+
     employee = await _create_employee(client, owner_headers, master_data, mobile=f"97{mobile_suffix}", email=f"ins{mobile_suffix}@example.com")
     await _grant_case_permission(client, owner_headers, employee["id"], module="insurance_management", actions=["view", "edit", "approve", "assign"])
-    r = await client.post(f"/api/v1/insurance-cases/{case_id}/assign", json={"employee_id": employee["id"]}, headers=owner_headers)
-    assert r.status_code == 200, r.text
     employee_headers = await _login(client, f"97{mobile_suffix}")
-    return case_id, employee_headers, customer_headers, application_id
+
+    r = await client.post(
+        "/api/v1/insurance-cases/manual",
+        json={
+            "full_name": "Portal Reuse", "mobile": f"96{mobile_suffix}", "age": 30,
+            "insurance_category_id": cat_id, "product_id": product["product_id"], "stage": "fresh_lead",
+        },
+        headers=employee_headers,
+    )
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    return data["id"], employee_headers, customer_headers, data["application_id"]
 
 
 # ---------------------------------------------------------------------- 1/3: valid update persists (Loan/Insurance)

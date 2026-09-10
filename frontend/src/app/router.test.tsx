@@ -76,7 +76,7 @@ describe("router — Loan/Insurance Management tab routes stay keyed", () => {
   it("every /insurance-management tab route's element has a distinct, non-empty key", () => {
     const insuranceManagement = findRouteByPath(router.routes as RouteLike[], "/insurance-management");
     expect(insuranceManagement).toBeTruthy();
-    const tabPaths = ["fresh-leads", "policy-document", "policy-login", "policy-issued", "re-eligible", "rejected"];
+    const tabPaths = ["fresh-leads", "policy-document", "policy-login", "policy-issued", "re-eligible", "rejected", "on-hold"];
     const keys = tabPaths.map((path) => {
       const route = findRoute(insuranceManagement?.children, path);
       expect(route, `route for path "${path}" should exist`).toBeTruthy();

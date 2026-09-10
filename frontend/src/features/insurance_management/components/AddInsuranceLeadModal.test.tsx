@@ -107,4 +107,42 @@ describe("AddInsuranceLeadModal", () => {
       insurance_category_id: "cat-1", product_id: "prod-1", stage: "fresh_lead",
     });
   });
+
+  it("collects and submits the extended applicant fields (contact / personal / employment / nominee)", async () => {
+    const user = userEvent.setup();
+    createManualInsuranceCase.mockResolvedValue({ id: "c1" });
+    renderModal();
+    await fillCustomer(user);
+    await user.type(screen.getByLabelText("Alternate Mobile (optional)"), "9123456780");
+    await user.type(screen.getByLabelText("Education (optional)"), "B.Tech");
+    await user.type(screen.getByLabelText("Height cm (optional)"), "172");
+    await user.type(screen.getByLabelText("Weight kg (optional)"), "72");
+    await user.type(screen.getByLabelText("Mother's Name (optional)"), "Lakshmi");
+    await user.type(screen.getByLabelText("Father's Name (optional)"), "Ramesh");
+    await user.type(screen.getByLabelText("Company Name (optional)"), "ABC Pvt Ltd");
+    await user.type(screen.getByLabelText("Designation (optional)"), "Manager");
+    await user.type(screen.getByLabelText("Nominee Name (optional)"), "Priya Kumar");
+    await user.type(screen.getByLabelText("Relationship with Nominee (optional)"), "Wife");
+    await user.selectOptions(screen.getByLabelText("Insurance Category"), "cat-1");
+    await user.selectOptions(await screen.findByLabelText("Insurance Product"), "prod-1");
+    await user.click(screen.getByRole("button", { name: "Create Insurance Lead" }));
+
+    await waitFor(() => expect(createManualInsuranceCase).toHaveBeenCalled());
+    expect(createManualInsuranceCase.mock.calls[0][0]).toMatchObject({
+      alternate_mobile: "9123456780", education: "B.Tech", height: 172, weight: 72,
+      mother_name: "Lakshmi", father_name: "Ramesh", company_name: "ABC Pvt Ltd", designation: "Manager",
+      nominee_name: "Priya Kumar", nominee_relationship: "Wife",
+    });
+  });
+
+  it("blocks submit when the optional Alternate Mobile is present but invalid", async () => {
+    const user = userEvent.setup();
+    renderModal();
+    await fillCustomer(user);
+    await user.selectOptions(screen.getByLabelText("Insurance Category"), "cat-1");
+    await user.selectOptions(await screen.findByLabelText("Insurance Product"), "prod-1");
+    await user.type(screen.getByLabelText("Alternate Mobile (optional)"), "12345");
+    expect(screen.getByText("Enter a valid 10-digit mobile number.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create Insurance Lead" })).toBeDisabled();
+  });
 });

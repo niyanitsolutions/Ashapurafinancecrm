@@ -36,11 +36,22 @@ export function AddInsuranceLeadModal({
 
   const [fullName, setFullName] = useState("");
   const [mobile, setMobile] = useState("");
+  const [alternateMobile, setAlternateMobile] = useState("");
   const [email, setEmail] = useState("");
   const [gender, setGender] = useState("");
   const [age, setAge] = useState("");
   const [profession, setProfession] = useState("");
+  const [education, setEducation] = useState("");
+  const [height, setHeight] = useState("");
+  const [weight, setWeight] = useState("");
+  const [motherName, setMotherName] = useState("");
+  const [fatherName, setFatherName] = useState("");
+  const [companyName, setCompanyName] = useState("");
+  const [designation, setDesignation] = useState("");
   const [annualIncome, setAnnualIncome] = useState("");
+  const [nomineeName, setNomineeName] = useState("");
+  const [nomineeDob, setNomineeDob] = useState("");
+  const [nomineeRelationship, setNomineeRelationship] = useState("");
   const [remarks, setRemarks] = useState("");
   const [stage, setStage] = useState("fresh_lead");
   const [reason, setReason] = useState("");
@@ -71,9 +82,12 @@ export function AddInsuranceLeadModal({
   const today = todayISTDateString();
   const customDateInvalid = reChoice === "custom" && Boolean(customDate) && customDate <= today;
 
+  const alternateMobileInvalid = alternateMobile.trim().length > 0 && !/^[6-9]\d{9}$/.test(alternateMobile.trim());
+
   const canSubmit =
     fullName.trim().length > 0 &&
     /^[6-9]\d{9}$/.test(mobile) &&
+    !alternateMobileInvalid &&
     Boolean(categoryId) &&
     Boolean(productId) &&
     Boolean(age) &&
@@ -84,15 +98,28 @@ export function AddInsuranceLeadModal({
     setSubmitting(true);
     setError(null);
     try {
+      const trimmed = (v: string) => v.trim() || undefined;
+      const num = (v: string) => (v ? Number(v) : undefined);
       const created = await createManualInsuranceCase({
         full_name: fullName.trim(),
         mobile,
-        email: email.trim() || undefined,
+        alternate_mobile: trimmed(alternateMobile),
+        email: trimmed(email),
         gender: gender || undefined,
-        age: age ? Number(age) : undefined,
-        profession: profession.trim() || undefined,
-        annual_income: annualIncome ? Number(annualIncome) : undefined,
-        remarks: remarks.trim() || undefined,
+        age: num(age),
+        profession: trimmed(profession),
+        education: trimmed(education),
+        height: num(height),
+        weight: num(weight),
+        mother_name: trimmed(motherName),
+        father_name: trimmed(fatherName),
+        company_name: trimmed(companyName),
+        designation: trimmed(designation),
+        annual_income: num(annualIncome),
+        nominee_name: trimmed(nomineeName),
+        nominee_dob: nomineeDob || undefined,
+        nominee_relationship: trimmed(nomineeRelationship),
+        remarks: trimmed(remarks),
         insurance_category_id: categoryId,
         product_id: productId,
         stage,
@@ -123,6 +150,16 @@ export function AddInsuranceLeadModal({
         <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
           <FormField label="Name" name="full_name" required value={fullName} onChange={(e) => setFullName(e.target.value)} />
           <FormField label="Mobile" name="mobile" required maxLength={10} value={mobile} onChange={(e) => setMobile(e.target.value)} />
+          <div>
+            <FormField
+              label="Alternate Mobile (optional)"
+              name="alternate_mobile"
+              maxLength={10}
+              value={alternateMobile}
+              onChange={(e) => setAlternateMobile(e.target.value)}
+            />
+            {alternateMobileInvalid && <p className="-mt-3 text-xs text-danger">Enter a valid 10-digit mobile number.</p>}
+          </div>
           <FormField label="Email (optional)" name="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
           <SelectField
             label="Gender"
@@ -137,8 +174,35 @@ export function AddInsuranceLeadModal({
             ]}
           />
           <FormField label="Age" name="age" required type="number" min={18} max={120} value={age} onChange={(e) => setAge(e.target.value)} />
+        </div>
+
+        <h3 className="pt-2 text-xs font-semibold uppercase tracking-wide text-text/50">Personal Details</h3>
+        <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
           <FormField label="Profession (optional)" name="profession" value={profession} onChange={(e) => setProfession(e.target.value)} />
+          <FormField label="Education (optional)" name="education" value={education} onChange={(e) => setEducation(e.target.value)} />
+          <FormField label="Height cm (optional)" name="height" type="number" min={0} value={height} onChange={(e) => setHeight(e.target.value)} />
+          <FormField label="Weight kg (optional)" name="weight" type="number" min={0} value={weight} onChange={(e) => setWeight(e.target.value)} />
+          <FormField label="Mother's Name (optional)" name="mother_name" value={motherName} onChange={(e) => setMotherName(e.target.value)} />
+          <FormField label="Father's Name (optional)" name="father_name" value={fatherName} onChange={(e) => setFatherName(e.target.value)} />
+        </div>
+
+        <h3 className="pt-2 text-xs font-semibold uppercase tracking-wide text-text/50">Employment Details</h3>
+        <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
+          <FormField label="Company Name (optional)" name="company_name" value={companyName} onChange={(e) => setCompanyName(e.target.value)} />
+          <FormField label="Designation (optional)" name="designation" value={designation} onChange={(e) => setDesignation(e.target.value)} />
           <FormField label="Annual Income (optional)" name="annual_income" type="number" min={0} value={annualIncome} onChange={(e) => setAnnualIncome(e.target.value)} />
+        </div>
+
+        <h3 className="pt-2 text-xs font-semibold uppercase tracking-wide text-text/50">Nominee Details</h3>
+        <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
+          <FormField label="Nominee Name (optional)" name="nominee_name" value={nomineeName} onChange={(e) => setNomineeName(e.target.value)} />
+          <FormField label="Nominee DOB (optional)" name="nominee_dob" type="date" value={nomineeDob} onChange={(e) => setNomineeDob(e.target.value)} />
+          <FormField
+            label="Relationship with Nominee (optional)"
+            name="nominee_relationship"
+            value={nomineeRelationship}
+            onChange={(e) => setNomineeRelationship(e.target.value)}
+          />
         </div>
 
         <h3 className="pt-2 text-xs font-semibold uppercase tracking-wide text-text/50">Insurance Details</h3>

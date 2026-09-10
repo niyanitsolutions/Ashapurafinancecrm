@@ -53,10 +53,31 @@ export interface InsuranceCaseListItem {
   created_at: string;
 }
 
+export interface InsuranceApplicantDetails {
+  age: number | null;
+  profession: string | null;
+  annual_income: number | null;
+  alternate_mobile: string | null;
+  height: number | null;
+  weight: number | null;
+  mother_name: string | null;
+  father_name: string | null;
+  education: string | null;
+  company_name: string | null;
+  designation: string | null;
+  nominee_name: string | null;
+  nominee_dob: string | null;
+  nominee_relationship: string | null;
+  remarks: string | null;
+}
+
 export interface InsuranceCaseDetail extends InsuranceCaseListItem {
   insurance_details: InsuranceCaseDetails;
   required_documents: RequiredDocumentsSummary;
   updated_at: string;
+  on_hold_reason: string | null;
+  on_hold_other_reason: string | null;
+  applicant: InsuranceApplicantDetails;
 }
 
 // The schema documents on a case's application — `is_in_schema` is false for a document
@@ -78,6 +99,8 @@ export interface OtherDocument {
   uploaded_at: string | null;
   verified_at: string | null;
   created_at: string;
+  is_current: boolean;
+  doc_version: number;
 }
 
 export interface CaseTimelineEntry {
@@ -107,6 +130,22 @@ export async function listInsuranceCases(params: {
   return { data: envelope.data ?? [], pagination: envelope.meta?.pagination ?? null };
 }
 
+export interface InsuranceCaseCounts {
+  fresh_lead: number;
+  policy_document: number;
+  policy_login: number;
+  policy_issued: number;
+  re_eligible: number;
+  on_hold: number;
+  rejected: number;
+}
+
+// Server-computed Policy Leads tab badge counts — scoped exactly like the list endpoint,
+// never derived from the currently-loaded page.
+export function getInsuranceCaseCounts() {
+  return apiRequest<InsuranceCaseCounts>("/insurance-cases/counts");
+}
+
 export function getInsuranceCase(caseId: string) {
   return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}`);
 }
@@ -119,12 +158,14 @@ export function addInsuranceCaseNote(caseId: string, text: string) {
   return apiRequest<{ id: string }>(`/insurance-cases/${caseId}/notes`, { method: "POST", body: JSON.stringify({ text }) });
 }
 
-export function assignInsuranceCase(caseId: string, employeeId: string) {
-  return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/assign`, { method: "POST", body: JSON.stringify({ employee_id: employeeId }) });
+// Policy Leads are assigned to Advisors (the `advisors` master), not staff users. The
+// backend re-validates that the advisor exists AND is Active.
+export function assignInsuranceCase(caseId: string, advisorId: string) {
+  return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/assign`, { method: "POST", body: JSON.stringify({ advisor_id: advisorId }) });
 }
 
-export function holdInsuranceCase(caseId: string, reason: string, remarks?: string) {
-  return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/hold`, { method: "POST", body: JSON.stringify({ reason, remarks }) });
+export function holdInsuranceCase(caseId: string, payload: { reason: string; other_reason?: string; remarks?: string }) {
+  return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/hold`, { method: "POST", body: JSON.stringify(payload) });
 }
 
 export function resumeInsuranceCase(caseId: string) {
@@ -212,6 +253,18 @@ export interface CreateManualInsuranceCasePayload {
   reason?: string;
   re_eligibility?: InsuranceReEligibilityChoice;
   re_eligible_date?: string;
+  // Extended applicant profile — all optional, persisted into the application form data.
+  alternate_mobile?: string;
+  height?: number;
+  weight?: number;
+  mother_name?: string;
+  father_name?: string;
+  education?: string;
+  company_name?: string;
+  designation?: string;
+  nominee_name?: string;
+  nominee_dob?: string;
+  nominee_relationship?: string;
 }
 
 export function createManualInsuranceCase(payload: CreateManualInsuranceCasePayload) {
@@ -279,6 +332,25 @@ export function verifyOtherDocument(caseId: string, docId: string) {
 
 export function rejectOtherDocument(caseId: string, docId: string, reason: string) {
   return apiRequest<OtherDocument>(`/insurance-cases/${caseId}/other-documents/${docId}/reject`, { method: "POST", body: JSON.stringify({ reason }) });
+}
+
+export function getOtherDocumentHistory(caseId: string, docId: string) {
+  return apiRequest<OtherDocument[]>(`/insurance-cases/${caseId}/other-documents/${docId}/history`);
+}
+
+// Staff upload / re-upload against an Other Document. A re-upload after a rejection keeps
+// the old version in history (backend supersede) and makes the new file the current,
+// pending-review one.
+export async function uploadOtherDocument(caseId: string, docId: string, file: File): Promise<OtherDocument> {
+  const { upload_url } = await apiRequest<{ upload_url: string; s3_key: string }>(
+    `/insurance-cases/${caseId}/other-documents/${docId}/upload-url`,
+    { method: "POST", body: JSON.stringify({ file_name: file.name, content_type: file.type || undefined }) },
+  );
+  await putOtherDocumentToStorage(upload_url, file);
+  return apiRequest<OtherDocument>(`/insurance-cases/${caseId}/other-documents/${docId}/confirm`, {
+    method: "POST",
+    body: JSON.stringify({ file_name: file.name, content_type: file.type || undefined }),
+  });
 }
 
 export function listOwnOtherDocuments(caseId: string) {

@@ -25,9 +25,12 @@ from app.features.insurance_management.dependencies import (
 )
 from app.features.insurance_management.schemas import (
     AddOtherDocumentRequest,
+    AssignInsuranceCaseRequest,
     ChangeProductRequest,
     ConfirmOtherDocumentRequest,
     CreateManualInsuranceCaseRequest,
+    HoldInsuranceCaseRequest,
+    InsuranceCaseCountsResponse,
     InsuranceCaseDetailResponse,
     InsuranceCaseDocumentResponse,
     InsuranceCaseListItem,
@@ -47,10 +50,8 @@ from app.features.insurance_management.schemas import (
 from app.features.insurance_management.service import InsuranceCaseService
 from app.features.workflow_engine.schemas import (
     AddCaseNoteRequest,
-    AssignCaseRequest,
     CaseNoteResponse,
     CaseTimelineEntryResponse,
-    HoldCaseRequest,
 )
 
 router = APIRouter(prefix="/insurance-cases", tags=["insurance-management"])
@@ -68,12 +69,13 @@ def _perm(action: str) -> Any:
 
 async def _detail(service: InsuranceCaseService, case_id: str, actor: User, *, own: bool = False) -> ApiResponse[InsuranceCaseDetailResponse]:
     case = await (service.get_own_case(case_id, actor) if own else service.get_case(case_id, actor))
-    customer_map, product_map, employee_map = await service.resolve_names([case])
+    customer_map, product_map, assignee_map = await service.resolve_names([case])
     summary = await service.required_documents_summary(case)
+    applicant = await service.applicant_details(case)
     return ApiResponse[InsuranceCaseDetailResponse].ok(
         mappers.to_detail_response(
             case, customer_map.get(case.customer_id), product_map.get(case.product_id, ""),
-            employee_map.get(case.assigned_to or ""), summary,
+            assignee_map.get(case.assigned_to or ""), summary, applicant,
         )
     )
 
@@ -149,6 +151,12 @@ async def create_manual_case(
     return await _detail(service, case.require_id(), actor)
 
 
+# Registered before "/{case_id}" so "counts" is never captured as a case id.
+@router.get("/counts")
+async def get_counts(service: ServiceDep, actor: Annotated[User, _perm("view")]) -> ApiResponse[InsuranceCaseCountsResponse]:
+    return ApiResponse[InsuranceCaseCountsResponse].ok(InsuranceCaseCountsResponse(**await service.get_counts(actor)))
+
+
 # "Add Insurance Lead" form pickers — staff-facing (the Customer Portal's own
 # /customer/portal-* category/product reads are Customer-only). Registered before
 # "/{case_id}" so "lookup" is never captured as a case id.
@@ -187,9 +195,9 @@ async def add_note(case_id: str, payload: AddCaseNoteRequest, service: ServiceDe
 
 @router.post("/{case_id}/assign")
 async def assign_case(
-    case_id: str, payload: AssignCaseRequest, service: ServiceDep, actor: Annotated[User, _perm("assign")]
+    case_id: str, payload: AssignInsuranceCaseRequest, service: ServiceDep, actor: Annotated[User, _perm("assign")]
 ) -> ApiResponse[InsuranceCaseDetailResponse]:
-    await service.assign_case(case_id, payload.employee_id, actor)
+    await service.assign_case(case_id, payload.advisor_id, actor)
     return await _detail(service, case_id, actor)
 
 
@@ -202,8 +210,10 @@ async def update_status(
 
 
 @router.post("/{case_id}/hold")
-async def hold_case(case_id: str, payload: HoldCaseRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]) -> ApiResponse[InsuranceCaseDetailResponse]:
-    await service.hold_case(case_id, payload.reason, actor, remarks=payload.remarks)
+async def hold_case(
+    case_id: str, payload: HoldInsuranceCaseRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[InsuranceCaseDetailResponse]:
+    await service.hold_case(case_id, payload.reason, actor, other_reason=payload.other_reason, remarks=payload.remarks)
     return await _detail(service, case_id, actor)
 
 
@@ -384,6 +394,37 @@ async def add_other_document(
 ) -> ApiResponse[OtherDocumentResponse]:
     doc = await service.add_other_document(case_id, payload.name, actor)
     return ApiResponse[OtherDocumentResponse].ok(mappers.other_document_to_response(doc))
+
+
+@router.post("/{case_id}/other-documents/{doc_id}/upload-url")
+async def staff_mint_other_document_upload_url(
+    case_id: str, doc_id: str, payload: OtherDocumentUploadUrlRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[OtherDocumentUploadUrlResponse]:
+    upload_url, s3_key = await service.staff_mint_other_document_upload_url(case_id, doc_id, payload, actor)
+    return ApiResponse[OtherDocumentUploadUrlResponse].ok(OtherDocumentUploadUrlResponse(upload_url=upload_url, s3_key=s3_key))
+
+
+@router.post("/{case_id}/other-documents/{doc_id}/confirm")
+async def staff_confirm_other_document_upload(
+    case_id: str, doc_id: str, payload: ConfirmOtherDocumentRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[OtherDocumentResponse]:
+    doc = await service.staff_confirm_other_document_upload(case_id, doc_id, payload, actor)
+    return ApiResponse[OtherDocumentResponse].ok(
+        mappers.other_document_to_response(doc, service.other_document_download_url(doc), service.other_document_attachment_url(doc))
+    )
+
+
+@router.get("/{case_id}/other-documents/{doc_id}/history")
+async def other_document_history(
+    case_id: str, doc_id: str, service: ServiceDep, actor: Annotated[User, _perm("view")]
+) -> ApiResponse[list[OtherDocumentResponse]]:
+    docs = await service.other_document_history(case_id, doc_id, actor)
+    return ApiResponse[list[OtherDocumentResponse]].ok(
+        [
+            mappers.other_document_to_response(d, service.other_document_download_url(d), service.other_document_attachment_url(d))
+            for d in docs
+        ]
+    )
 
 
 @router.post("/{case_id}/other-documents/{doc_id}/verify")

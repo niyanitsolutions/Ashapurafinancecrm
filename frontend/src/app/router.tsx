@@ -295,6 +295,7 @@ export const router = createBrowserRouter([
               { path: "policy-issued", element: <InsuranceCaseListPage key="policy_issued" fixedStatus="policy_issued" /> },
               { path: "re-eligible", element: <InsuranceCaseListPage key="re_eligible" fixedStatus="re_eligible" /> },
               { path: "rejected", element: <InsuranceCaseListPage key="rejected" fixedStatus="rejected" /> },
+              { path: "on-hold", element: <InsuranceCaseListPage key="on_hold" fixedStatus="on_hold" /> },
               // Bookmark/deep-link safety for the pre-redesign tab URLs.
               { path: "cases", element: <Navigate to="/insurance-management/fresh-leads" replace /> },
               { path: "policies-issued", element: <Navigate to="/insurance-management/policy-issued" replace /> },

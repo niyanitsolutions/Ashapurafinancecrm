@@ -1,8 +1,10 @@
 from datetime import date, datetime
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 from app.features.customer.schemas import ApplicationDocumentResponse
+from app.features.insurance_management.constants import InsuranceHoldReason
 from app.features.workflow_engine.constants import InsuranceStatus, ReEligibilityPeriod
 
 # Stages an Insurance case can be created in directly from the manual "Add Insurance
@@ -87,6 +89,37 @@ class ChangeProductRequest(BaseModel):
     product_id: str
 
 
+class AssignInsuranceCaseRequest(BaseModel):
+    """Policy Leads are assigned to Advisors (the `advisors` master), not staff users."""
+
+    advisor_id: str = Field(min_length=1)
+
+
+class HoldInsuranceCaseRequest(BaseModel):
+    """Policy Lead "Place On Hold" — `reason` is one of the closed
+    `InsuranceHoldReason` set. When it is `other`, `other_reason` (the free-text "Other
+    Hold Reason") is mandatory and is persisted with the case's hold information."""
+
+    reason: str
+    other_reason: str | None = None
+    remarks: str | None = None
+
+    @field_validator("reason")
+    @classmethod
+    def _valid_reason(cls, value: str) -> str:
+        if value not in InsuranceHoldReason.ALL:
+            raise ValueError(f"'{value}' is not a valid Hold Reason.")
+        return value
+
+    @model_validator(mode="after")
+    def _other_reason_required(self) -> "HoldInsuranceCaseRequest":
+        if self.reason == InsuranceHoldReason.OTHER and not (self.other_reason or "").strip():
+            raise ValueError("Other Hold Reason is required when the Hold Reason is 'Other'.")
+        if self.reason != InsuranceHoldReason.OTHER:
+            self.other_reason = None
+        return self
+
+
 class InsuranceCaseDetailsResponse(BaseModel):
     sum_insured: float | None = None
     premium_amount: float | None = None
@@ -106,6 +139,20 @@ class RequiredDocumentsSummaryResponse(BaseModel):
     all_required_verified: bool
 
 
+class InsuranceCaseCountsResponse(BaseModel):
+    """Server-computed Policy Leads tab badge counts — one per `InsuranceStatus.ALL`
+    value, scoped identically to `list_cases` so a badge can never disagree with what its
+    tab's list call returns (same principle as Loan's `GET /loan-cases/counts`)."""
+
+    fresh_lead: int
+    policy_document: int
+    policy_login: int
+    policy_issued: int
+    re_eligible: int
+    on_hold: int
+    rejected: int
+
+
 class InsuranceCaseListItem(BaseModel):
     id: str
     case_code: str
@@ -122,10 +169,36 @@ class InsuranceCaseListItem(BaseModel):
     created_at: datetime
 
 
+class InsuranceApplicantDetailsResponse(BaseModel):
+    """Extended applicant profile captured on "+ Add Insurance Lead" — all optional,
+    stored in `Application.form_data`. Absent on cases created before these fields
+    existed; the UI shows "—" for each missing value (never fabricated)."""
+
+    age: int | None = None
+    profession: str | None = None
+    annual_income: float | None = None
+    alternate_mobile: str | None = None
+    height: float | None = None
+    weight: float | None = None
+    mother_name: str | None = None
+    father_name: str | None = None
+    education: str | None = None
+    company_name: str | None = None
+    designation: str | None = None
+    nominee_name: str | None = None
+    nominee_dob: date | None = None
+    nominee_relationship: str | None = None
+    remarks: str | None = None
+
+
 class InsuranceCaseDetailResponse(InsuranceCaseListItem):
     insurance_details: InsuranceCaseDetailsResponse
     required_documents: RequiredDocumentsSummaryResponse
     updated_at: datetime
+    # Populated only while `current_status == "on_hold"` (cleared on resume).
+    on_hold_reason: str | None = None
+    on_hold_other_reason: str | None = None
+    applicant: InsuranceApplicantDetailsResponse = Field(default_factory=InsuranceApplicantDetailsResponse)
 
 
 # ---------------------------------------------------------------------- manual lead creation + stage movement
@@ -155,6 +228,41 @@ class CreateManualInsuranceCaseRequest(_ReEligibilityFields):
     insurance_category_id: str = Field(min_length=1)
     product_id: str = Field(min_length=1)
     stage: str = Field(default=InsuranceStatus.FRESH_LEAD)
+
+    # Extended applicant profile — all optional; persisted into `Application.form_data`.
+    alternate_mobile: str | None = Field(default=None, pattern=r"^[6-9]\d{9}$")
+    height: float | None = Field(default=None, ge=0, le=300)
+    weight: float | None = Field(default=None, ge=0, le=500)
+    mother_name: str | None = Field(default=None, max_length=200)
+    father_name: str | None = Field(default=None, max_length=200)
+    education: str | None = Field(default=None, max_length=200)
+    company_name: str | None = Field(default=None, max_length=200)
+    designation: str | None = Field(default=None, max_length=200)
+    nominee_name: str | None = Field(default=None, max_length=200)
+    nominee_dob: date | None = None
+    nominee_relationship: str | None = Field(default=None, max_length=100)
+
+    _APPLICANT_KEYS: ClassVar[tuple[str, ...]] = (
+        "alternate_mobile", "height", "weight", "mother_name", "father_name", "education",
+        "company_name", "designation", "nominee_name", "nominee_relationship",
+    )
+
+    def applicant_form_data(self) -> dict[str, Any]:
+        """The extended fields to merge into `Application.form_data` — only the ones the
+        staff member actually filled in (a blank field is never written)."""
+        data: dict[str, Any] = {}
+        for key in self._APPLICANT_KEYS:
+            value = getattr(self, key)
+            if isinstance(value, str):
+                value = value.strip() or None
+            if value is not None:
+                data[key] = value
+        for key in ("height", "weight"):
+            if getattr(self, key) is not None:
+                data[key] = getattr(self, key)
+        if self.nominee_dob is not None:
+            data["nominee_dob"] = self.nominee_dob.isoformat()
+        return data
 
     @field_validator("stage")
     @classmethod
@@ -242,3 +350,5 @@ class OtherDocumentResponse(BaseModel):
     uploaded_at: datetime | None
     verified_at: datetime | None
     created_at: datetime
+    is_current: bool = True
+    doc_version: int = 1

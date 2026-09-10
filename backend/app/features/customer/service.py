@@ -742,6 +742,7 @@ class CustomerService:
     async def create_manual_insurance_application(
         self, *, full_name: str, mobile: str, email: str | None, gender: str | None, age: int | None,
         profession: str | None, annual_income: float | None, remarks: str | None, product_id: str, actor: User,
+        extra_form_data: dict[str, Any] | None = None,
     ) -> tuple[Application, str | None, str | None]:
         """Staff-initiated Insurance lead — the walk-in / phoned-in counterpart of a
         customer applying through the portal. Reuses the exact same Lead-less
@@ -798,7 +799,7 @@ class CustomerService:
             user_id=customer_user.require_id(), customer_id=customer.require_id(), lead_id=None,
             product_category="insurance", product_id=product_id, form_definition=form_def, actor=actor,
         )
-        form_data: dict[str, Any] = {}
+        form_data: dict[str, Any] = dict(extra_form_data or {})
         if age is not None:
             form_data["age"] = age
         if profession:

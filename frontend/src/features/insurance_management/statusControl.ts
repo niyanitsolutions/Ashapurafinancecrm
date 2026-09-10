@@ -32,6 +32,22 @@ export const INSURANCE_STATUS_LABELS: Record<string, string> = {
   rejected: "Rejected",
 };
 
+// Policy Lead "Place On Hold" reasons — matches backend `InsuranceHoldReason`. Separate
+// from Loan's `HOLD_REASONS` (workflow_engine/holdReasons.ts). "Other" reveals a
+// free-text "Other Hold Reason" field that is persisted with the case's hold info.
+export const INSURANCE_HOLD_REASONS: { value: string; label: string }[] = [
+  { value: "underwriting_issues", label: "Underwriting Issues" },
+  { value: "medical_pending", label: "Medical Pending" },
+  { value: "document_not_clear", label: "Document Not Clear" },
+  { value: "payment_pending", label: "Payment Pending" },
+  { value: "document_pending", label: "Document Pending" },
+  { value: "other", label: "Other" },
+];
+
+export const INSURANCE_HOLD_REASON_LABELS: Record<string, string> = Object.fromEntries(
+  INSURANCE_HOLD_REASONS.map((r) => [r.value, r.label]),
+);
+
 // Insurance offers 3 / 6 / 12 / Custom / No — no 9-month option (that is loan-only).
 // "No" means "never automatically Re-Eligible".
 export const INSURANCE_RE_ELIGIBILITY_OPTIONS: { value: "3_months" | "6_months" | "12_months" | "custom" | "no"; label: string }[] = [

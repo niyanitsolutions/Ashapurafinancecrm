@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Button } from "@/components/buttons/Button";
-import { EmployeeSelect } from "@/components/forms/EmployeeSelect";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
 import { SelectField } from "@/components/forms/SelectField";
@@ -42,15 +41,22 @@ import {
   updatePolicyLogin,
   verifyInsuranceCaseDocument,
   type CaseTimelineEntry,
+  type InsuranceApplicantDetails,
   type InsuranceCaseDetail,
   type InsuranceCaseDocument,
 } from "@/features/insurance_management/api";
-import { getInsuranceStatusControlInfo, INSURANCE_STATUS_LABELS } from "@/features/insurance_management/statusControl";
+import {
+  getInsuranceStatusControlInfo,
+  INSURANCE_HOLD_REASON_LABELS,
+  INSURANCE_HOLD_REASONS,
+  INSURANCE_STATUS_LABELS,
+} from "@/features/insurance_management/statusControl";
+import { listAdvisors, type AdvisorListItem } from "@/features/recruitment/api";
+import { ADVISOR_CHANNEL_LABELS } from "@/features/recruitment/labels";
 
 // Every stage staff can deliberately "Move To" — the backend still validates the case
 // can legally exist there (documents verified, premium recorded, …).
 const MOVE_TO_STAGES = ["fresh_lead", "policy_document", "policy_login", "policy_issued", "re_eligible", "rejected"];
-import { HOLD_REASONS } from "@/features/workflow_engine/holdReasons";
 import { formatISTDateTime } from "@/shared/dateFormat";
 import { useDocumentCollectionBackContext } from "@/shared/navigationContext";
 
@@ -245,11 +251,13 @@ export function InsuranceCaseDetailsPage() {
               <Field label="Customer" value={insuranceCase.customer_name} />
               <Field label="Product" value={insuranceCase.product_name} />
               <Field label="Category" value={formDef?.insurance_category_name} />
-              <Field label="Assigned To" value={insuranceCase.assigned_to_name} />
+              <Field label="Assigned Advisor" value={insuranceCase.assigned_to_name} />
               <Field label="Status" value={STATUS_LABELS[status] ?? status} />
               <Field label="Created" value={formatISTDateTime(insuranceCase.created_at)} />
             </div>
           </Section>
+
+          <ApplicantDetailsSection applicant={insuranceCase.applicant} />
 
           {canEdit && status !== "policy_issued" && status !== "rejected" && status !== "on_hold" && (
             <Section title="Move Case Forward">
@@ -391,18 +399,31 @@ export function InsuranceCaseDetailsPage() {
         <div className="space-y-6">
           {canAssign && (
             <Section title="Assignment">
-              <AssignForm currentName={insuranceCase.assigned_to_name} onSubmit={(employeeId) => run(() => assignInsuranceCase(caseId, employeeId), "Case assigned.")} />
+              <AssignForm currentName={insuranceCase.assigned_to_name} onSubmit={(advisorId) => run(() => assignInsuranceCase(caseId, advisorId), "Case assigned.")} />
             </Section>
           )}
 
           {canEdit && status !== "policy_issued" && status !== "rejected" && (
             <Section title="Case Status Control">
               {status === "on_hold" ? (
-                <Button size="sm" className="w-full" onClick={() => run(() => resumeInsuranceCase(caseId), "Case resumed.")}>
-                  Resume
-                </Button>
+                <div className="space-y-2">
+                  <div className="rounded border border-border bg-background/50 px-3 py-2 text-sm">
+                    <div className="text-xs text-text/50">On Hold — Reason</div>
+                    <div>
+                      {INSURANCE_HOLD_REASON_LABELS[insuranceCase.on_hold_reason ?? ""] ?? insuranceCase.on_hold_reason ?? "—"}
+                      {insuranceCase.on_hold_other_reason && ` — ${insuranceCase.on_hold_other_reason}`}
+                    </div>
+                  </div>
+                  <Button size="sm" className="w-full" onClick={() => run(() => resumeInsuranceCase(caseId), "Case resumed.")}>
+                    Resume
+                  </Button>
+                </div>
               ) : (
-                <HoldForm onSubmit={(reason, remarks) => run(() => holdInsuranceCase(caseId, reason, remarks), "Case placed on hold.")} />
+                <HoldForm
+                  onSubmit={(reason, otherReason, remarks) =>
+                    run(() => holdInsuranceCase(caseId, { reason, other_reason: otherReason, remarks }), "Case placed on hold.")
+                  }
+                />
               )}
             </Section>
           )}
@@ -528,41 +549,119 @@ export function InsuranceCaseDetailsPage() {
   );
 }
 
-function AssignForm({ currentName, onSubmit }: { currentName: string | null; onSubmit: (employeeId: string) => void }) {
-  const [employeeId, setEmployeeId] = useState("");
+// Policy Leads are assigned to ACTIVE Advisors only (QR / Non QR shown for context). The
+// backend re-validates existence + Active status, so a stale/inactive option is rejected
+// server-side too.
+function AssignForm({ currentName, onSubmit }: { currentName: string | null; onSubmit: (advisorId: string) => void }) {
+  const [advisorId, setAdvisorId] = useState("");
+  const [advisors, setAdvisors] = useState<AdvisorListItem[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    listAdvisors({ status: "active", page_size: 200 })
+      .then(({ data }) => setAdvisors(data))
+      .catch(() => setLoadError("Could not load advisors."));
+  }, []);
+
   return (
     <div className="space-y-2">
       {currentName && <p className="text-sm text-text/70">Currently: {currentName}</p>}
-      <EmployeeSelect label="Employee" value={employeeId} onChange={setEmployeeId} />
-      <Button size="sm" className="w-full" disabled={!employeeId} onClick={() => onSubmit(employeeId)}>
+      {loadError && <p className="text-xs text-danger">{loadError}</p>}
+      <SelectField
+        label="Advisor"
+        name="advisor_id"
+        value={advisorId}
+        onChange={(e) => setAdvisorId(e.target.value)}
+        placeholder={advisors.length ? "Select advisor" : "No active advisors"}
+        options={advisors.map((a) => ({
+          value: a.id,
+          label: `${a.full_name} — ${ADVISOR_CHANNEL_LABELS[a.channel] ?? a.channel}`,
+        }))}
+      />
+      <Button size="sm" className="w-full" disabled={!advisorId} onClick={() => onSubmit(advisorId)}>
         {currentName ? "Reassign" : "Assign"}
       </Button>
     </div>
   );
 }
 
-function HoldForm({ onSubmit }: { onSubmit: (reason: string, remarks?: string) => void }) {
-  const [reason, setReason] = useState(HOLD_REASONS[0].value);
+function HoldForm({ onSubmit }: { onSubmit: (reason: string, otherReason: string | undefined, remarks: string | undefined) => void }) {
+  const [reason, setReason] = useState(INSURANCE_HOLD_REASONS[0].value);
+  const [otherReason, setOtherReason] = useState("");
   const [remarks, setRemarks] = useState("");
+  const isOther = reason === "other";
+  const canSubmit = !isOther || otherReason.trim().length > 0;
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        onSubmit(reason, remarks || undefined);
+        if (!canSubmit) return;
+        onSubmit(reason, isOther ? otherReason.trim() : undefined, remarks || undefined);
       }}
       className="space-y-2"
     >
       <SelectField
         label="Hold Reason"
+        name="hold_reason"
         value={reason}
         onChange={(e) => setReason(e.target.value)}
-        options={HOLD_REASONS.map((r) => ({ value: r.value, label: r.label }))}
+        options={INSURANCE_HOLD_REASONS.map((r) => ({ value: r.value, label: r.label }))}
       />
+      {isOther && (
+        <FormField
+          label="Other Hold Reason"
+          name="other_hold_reason"
+          value={otherReason}
+          onChange={(e) => setOtherReason(e.target.value)}
+          required
+        />
+      )}
       <TextareaField label="Remarks (optional)" value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={2} />
-      <Button type="submit" variant="secondary" size="sm" className="w-full">
+      <Button type="submit" variant="secondary" size="sm" className="w-full" disabled={!canSubmit}>
         Place On Hold
       </Button>
     </form>
+  );
+}
+
+// Extended applicant profile captured on "+ Add Insurance Lead" (stored in the
+// application form data). Every value shows "—" when absent — old cases created before
+// these fields existed simply render dashes, never fabricated data.
+function ApplicantDetailsSection({ applicant }: { applicant: InsuranceApplicantDetails }) {
+  return (
+    <Section title="Applicant Details">
+      <div className="space-y-4">
+        <div>
+          <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-text/40">Contact & Personal</h4>
+          <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
+            <Field label="Age" value={applicant.age} />
+            <Field label="Profession" value={applicant.profession} />
+            <Field label="Alternate Mobile" value={applicant.alternate_mobile} />
+            <Field label="Education" value={applicant.education} />
+            <Field label="Height (cm)" value={applicant.height} />
+            <Field label="Weight (kg)" value={applicant.weight} />
+            <Field label="Mother's Name" value={applicant.mother_name} />
+            <Field label="Father's Name" value={applicant.father_name} />
+          </div>
+        </div>
+        <div>
+          <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-text/40">Employment</h4>
+          <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
+            <Field label="Company Name" value={applicant.company_name} />
+            <Field label="Designation" value={applicant.designation} />
+            <Field label="Annual Income" value={applicant.annual_income} />
+          </div>
+        </div>
+        <div>
+          <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-text/40">Nominee</h4>
+          <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
+            <Field label="Nominee Name" value={applicant.nominee_name} />
+            <Field label="Nominee DOB" value={applicant.nominee_dob} />
+            <Field label="Relationship with Nominee" value={applicant.nominee_relationship} />
+          </div>
+        </div>
+      </div>
+    </Section>
   );
 }
 

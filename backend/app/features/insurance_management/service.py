@@ -36,7 +36,7 @@ from app.config.redis import get_redis
 from app.constants.roles import EMPLOYEE, OWNER
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from app.features.auth.models import User
-from app.features.customer.constants import AuditEvent, DocumentSide, DocumentVerificationStatus
+from app.features.customer.constants import DocumentSide, DocumentVerificationStatus
 from app.features.customer.models import Application, ApplicationDocument
 from app.features.customer.repository import (
     ApplicationDocumentRepository,
@@ -54,6 +54,8 @@ from app.features.insurance_management.schemas import (
     OtherDocumentUploadUrlRequest,
     PolicyLoginUpdateRequest,
 )
+from app.features.recruitment.constants import AdvisorStatus
+from app.features.recruitment.repository import AdvisorRepository
 from app.features.reminders.constants import NotificationType
 from app.features.reminders.service import RemindersService
 from app.features.system_settings.constants import MasterDataStatus
@@ -117,6 +119,7 @@ class InsuranceCaseService:
         self._categories = InsuranceCategoryRepository(db)
         self._document_types = DocumentTypeRepository(db)
         self._other_documents = InsuranceCaseAdditionalDocumentRepository(db)
+        self._advisors = AdvisorRepository(db)
         self._reminders = RemindersService(db)
 
     def _customer_service(self) -> CustomerService:
@@ -129,13 +132,15 @@ class InsuranceCaseService:
 
     # ---------------------------------------------------------------- case sync / lookup
 
-    async def _create_case_for_application(self, application: Application) -> ApplicationWorkflow:
+    async def _create_case_for_application(
+        self, application: Application, *, actor_id: str | None = None
+    ) -> ApplicationWorkflow:
         case_code = await generate_id(self._db, IdPrefix.INSURANCE_CASE)
         return await self._engine.create_case(
             case_code=case_code, case_type=CaseType.INSURANCE, application_id=application.require_id(),
             customer_id=application.customer_id or "", product_id=application.product_id,
-            product_category=application.product_category, assigned_to=application.assigned_to,
-            actor_id=None, initial_status=InsuranceStatus.FRESH_LEAD, insurance_details=InsuranceCaseDetails(),
+            product_category=application.product_category, assigned_to=None,
+            actor_id=actor_id, initial_status=InsuranceStatus.FRESH_LEAD, insurance_details=InsuranceCaseDetails(),
         )
 
     async def _sync_new_cases(self) -> None:
@@ -176,11 +181,25 @@ class InsuranceCaseService:
         case = await self._workflows.find_by_id(case_id)
         if case is None or case.case_type != CaseType.INSURANCE:
             raise NotFoundError("Insurance case not found.")
-        if actor.role == EMPLOYEE:
-            employee_id = await self._acting_employee_id(actor)
-            if case.assigned_to != employee_id:
-                raise ForbiddenError("This case isn't assigned to you.")
+        if actor.role == EMPLOYEE and not await self._employee_can_see(case, actor):
+            raise ForbiddenError("This case isn't yours.")
         return case
+
+    async def _employee_can_see(self, case: ApplicationWorkflow, actor: User) -> bool:
+        """Policy Leads are assigned to Advisors now (not staff users), so an Employee's
+        visibility is by authorship: they see the cases they created (e.g. their own
+        "+ Add Insurance Lead" walk-ins). A legacy `assigned_to` that still holds their
+        employee id also counts, so no historical case silently disappears."""
+        if case.created_by == actor.require_id():
+            return True
+        employee_id = await self._acting_employee_id(actor)
+        return employee_id != _NO_ASSIGNMENT_SENTINEL and case.assigned_to == employee_id
+
+    def _employee_scope_filter(self, actor: User, employee_id: str | None) -> dict[str, Any]:
+        clauses: list[dict[str, Any]] = [{"created_by": actor.require_id()}]
+        if employee_id is not None and employee_id != _NO_ASSIGNMENT_SENTINEL:
+            clauses.append({"assigned_to": employee_id})
+        return {"$and": [{"$or": clauses}]}
 
     async def get_own_case(self, case_id: str, actor: User) -> ApplicationWorkflow:
         case = await self._workflows.find_by_id(case_id)
@@ -196,13 +215,30 @@ class InsuranceCaseService:
         unassigned_only: bool, status: str | None, skip: int, limit: int, sort: list[tuple[str, int]] | None,
     ) -> tuple[list[ApplicationWorkflow], int]:
         await self._sync_new_cases()
+        extra_filter: dict[str, Any] | None = None
         if actor.role == EMPLOYEE:
-            assigned_to = await self._acting_employee_id(actor)
-            unassigned_only = False
+            extra_filter = self._employee_scope_filter(actor, await self._acting_employee_id(actor))
+            assigned_to, unassigned_only = None, False
         return await self._workflows.search_and_filter(
             case_type=CaseType.INSURANCE, search=search, customer_id=customer_id, assigned_to=assigned_to,
             unassigned_only=unassigned_only, status=status, skip=skip, limit=limit, sort=sort,
+            extra_filter=extra_filter,
         )
+
+    async def get_counts(self, actor: User) -> dict[str, int]:
+        """One count per `InsuranceStatus.ALL` Policy Leads tab, built with the identical
+        `assigned_to` scoping `list_cases` applies — a count can never disagree with what
+        its tab's list call returns (same principle as Loan's `get_counts`)."""
+        await self._sync_new_cases()
+        extra_filter: dict[str, Any] | None = None
+        if actor.role == EMPLOYEE:
+            extra_filter = self._employee_scope_filter(actor, await self._acting_employee_id(actor))
+        return {
+            status: await self._workflows.count_filtered(
+                case_type=CaseType.INSURANCE, status=status, extra_filter=extra_filter,
+            )
+            for status in InsuranceStatus.ALL
+        }
 
     async def list_own_cases(self, actor: User) -> list[ApplicationWorkflow]:
         applications = await self._applications.find_for_user(actor.require_id(), status="submitted")
@@ -212,34 +248,39 @@ class InsuranceCaseService:
 
     # ---------------------------------------------------------------- assignment
 
-    async def assign_case(self, case_id: str, employee_id: str, actor: User) -> ApplicationWorkflow:
+    async def assign_case(self, case_id: str, advisor_id: str, actor: User) -> ApplicationWorkflow:
+        """Assign a Policy Lead to an **Advisor** (the existing `advisors` master — never a
+        separate collection). The advisor must exist AND be Active; an inactive-advisor id
+        sent straight to the API is rejected here, not just hidden from the dropdown. The
+        "only an Owner can reassign an already-assigned case" rule is unchanged."""
         case = await self._workflows.find_by_id(case_id)
         if case is None or case.case_type != CaseType.INSURANCE:
             raise NotFoundError("Insurance case not found.")
         if actor.role != OWNER and case.assigned_to is not None:
             raise ForbiddenError("Only an Owner can reassign a case that's already assigned to someone.")
-        if await self._employees.find_by_id(employee_id) is None:
-            raise ValidationError("Unknown employee_id.")
+        advisor = await self._advisors.find_by_id(advisor_id)
+        if advisor is None:
+            raise ValidationError("Unknown advisor.")
+        if advisor.status != AdvisorStatus.ACTIVE:
+            raise ValidationError("That advisor is inactive and cannot be assigned Policy Leads.")
         is_reassignment = case.assigned_to is not None
-        updated = await self._workflows.update(case_id, {"assigned_to": employee_id}, updated_by=actor.require_id())
+        updated = await self._workflows.update(case_id, {"assigned_to": advisor_id}, updated_by=actor.require_id())
         if updated is None:
             raise NotFoundError("Insurance case not found.")
         await write_audit_log(
             self._db, event_type=WorkflowAuditEvent.CASE_REASSIGNED if is_reassignment else WorkflowAuditEvent.CASE_ASSIGNED,
-            user_id=actor.require_id(), metadata={"application_workflow_id": case_id, "employee_id": employee_id},
+            user_id=actor.require_id(), metadata={"application_workflow_id": case_id, "advisor_id": advisor_id},
         )
-        if await self._applications.update(case.application_id, {"assigned_to": employee_id}, updated_by=actor.require_id()) is not None:
-            await write_audit_log(
-                self._db, event_type=AuditEvent.APPLICATION_ASSIGNED, user_id=actor.require_id(),
-                metadata={"application_id": case.application_id, "employee_id": employee_id},
-            )
         return updated
 
     # ---------------------------------------------------------------- hold / resume
 
-    async def hold_case(self, case_id: str, reason: str, actor: User, *, remarks: str | None = None) -> ApplicationWorkflow:
+    async def hold_case(
+        self, case_id: str, reason: str, actor: User, *, other_reason: str | None = None, remarks: str | None = None
+    ) -> ApplicationWorkflow:
         case = await self.get_case(case_id, actor)
-        return await engine_put_on_hold(self._engine, case, reason, actor, remarks=remarks)
+        normalized = (other_reason or "").strip() or None
+        return await engine_put_on_hold(self._engine, case, reason, actor, remarks=remarks, other_reason=normalized)
 
     async def resume_case(self, case_id: str, actor: User) -> ApplicationWorkflow:
         case = await self.get_case(case_id, actor)
@@ -435,17 +476,13 @@ class InsuranceCaseService:
             full_name=payload.full_name, mobile=payload.mobile, email=payload.email, gender=payload.gender,
             age=payload.age, profession=payload.profession, annual_income=payload.annual_income,
             remarks=payload.remarks, product_id=payload.product_id, actor=actor,
+            extra_form_data=payload.applicant_form_data(),
         )
-        case = await self.ensure_case_for_application(application.require_id())
-        assert case is not None
+        # `created_by = actor` on the workflow is what gives an Employee creator ownership
+        # of the case (Policy Leads are assigned to Advisors, not staff users, so the old
+        # "self-assign the employee" workaround no longer applies).
+        case = await self._create_case_for_application(application, actor_id=actor.require_id())
         case_id = case.require_id()
-
-        # An Employee who creates a lead owns it — otherwise the gated `move_to_*`
-        # transitions in the stage-walk below would 403 on their own not-assigned check.
-        if actor.role == EMPLOYEE:
-            employee_id = await self._acting_employee_id(actor)
-            if employee_id is not None and employee_id != _NO_ASSIGNMENT_SENTINEL:
-                case = await self.assign_case(case_id, employee_id, actor)
 
         await write_audit_log(
             self._db, event_type=InsuranceAuditEvent.MANUAL_CASE_CREATED, user_id=actor.require_id(),
@@ -645,6 +682,13 @@ class InsuranceCaseService:
                 missing.append(rd.document_type_id)
         return len(missing) == 0, missing
 
+    async def applicant_details(self, case: ApplicationWorkflow) -> dict[str, Any]:
+        """The extended applicant profile stored in `Application.form_data` (age /
+        profession / nominee / height / ... ) — an empty dict for a case whose
+        application predates these fields."""
+        application = await self._applications.find_by_id(case.application_id)
+        return dict(application.form_data) if application is not None else {}
+
     async def required_documents_summary(self, case: ApplicationWorkflow) -> dict[str, Any]:
         application = await self._applications.find_by_id(case.application_id)
         form_def = await self._form_defs.find_by_id(application.form_definition_id) if application else None
@@ -741,65 +785,111 @@ class InsuranceCaseService:
         await self.get_own_case(case_id, actor)
         return await self._other_documents.find_for_case(case_id)
 
+    async def other_document_history(self, case_id: str, doc_id: str, actor: User) -> list[InsuranceCaseAdditionalDocument]:
+        await self.get_case(case_id, actor)
+        doc = await self._other_documents.find_by_id(doc_id)
+        if doc is None or doc.insurance_case_id != case_id:
+            raise NotFoundError("Other document not found.")
+        return await self._other_documents.history_for(case_id, doc.name)
+
+    async def _resolve_other_document(
+        self, case: ApplicationWorkflow, doc_id: str
+    ) -> InsuranceCaseAdditionalDocument:
+        doc = await self._other_documents.find_by_id(doc_id)
+        if doc is None or doc.insurance_case_id != case.require_id():
+            raise NotFoundError("Other document not found.")
+        return doc
+
     async def _get_own_other_document(
         self, case_id: str, doc_id: str, actor: User
     ) -> tuple[ApplicationWorkflow, InsuranceCaseAdditionalDocument]:
         case = await self.get_own_case(case_id, actor)
-        doc = await self._other_documents.find_by_id(doc_id)
-        if doc is None or doc.insurance_case_id != case_id:
-            raise NotFoundError("Other document not found.")
-        return case, doc
+        return case, await self._resolve_other_document(case, doc_id)
+
+    async def _get_staff_other_document(
+        self, case_id: str, doc_id: str, actor: User
+    ) -> tuple[ApplicationWorkflow, InsuranceCaseAdditionalDocument]:
+        case = await self.get_case(case_id, actor)
+        return case, await self._resolve_other_document(case, doc_id)
+
+    async def _mint_other_document_upload_url(
+        self, case: ApplicationWorkflow, doc_id: str, payload: OtherDocumentUploadUrlRequest
+    ) -> tuple[str, str]:
+        application = await self._applications.find_by_id(case.application_id)
+        if application is None:
+            raise NotFoundError("Application not found.")
+        # The key is per-version (`doc_id/file`) so a re-upload never overwrites the
+        # previous file's object in storage.
+        s3_key = self._other_document_s3_key(application.application_code, doc_id, payload.file_name)
+        return generate_presigned_upload_url(s3_key, content_type=payload.content_type), s3_key
+
+    async def _apply_other_document_upload(
+        self, case: ApplicationWorkflow, doc: InsuranceCaseAdditionalDocument,
+        payload: ConfirmOtherDocumentRequest, actor: User,
+    ) -> InsuranceCaseAdditionalDocument:
+        application = await self._applications.find_by_id(case.application_id)
+        if application is None:
+            raise NotFoundError("Application not found.")
+        # Never trust the client-supplied key — re-derive it exactly as the upload URL was minted.
+        s3_key = self._other_document_s3_key(application.application_code, doc.require_id(), payload.file_name)
+        size = get_object_size(s3_key)
+        if size is None:
+            raise ValidationError("The file hasn't finished uploading yet. Please try again in a moment.")
+        upload_fields: dict[str, Any] = {
+            "document_status": "uploaded", "verification_status": "pending", "rejection_reason": None,
+            "s3_key": s3_key, "file_name": payload.file_name, "content_type": payload.content_type,
+            "file_size_bytes": size, "uploaded_at": utc_now(), "verified_by": None, "verified_at": None,
+        }
+        if doc.document_status == "requested":
+            # First upload against the request — update in place, no prior version exists.
+            updated = await self._other_documents.update(doc.require_id(), upload_fields, updated_by=actor.require_id())
+            assert updated is not None
+            return updated
+        # Re-upload — supersede the current row, keep it in history, make the new file current.
+        await self._other_documents.update(doc.require_id(), {"is_current": False}, updated_by=actor.require_id())
+        new_id = await self._other_documents.insert(InsuranceCaseAdditionalDocument(
+            insurance_case_id=doc.insurance_case_id, application_id=doc.application_id, name=doc.name,
+            is_current=True, doc_version=doc.doc_version + 1, replaces_document_id=doc.require_id(),
+            created_by=actor.require_id(), **upload_fields,
+        ))
+        created = await self._other_documents.find_by_id(new_id)
+        assert created is not None
+        return created
 
     async def mint_other_document_upload_url(
         self, case_id: str, doc_id: str, payload: OtherDocumentUploadUrlRequest, actor: User
     ) -> tuple[str, str]:
         case, _doc = await self._get_own_other_document(case_id, doc_id, actor)
-        application = await self._applications.find_by_id(case.application_id)
-        if application is None:
-            raise NotFoundError("Application not found.")
-        s3_key = self._other_document_s3_key(application.application_code, doc_id, payload.file_name)
-        upload_url = generate_presigned_upload_url(s3_key, content_type=payload.content_type)
-        return upload_url, s3_key
+        return await self._mint_other_document_upload_url(case, doc_id, payload)
 
     async def confirm_other_document_upload(
         self, case_id: str, doc_id: str, payload: ConfirmOtherDocumentRequest, actor: User
     ) -> InsuranceCaseAdditionalDocument:
         case, doc = await self._get_own_other_document(case_id, doc_id, actor)
-        application = await self._applications.find_by_id(case.application_id)
-        if application is None:
-            raise NotFoundError("Application not found.")
-        # Never trust the client-supplied key — re-derive it exactly as the upload URL was minted.
-        s3_key = self._other_document_s3_key(application.application_code, doc_id, payload.file_name)
-        size = get_object_size(s3_key)
-        if size is None:
-            raise ValidationError("The file hasn't finished uploading yet. Please try again in a moment.")
-        updated = await self._other_documents.update(
-            doc_id,
-            {
-                "document_status": "uploaded", "verification_status": "pending", "rejection_reason": None,
-                "s3_key": s3_key, "file_name": payload.file_name, "content_type": payload.content_type,
-                "file_size_bytes": size, "uploaded_at": utc_now(),
-            },
-            updated_by=actor.require_id(),
-        )
-        assert updated is not None
-        if case.assigned_to:
-            employee = await self._employees.find_by_id(case.assigned_to)
-            if employee is not None:
-                await self._reminders.create_notification(
-                    recipient_user_id=employee.user_id, notification_type=NotificationType.DOCUMENT_UPLOADED,
-                    title="New Other Document", message=f"Customer uploaded: {doc.name}",
-                    entity_type="insurance_case", entity_id=case_id,
-                )
-        else:
-            owners = await self._db["users"].find({"role": OWNER, "is_deleted": False}).to_list(length=50)
-            for owner_doc in owners:
-                await self._reminders.create_notification(
-                    recipient_user_id=str(owner_doc["_id"]), notification_type=NotificationType.DOCUMENT_UPLOADED,
-                    title="New Other Document", message=f"Customer uploaded: {doc.name}",
-                    entity_type="insurance_case", entity_id=case_id,
-                )
-        return updated
+        result = await self._apply_other_document_upload(case, doc, payload, actor)
+        await self._notify_other_document_uploaded(case, doc.name, "Customer")
+        return result
+
+    async def staff_mint_other_document_upload_url(
+        self, case_id: str, doc_id: str, payload: OtherDocumentUploadUrlRequest, actor: User
+    ) -> tuple[str, str]:
+        case, _doc = await self._get_staff_other_document(case_id, doc_id, actor)
+        return await self._mint_other_document_upload_url(case, doc_id, payload)
+
+    async def staff_confirm_other_document_upload(
+        self, case_id: str, doc_id: str, payload: ConfirmOtherDocumentRequest, actor: User
+    ) -> InsuranceCaseAdditionalDocument:
+        case, doc = await self._get_staff_other_document(case_id, doc_id, actor)
+        return await self._apply_other_document_upload(case, doc, payload, actor)
+
+    async def _notify_other_document_uploaded(self, case: ApplicationWorkflow, doc_name: str, by_label: str) -> None:
+        owners = await self._db["users"].find({"role": OWNER, "is_deleted": False}).to_list(length=50)
+        for owner_doc in owners:
+            await self._reminders.create_notification(
+                recipient_user_id=str(owner_doc["_id"]), notification_type=NotificationType.DOCUMENT_UPLOADED,
+                title="New Other Document", message=f"{by_label} uploaded: {doc_name}",
+                entity_type="insurance_case", entity_id=case.require_id(),
+            )
 
     async def verify_other_document(self, case_id: str, doc_id: str, actor: User) -> InsuranceCaseAdditionalDocument:
         await self.get_case(case_id, actor)
@@ -884,13 +974,16 @@ class InsuranceCaseService:
     async def resolve_names(self, cases: list[ApplicationWorkflow]) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
         customer_ids = {c.customer_id for c in cases if c.customer_id}
         product_ids = {c.product_id for c in cases}
-        employee_ids = {c.assigned_to for c in cases if c.assigned_to}
+        assignee_ids = {c.assigned_to for c in cases if c.assigned_to}
 
         customers = await self._customers.find_many({}, limit=1000) if customer_ids else []
         products = await self._products.find_many({}, limit=500)
-        employees = await self._employees.find_many({}, limit=500) if employee_ids else []
+        # `assigned_to` is an Advisor now; a legacy value may still be an employee id.
+        advisors = await self._advisors.find_many({}, limit=1000) if assignee_ids else []
+        employees = await self._employees.find_many({}, limit=500) if assignee_ids else []
 
         customer_map = {c.require_id(): c.full_name for c in customers if c.require_id() in customer_ids}
         product_map = {p.require_id(): p.name for p in products if p.require_id() in product_ids}
-        employee_map = {e.require_id(): e.display_name for e in employees if e.require_id() in employee_ids}
-        return customer_map, product_map, employee_map
+        assignee_map: dict[str, str] = {e.require_id(): e.display_name for e in employees if e.require_id() in assignee_ids}
+        assignee_map.update({a.require_id(): a.full_name for a in advisors if a.require_id() in assignee_ids})
+        return customer_map, product_map, assignee_map

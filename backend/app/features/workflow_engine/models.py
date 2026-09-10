@@ -216,6 +216,9 @@ class ApplicationWorkflow(BaseDocument):
     # cleared on resume. `on_hold_previous_status` is what `resume` transitions back
     # into — an Optional Status on the workflow definition, not a hardcoded branch.
     on_hold_reason: str | None = None
+    # Free-text detail captured only when `on_hold_reason` is an "other" bucket (Insurance
+    # Policy Leads' hold form). Nullable/additive — Loan never sets it. Cleared on resume.
+    on_hold_other_reason: str | None = None
     on_hold_previous_status: str | None = None
     on_hold_since: datetime | None = None
 
