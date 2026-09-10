@@ -257,8 +257,6 @@ export const ADVISOR_PRODUCT_CATEGORIES = [
 ] as const;
 export type AdvisorProductCategory = (typeof ADVISOR_PRODUCT_CATEGORIES)[number];
 
-export type AdvisorFilterKey = "individual" | "total_employees" | "active" | "inactive";
-
 export interface AdvisorListItem {
   id: string;
   advisor_code: string;
@@ -269,6 +267,10 @@ export interface AdvisorListItem {
   channel: "qr" | "non_qr";
   agency_code: string | null;
   agent_code: string | null;
+  // Profession classification — separate from `channel` (Type) and `status`. `null` for
+  // advisors promoted before the field existed (the UI shows "—").
+  profession: string | null;
+  other_profession: string | null;
   status: "active" | "inactive";
   is_employee: boolean;
   no_of_policies: number;
@@ -299,22 +301,14 @@ export interface AdvisorDetail extends AdvisorListItem {
   businesses: AdvisorBusinessRecord[];
 }
 
-export interface AdvisorCounts {
-  qr: number;
-  non_qr: number;
-  total: number;
-  individual: number;
-  total_employees: number;
-  active: number;
-  inactive: number;
-}
-
 export async function listAdvisors(params: {
   page?: number;
   page_size?: number;
   search?: string;
+  // The three independent filters. Omit one to mean "All".
+  profession?: string;
   channel?: "qr" | "non_qr";
-  filter_key?: AdvisorFilterKey;
+  status?: "active" | "inactive";
 }): Promise<PaginatedResponse<AdvisorListItem>> {
   const usp = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -323,10 +317,6 @@ export async function listAdvisors(params: {
   const qs = usp.toString();
   const envelope = await apiRequestRaw<AdvisorListItem[]>(`/advisors${qs ? `?${qs}` : ""}`);
   return { data: envelope.data ?? [], pagination: envelope.meta?.pagination ?? null };
-}
-
-export function getAdvisorCounts(channel: "qr" | "non_qr") {
-  return apiRequest<AdvisorCounts>(`/advisors/counts?channel=${channel}`);
 }
 
 export function getAdvisor(id: string) {

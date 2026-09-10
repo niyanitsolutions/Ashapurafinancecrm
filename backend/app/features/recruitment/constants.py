@@ -147,20 +147,6 @@ class AdvisorProductCategory:
     ALL = (SAVINGS, PROTECTION, ULIP, ANNUITY, BUSINESS_INSURANCE, CUSTOM)
 
 
-class AdvisorFilter:
-    """The Advisors list filter chips. `INDIVIDUAL` / `TOTAL_EMPLOYEES` partition by
-    whether the advisor's mobile matches an `employees` row; `ACTIVE` / `INACTIVE`
-    filter on `Advisor.status`. Each filter also drives its own count (scoped to the
-    current QR / Non-QR sub-tab)."""
-
-    INDIVIDUAL = "individual"
-    TOTAL_EMPLOYEES = "total_employees"
-    ACTIVE = "active"
-    INACTIVE = "inactive"
-
-    ALL = (INDIVIDUAL, TOTAL_EMPLOYEES, ACTIVE, INACTIVE)
-
-
 class DocumentSlot:
     """Upload slots on the Recruitment Document Collection form. `PHOTO`/`SIGNATURE`
     reuse the same presigned-PUT plumbing as the four required documents."""

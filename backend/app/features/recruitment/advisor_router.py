@@ -20,7 +20,6 @@ from app.features.recruitment.dependencies import get_advisor_service
 from app.features.recruitment.schemas import (
     AddAdvisorBusinessRequest,
     AdvisorBusinessResponse,
-    AdvisorCountsResponse,
     AdvisorDetailResponse,
     AdvisorListItem,
     UpdateAdvisorRequest,
@@ -52,20 +51,16 @@ async def _detail(service: AdvisorService, advisor_id: str) -> ApiResponse[Advis
 @router.get("")
 async def list_advisors(
     service: ServiceDep, actor: Annotated[User, _perm("view")], page: PageParamsDep,
-    channel: str | None = None, filter_key: str | None = None,
+    channel: str | None = None, profession: str | None = None, status: str | None = None,
 ) -> ApiResponse[list[AdvisorListItem]]:
+    """`channel` (QR / Non-QR "Type"), `profession` and `status` are independent optional
+    filters — any combination is allowed; omitting one means "All"."""
     rows, total = await service.list_advisors(
-        actor, channel=channel, filter_key=filter_key, search=page.search, skip=page.skip, limit=page.page_size, sort=page.sort
+        actor, channel=channel, profession=profession, status=status,
+        search=page.search, skip=page.skip, limit=page.page_size, sort=page.sort,
     )
     items = [mappers.advisor_to_list_item(a, is_emp, count, premium) for a, is_emp, count, premium in rows]
     return ApiResponse[list[AdvisorListItem]].ok(items, meta=ResponseMeta(pagination=page.build_meta(total)))
-
-
-@router.get("/counts")
-async def get_advisor_counts(
-    service: ServiceDep, actor: Annotated[User, _perm("view")], channel: str | None = None
-) -> ApiResponse[AdvisorCountsResponse]:
-    return ApiResponse[AdvisorCountsResponse].ok(AdvisorCountsResponse(**await service.get_counts(actor, channel=channel)))
 
 
 @router.get("/{advisor_id}")

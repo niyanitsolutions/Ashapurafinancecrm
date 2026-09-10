@@ -150,6 +150,12 @@ class Advisor(BaseDocument):
     channel: str = "non_qr"  # AdvisorChannel.ALL
     agency_code: str | None = None
     agent_code: str | None = None
+    # Profession classification — copied from the recruitment lead at promotion (Fresh
+    # Leads' `Profession` values are the single source of truth; nothing is duplicated as a
+    # new master). `None` on advisors promoted before this field existed: they stay visible
+    # under "All" and render as "—" — never guessed. Separate from `channel` and `status`.
+    profession: str | None = None  # Profession.ALL
+    other_profession: str | None = None  # free text, set iff profession == "other"
     # Optional advisor-portal credential — set by staff on the Agency Code edit form,
     # hashed via `app.security.password.hash_password`. NEVER included in any response
     # schema/mapper (`AdvisorListItem` / `AdvisorDetailResponse` / `AdvisorSummary` have

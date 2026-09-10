@@ -1,9 +1,8 @@
 """End-to-end tests for Advisor Management (Phase 2).
 
-Covers the Advisor list + filters (Individual / Total Employees / Active / Inactive),
-QR / Non-QR derivation from the agency code, the Advisor detail (with linked recruitment
-info), Add Business, and the policy-count / total-premium aggregation from the saved
-business records.
+Covers the Advisor list + its three independent filters (Profession / Type / Status),
+QR / Non-QR "Type", the Advisor detail (with linked recruitment info), Add Business, and
+the policy-count / total-premium aggregation from the saved business records.
 """
 
 from app.features.system_settings.models import LeadSource
@@ -17,13 +16,15 @@ async def _source_id(mock_db) -> str:
     return str(result.inserted_id)
 
 
-async def _promote_advisor(client, headers, mock_db, *, mobile="9876543210") -> dict:
+async def _promote_advisor(client, headers, mock_db, *, mobile="9876543210", profession="salaried") -> dict:
     """Run a recruitment lead all the way to examination PASS and return its Advisor."""
     source_id = await _source_id(mock_db)
     body = {
         "full_name": "Ravi Kumar", "mobile": mobile, "email": "ravi@example.com", "gender": "male",
-        "age": 32, "source_id": source_id, "profession": "salaried",
+        "age": 32, "source_id": source_id, "profession": profession,
     }
+    if profession == "other":
+        body["other_profession"] = "Farmer"
     lead = (await client.post(RECRUIT, json=body, headers=headers)).json()["data"]
     lid = lead["id"]
     assert (await client.post(f"{RECRUIT}/{lid}/move-to-bop", headers=headers)).status_code == 200
@@ -144,50 +145,147 @@ async def test_agent_code_and_password_are_write_safe(client, mock_db, owner_hea
         assert "password_hash" not in a.get("metadata", {})
 
 
-async def test_weak_password_rejected(client, mock_db, owner_headers):
-    advisor = await _promote_advisor(client, owner_headers, mock_db)
-    r = await client.patch(f"{ADV}/{advisor['id']}", json={"password": "short"}, headers=owner_headers)
-    assert r.status_code == 422
-
-
-async def test_status_inactive_and_filter(client, mock_db, owner_headers):
+async def test_short_password_accepted_and_hashed(client, mock_db, owner_headers):
+    """The Agency Code password field has NO minimum-length / complexity policy — a short
+    value like "123" is accepted, stored only as a bcrypt hash, and never echoed back."""
     advisor = await _promote_advisor(client, owner_headers, mock_db)
     aid = advisor["id"]
-    assert (await client.patch(f"{ADV}/{aid}", json={"status": "inactive"}, headers=owner_headers)).json()["data"]["status"] == "inactive"
 
-    active = await client.get(f"{ADV}?channel=non_qr&filter_key=active", headers=owner_headers)
+    for pw in ("123", "12345", "abc"):
+        r = await client.patch(f"{ADV}/{aid}", json={"password": pw}, headers=owner_headers)
+        assert r.status_code == 200, (pw, r.text)
+        body = r.json()["data"]
+        assert "password" not in body and "password_hash" not in body
+
+    from app.security.password import verify_password
+
+    stored = await mock_db["advisors"].find_one({"_id": __import__("bson").ObjectId(aid)})
+    assert stored["password_hash"].startswith("$2") and stored["password_hash"] != "abc"
+    assert verify_password("abc", stored["password_hash"])
+
+
+async def test_blank_password_preserves_existing(client, mock_db, owner_headers):
+    advisor = await _promote_advisor(client, owner_headers, mock_db)
+    aid = advisor["id"]
+    await client.patch(f"{ADV}/{aid}", json={"password": "123"}, headers=owner_headers)
+    original = (await mock_db["advisors"].find_one({"_id": __import__("bson").ObjectId(aid)}))["password_hash"]
+
+    # A blank password + another field change must NOT touch the stored hash.
+    await client.patch(f"{ADV}/{aid}", json={"password": "", "agent_code": "AGT-1"}, headers=owner_headers)
+    after_blank = (await mock_db["advisors"].find_one({"_id": __import__("bson").ObjectId(aid)}))["password_hash"]
+    assert after_blank == original
+
+    # ...and so must omitting the field entirely.
+    await client.patch(f"{ADV}/{aid}", json={"agency_code": "AG-9"}, headers=owner_headers)
+    assert (await mock_db["advisors"].find_one({"_id": __import__("bson").ObjectId(aid)}))["password_hash"] == original
+
+
+async def test_status_update_and_filter(client, mock_db, owner_headers):
+    advisor = await _promote_advisor(client, owner_headers, mock_db)
+    aid = advisor["id"]
+
+    # Active -> Inactive: the advisor stays in the DB, only status flips.
+    assert (await client.patch(f"{ADV}/{aid}", json={"status": "inactive"}, headers=owner_headers)).json()["data"]["status"] == "inactive"
+    assert await mock_db["advisors"].count_documents({"recruitment_lead_id": advisor["recruitment_lead_id"]}) == 1
+
+    active = await client.get(f"{ADV}?status=active", headers=owner_headers)
     assert aid not in [a["id"] for a in active.json()["data"]]
-    inactive = await client.get(f"{ADV}?channel=non_qr&filter_key=inactive", headers=owner_headers)
+    inactive = await client.get(f"{ADV}?status=inactive", headers=owner_headers)
     assert [a["id"] for a in inactive.json()["data"]] == [aid]
 
+    # Inactive -> Active restores it to the Active view (still one record).
+    assert (await client.patch(f"{ADV}/{aid}", json={"status": "active"}, headers=owner_headers)).json()["data"]["status"] == "active"
+    assert aid in [a["id"] for a in (await client.get(f"{ADV}?status=active", headers=owner_headers)).json()["data"]]
+    assert await mock_db["advisors"].count_documents({"recruitment_lead_id": advisor["recruitment_lead_id"]}) == 1
 
-# ---------------------------------------------------------------- Individual / Total Employees
+
+# ---------------------------------------------------------------- Profession / Type / Status filters
 
 
-async def test_individual_vs_total_employees_filter(client, mock_db, owner_headers):
-    from app.features.employee.models import Employee
+async def test_profession_is_copied_from_the_lead_and_displayed(client, mock_db, owner_headers):
+    advisor = await _promote_advisor(client, owner_headers, mock_db, profession="retired")
+    row = next(a for a in (await client.get(ADV, headers=owner_headers)).json()["data"] if a["id"] == advisor["id"])
+    assert row["profession"] == "retired"
+    assert (await client.get(f"{ADV}/{advisor['id']}", headers=owner_headers)).json()["data"]["profession"] == "retired"
 
-    a1 = await _promote_advisor(client, owner_headers, mock_db, mobile="9700000001")
-    a2 = await _promote_advisor(client, owner_headers, mock_db, mobile="9700000002")
 
-    # Make a1's mobile match an employees row.
-    emp = Employee(
-        user_id="u1", employee_code="AFS-EMP-000099", first_name="X", last_name="Y", display_name="X Y",
-        mobile="9700000001", email="x@example.com", department_id="d", designation_id="de", branch_id="b",
-        joining_date=__import__("datetime").datetime(2026, 1, 1, tzinfo=__import__("datetime").UTC),
-        employment_type="full_time",
+async def test_legacy_advisor_without_profession_still_loads_under_all(client, mock_db, owner_headers):
+    """Backward compatibility: an advisor row stored before the profession field existed
+    loads fine, shows `profession = null`, appears under "All", and is excluded from every
+    specific profession filter (never guessed)."""
+    advisor = await _promote_advisor(client, owner_headers, mock_db)
+    aid = advisor["id"]
+    await mock_db["advisors"].update_one(
+        {"_id": __import__("bson").ObjectId(aid)},
+        {"$unset": {"profession": "", "other_profession": ""}},
     )
-    await mock_db["employees"].insert_one(emp.model_dump(by_alias=True, exclude={"id"}))
 
-    individuals = await client.get(f"{ADV}?channel=non_qr&filter_key=individual", headers=owner_headers)
-    assert [a["id"] for a in individuals.json()["data"]] == [a2["id"]]
-    employees = await client.get(f"{ADV}?channel=non_qr&filter_key=total_employees", headers=owner_headers)
-    assert [a["id"] for a in employees.json()["data"]] == [a1["id"]]
+    row = next(a for a in (await client.get(ADV, headers=owner_headers)).json()["data"] if a["id"] == aid)
+    assert row["profession"] is None
+    assert (await client.get(f"{ADV}/{aid}", headers=owner_headers)).json()["data"]["profession"] is None
+    assert aid not in [a["id"] for a in (await client.get(f"{ADV}?profession=salaried", headers=owner_headers)).json()["data"]]
 
-    counts = (await client.get(f"{ADV}/counts?channel=non_qr", headers=owner_headers)).json()["data"]
-    assert counts["individual"] == 1
-    assert counts["total_employees"] == 1
-    assert counts["non_qr"] == 2
+
+async def test_profession_filter_each_bucket(client, mock_db, owner_headers):
+    made = {
+        p: (await _promote_advisor(client, owner_headers, mock_db, mobile=m, profession=p))["id"]
+        for p, m in (
+            ("house_wife", "9700000001"), ("retired", "9700000002"), ("self_employed", "9700000003"),
+            ("salaried", "9700000004"), ("other", "9700000005"),
+        )
+    }
+    for profession, aid in made.items():
+        listed = await client.get(f"{ADV}?profession={profession}", headers=owner_headers)
+        assert [a["id"] for a in listed.json()["data"]] == [aid], profession
+        assert all(a["profession"] == profession for a in listed.json()["data"])
+
+    # "All" (no profession param) returns every advisor.
+    all_ids = {a["id"] for a in (await client.get(ADV, headers=owner_headers)).json()["data"]}
+    assert set(made.values()) <= all_ids
+
+
+async def test_type_filter(client, mock_db, owner_headers):
+    qr = await _promote_advisor(client, owner_headers, mock_db, mobile="9700000011")
+    non_qr = await _promote_advisor(client, owner_headers, mock_db, mobile="9700000012")
+    await client.patch(f"{ADV}/{qr['id']}", json={"channel": "qr"}, headers=owner_headers)
+
+    qr_list = await client.get(f"{ADV}?channel=qr", headers=owner_headers)
+    assert [a["id"] for a in qr_list.json()["data"]] == [qr["id"]]
+    non_qr_list = await client.get(f"{ADV}?channel=non_qr", headers=owner_headers)
+    assert qr["id"] not in [a["id"] for a in non_qr_list.json()["data"]]
+    assert non_qr["id"] in [a["id"] for a in non_qr_list.json()["data"]]
+
+
+async def test_profession_type_status_combine(client, mock_db, owner_headers):
+    # Rahul: Salaried / QR / Active   (the only full match for the 3-way filter below)
+    rahul = await _promote_advisor(client, owner_headers, mock_db, mobile="9700000021", profession="salaried")
+    await client.patch(f"{ADV}/{rahul['id']}", json={"channel": "qr"}, headers=owner_headers)
+    # Kumar: Salaried / Non QR / Active
+    await _promote_advisor(client, owner_headers, mock_db, mobile="9700000022", profession="salaried")
+    # Arun: Salaried / QR / Inactive
+    arun = await _promote_advisor(client, owner_headers, mock_db, mobile="9700000023", profession="salaried")
+    await client.patch(f"{ADV}/{arun['id']}", json={"channel": "qr", "status": "inactive"}, headers=owner_headers)
+    # Suresh: Retired / QR / Active
+    suresh = await _promote_advisor(client, owner_headers, mock_db, mobile="9700000024", profession="retired")
+    await client.patch(f"{ADV}/{suresh['id']}", json={"channel": "qr"}, headers=owner_headers)
+
+    r = await client.get(f"{ADV}?profession=salaried&channel=qr&status=active", headers=owner_headers)
+    assert [a["id"] for a in r.json()["data"]] == [rahul["id"]]
+
+    # "All" is independent per filter: profession=All, Type=QR, Status=Active -> Rahul + Suresh.
+    r = await client.get(f"{ADV}?channel=qr&status=active", headers=owner_headers)
+    assert {a["id"] for a in r.json()["data"]} == {rahul["id"], suresh["id"]}
+
+    # profession=Retired, Type=All, Status=All -> only Suresh.
+    r = await client.get(f"{ADV}?profession=retired", headers=owner_headers)
+    assert [a["id"] for a in r.json()["data"]] == [suresh["id"]]
+
+
+async def test_unknown_filter_values_rejected(client, mock_db, owner_headers):
+    await _promote_advisor(client, owner_headers, mock_db)
+    assert (await client.get(f"{ADV}?profession=doctor", headers=owner_headers)).status_code == 422
+    assert (await client.get(f"{ADV}?channel=sometype", headers=owner_headers)).status_code == 422
+    assert (await client.get(f"{ADV}?status=paused", headers=owner_headers)).status_code == 422
 
 
 # ---------------------------------------------------------------- Add Business + aggregation

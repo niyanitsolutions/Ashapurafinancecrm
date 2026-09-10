@@ -116,29 +116,33 @@ class AdvisorRepository(BaseRepository[Advisor]):
         return self.model.model_validate(doc) if doc else None
 
     @staticmethod
-    def build_query(*, search: str | None = None, channel: str | None = None, status: str | None = None) -> dict[str, Any]:
+    def build_query(
+        *, search: str | None = None, channel: str | None = None, status: str | None = None,
+        profession: str | None = None,
+    ) -> dict[str, Any]:
+        # `channel` (Type), `status` and `profession` are independent, indexed equality
+        # filters — any combination narrows the result; omitting one means "no restriction".
         query: dict[str, Any] = {"is_deleted": False}
         if channel:
             query["channel"] = channel
         if status:
             query["status"] = status
+        if profession:
+            query["profession"] = profession
         if search:
             pattern = re.compile(re.escape(search), re.IGNORECASE)
             query["$or"] = [{field: pattern} for field in _ADVISOR_SEARCH_FIELDS]
         return query
 
     async def search_and_filter(
-        self, *, search: str | None, channel: str | None, status: str | None,
+        self, *, search: str | None, channel: str | None, status: str | None, profession: str | None,
         skip: int, limit: int, sort: list[tuple[str, int]] | None,
     ) -> tuple[list[Advisor], int]:
-        query = self.build_query(search=search, channel=channel, status=status)
+        query = self.build_query(search=search, channel=channel, status=status, profession=profession)
         total = await self.collection.count_documents(query)
         cursor = self.collection.find(query).skip(skip).limit(limit).sort(sort or [("created_at", -1)])
         items = [self.model.model_validate(doc) async for doc in cursor]
         return items, total
-
-    async def count_advisors(self, *, channel: str | None = None, status: str | None = None) -> int:
-        return await self.collection.count_documents(self.build_query(channel=channel, status=status))
 
 
 class AdvisorBusinessRepository(BaseRepository[AdvisorBusiness]):

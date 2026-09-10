@@ -15,7 +15,6 @@ from app.features.recruitment.constants import (
     RecruitmentStage,
     SignatureMethod,
 )
-from app.security.password import PasswordStr
 
 _MOBILE = r"^[6-9]\d{9}$"
 
@@ -277,13 +276,16 @@ class RecruitmentLookupResponse(BaseModel):
 
 class UpdateAdvisorRequest(BaseModel):
     # `None` for a field = "leave unchanged". Send `agency_code=""` to clear it.
-    # 2026 redesign: `channel` (QR / Non-QR) is now an explicit choice, no longer derived
-    # from `agency_code`. `password` is write-only — set the advisor-portal credential;
-    # the plaintext is hashed and never returned or logged.
+    # `channel` (QR / Non-QR "Type") and `status` are explicit, independent choices.
+    # `password` is write-only — the advisor-portal credential set on the Agency Code edit
+    # form. It deliberately has NO minimum-length or complexity policy (staff enter short
+    # codes here); the plaintext is hashed via `hash_password`, never returned or logged,
+    # and a blank value leaves the stored password unchanged. bcrypt's 72-byte hard cap is
+    # still enforced by `hash_password`.
     agency_code: str | None = None
     agent_code: str | None = None
     channel: str | None = Field(default=None, pattern=f"^({'|'.join(AdvisorChannel.ALL)})$")
-    password: PasswordStr | None = None
+    password: str | None = Field(default=None, max_length=72)
     status: str | None = Field(default=None, pattern=f"^({'|'.join(AdvisorStatus.ALL)})$")
 
 
@@ -336,6 +338,10 @@ class AdvisorListItem(BaseModel):
     channel: str
     agency_code: str | None
     agent_code: str | None
+    # Profession classification (separate from `channel`/Type and `status`). `None` for
+    # advisors promoted before the field existed — the UI renders "—".
+    profession: str | None
+    other_profession: str | None
     status: str
     is_employee: bool
     no_of_policies: int
@@ -348,18 +354,6 @@ class AdvisorDetailResponse(AdvisorListItem):
     # Linked recruitment lead (recruitment / application + documents + examination info).
     recruitment: RecruitmentLeadDetailResponse | None = None
     businesses: list[AdvisorBusinessResponse] = Field(default_factory=list)
-
-
-class AdvisorCountsResponse(BaseModel):
-    # Global QR / Non-QR (the sub-tab badges).
-    qr: int
-    non_qr: int
-    # Scoped to the requested `channel` (the filter-chip counts).
-    total: int
-    individual: int
-    total_employees: int
-    active: int
-    inactive: int
 
 
 # Re-exported for router type hints / tests.

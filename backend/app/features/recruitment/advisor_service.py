@@ -2,9 +2,9 @@
 
 Same authorization posture as `RecruitmentService`: the router gates every route with
 `require_permission("insurance_management", "recruitment", action)` (Phase 2 reuses the
-Phase 1 resource — no new permission). This service owns the Advisor list/filters, the
-QR-vs-Non-QR classification (derived from `agency_code`), and the `AdvisorBusiness`
-records whose `$sum` is the advisor's policy count / total premium.
+Phase 1 resource — no new permission). This service owns the Advisor list (filtered by
+Profession / Type / Status, three independent fields) and the `AdvisorBusiness` records
+whose `$sum` is the advisor's policy count / total premium.
 """
 
 from collections.abc import Callable
@@ -17,9 +17,9 @@ from app.features.auth.models import User
 from app.features.employee.repository import EmployeeRepository
 from app.features.recruitment.constants import (
     AdvisorChannel,
-    AdvisorFilter,
     AdvisorProductCategory,
     AdvisorStatus,
+    Profession,
     RecruitmentAuditEvent,
 )
 from app.features.recruitment.models import Advisor, AdvisorBusiness, RecruitmentLead
@@ -48,75 +48,35 @@ class AdvisorService:
     # ---------------------------------------------------------------- employee matching
 
     async def _employee_mobiles(self) -> set[str]:
+        # Only used to flag an advisor row as "(employee)" for display — never a filter.
         return {e.mobile for e in await self._employees.find_many({}, limit=5000)}
 
-    @staticmethod
-    def _matches_filter(advisor: Advisor, *, is_employee: bool, filter_key: str | None) -> bool:
-        if filter_key == AdvisorFilter.INDIVIDUAL:
-            return not is_employee
-        if filter_key == AdvisorFilter.TOTAL_EMPLOYEES:
-            return is_employee
-        if filter_key == AdvisorFilter.ACTIVE:
-            return advisor.status == AdvisorStatus.ACTIVE
-        if filter_key == AdvisorFilter.INACTIVE:
-            return advisor.status == AdvisorStatus.INACTIVE
-        return True
-
-    # ---------------------------------------------------------------- list / counts
+    # ---------------------------------------------------------------- list
 
     async def list_advisors(
-        self, _actor: User, *, channel: str | None, filter_key: str | None, search: str | None,
-        skip: int, limit: int, sort: list[tuple[str, int]] | None,
+        self, _actor: User, *, channel: str | None, profession: str | None, status: str | None,
+        search: str | None, skip: int, limit: int, sort: list[tuple[str, int]] | None,
     ) -> tuple[list[tuple[Advisor, bool, int, float]], int]:
-        if filter_key is not None and filter_key not in AdvisorFilter.ALL:
-            raise ValidationError(f"Unknown filter: {filter_key}")
+        # Profession, Type (channel) and Status are three independent, indexed equality
+        # filters. `None` for any of them = "All" (no restriction); they combine with AND.
         if channel is not None and channel not in AdvisorChannel.ALL:
-            raise ValidationError(f"Unknown channel: {channel}")
+            raise ValidationError(f"Unknown Type: {channel}")
+        if profession is not None and profession not in Profession.ALL:
+            raise ValidationError(f"Unknown profession: {profession}")
+        if status is not None and status not in AdvisorStatus.ALL:
+            raise ValidationError(f"Unknown status: {status}")
 
-        # The Individual / Total-Employees split can't be expressed as a Mongo query
-        # (it depends on a cross-collection mobile match), so those two filters page in
-        # Python; Active/Inactive/none page in the DB.
-        status_filter = filter_key if filter_key in (AdvisorFilter.ACTIVE, AdvisorFilter.INACTIVE) else None
-        needs_python_paging = filter_key in (AdvisorFilter.INDIVIDUAL, AdvisorFilter.TOTAL_EMPLOYEES)
+        page, total = await self._advisors.search_and_filter(
+            search=search, channel=channel, status=status, profession=profession,
+            skip=skip, limit=limit, sort=sort,
+        )
         employee_mobiles = await self._employee_mobiles()
-
-        if needs_python_paging:
-            all_matching, _ = await self._advisors.search_and_filter(
-                search=search, channel=channel, status=None, skip=0, limit=100_000, sort=sort
-            )
-            filtered = [a for a in all_matching if self._matches_filter(a, is_employee=a.mobile in employee_mobiles, filter_key=filter_key)]
-            total = len(filtered)
-            page = filtered[skip : skip + limit]
-        else:
-            page, total = await self._advisors.search_and_filter(
-                search=search, channel=channel, status=status_filter, skip=skip, limit=limit, sort=sort
-            )
-
         aggregates = await self._business.aggregate_by_advisor([a.require_id() for a in page])
         rows: list[tuple[Advisor, bool, int, float]] = []
         for advisor in page:
             count, premium = aggregates.get(advisor.require_id(), (0, 0.0))
             rows.append((advisor, advisor.mobile in employee_mobiles, count, premium))
         return rows, total
-
-    async def get_counts(self, _actor: User, *, channel: str | None) -> dict[str, int]:
-        qr = await self._advisors.count_advisors(channel=AdvisorChannel.QR)
-        non_qr = await self._advisors.count_advisors(channel=AdvisorChannel.NON_QR)
-
-        scoped, _ = await self._advisors.search_and_filter(
-            search=None, channel=channel, status=None, skip=0, limit=100_000, sort=None
-        )
-        employee_mobiles = await self._employee_mobiles()
-        individual = sum(1 for a in scoped if a.mobile not in employee_mobiles)
-        return {
-            "qr": qr,
-            "non_qr": non_qr,
-            "total": len(scoped),
-            "individual": individual,
-            "total_employees": len(scoped) - individual,
-            "active": sum(1 for a in scoped if a.status == AdvisorStatus.ACTIVE),
-            "inactive": sum(1 for a in scoped if a.status == AdvisorStatus.INACTIVE),
-        }
 
     # ---------------------------------------------------------------- detail
 
@@ -163,8 +123,11 @@ class AdvisorService:
             updates["channel"] = payload.channel
         if payload.status is not None:
             updates["status"] = payload.status
-        if payload.password is not None:
+        if payload.password:
+            # Blank input = "keep the current password" (never hash an empty string).
             # Write-only: store the hash, never echo the plaintext (or the hash) anywhere.
+            # No length/complexity policy on this field (see UpdateAdvisorRequest); bcrypt's
+            # 72-byte cap is still enforced by hash_password.
             updates["password_hash"] = hash_password(payload.password)
 
         if not updates:

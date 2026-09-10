@@ -4,10 +4,46 @@ import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
 import { SelectField } from "@/components/forms/SelectField";
 import { Modal } from "@/components/overlays/Modal";
+import { Icon } from "@/theme/icons";
 import { updateAdvisor, type AdvisorDetail } from "@/features/recruitment/api";
 import { getErrorMessage } from "@/shared/api/errors";
 
 type Channel = "qr" | "non_qr";
+
+// Password input with a show/hide eye toggle, styled to match FormField (the shared
+// PasswordField is themed for the dark auth screens). No length/complexity rule — this is
+// the advisor-portal credential; the backend hashes whatever is entered.
+function PasswordInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div className="mb-4">
+      <label htmlFor="advisor-password" className="block text-sm font-medium text-text mb-1.5">
+        Password
+      </label>
+      <div className="relative">
+        <input
+          id="advisor-password"
+          name="password"
+          type={visible ? "text" : "password"}
+          autoComplete="new-password"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="Leave blank to keep the current password"
+          className="w-full rounded-xl border border-border px-3.5 py-2.5 pr-11 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary [&::-ms-reveal]:hidden"
+        />
+        <button
+          type="button"
+          onClick={() => setVisible((v) => !v)}
+          tabIndex={-1}
+          aria-label={visible ? "Hide password" : "Show password"}
+          className="absolute inset-y-0 right-0 flex items-center pr-3 text-textSecondary transition-colors hover:text-text"
+        >
+          <Icon name={visible ? "eye-off" : "eye"} className="h-5 w-5" />
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export function EditAdvisorModal({
   advisor,
@@ -90,16 +126,7 @@ export function EditAdvisorModal({
         onChange={(e) => setAgentCode(e.target.value)}
         placeholder="Agent code"
       />
-      <FormField
-        id="advisor-password"
-        name="password"
-        label="Password"
-        type="password"
-        autoComplete="new-password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        placeholder="Leave blank to keep the current password"
-      />
+      <PasswordInput value={password} onChange={setPassword} />
       <SelectField
         id="advisor-channel"
         name="channel"

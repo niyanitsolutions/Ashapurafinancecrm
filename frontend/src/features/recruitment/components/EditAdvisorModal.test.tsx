@@ -20,6 +20,8 @@ const advisor: AdvisorDetail = {
   channel: "non_qr",
   agency_code: null,
   agent_code: null,
+  profession: "salaried",
+  other_profession: null,
   status: "active",
   is_employee: false,
   no_of_policies: 0,
@@ -36,6 +38,27 @@ describe("EditAdvisorModal", () => {
     expect(screen.getByLabelText("Password")).toHaveValue("");
     const type = screen.getByLabelText("Type") as HTMLSelectElement;
     expect([...type.options].map((o) => o.textContent)).toEqual(["QR", "Non QR"]);
+  });
+
+  it("toggles password visibility with the eye button", async () => {
+    const user = userEvent.setup();
+    render(<EditAdvisorModal advisor={advisor} onClose={vi.fn()} onSaved={vi.fn()} />);
+    const input = screen.getByLabelText("Password");
+    await user.type(input, "12345");
+
+    expect(input).toHaveAttribute("type", "password");
+    await user.click(screen.getByRole("button", { name: "Show password" }));
+    expect(input).toHaveAttribute("type", "text"); // now visible
+    await user.click(screen.getByRole("button", { name: "Hide password" }));
+    expect(input).toHaveAttribute("type", "password"); // hidden again
+  });
+
+  it("accepts a short password with no minimum-length client validation", async () => {
+    const user = userEvent.setup();
+    render(<EditAdvisorModal advisor={advisor} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await user.type(screen.getByLabelText("Password"), "123");
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+    await waitFor(() => expect(updateAdvisor).toHaveBeenCalledWith("a1", { password: "123" }));
   });
 
   it("sends only the changed fields (agent code, type, password)", async () => {

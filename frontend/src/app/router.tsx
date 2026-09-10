@@ -56,7 +56,6 @@ import { InsuranceCaseListPage } from "@/features/insurance_management/pages/Ins
 import { InsuranceManagementLayout } from "@/features/insurance_management/pages/InsuranceManagementLayout";
 import { AdvisorDetailsPage } from "@/features/recruitment/pages/AdvisorDetailsPage";
 import { AdvisorListPage } from "@/features/recruitment/pages/AdvisorListPage";
-import { AdvisorsLayout } from "@/features/recruitment/pages/AdvisorsLayout";
 import { AgencyCodeListPage } from "@/features/recruitment/pages/AgencyCodeListPage";
 import { RecruitmentDetailsPage } from "@/features/recruitment/pages/RecruitmentDetailsPage";
 import { RecruitmentLayout } from "@/features/recruitment/pages/RecruitmentLayout";
@@ -324,16 +323,11 @@ export const router = createBrowserRouter([
                 ],
               },
               { path: "recruitment/:recruitmentId", element: <RecruitmentDetailsPage /> },
-              // Phase 2 — Advisor Management. Own QR / Non-QR sub-tab layout.
-              {
-                path: "advisors",
-                element: <AdvisorsLayout />,
-                children: [
-                  { index: true, element: <Navigate to="/insurance-management/advisors/non-qr" replace /> },
-                  { path: "qr", element: <AdvisorListPage key="adv_qr" channel="qr" /> },
-                  { path: "non-qr", element: <AdvisorListPage key="adv_nonqr" channel="non_qr" /> },
-                ],
-              },
+              // Phase 2 — Advisor Management. One list with independent Profession / Type /
+              // Status filters (the old QR / Non-QR sub-tabs are now the Type filter).
+              { path: "advisors", element: <AdvisorListPage /> },
+              { path: "advisors/qr", element: <Navigate to="/insurance-management/advisors" replace /> },
+              { path: "advisors/non-qr", element: <Navigate to="/insurance-management/advisors" replace /> },
               { path: "advisors/:advisorId", element: <AdvisorDetailsPage /> },
             ],
           },

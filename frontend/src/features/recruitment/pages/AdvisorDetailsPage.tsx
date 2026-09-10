@@ -16,7 +16,13 @@ import {
   Panel,
   PersonalInfoPanel,
 } from "@/features/recruitment/components/RecruitmentInfoPanels";
-import { ADVISOR_CHANNEL_LABELS, ADVISOR_STATUS_LABELS, businessCategoryLabel, formatINR } from "@/features/recruitment/labels";
+import {
+  ADVISOR_CHANNEL_LABELS,
+  ADVISOR_STATUS_LABELS,
+  businessCategoryLabel,
+  formatINR,
+  professionLabel,
+} from "@/features/recruitment/labels";
 import { getErrorMessage } from "@/shared/api/errors";
 import { formatISTDate } from "@/shared/dateFormat";
 
@@ -50,7 +56,7 @@ export function AdvisorDetailsPage() {
   return (
     <div className="p-4 lg:p-6">
       <Link
-        to={`/insurance-management/advisors/${advisor.channel === "qr" ? "qr" : "non-qr"}`}
+        to="/insurance-management/advisors"
         className="mb-3 inline-flex items-center gap-1 text-sm text-textSecondary hover:text-text"
       >
         <Icon name="chevron-left" className="h-4 w-4" /> Advisors
@@ -68,7 +74,11 @@ export function AdvisorDetailsPage() {
           <InfoRow label="Advisor code" value={advisor.advisor_code} />
           <InfoRow label="Mobile" value={advisor.mobile} />
           <InfoRow label="Email" value={advisor.email} />
-          <InfoRow label="Channel" value={ADVISOR_CHANNEL_LABELS[advisor.channel]} />
+          <InfoRow label="Type" value={ADVISOR_CHANNEL_LABELS[advisor.channel]} />
+          <InfoRow
+            label="Profession"
+            value={advisor.profession ? professionLabel(advisor.profession, advisor.other_profession) : null}
+          />
           <InfoRow label="Agency code" value={advisor.agency_code} />
           <InfoRow label="Agent code" value={advisor.agent_code} />
           <InfoRow label="Status" value={ADVISOR_STATUS_LABELS[advisor.status]} />

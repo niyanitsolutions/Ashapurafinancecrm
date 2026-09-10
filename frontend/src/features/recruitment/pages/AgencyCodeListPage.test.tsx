@@ -24,6 +24,8 @@ const advisor: AdvisorListItem = {
   channel: "qr",
   agency_code: "AG-1001",
   agent_code: "AGT-9",
+  profession: "salaried",
+  other_profession: null,
   status: "active",
   is_employee: false,
   no_of_policies: 0,

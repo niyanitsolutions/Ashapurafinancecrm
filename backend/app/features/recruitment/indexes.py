@@ -18,5 +18,6 @@ async def ensure_recruitment_indexes(db: AsyncIOMotorDatabase[Any]) -> None:
     await db["advisors"].create_index("recruitment_lead_id", unique=True)
     await db["advisors"].create_index("channel")
     await db["advisors"].create_index("status")
+    await db["advisors"].create_index("profession")
 
     await db["advisor_business"].create_index("advisor_id")

@@ -187,6 +187,8 @@ def advisor_to_list_item(advisor: Advisor, is_employee: bool, no_of_policies: in
         channel=advisor.channel,
         agency_code=advisor.agency_code,
         agent_code=advisor.agent_code,
+        profession=advisor.profession,
+        other_profession=advisor.other_profession,
         status=advisor.status,
         is_employee=is_employee,
         no_of_policies=no_of_policies,

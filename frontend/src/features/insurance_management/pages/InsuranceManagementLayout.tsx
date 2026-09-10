@@ -2,9 +2,10 @@ import { Outlet, useLocation } from "react-router-dom";
 import { ModuleTabs } from "@/components/layout/ModuleTabs";
 
 // Insurance Management hosts three workflows: the "Policy Leads" pipeline, Advisor
-// Recruitment ("Recruitment Leads"), and Advisor Management. The top strip switches
-// between them; the Policy Leads sub-tabs render underneath only while a Policy Leads
-// route is open (Recruitment / Advisors render their own sub-tabs).
+// Recruitment ("Recruitment Leads"), and Advisor Management ("Advisors"). The top strip
+// switches between them; the Policy Leads sub-tabs render underneath only while a Policy
+// Leads route is open (Recruitment renders its own sub-tabs; Advisors is a single
+// filtered list).
 const POLICY_LEADS_PREFIXES = [
   "/insurance-management/fresh-leads",
   "/insurance-management/policy-document",

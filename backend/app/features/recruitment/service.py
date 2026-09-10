@@ -471,6 +471,8 @@ class RecruitmentService:
                 full_name=lead.full_name,
                 mobile=lead.mobile,
                 email=lead.email,
+                profession=lead.profession,
+                other_profession=lead.other_profession,
                 created_by=actor.require_id(),
             )
             advisor_id = await self._advisors.insert(advisor)
