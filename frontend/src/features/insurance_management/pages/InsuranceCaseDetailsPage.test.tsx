@@ -73,12 +73,13 @@ const baseCase: InsuranceCaseDetail = {
   updated_at: "2026-09-01T00:00:00Z",
   insurance_details: {
     sum_insured: null, premium_amount: null, ppt: null, pt: null, policy_login_remarks: null,
-    policy_number: null, policy_issued_at: null, re_eligibility_choice: null, re_eligible_date: null,
+    policy_number: null, policy_issue_date: null, policy_issued_at: null, re_eligibility_choice: null, re_eligible_date: null,
     re_eligibility_auto_transitioned: false,
   },
   required_documents: { required_total: 1, verified_total: 0, all_required_verified: false },
   on_hold_reason: null,
   on_hold_other_reason: null,
+  assigned_to_channel: null,
   applicant: {
     age: null, profession: null, annual_income: null, alternate_mobile: null, height: null, weight: null,
     mother_name: null, father_name: null, education: null, company_name: null, designation: null,
@@ -140,12 +141,67 @@ describe("InsuranceCaseDetailsPage", () => {
 
     const select = await screen.findByLabelText("Advisor");
     await waitFor(() => expect(listAdvisors).toHaveBeenCalledWith(expect.objectContaining({ status: "active" })));
+    // Regression lock: the page_size sent must never exceed the API's page-size cap (100)
+    // — a value over that (the previous bug) makes every load 422 and always renders as
+    // an empty "No active advisors" dropdown, even when active advisors clearly exist.
+    const requestedPageSize = listAdvisors.mock.calls[0][0].page_size;
+    expect(requestedPageSize).toBeLessThanOrEqual(100);
+
     const labels = Array.from(select.querySelectorAll("option")).map((o) => o.textContent);
     expect(labels).toEqual(expect.arrayContaining(["Ravi Kumar — QR", "Suresh — Non QR"]));
 
     await userEvent.setup().selectOptions(select, "adv-1");
     await userEvent.setup().click(screen.getByRole("button", { name: "Assign" }));
     await waitFor(() => expect(assignInsuranceCase).toHaveBeenCalledWith("c1", "adv-1"));
+  });
+
+  it("shows the assigned advisor's name and Type on Case Overview", async () => {
+    getInsuranceCase.mockResolvedValue({ ...baseCase, assigned_to_name: "testing001", assigned_to_channel: "qr" });
+    renderPage();
+    await screen.findByText("Case Overview");
+    expect(screen.getByText("testing001 — QR")).toBeInTheDocument();
+  });
+
+  it("shows a distinct loading state while advisors are being fetched", async () => {
+    getInsuranceCase.mockResolvedValue(baseCase);
+    let resolveAdvisors: (v: { data: unknown[]; pagination: null }) => void = () => undefined;
+    listAdvisors.mockReturnValue(new Promise((resolve) => (resolveAdvisors = resolve)));
+    renderPage();
+
+    await screen.findByText("Assignment");
+    expect(screen.getByText("Loading advisors…")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Advisor")).not.toBeInTheDocument();
+
+    resolveAdvisors({ data: [{ id: "adv-1", full_name: "Ravi Kumar", channel: "qr", status: "active" }], pagination: null });
+    await screen.findByLabelText("Advisor");
+    expect(screen.queryByText("Loading advisors…")).not.toBeInTheDocument();
+  });
+
+  it("shows an empty state distinctly from an API error, and never silently hides a failed load", async () => {
+    getInsuranceCase.mockResolvedValue(baseCase);
+    listAdvisors.mockResolvedValue({ data: [], pagination: null });
+    renderPage();
+
+    const select = await screen.findByLabelText("Advisor");
+    expect(select).toHaveTextContent("No active advisors");
+  });
+
+  it("shows a retry-able error state when the advisor list fails to load, distinct from 'no active advisors'", async () => {
+    getInsuranceCase.mockResolvedValue(baseCase);
+    listAdvisors.mockRejectedValueOnce(new Error("boom"));
+    renderPage();
+
+    expect(await screen.findByText("Could not load advisors.")).toBeInTheDocument();
+    expect(screen.queryByText("No active advisors")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Advisor")).not.toBeInTheDocument();
+
+    listAdvisors.mockResolvedValueOnce({
+      data: [{ id: "adv-1", full_name: "Ravi Kumar", channel: "qr", status: "active" }],
+      pagination: null,
+    });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByLabelText("Advisor");
+    expect(screen.queryByText("Could not load advisors.")).not.toBeInTheDocument();
   });
 
   it("hold form uses the insurance reasons and requires 'Other Hold Reason' when Other is picked", async () => {

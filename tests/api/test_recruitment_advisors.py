@@ -164,6 +164,32 @@ async def test_short_password_accepted_and_hashed(client, mock_db, owner_headers
     assert verify_password("abc", stored["password_hash"])
 
 
+async def test_has_password_flag_reflects_state_without_ever_leaking_the_secret(client, mock_db, owner_headers):
+    """Advisor Details needs to know whether a password is set (to render a masked
+    ••••••••/"Password set" row with an eye toggle) without the backend ever returning
+    the hash or plaintext. `has_password` is a plain boolean, computed server-side."""
+    advisor = await _promote_advisor(client, owner_headers, mock_db)
+    aid = advisor["id"]
+
+    detail = (await client.get(f"{ADV}/{aid}", headers=owner_headers)).json()["data"]
+    assert detail["has_password"] is False
+    assert isinstance(detail["has_password"], bool)
+    assert "password" not in detail and "password_hash" not in detail
+
+    listed_row = next(a for a in (await client.get(ADV, headers=owner_headers)).json()["data"] if a["id"] == aid)
+    assert listed_row["has_password"] is False
+    assert "password" not in listed_row and "password_hash" not in listed_row
+
+    r = await client.patch(f"{ADV}/{aid}", json={"password": "S3cretPass!"}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["has_password"] is True
+    assert "password" not in r.json()["data"] and "password_hash" not in r.json()["data"]
+
+    detail_after = (await client.get(f"{ADV}/{aid}", headers=owner_headers)).json()["data"]
+    assert detail_after["has_password"] is True
+    assert "password" not in detail_after and "password_hash" not in detail_after
+
+
 async def test_blank_password_preserves_existing(client, mock_db, owner_headers):
     advisor = await _promote_advisor(client, owner_headers, mock_db)
     aid = advisor["id"]

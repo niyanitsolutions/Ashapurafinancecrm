@@ -7,6 +7,7 @@ import { Modal } from "@/components/overlays/Modal";
 import { listPortalProducts } from "@/features/customer/api";
 import type { InsuranceCaseDetail } from "@/features/insurance_management/api";
 import type { NamedMasterData } from "@/features/system_settings/api";
+import { istDateKey } from "@/shared/dateFormat";
 
 export interface PolicyLoginUpdatePayload {
   product_id?: string;
@@ -15,6 +16,7 @@ export interface PolicyLoginUpdatePayload {
   pt?: number;
   remarks?: string;
   policy_number?: string;
+  policy_issue_date?: string;
 }
 
 // Policy Login "Update" — records Premium / PPT / PT / Remarks / Policy Number, and can
@@ -40,6 +42,7 @@ export function PolicyLoginUpdateModal({
   const [ppt, setPpt] = useState(d.ppt != null ? String(d.ppt) : "");
   const [pt, setPt] = useState(d.pt != null ? String(d.pt) : "");
   const [policyNumber, setPolicyNumber] = useState(d.policy_number ?? "");
+  const [issueDate, setIssueDate] = useState(d.policy_issue_date ? istDateKey(d.policy_issue_date) : "");
   const [remarks, setRemarks] = useState(d.policy_login_remarks ?? "");
 
   useEffect(() => {
@@ -57,6 +60,7 @@ export function PolicyLoginUpdateModal({
       ppt: ppt ? Number(ppt) : undefined,
       pt: pt ? Number(pt) : undefined,
       policy_number: policyNumber.trim() || undefined,
+      policy_issue_date: issueDate || undefined,
       remarks: remarks.trim() || undefined,
     });
   };
@@ -91,6 +95,7 @@ export function PolicyLoginUpdateModal({
           <FormField label="PT (years)" name="pt" type="number" min="1" value={pt} onChange={(e) => setPt(e.target.value)} />
         </div>
         <FormField label="Policy Number" name="policy_number" value={policyNumber} onChange={(e) => setPolicyNumber(e.target.value)} />
+        <FormField label="Issue Date" name="policy_issue_date" type="date" value={issueDate} onChange={(e) => setIssueDate(e.target.value)} />
         <TextareaField label="Remarks" name="policy_login_remarks" value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={2} />
 
         <div className="flex gap-2 pt-1">

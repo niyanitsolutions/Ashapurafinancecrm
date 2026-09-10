@@ -95,7 +95,7 @@ from app.services.storage.client import (
     get_object_size,
 )
 from app.shared.audit_log import write_audit_log
-from app.utils.datetime import utc_now
+from app.utils.datetime import ist_date_to_utc_midnight, utc_now
 from app.utils.helpers import to_object_id
 from app.utils.id_generator import IdPrefix, generate_id
 
@@ -596,6 +596,8 @@ class InsuranceCaseService:
             updates["policy_login_remarks"] = payload.remarks.strip() or None
         if payload.policy_number is not None:
             updates["policy_number"] = payload.policy_number.strip() or None
+        if payload.policy_issue_date is not None:
+            updates["policy_issue_date"] = ist_date_to_utc_midnight(payload.policy_issue_date)
         updated_details = details.model_copy(update=updates)
         updated = await self._workflows.update(case_id, {"insurance_details": updated_details.model_dump()}, updated_by=actor.require_id())
         assert updated is not None
@@ -971,7 +973,13 @@ class InsuranceCaseService:
 
     # ---------------------------------------------------------------- name resolution
 
-    async def resolve_names(self, cases: list[ApplicationWorkflow]) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    async def resolve_names(
+        self, cases: list[ApplicationWorkflow]
+    ) -> tuple[dict[str, str], dict[str, str], dict[str, str], dict[str, str]]:
+        """Returns `(customer_map, product_map, assignee_map, assignee_channel_map)` —
+        the last is the raw Advisor `channel` ("qr"/"non_qr"), keyed the same as
+        `assignee_map`, so the case detail can show "Name — QR" without a second lookup.
+        Absent for a legacy employee-id assignment (employees have no channel)."""
         customer_ids = {c.customer_id for c in cases if c.customer_id}
         product_ids = {c.product_id for c in cases}
         assignee_ids = {c.assigned_to for c in cases if c.assigned_to}
@@ -986,4 +994,5 @@ class InsuranceCaseService:
         product_map = {p.require_id(): p.name for p in products if p.require_id() in product_ids}
         assignee_map: dict[str, str] = {e.require_id(): e.display_name for e in employees if e.require_id() in assignee_ids}
         assignee_map.update({a.require_id(): a.full_name for a in advisors if a.require_id() in assignee_ids})
-        return customer_map, product_map, assignee_map
+        assignee_channel_map = {a.require_id(): a.channel for a in advisors if a.require_id() in assignee_ids}
+        return customer_map, product_map, assignee_map, assignee_channel_map

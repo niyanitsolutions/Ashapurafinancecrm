@@ -31,6 +31,7 @@ const advisor: AdvisorListItem = {
   no_of_policies: 0,
   total_premium: 0,
   created_at: "2026-09-01T00:00:00Z",
+  has_password: false,
 };
 
 describe("AgencyCodeListPage", () => {

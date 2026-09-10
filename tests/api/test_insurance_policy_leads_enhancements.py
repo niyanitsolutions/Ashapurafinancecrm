@@ -10,12 +10,16 @@
 Insurance-only; Loan is never exercised here.
 """
 
+from datetime import date, datetime
+
 from bson import ObjectId
+from test_case_status_control import _create_employee, _grant_case_permission, _login
 from test_insurance_policy_leads import _case_for, _insurance_product_with_schema
 from test_workflow import _seed_workflow_definitions, _submitted_application
 
 from app.features.customer.models import ApplicationDocument
 from app.features.recruitment.models import Advisor
+from app.utils.datetime import ist_date_to_utc_midnight
 
 _MANUAL = "/api/v1/insurance-cases/manual"
 
@@ -103,6 +107,71 @@ async def test_assign_non_advisor_id_rejected(client, mock_db, owner_headers, ma
     assert r.status_code == 422, r.text
     r = await client.post(f"/api/v1/insurance-cases/{case['id']}/assign", json={"advisor_id": str(ObjectId())}, headers=owner_headers)
     assert r.status_code == 422, r.text
+
+
+async def test_assign_requires_the_existing_assign_permission(client, mock_db, owner_headers, master_data):
+    """The advisor-lookup fix must not loosen who is allowed to assign — an Employee
+    without the `assign` action on insurance_management:applications is still 403'd,
+    exactly like before this change (the Owner can always assign)."""
+    product = await _product(mock_db)
+    advisor_id = await _advisor(mock_db, mobile="9800000040")
+
+    # Grant the full action set first (this is what creates the permission catalog entry
+    # for insurance_management:applications in this test's mock_db); a second grant to a
+    # different employee then reuses that same catalog entry with a narrower action set.
+    can_assign = await _create_employee(client, owner_headers, master_data, mobile="9500000302", email="canassign@example.com")
+    await _grant_case_permission(client, owner_headers, can_assign["id"], module="insurance_management", actions=["view", "edit", "assign"])
+    can_assign_headers = await _login(client, "9500000302", "InitialPass1!")
+    # This employee created the case themselves, so they also have visibility into it —
+    # isolates the assertion to the `assign` action grant, not the separate (unchanged,
+    # out of scope) created-by visibility rule.
+    own_case = await _manual_case(client, can_assign_headers, product, mobile="9876500801")
+
+    no_assign = await _create_employee(client, owner_headers, master_data, mobile="9500000301", email="noassign@example.com")
+    await _grant_case_permission(client, owner_headers, no_assign["id"], module="insurance_management", actions=["view", "edit"])
+    no_assign_headers = await _login(client, "9500000301", "InitialPass1!")
+    r = await client.post(f"/api/v1/insurance-cases/{own_case['id']}/assign", json={"advisor_id": advisor_id}, headers=no_assign_headers)
+    assert r.status_code == 403, r.text
+
+    r = await client.post(f"/api/v1/insurance-cases/{own_case['id']}/assign", json={"advisor_id": advisor_id}, headers=can_assign_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["assigned_to"] == advisor_id
+
+
+async def test_assign_and_reassign_are_audit_logged(client, mock_db, owner_headers):
+    product = await _product(mock_db)
+    case = await _manual_case(client, owner_headers, product)
+    advisor_a = await _advisor(mock_db, name="Advisor A", mobile="9800000041")
+    advisor_b = await _advisor(mock_db, name="Advisor B", mobile="9800000042")
+
+    r = await client.post(f"/api/v1/insurance-cases/{case['id']}/assign", json={"advisor_id": advisor_a}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    r = await client.post(f"/api/v1/insurance-cases/{case['id']}/assign", json={"advisor_id": advisor_b}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+
+    events = await mock_db["audit_logs"].find({"metadata.application_workflow_id": case["id"]}).to_list(length=50)
+    event_types = {e["event_type"] for e in events}
+    assert "workflow_case_assigned" in event_types
+    assert "workflow_case_reassigned" in event_types
+    reassigned = next(e for e in events if e["event_type"] == "workflow_case_reassigned")
+    assert reassigned["metadata"]["advisor_id"] == advisor_b
+
+
+async def test_assigned_advisor_name_and_channel_shown_on_case_overview(client, mock_db, owner_headers):
+    """Case detail carries both the advisor's name and raw Type (`channel`) so the
+    frontend can render "Name — QR"/"Name — Non QR" without a second lookup."""
+    product = await _product(mock_db)
+    case = await _manual_case(client, owner_headers, product)
+    advisor_id = await _advisor(mock_db, name="testing001", channel="qr", mobile="9800000043")
+
+    r = await client.post(f"/api/v1/insurance-cases/{case['id']}/assign", json={"advisor_id": advisor_id}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["assigned_to_name"] == "testing001"
+    assert r.json()["data"]["assigned_to_channel"] == "qr"
+
+    detail = (await client.get(f"/api/v1/insurance-cases/{case['id']}", headers=owner_headers)).json()["data"]
+    assert detail["assigned_to_name"] == "testing001"
+    assert detail["assigned_to_channel"] == "qr"
 
 
 # ---------------------------------------------------------------- hold reasons
@@ -373,3 +442,144 @@ async def test_other_document_does_not_modify_product_schema_or_block_the_gate(c
     await _verified_schema_doc(mock_db, case_a["application_id"], product["document_type_id"])
     r = await client.post(f"/api/v1/insurance-cases/{case_a['id']}/move-to-policy-login", headers=owner_headers)
     assert r.status_code == 200, r.text
+
+
+# ---------------------------------------------------------------- Policy Login: Issue Date
+
+
+async def _to_policy_login(client, headers, mock_db, product, *, mobile):
+    case = await _manual_case(client, headers, product, mobile=mobile, stage="policy_document")
+    await _verified_schema_doc(mock_db, case["application_id"], product["document_type_id"])
+    r = await client.post(f"/api/v1/insurance-cases/{case['id']}/move-to-policy-login", headers=headers)
+    assert r.status_code == 200, r.text
+    return case["id"]
+
+
+def _expected_issue_date_iso(calendar_date: str) -> datetime:
+    """The exact stored/returned instant for a `policy_issue_date` calendar date — IST
+    midnight of that date, expressed in UTC (same conversion the service applies)."""
+    return ist_date_to_utc_midnight(date.fromisoformat(calendar_date))
+
+
+async def test_policy_login_saves_and_returns_issue_date(client, mock_db, owner_headers):
+    product = await _product(mock_db)
+    case_id = await _to_policy_login(client, owner_headers, mock_db, product, mobile="9876500701")
+
+    r = await client.patch(
+        f"/api/v1/insurance-cases/{case_id}/policy-login",
+        json={"premium_amount": 20000, "ppt": 10, "pt": 10, "policy_number": "POL123456789", "policy_issue_date": "2026-09-10"},
+        headers=owner_headers,
+    )
+    assert r.status_code == 200, r.text
+    saved = datetime.fromisoformat(r.json()["data"]["insurance_details"]["policy_issue_date"])
+    assert saved == _expected_issue_date_iso("2026-09-10")
+
+    # Reopening (re-fetching) the case returns the exact same saved instant.
+    detail = (await client.get(f"/api/v1/insurance-cases/{case_id}", headers=owner_headers)).json()["data"]
+    assert datetime.fromisoformat(detail["insurance_details"]["policy_issue_date"]) == _expected_issue_date_iso("2026-09-10")
+    assert detail["insurance_details"]["policy_number"] == "POL123456789"
+
+
+async def test_policy_login_issue_date_is_editable(client, mock_db, owner_headers):
+    product = await _product(mock_db)
+    case_id = await _to_policy_login(client, owner_headers, mock_db, product, mobile="9876500702")
+
+    await client.patch(
+        f"/api/v1/insurance-cases/{case_id}/policy-login", json={"policy_issue_date": "2026-09-10"}, headers=owner_headers
+    )
+    r = await client.patch(
+        f"/api/v1/insurance-cases/{case_id}/policy-login", json={"policy_issue_date": "2026-10-01"}, headers=owner_headers
+    )
+    assert r.status_code == 200, r.text
+    saved = datetime.fromisoformat(r.json()["data"]["insurance_details"]["policy_issue_date"])
+    assert saved == _expected_issue_date_iso("2026-10-01")
+
+
+async def test_policy_login_without_issue_date_still_works(client, mock_db, owner_headers):
+    """Existing Policy Login behaviour (Premium/PPT/PT/Policy Number/Remarks, no Issue
+    Date) is completely unaffected — the new field is additive and optional."""
+    product = await _product(mock_db)
+    case_id = await _to_policy_login(client, owner_headers, mock_db, product, mobile="9876500703")
+
+    r = await client.patch(
+        f"/api/v1/insurance-cases/{case_id}/policy-login",
+        json={"premium_amount": 15000, "ppt": 5, "pt": 15, "policy_number": "POL999", "remarks": "ok"},
+        headers=owner_headers,
+    )
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]["insurance_details"]
+    assert data["policy_issue_date"] is None
+    assert data["premium_amount"] == 15000 and data["policy_number"] == "POL999"
+
+
+async def test_old_case_without_issue_date_field_still_loads(client, mock_db, owner_headers):
+    """A pre-existing `insurance_details` document (written before `policy_issue_date`
+    existed) must still validate and load, showing null rather than erroring."""
+    product = await _insurance_product_with_schema(mock_db, product_name="Legacy Plan", docs=["PAN"])
+    await _seed_workflow_definitions(mock_db)
+    _headers, application_id = await _submitted_application(client, mock_db, product, mobile="9641110002")
+    case_id = await _case_for(client, owner_headers, application_id)
+    # Simulate a document written before this field existed.
+    await mock_db["application_workflows"].update_one(
+        {"_id": ObjectId(case_id)},
+        {"$set": {"insurance_details.premium_amount": 5000}, "$unset": {"insurance_details.policy_issue_date": ""}},
+    )
+    detail = (await client.get(f"/api/v1/insurance-cases/{case_id}", headers=owner_headers)).json()["data"]
+    assert detail["insurance_details"]["policy_issue_date"] is None
+    assert detail["insurance_details"]["premium_amount"] == 5000
+
+
+async def test_invalid_issue_date_rejected(client, mock_db, owner_headers):
+    product = await _product(mock_db)
+    case_id = await _to_policy_login(client, owner_headers, mock_db, product, mobile="9876500704")
+
+    r = await client.patch(
+        f"/api/v1/insurance-cases/{case_id}/policy-login", json={"policy_issue_date": "2026-99-99"}, headers=owner_headers
+    )
+    assert r.status_code == 422, r.text
+    r = await client.patch(
+        f"/api/v1/insurance-cases/{case_id}/policy-login", json={"policy_issue_date": "not-a-date"}, headers=owner_headers
+    )
+    assert r.status_code == 422, r.text
+    # Rejected — nothing was silently written.
+    detail = (await client.get(f"/api/v1/insurance-cases/{case_id}", headers=owner_headers)).json()["data"]
+    assert detail["insurance_details"]["policy_issue_date"] is None
+
+
+async def test_issue_date_does_not_weaken_policy_login_gates(client, mock_db, owner_headers):
+    """Adding Issue Date must not bypass the existing Premium/PPT/PT-required gate for
+    Move to Policy Issued, and must not itself unlock the move."""
+    product = await _product(mock_db)
+    case_id = await _to_policy_login(client, owner_headers, mock_db, product, mobile="9876500705")
+
+    # Issue Date alone (no premium/ppt/pt) does NOT satisfy the Policy Issued gate.
+    await client.patch(f"/api/v1/insurance-cases/{case_id}/policy-login", json={"policy_issue_date": "2026-09-10"}, headers=owner_headers)
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-issued", headers=owner_headers)
+    assert r.status_code == 422, r.text
+
+    # Once premium/ppt/pt are also recorded, the existing gate opens exactly as before.
+    await client.patch(
+        f"/api/v1/insurance-cases/{case_id}/policy-login",
+        json={"premium_amount": 20000, "ppt": 10, "pt": 10}, headers=owner_headers,
+    )
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-issued", headers=owner_headers)
+    assert r.status_code == 200, r.text
+
+
+async def test_policy_issued_retains_and_returns_issue_date(client, mock_db, owner_headers):
+    product = await _product(mock_db)
+    case_id = await _to_policy_login(client, owner_headers, mock_db, product, mobile="9876500706")
+    await client.patch(
+        f"/api/v1/insurance-cases/{case_id}/policy-login",
+        json={"premium_amount": 20000, "ppt": 10, "pt": 10, "policy_number": "POL42", "policy_issue_date": "2026-09-10"},
+        headers=owner_headers,
+    )
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-issued", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]["insurance_details"]
+    assert datetime.fromisoformat(data["policy_issue_date"]) == _expected_issue_date_iso("2026-09-10")
+    assert data["policy_number"] == "POL42"
+
+    detail = (await client.get(f"/api/v1/insurance-cases/{case_id}", headers=owner_headers)).json()["data"]
+    assert datetime.fromisoformat(detail["insurance_details"]["policy_issue_date"]) == _expected_issue_date_iso("2026-09-10")
+    assert detail["current_status"] == "policy_issued"

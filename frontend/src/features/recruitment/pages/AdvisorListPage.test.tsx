@@ -30,6 +30,7 @@ function advisor(over: Partial<AdvisorListItem> = {}): AdvisorListItem {
     no_of_policies: 3,
     total_premium: 150000,
     created_at: "2026-09-01T00:00:00Z",
+    has_password: false,
     ...over,
   };
 }

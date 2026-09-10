@@ -276,6 +276,9 @@ export interface AdvisorListItem {
   no_of_policies: number;
   total_premium: number;
   created_at: string;
+  // Whether an advisor-portal password has ever been set — NEVER the hash or plaintext
+  // itself. Lets the UI show a safe masked "Password set" / "Not set" state.
+  has_password: boolean;
 }
 
 export interface AdvisorBusinessRecord {

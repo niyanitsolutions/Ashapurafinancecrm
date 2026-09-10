@@ -57,7 +57,7 @@ import { ADVISOR_CHANNEL_LABELS } from "@/features/recruitment/labels";
 // Every stage staff can deliberately "Move To" — the backend still validates the case
 // can legally exist there (documents verified, premium recorded, …).
 const MOVE_TO_STAGES = ["fresh_lead", "policy_document", "policy_login", "policy_issued", "re_eligible", "rejected"];
-import { formatISTDateTime } from "@/shared/dateFormat";
+import { formatISTDate, formatISTDateTime } from "@/shared/dateFormat";
 import { useDocumentCollectionBackContext } from "@/shared/navigationContext";
 
 const STATUS_LABELS = INSURANCE_STATUS_LABELS;
@@ -65,6 +65,15 @@ const STATUS_LABELS = INSURANCE_STATUS_LABELS;
 function formatINR(value: number | null | undefined): string {
   if (value == null) return "—";
   return `₹${value.toLocaleString("en-IN")}`;
+}
+
+// "testing001 — QR" — the assigned Advisor's name plus their Type, when both are known.
+// `channel` is `null` for an unassigned case or a legacy employee-id assignment (no
+// Advisor Type concept), in which case only the name is shown.
+function advisorDisplayName(name: string | null, channel: string | null): string | null {
+  if (!name) return null;
+  if (!channel) return name;
+  return `${name} — ${ADVISOR_CHANNEL_LABELS[channel] ?? channel}`;
 }
 
 function Field({ label, value }: { label: string; value: string | number | null | undefined }) {
@@ -251,7 +260,10 @@ export function InsuranceCaseDetailsPage() {
               <Field label="Customer" value={insuranceCase.customer_name} />
               <Field label="Product" value={insuranceCase.product_name} />
               <Field label="Category" value={formDef?.insurance_category_name} />
-              <Field label="Assigned Advisor" value={insuranceCase.assigned_to_name} />
+              <Field
+                label="Assigned Advisor"
+                value={advisorDisplayName(insuranceCase.assigned_to_name, insuranceCase.assigned_to_channel)}
+              />
               <Field label="Status" value={STATUS_LABELS[status] ?? status} />
               <Field label="Created" value={formatISTDateTime(insuranceCase.created_at)} />
             </div>
@@ -300,6 +312,7 @@ export function InsuranceCaseDetailsPage() {
                     <Field label="Policy Number" value={details.policy_number} />
                     <Field label="PPT (years)" value={details.ppt} />
                     <Field label="PT (years)" value={details.pt} />
+                    <Field label="Issue Date" value={details.policy_issue_date ? formatISTDate(details.policy_issue_date) : null} />
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <Button size="sm" onClick={() => setShowPolicyLogin(true)}>
@@ -387,6 +400,7 @@ export function InsuranceCaseDetailsPage() {
             <Section title="Policy">
               <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
                 <Field label="Policy Number" value={details.policy_number} />
+                <Field label="Issue Date" value={details.policy_issue_date ? formatISTDate(details.policy_issue_date) : null} />
                 <Field label="Premium" value={formatINR(details.premium_amount)} />
                 <Field label="PPT (years)" value={details.ppt} />
                 <Field label="PT (years)" value={details.pt} />
@@ -399,7 +413,10 @@ export function InsuranceCaseDetailsPage() {
         <div className="space-y-6">
           {canAssign && (
             <Section title="Assignment">
-              <AssignForm currentName={insuranceCase.assigned_to_name} onSubmit={(advisorId) => run(() => assignInsuranceCase(caseId, advisorId), "Case assigned.")} />
+              <AssignForm
+                currentName={advisorDisplayName(insuranceCase.assigned_to_name, insuranceCase.assigned_to_channel)}
+                onSubmit={(advisorId) => run(() => assignInsuranceCase(caseId, advisorId), "Case assigned.")}
+              />
             </Section>
           )}
 
@@ -549,38 +566,72 @@ export function InsuranceCaseDetailsPage() {
   );
 }
 
-// Policy Leads are assigned to ACTIVE Advisors only (QR / Non QR shown for context). The
-// backend re-validates existence + Active status, so a stale/inactive option is rejected
-// server-side too.
+// Policy Leads are assigned to ACTIVE Advisors only (QR / Non QR shown for context) —
+// reuses the existing Advisor master (`GET /advisors?status=active`, the same
+// staff-facing endpoint the Advisors screen itself uses), never a second advisor source.
+// The backend independently re-validates existence + Active status on submit, so a stale
+// or manually-crafted advisor id is rejected server-side too, not just hidden here.
+//
+// `page_size` MUST stay at or under the API's page-size cap (100) — the previous 200
+// silently 422'd on every load, which is why the dropdown always showed "No active
+// advisors" even when active advisors clearly existed. Loading / success / empty / error
+// are now distinct states so a future regression like that is visible, not silent.
+const ADVISOR_PAGE_SIZE = 100;
+
 function AssignForm({ currentName, onSubmit }: { currentName: string | null; onSubmit: (advisorId: string) => void }) {
   const [advisorId, setAdvisorId] = useState("");
-  const [advisors, setAdvisors] = useState<AdvisorListItem[]>([]);
+  const [advisors, setAdvisors] = useState<AdvisorListItem[] | null>(null); // null = still loading
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
-    listAdvisors({ status: "active", page_size: 200 })
-      .then(({ data }) => setAdvisors(data))
-      .catch(() => setLoadError("Could not load advisors."));
-  }, []);
+    let cancelled = false;
+    setAdvisors(null);
+    setLoadError(null);
+    listAdvisors({ status: "active", page_size: ADVISOR_PAGE_SIZE })
+      .then(({ data }) => {
+        if (!cancelled) setAdvisors(data);
+      })
+      .catch((err) => {
+        if (!cancelled) setLoadError(getErrorMessage(err) || "Could not load advisors.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadToken]);
+
+  const loading = advisors === null && !loadError;
 
   return (
     <div className="space-y-2">
       {currentName && <p className="text-sm text-text/70">Currently: {currentName}</p>}
-      {loadError && <p className="text-xs text-danger">{loadError}</p>}
-      <SelectField
-        label="Advisor"
-        name="advisor_id"
-        value={advisorId}
-        onChange={(e) => setAdvisorId(e.target.value)}
-        placeholder={advisors.length ? "Select advisor" : "No active advisors"}
-        options={advisors.map((a) => ({
-          value: a.id,
-          label: `${a.full_name} — ${ADVISOR_CHANNEL_LABELS[a.channel] ?? a.channel}`,
-        }))}
-      />
-      <Button size="sm" className="w-full" disabled={!advisorId} onClick={() => onSubmit(advisorId)}>
-        {currentName ? "Reassign" : "Assign"}
-      </Button>
+
+      {loading && <p className="text-sm text-text/50">Loading advisors…</p>}
+
+      {loadError && (
+        <div className="space-y-1.5 rounded border border-danger/30 bg-danger/5 px-3 py-2">
+          <p className="text-xs text-danger">Could not load advisors.</p>
+          <Button type="button" size="sm" variant="secondary" onClick={() => setReloadToken((t) => t + 1)}>
+            Retry
+          </Button>
+        </div>
+      )}
+
+      {!loading && !loadError && (
+        <>
+          <SelectField
+            label="Advisor"
+            name="advisor_id"
+            value={advisorId}
+            onChange={(e) => setAdvisorId(e.target.value)}
+            placeholder={(advisors ?? []).length ? "Select advisor" : "No active advisors"}
+            options={(advisors ?? []).map((a) => ({ value: a.id, label: advisorDisplayName(a.full_name, a.channel) ?? a.full_name }))}
+          />
+          <Button size="sm" className="w-full" disabled={!advisorId} onClick={() => onSubmit(advisorId)}>
+            {currentName ? "Reassign" : "Assign"}
+          </Button>
+        </>
+      )}
     </div>
   );
 }

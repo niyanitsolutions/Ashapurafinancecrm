@@ -69,13 +69,14 @@ def _perm(action: str) -> Any:
 
 async def _detail(service: InsuranceCaseService, case_id: str, actor: User, *, own: bool = False) -> ApiResponse[InsuranceCaseDetailResponse]:
     case = await (service.get_own_case(case_id, actor) if own else service.get_case(case_id, actor))
-    customer_map, product_map, assignee_map = await service.resolve_names([case])
+    customer_map, product_map, assignee_map, assignee_channel_map = await service.resolve_names([case])
     summary = await service.required_documents_summary(case)
     applicant = await service.applicant_details(case)
     return ApiResponse[InsuranceCaseDetailResponse].ok(
         mappers.to_detail_response(
             case, customer_map.get(case.customer_id), product_map.get(case.product_id, ""),
             assignee_map.get(case.assigned_to or ""), summary, applicant,
+            assignee_channel_map.get(case.assigned_to or ""),
         )
     )
 
@@ -86,7 +87,7 @@ async def _detail(service: InsuranceCaseService, case_id: str, actor: User, *, o
 @router.get("/mine")
 async def list_own_cases(service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep) -> ApiResponse[list[InsuranceCaseListItem]]:
     cases = await service.list_own_cases(current_user)
-    customer_map, product_map, employee_map = await service.resolve_names(cases)
+    customer_map, product_map, employee_map, _channel_map = await service.resolve_names(cases)
     items = [
         mappers.to_list_item(c, customer_map.get(c.customer_id), product_map.get(c.product_id, ""), employee_map.get(c.assigned_to or ""))
         for c in cases
@@ -135,7 +136,7 @@ async def list_cases(
         actor, search=page.search, customer_id=customer_id, assigned_to=assigned_to, unassigned_only=unassigned_only,
         status=status, skip=page.skip, limit=page.page_size, sort=page.sort,
     )
-    customer_map, product_map, employee_map = await service.resolve_names(cases)
+    customer_map, product_map, employee_map, _channel_map = await service.resolve_names(cases)
     items = [
         mappers.to_list_item(c, customer_map.get(c.customer_id), product_map.get(c.product_id, ""), employee_map.get(c.assigned_to or ""))
         for c in cases

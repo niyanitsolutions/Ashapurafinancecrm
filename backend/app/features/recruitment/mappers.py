@@ -194,6 +194,8 @@ def advisor_to_list_item(advisor: Advisor, is_employee: bool, no_of_policies: in
         no_of_policies=no_of_policies,
         total_premium=total_premium,
         created_at=advisor.created_at,
+        # Only ever a boolean — `advisor.password_hash` itself never leaves this function.
+        has_password=advisor.password_hash is not None,
     )
 
 

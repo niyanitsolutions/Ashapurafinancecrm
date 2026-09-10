@@ -347,6 +347,11 @@ class AdvisorListItem(BaseModel):
     no_of_policies: int
     total_premium: float
     created_at: datetime
+    # Whether an advisor-portal password has ever been set — NEVER the hash or plaintext
+    # itself (see `Advisor.password_hash`, never included in any response schema). Lets
+    # the UI show a safe masked "Password set" / "Not set" state without any secret
+    # leaving the backend.
+    has_password: bool = False
 
 
 class AdvisorDetailResponse(AdvisorListItem):

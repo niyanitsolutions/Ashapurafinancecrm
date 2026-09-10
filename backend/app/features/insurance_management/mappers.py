@@ -46,6 +46,7 @@ def _applicant_response(form_data: dict[str, Any] | None) -> InsuranceApplicantD
 def to_detail_response(
     case: ApplicationWorkflow, customer_name: str | None, product_name: str, assigned_to_name: str | None,
     documents_summary: dict[str, Any], applicant_form_data: dict[str, Any] | None = None,
+    assigned_to_channel: str | None = None,
 ) -> InsuranceCaseDetailResponse:
     return InsuranceCaseDetailResponse(
         **to_list_item(case, customer_name, product_name, assigned_to_name).model_dump(),
@@ -55,6 +56,9 @@ def to_detail_response(
         on_hold_reason=case.on_hold_reason,
         on_hold_other_reason=case.on_hold_other_reason,
         applicant=_applicant_response(applicant_form_data),
+        # Raw Advisor `channel` ("qr"/"non_qr") for the assigned advisor — absent (None)
+        # for a legacy employee-id assignment. The frontend renders the QR/Non QR label.
+        assigned_to_channel=assigned_to_channel,
     )
 
 

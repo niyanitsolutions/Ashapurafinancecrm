@@ -155,6 +155,12 @@ class InsuranceCaseDetails(BaseModel):
     policy_login_remarks: str | None = None
 
     policy_number: str | None = None
+    # The calendar date printed on the policy (staff-entered at Policy Login, editable) —
+    # UTC instant of IST midnight, same convention as `AdvisorBusiness.policy_issue_date` /
+    # `Lead.next_follow_up_date` (`ist_date_to_utc_midnight`). Distinct from
+    # `policy_issued_at` below, which is *this system's* stage-transition timestamp.
+    # Nullable/additive: existing Policy Login records without it load unchanged.
+    policy_issue_date: datetime | None = None
     policy_issued_at: datetime | None = None
 
     # Reject → Re-Eligibility scheduling — same semantics as LoanCaseDetails' block:

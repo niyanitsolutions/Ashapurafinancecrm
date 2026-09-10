@@ -26,6 +26,35 @@ import {
 import { getErrorMessage } from "@/shared/api/errors";
 import { formatISTDate } from "@/shared/dateFormat";
 
+// Secure masked "Password" row — the backend never returns the password hash or
+// plaintext (see `AdvisorDetail.has_password`, a plain boolean), so the eye toggle can
+// only switch between two equally-safe representations. It NEVER recovers or displays
+// the real credential; clicking it cannot leak anything the API didn't already send.
+function PasswordInfoRow({ hasPassword }: { hasPassword: boolean }) {
+  const [visible, setVisible] = useState(false);
+  if (!hasPassword) {
+    return <InfoRow label="Password" value="Not set" />;
+  }
+  return (
+    <InfoRow
+      label="Password"
+      value={
+        <span className="inline-flex items-center gap-1.5">
+          {visible ? "Password set" : "••••••••"}
+          <button
+            type="button"
+            onClick={() => setVisible((v) => !v)}
+            aria-label={visible ? "Hide password state" : "Show password state"}
+            className="text-textSecondary transition-colors hover:text-text"
+          >
+            <Icon name={visible ? "eye-off" : "eye"} className="h-4 w-4" />
+          </button>
+        </span>
+      }
+    />
+  );
+}
+
 export function AdvisorDetailsPage() {
   const { advisorId = "" } = useParams();
   const { can } = usePermissions();
@@ -81,6 +110,7 @@ export function AdvisorDetailsPage() {
           />
           <InfoRow label="Agency code" value={advisor.agency_code} />
           <InfoRow label="Agent code" value={advisor.agent_code} />
+          <PasswordInfoRow hasPassword={advisor.has_password} />
           <InfoRow label="Status" value={ADVISOR_STATUS_LABELS[advisor.status]} />
           <InfoRow label="No. of Policies" value={advisor.no_of_policies} />
           <InfoRow label="Premium Amount" value={formatINR(advisor.total_premium)} />

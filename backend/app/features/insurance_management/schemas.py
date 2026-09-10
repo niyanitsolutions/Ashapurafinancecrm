@@ -83,6 +83,11 @@ class PolicyLoginUpdateRequest(BaseModel):
     pt: int | None = Field(default=None, ge=1)
     remarks: str | None = None
     policy_number: str | None = None
+    # A real calendar date only (`date`, not `str`) — Pydantic itself rejects an
+    # out-of-range/malformed value (e.g. "2026-99-99") with the standard 422 envelope
+    # before this schema is even constructed. Converted to the stored UTC-midnight
+    # instant the same way every other calendar-date-only field in this codebase is.
+    policy_issue_date: date | None = None
 
 
 class ChangeProductRequest(BaseModel):
@@ -127,6 +132,9 @@ class InsuranceCaseDetailsResponse(BaseModel):
     pt: int | None = None
     policy_login_remarks: str | None = None
     policy_number: str | None = None
+    # Staff-entered calendar date printed on the policy — `None` on a case saved before
+    # this field existed (the UI shows "—"). Distinct from `policy_issued_at` below.
+    policy_issue_date: datetime | None = None
     policy_issued_at: datetime | None = None
     re_eligibility_choice: str | None = None
     re_eligible_date: datetime | None = None
@@ -199,6 +207,10 @@ class InsuranceCaseDetailResponse(InsuranceCaseListItem):
     on_hold_reason: str | None = None
     on_hold_other_reason: str | None = None
     applicant: InsuranceApplicantDetailsResponse = Field(default_factory=InsuranceApplicantDetailsResponse)
+    # Raw Advisor `channel` ("qr" / "non_qr") for `assigned_to_name` — None when
+    # unassigned or (legacy) assigned to a staff employee id. The frontend renders the
+    # QR / Non QR label next to the advisor's name (never recomputed from a second call).
+    assigned_to_channel: str | None = None
 
 
 # ---------------------------------------------------------------------- manual lead creation + stage movement

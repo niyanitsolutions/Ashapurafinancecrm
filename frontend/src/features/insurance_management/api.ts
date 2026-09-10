@@ -25,6 +25,10 @@ export interface InsuranceCaseDetails {
   pt: number | null;
   policy_login_remarks: string | null;
   policy_number: string | null;
+  // Staff-entered calendar date printed on the policy (editable at Policy Login).
+  // Distinct from `policy_issued_at` below, which is this system's own stage-transition
+  // timestamp. `null` on a case saved before this field existed.
+  policy_issue_date: string | null;
   policy_issued_at: string | null;
   re_eligibility_choice: string | null;
   re_eligible_date: string | null;
@@ -78,6 +82,9 @@ export interface InsuranceCaseDetail extends InsuranceCaseListItem {
   on_hold_reason: string | null;
   on_hold_other_reason: string | null;
   applicant: InsuranceApplicantDetails;
+  // Raw Advisor `channel` ("qr" / "non_qr") for `assigned_to_name` — null when
+  // unassigned or (legacy) assigned to a staff employee id.
+  assigned_to_channel: string | null;
 }
 
 // The schema documents on a case's application — `is_in_schema` is false for a document
@@ -218,7 +225,15 @@ export function rejectInsuranceCase(
 // differs).
 export function updatePolicyLogin(
   caseId: string,
-  payload: { product_id?: string; premium_amount?: number; ppt?: number; pt?: number; remarks?: string; policy_number?: string },
+  payload: {
+    product_id?: string;
+    premium_amount?: number;
+    ppt?: number;
+    pt?: number;
+    remarks?: string;
+    policy_number?: string;
+    policy_issue_date?: string;
+  },
 ) {
   return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/policy-login`, { method: "PATCH", body: JSON.stringify(payload) });
 }
