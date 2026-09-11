@@ -45,3 +45,17 @@ class InsuranceCaseAdditionalDocument(BaseDocument):
     is_current: bool = True
     doc_version: int = 1
     replaces_document_id: str | None = None
+
+
+class InsurancePaymentTransaction(BaseDocument):
+    """One immutable record per "Add Payment" — never updated or deleted after insert,
+    the append-only ledger backing the Payment stage's "Payment History" panel.
+    `created_by`/`created_at` (from `BaseDocument`) are the existing audit shape reused
+    here rather than inventing a parallel who/when scheme. `running_total` snapshots
+    `insurance_details.amount_paid` immediately AFTER this transaction was applied, so
+    the history list can render a running total without recomputing it from every prior
+    row on every read."""
+
+    insurance_case_id: str
+    amount: float
+    running_total: float

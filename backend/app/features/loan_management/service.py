@@ -467,6 +467,21 @@ class LoanCaseService:
         updates: dict[str, Any] = {}
         if target == LoanStatus.REJECTED:
             updates["rejection_reason"] = clean_reason or "Staff override — no reason recorded."
+        if target == LoanStatus.DISBURSED and (case.loan_details is None or case.loan_details.disbursed_at is None):
+            # Root cause of the reported "moved to Disbursed but missing from the
+            # Disbursed tab" bug: the Disbursements report/list (`list_disbursements`)
+            # filters on `loan_details.disbursed_at` within the selected date range (its
+            # own report semantics, unrelated to `current_status`) — the normal
+            # `disburse()` action always sets it, but a force-moved case skipped that
+            # write entirely, so it counted (`get_counts` only checks `current_status`)
+            # but could never appear in the report for ANY date range. Setting it here
+            # (never fabricating `disbursed_amount`/`disbursed_reference` — those stay
+            # whatever they already were, "—" in the UI) makes an override-disbursed case
+            # behave identically to a normally-disbursed one for every downstream reader,
+            # including Top Up eligibility scheduling (`schedule_top_up`), which also
+            # requires this field.
+            details = (case.loan_details or LoanCaseDetails()).model_copy(update={"disbursed_at": utc_now()})
+            updates["loan_details"] = details.model_dump()
         remark = "Staff override — stage validations skipped." + (f" {clean_reason}" if clean_reason else "")
         updated = await self._engine.transition(
             case, target, actor, updates=updates or None, remarks=remark, force=True

@@ -11,6 +11,7 @@ const rejectInsuranceCase = vi.fn();
 const moveToPolicyLogin = vi.fn();
 const moveToPayment = vi.fn();
 const updatePayment = vi.fn();
+const getPaymentHistory = vi.fn();
 const moveToPolicyIssued = vi.fn();
 const moveInsuranceCaseBack = vi.fn();
 const moveInsuranceCaseToStage = vi.fn();
@@ -29,6 +30,7 @@ vi.mock("@/features/insurance_management/api", async () => {
     moveToPolicyLogin: (...a: unknown[]) => moveToPolicyLogin(...(a as [])),
     moveToPayment: (...a: unknown[]) => moveToPayment(...(a as [])),
     updatePayment: (...a: unknown[]) => updatePayment(...(a as [])),
+    getPaymentHistory: (...a: unknown[]) => getPaymentHistory(...(a as [])),
     moveToPolicyIssued: (...a: unknown[]) => moveToPolicyIssued(...(a as [])),
     moveInsuranceCaseBack: (...a: unknown[]) => moveInsuranceCaseBack(...(a as [])),
     moveInsuranceCaseToStage: (...a: unknown[]) => moveInsuranceCaseToStage(...(a as [])),
@@ -137,6 +139,7 @@ describe("InsuranceCaseDetailsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     listInsuranceCaseDocuments.mockResolvedValue([pendingDoc]);
+    getPaymentHistory.mockResolvedValue({ transactions: [], unrecorded_amount: 0, total_paid: 0 });
     listAdvisors.mockResolvedValue({
       data: [
         { id: "adv-1", full_name: "Ravi Kumar", channel: "qr", status: "active" },
@@ -406,17 +409,45 @@ describe("InsuranceCaseDetailsPage", () => {
     await waitFor(() => expect(moveToPayment).toHaveBeenCalledWith("c1"));
   });
 
-  it("at Payment, shows Premium / Amount Paid / Balance / Payment Status and opens Update Payment on click", async () => {
+  it("at Payment, shows Premium / Total Amount Paid / Balance / Payment Status and opens Add Payment on click", async () => {
     getInsuranceCase.mockResolvedValue(paymentCase({ amount_paid: 12000, payment_status: "partially_paid" }));
     renderPage();
 
     await screen.findByText("Payment");
-    expect(screen.getByText("₹12,000")).toBeInTheDocument(); // Amount Paid
+    expect(screen.getByText("Total Amount Paid")).toBeInTheDocument();
+    expect(screen.getByText("₹12,000")).toBeInTheDocument(); // Total Amount Paid
     expect(screen.getByText("₹8,000")).toBeInTheDocument(); // Balance
     expect(screen.getByText("Partially Paid")).toBeInTheDocument();
 
-    await userEvent.setup().click(screen.getByRole("button", { name: "Update Payment" }));
-    expect(await screen.findByLabelText("Amount Paid")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Add Payment" }));
+    expect(await screen.findByLabelText("Add Payment Amount")).toBeInTheDocument();
+  });
+
+  it("at Payment, shows the Payment History panel with recorded transactions", async () => {
+    getInsuranceCase.mockResolvedValue(paymentCase({ amount_paid: 14000, payment_status: "partially_paid" }));
+    getPaymentHistory.mockResolvedValue({
+      transactions: [
+        { id: "t1", amount: 9000, running_total: 9000, created_by: "u1", created_by_name: "Staff A", created_at: "2026-09-11T10:00:00Z" },
+        { id: "t2", amount: 5000, running_total: 14000, created_by: "u1", created_by_name: "Staff A", created_at: "2026-09-11T11:30:00Z" },
+      ],
+      unrecorded_amount: 0,
+      total_paid: 14000,
+    });
+    renderPage();
+
+    await screen.findByText("Payment History");
+    await waitFor(() => expect(screen.getAllByText("Staff A")).toHaveLength(2));
+    expect(screen.getAllByText("₹9,000").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("₹5,000").length).toBeGreaterThan(0);
+  });
+
+  it("at Payment, an existing pre-history amount shows as an unrecorded, unattributed line — not a fabricated transaction", async () => {
+    getInsuranceCase.mockResolvedValue(paymentCase({ amount_paid: 9000, payment_status: "partially_paid" }));
+    getPaymentHistory.mockResolvedValue({ transactions: [], unrecorded_amount: 9000, total_paid: 9000 });
+    renderPage();
+
+    await screen.findByText("Payment History");
+    expect(await screen.findByText(/Carried over before payment history tracking began/)).toBeInTheDocument();
   });
 
   it("at Payment, Move to Policy Issued stays disabled until Fully Paid AND Issue Date are both present", async () => {

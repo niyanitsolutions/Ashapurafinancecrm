@@ -451,7 +451,7 @@ async def test_insurance_pipeline_fresh_lead_to_policy_issued(client, mock_db, o
     r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-issued", headers=owner_headers)
     assert r.status_code == 422, r.text
 
-    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount_paid": 25000}, headers=owner_headers)
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 25000}, headers=owner_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["insurance_details"]["payment_status"] == "fully_paid"
 

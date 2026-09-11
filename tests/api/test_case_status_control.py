@@ -979,3 +979,67 @@ async def test_staff_override_case_appears_in_target_stage_list_and_counts(clien
     assert r.json()["data"][0]["id"] == case_id
     detail_again = (await client.get(f"/api/v1/loan-cases/{case_id}", headers=owner_headers)).json()["data"]
     assert detail_again["current_status"] == "credit_evaluation"
+
+
+async def test_staff_override_moving_again_removes_from_old_stage_adds_to_new(client, mock_db, owner_headers, master_data):
+    case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000026")
+
+    r = await client.post(
+        f"/api/v1/loan-cases/{case_id}/override-stage", json={"status": "credit_evaluation"}, headers=employee_headers
+    )
+    assert r.status_code == 200, r.text
+    counts = (await client.get("/api/v1/loan-cases/counts", headers=owner_headers)).json()["data"]
+    assert counts["credit_evaluation"] == 1 and counts["esign_nach_kyc"] == 0
+
+    r = await client.post(
+        f"/api/v1/loan-cases/{case_id}/override-stage", json={"status": "esign_nach_kyc"}, headers=employee_headers
+    )
+    assert r.status_code == 200, r.text
+
+    # Gone from the old stage's list/count, present in the new one's — never in both.
+    r = await client.get("/api/v1/loan-cases?status=credit_evaluation&page_size=100", headers=owner_headers)
+    assert r.json()["meta"]["pagination"]["total"] == 0
+    r = await client.get("/api/v1/loan-cases?status=esign_nach_kyc&page_size=100", headers=owner_headers)
+    body = r.json()
+    assert body["meta"]["pagination"]["total"] == 1 and body["data"][0]["id"] == case_id
+
+    counts = (await client.get("/api/v1/loan-cases/counts", headers=owner_headers)).json()["data"]
+    assert counts["credit_evaluation"] == 0 and counts["esign_nach_kyc"] == 1
+
+
+async def test_staff_override_to_disbursed_appears_in_disbursements_report_and_counts(
+    client, mock_db, owner_headers, master_data
+):
+    """Root-caused regression: `get_counts` counts every `current_status == disbursed`
+    case regardless of date, but the Disbursed tab's actual page
+    (`GET /loan-cases/disbursements`) filters on `loan_details.disbursed_at` within a
+    date range (defaults to "This Month" in the UI) — a case force-moved to Disbursed via
+    Staff Override never had that field set by the normal `disburse()` action, so it
+    counted but could never appear in the report for ANY date range. This reproduces the
+    exact reported symptom (count=9, list=4) and locks in the fix."""
+    case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000027")
+
+    r = await client.post(f"/api/v1/loan-cases/{case_id}/override-stage", json={"status": "disbursed"}, headers=employee_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["current_status"] == "disbursed"
+
+    counts = (await client.get("/api/v1/loan-cases/counts", headers=owner_headers)).json()["data"]
+    assert counts["disbursed"] == 1
+
+    # No date filter — the case must be findable at all, with a real disbursed_at set.
+    r = await client.get("/api/v1/loan-cases/disbursements?page_size=100", headers=owner_headers)
+    body = r.json()
+    assert body["meta"]["pagination"]["total"] == 1, body
+    assert body["data"]["items"][0]["id"] == case_id
+    assert body["data"]["items"][0]["disbursed_at"] is not None
+    # Override never fabricates a disbursed amount/reference it was never given.
+    assert body["data"]["items"][0]["disbursed_amount"] is None
+
+    # And specifically under "This Month" (today's date), the default the UI opens with.
+    from datetime import UTC, datetime
+
+    today = datetime.now(UTC).date().isoformat()
+    r = await client.get(f"/api/v1/loan-cases/disbursements?date_from={today}&date_to={today}&page_size=100", headers=owner_headers)
+    body = r.json()
+    assert body["meta"]["pagination"]["total"] == 1
+    assert body["data"]["items"][0]["id"] == case_id

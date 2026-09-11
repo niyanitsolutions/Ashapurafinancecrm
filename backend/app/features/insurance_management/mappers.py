@@ -2,7 +2,10 @@ from typing import Any
 
 from app.features.customer.mappers import document_to_response
 from app.features.customer.models import ApplicationDocument
-from app.features.insurance_management.models import InsuranceCaseAdditionalDocument
+from app.features.insurance_management.models import (
+    InsuranceCaseAdditionalDocument,
+    InsurancePaymentTransaction,
+)
 from app.features.insurance_management.schemas import (
     InsuranceApplicantDetailsResponse,
     InsuranceCaseDetailResponse,
@@ -10,6 +13,8 @@ from app.features.insurance_management.schemas import (
     InsuranceCaseDocumentResponse,
     InsuranceCaseListItem,
     OtherDocumentResponse,
+    PaymentHistoryResponse,
+    PaymentTransactionResponse,
     RequiredDocumentsSummaryResponse,
 )
 from app.features.workflow_engine.models import (
@@ -84,6 +89,23 @@ def other_document_to_response(
         verified_at=doc.verified_at, created_at=doc.created_at,
         is_current=doc.is_current, doc_version=doc.doc_version,
     )
+
+
+def payment_transaction_to_response(
+    transaction: InsurancePaymentTransaction, creator_name: str | None
+) -> PaymentTransactionResponse:
+    return PaymentTransactionResponse(
+        id=transaction.require_id(), amount=transaction.amount, running_total=transaction.running_total,
+        created_by=transaction.created_by, created_by_name=creator_name, created_at=transaction.created_at,
+    )
+
+
+def payment_history_to_response(
+    transactions: list[InsurancePaymentTransaction], creator_names: dict[str, str], unrecorded_amount: float
+) -> PaymentHistoryResponse:
+    items = [payment_transaction_to_response(t, creator_names.get(t.created_by or "")) for t in transactions]
+    total_paid = unrecorded_amount + sum(t.amount for t in transactions)
+    return PaymentHistoryResponse(transactions=items, unrecorded_amount=unrecorded_amount, total_paid=total_paid)
 
 
 def note_to_response(note: ApplicationNote) -> CaseNoteResponse:

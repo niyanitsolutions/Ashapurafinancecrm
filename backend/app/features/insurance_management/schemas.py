@@ -92,13 +92,42 @@ class PolicyLoginUpdateRequest(BaseModel):
 
 
 class PaymentUpdateRequest(BaseModel):
-    """No `payment_status` field on purpose — it's always server-computed from
-    `amount_paid` vs. the case's stored Premium Amount (`InsurancePaymentStatus.compute`),
-    never accepted from the client, so it can never be submitted out of sync with the
-    actual amount. Negative input is rejected here (`ge=0`); exceeding the Premium is
-    rejected in the service (needs the case's Premium to check against)."""
+    """"Add Payment" — `amount` is the NEW amount being collected right now, ADDED to
+    whatever is already recorded (`InsuranceCaseService.update_payment` does the
+    cumulative add atomically). It is NEVER the new total — deliberately named `amount`,
+    not `amount_paid`, so the contract itself can't be misread as "replace the total"
+    (production bug this replaces: the field used to be treated as the new total,
+    silently overwriting prior payments).
 
-    amount_paid: float = Field(ge=0)
+    No `payment_status` field on purpose — it's always server-computed from the
+    resulting cumulative total vs. the case's stored Premium Amount
+    (`InsurancePaymentStatus.compute`), never accepted from the client, so it can never
+    be submitted out of sync with the actual amount. Zero/negative is rejected here
+    (`gt=0`); exceeding the remaining balance is rejected atomically in the service
+    (needs the case's latest stored Premium/amount_paid to check against)."""
+
+    amount: float = Field(gt=0)
+
+
+class PaymentTransactionResponse(BaseModel):
+    id: str
+    amount: float
+    running_total: float
+    created_by: str | None
+    created_by_name: str | None
+    created_at: datetime
+
+
+class PaymentHistoryResponse(BaseModel):
+    """`transactions` is the recorded, immutable ledger (oldest first). `unrecorded_amount`
+    is the gap between the case's CURRENT `amount_paid` and the sum of `transactions` —
+    non-zero only for a case whose `amount_paid` predates this history feature. Never a
+    fabricated transaction with an invented date/staff member — surfaced as its own
+    honest, unattributed figure instead."""
+
+    transactions: list[PaymentTransactionResponse]
+    unrecorded_amount: float
+    total_paid: float
 
 
 class ChangeProductRequest(BaseModel):

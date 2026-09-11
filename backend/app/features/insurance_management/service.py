@@ -31,6 +31,7 @@ from datetime import date
 from typing import Any, ClassVar
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo import ReturnDocument
 
 from app.config.redis import get_redis
 from app.constants.roles import EMPLOYEE, OWNER
@@ -47,8 +48,14 @@ from app.features.customer.repository import (
 from app.features.customer.service import CustomerService
 from app.features.employee.repository import EmployeeRepository
 from app.features.insurance_management.constants import InsurancePaymentStatus
-from app.features.insurance_management.models import InsuranceCaseAdditionalDocument
-from app.features.insurance_management.repository import InsuranceCaseAdditionalDocumentRepository
+from app.features.insurance_management.models import (
+    InsuranceCaseAdditionalDocument,
+    InsurancePaymentTransaction,
+)
+from app.features.insurance_management.repository import (
+    InsuranceCaseAdditionalDocumentRepository,
+    InsurancePaymentTransactionRepository,
+)
 from app.features.insurance_management.schemas import (
     ConfirmOtherDocumentRequest,
     CreateManualInsuranceCaseRequest,
@@ -121,6 +128,7 @@ class InsuranceCaseService:
         self._categories = InsuranceCategoryRepository(db)
         self._document_types = DocumentTypeRepository(db)
         self._other_documents = InsuranceCaseAdditionalDocumentRepository(db)
+        self._payments = InsurancePaymentTransactionRepository(db)
         self._advisors = AdvisorRepository(db)
         self._reminders = RemindersService(db)
 
@@ -346,11 +354,24 @@ class InsuranceCaseService:
         return await self._engine.transition(case, InsuranceStatus.PAYMENT, actor, updates={"insurance_details": started.model_dump()})
 
     async def update_payment(self, case_id: str, payload: PaymentUpdateRequest, actor: User) -> ApplicationWorkflow:
-        """Record a payment against the case's Premium — case stays at `payment` (same
-        "edit in place, no transition" shape as `update_policy_login`). `payment_status`
-        is never taken from the request: it's always recomputed here from
-        `amount_paid`/`premium_amount`, so it can never be saved out of sync with the
-        actual numbers (see `InsuranceCaseDetails.payment_status`)."""
+        """"Add Payment" — `payload.amount` is ADDED to whatever is already recorded, never
+        replaces it (production bug this fixes: a second payment used to overwrite the
+        first). Case stays at `payment` (same "edit in place, no transition" shape as
+        `update_policy_login`).
+
+        The increment-and-validate step is one atomic, conditional `find_one_and_update`
+        (`$inc` guarded by a `$lte` filter on the CURRENT stored `amount_paid`) rather
+        than the usual read-modify-write-whole-subdocument pattern every other update in
+        this service uses — that pattern would silently lose one of two near-simultaneous
+        payments (classic lost-update race) and would also overwrite the increment this
+        same call just made. The filter is evaluated against MongoDB's live document at
+        write time, so two concurrent adds are serialized correctly: whichever lands
+        first succeeds against the balance as it stood; the second re-validates against
+        the NOW-updated total, and is atomically rejected (never silently lost, never
+        silently over-applied) if it would exceed the Premium. `payment_status` is never
+        taken from the request — always recomputed here from the confirmed new total, so
+        it can never be saved out of sync with the actual amount (see
+        `InsuranceCaseDetails.payment_status`)."""
         case = await self.get_case(case_id, actor)
         if case.current_status != InsuranceStatus.PAYMENT:
             raise ConflictError("Payment can only be updated at the Payment stage.")
@@ -358,31 +379,87 @@ class InsuranceCaseService:
         premium = details.premium_amount
         if premium is None:
             raise ConflictError("This case has no Premium recorded — update Policy Login first.")
-        if payload.amount_paid > premium:
-            raise ValidationError(f"Amount paid cannot exceed the Premium Amount of ₹{premium:,.2f}.")
 
-        old_status, old_amount = details.payment_status, details.amount_paid
-        new_status = InsurancePaymentStatus.compute(payload.amount_paid, premium)
-        updated_details = details.model_copy(update={"payment_status": new_status, "amount_paid": payload.amount_paid})
-        updated = await self._workflows.update(
-            case_id, {"insurance_details": updated_details.model_dump()}, updated_by=actor.require_id()
+        old_amount = details.amount_paid or 0.0
+        doc = await self._workflows.collection.find_one_and_update(
+            {
+                "_id": to_object_id(case_id),
+                "is_deleted": False,
+                "current_status": InsuranceStatus.PAYMENT,
+                "insurance_details.amount_paid": {"$lte": premium - payload.amount},
+            },
+            {"$inc": {"insurance_details.amount_paid": payload.amount}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if doc is None:
+            # Re-fetch to report the ACTUAL current balance (never a stale one) — the
+            # case may have moved on, or (far more likely) someone else's payment landed
+            # first and this amount would now exceed the remaining balance.
+            current = await self.get_case(case_id, actor)
+            if current.current_status != InsuranceStatus.PAYMENT:
+                raise ConflictError("Payment can only be updated at the Payment stage.")
+            current_paid = (current.insurance_details or InsuranceCaseDetails()).amount_paid or 0.0
+            remaining = premium - current_paid
+            raise ValidationError(
+                f"Amount paid cannot exceed the remaining balance of ₹{remaining:,.2f} "
+                f"(Premium ₹{premium:,.2f}, already paid ₹{current_paid:,.2f})."
+            )
+
+        new_total = doc["insurance_details"]["amount_paid"]
+        new_status = InsurancePaymentStatus.compute(new_total, premium)
+        updated = await self._workflows.collection.find_one_and_update(
+            {"_id": to_object_id(case_id)},
+            {"$set": {"insurance_details.payment_status": new_status, "updated_at": utc_now(), "updated_by": actor.require_id()}},
+            return_document=ReturnDocument.AFTER,
         )
         assert updated is not None
+        updated_case = ApplicationWorkflow.model_validate(updated)
+
+        transaction = InsurancePaymentTransaction(
+            insurance_case_id=case_id, amount=payload.amount, running_total=new_total, created_by=actor.require_id(),
+        )
+        await self._payments.insert(transaction)
+
         await write_audit_log(
             self._db, event_type=InsuranceAuditEvent.PAYMENT_UPDATED, user_id=actor.require_id(),
             metadata={
-                "application_workflow_id": case_id, "from_status": old_status, "to_status": new_status,
-                "from_amount": old_amount, "to_amount": payload.amount_paid,
+                "application_workflow_id": case_id, "amount_added": payload.amount,
+                "from_amount": old_amount, "to_amount": new_total, "to_status": new_status,
             },
         )
         await self._notes.insert(ApplicationNote(
             application_workflow_id=case_id, created_by=actor.require_id(),
             text=(
-                f"Payment updated: Status {old_status or '—'} → {new_status}. "
-                f"Amount ₹{old_amount or 0:,.2f} → ₹{payload.amount_paid:,.2f}."
+                f"Payment added: ₹{payload.amount:,.2f}. Total Paid ₹{old_amount:,.2f} → ₹{new_total:,.2f} "
+                f"({new_status})."
             ),
         ))
-        return updated
+        return updated_case
+
+    async def payment_history(self, case_id: str, actor: User) -> tuple[list[InsurancePaymentTransaction], float]:
+        """The immutable payment ledger plus `unrecorded_amount` — the gap (if any)
+        between the case's current `amount_paid` and the sum of recorded transactions.
+        Non-zero only for a case whose `amount_paid` predates individual transaction
+        tracking (e.g. a pre-existing ₹9,000 recorded under the old overwrite-only
+        behaviour); never backfilled as a fake transaction with an invented date/staff
+        member (per the brief — do not fabricate history)."""
+        case = await self.get_case(case_id, actor)
+        transactions = await self._payments.find_for_case(case_id)
+        total_paid = (case.insurance_details or InsuranceCaseDetails()).amount_paid or 0.0
+        recorded = sum(t.amount for t in transactions)
+        unrecorded = max(0.0, total_paid - recorded)
+        return transactions, unrecorded
+
+    async def resolve_payment_creator_names(self, transactions: list[InsurancePaymentTransaction]) -> dict[str, str]:
+        # Same convention as `CustomerService.resolve_verifier_names` — `created_by`
+        # stores the acting user's own auth id (BaseDocument's usual created_by
+        # convention), keyed by `Employee.user_id` since an Owner (no Employee record)
+        # can also record a payment.
+        creator_ids = {t.created_by for t in transactions if t.created_by}
+        if not creator_ids:
+            return {}
+        employees = await self._employees.find_many({}, limit=500)
+        return {e.user_id: e.display_name for e in employees if e.user_id in creator_ids}
 
     async def move_to_policy_issued(self, case_id: str, actor: User) -> ApplicationWorkflow:
         case = await self.get_case(case_id, actor)

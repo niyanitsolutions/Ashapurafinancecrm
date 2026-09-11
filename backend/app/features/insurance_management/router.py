@@ -41,6 +41,7 @@ from app.features.insurance_management.schemas import (
     OtherDocumentResponse,
     OtherDocumentUploadUrlRequest,
     OtherDocumentUploadUrlResponse,
+    PaymentHistoryResponse,
     PaymentUpdateRequest,
     PolicyLoginUpdateRequest,
     RejectCaseDocumentRequest,
@@ -261,6 +262,15 @@ async def update_payment(
 ) -> ApiResponse[InsuranceCaseDetailResponse]:
     await service.update_payment(case_id, payload, actor)
     return await _detail(service, case_id, actor)
+
+
+@router.get("/{case_id}/payment-history")
+async def get_payment_history(
+    case_id: str, service: ServiceDep, actor: Annotated[User, _perm("view")]
+) -> ApiResponse[PaymentHistoryResponse]:
+    transactions, unrecorded = await service.payment_history(case_id, actor)
+    creator_names = await service.resolve_payment_creator_names(transactions)
+    return ApiResponse[PaymentHistoryResponse].ok(mappers.payment_history_to_response(transactions, creator_names, unrecorded))
 
 
 @router.post("/{case_id}/move-to-policy-issued")

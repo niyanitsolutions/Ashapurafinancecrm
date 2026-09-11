@@ -34,6 +34,7 @@ import {
   holdInsuranceCase,
   listInsuranceCaseDocuments,
   moveInsuranceCaseBack,
+  getPaymentHistory,
   moveInsuranceCaseToStage,
   moveToPayment,
   moveToPolicyDocument,
@@ -50,6 +51,7 @@ import {
   type InsuranceApplicantDetails,
   type InsuranceCaseDetail,
   type InsuranceCaseDocument,
+  type PaymentHistory,
 } from "@/features/insurance_management/api";
 import {
   getInsuranceStatusControlInfo,
@@ -113,6 +115,7 @@ export function InsuranceCaseDetailsPage() {
   const [insuranceCase, setInsuranceCase] = useState<InsuranceCaseDetail | null>(null);
   const [timeline, setTimeline] = useState<CaseTimelineEntry[]>([]);
   const [documents, setDocuments] = useState<InsuranceCaseDocument[]>([]);
+  const [paymentHistory, setPaymentHistory] = useState<PaymentHistory | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rejectingDoc, setRejectingDoc] = useState<ApplicationDocument | null>(null);
@@ -134,6 +137,7 @@ export function InsuranceCaseDetailsPage() {
       .catch((err) => setError(getErrorMessage(err)));
     getInsuranceCaseTimeline(caseId).then(setTimeline).catch(() => setTimeline([]));
     listInsuranceCaseDocuments(caseId).then(setDocuments).catch(() => setDocuments([]));
+    getPaymentHistory(caseId).then(setPaymentHistory).catch(() => setPaymentHistory(null));
   };
 
   useEffect(load, [caseId]);
@@ -252,7 +256,7 @@ export function InsuranceCaseDetailsPage() {
     try {
       await updatePayment(caseId, payload);
       setShowPayment(false);
-      setMessage("Payment updated.");
+      setMessage("Payment added.");
       load();
     } catch (err) {
       setError(getErrorMessage(err));
@@ -358,7 +362,7 @@ export function InsuranceCaseDetailsPage() {
                 <div className="space-y-3">
                   <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
                     <Field label="Premium Amount" value={formatINR(details.premium_amount)} />
-                    <Field label="Amount Paid" value={formatINR(details.amount_paid)} />
+                    <Field label="Total Amount Paid" value={formatINR(details.amount_paid)} />
                     <Field
                       label="Balance"
                       value={
@@ -375,7 +379,7 @@ export function InsuranceCaseDetailsPage() {
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <Button size="sm" onClick={() => setShowPayment(true)}>
-                      Update Payment
+                      Add Payment
                     </Button>
                     {canIssuePolicy && (
                       <Button
@@ -425,6 +429,8 @@ export function InsuranceCaseDetailsPage() {
               )}
             </Section>
           )}
+
+          {status === "payment" && <PaymentHistorySection history={paymentHistory} />}
 
           {(status === "policy_document" || status === "policy_login" || status === "policy_issued") && (
             <Section title="Documents">
@@ -756,6 +762,55 @@ function HoldForm({ onSubmit }: { onSubmit: (reason: string, otherReason: string
         Place On Hold
       </Button>
     </form>
+  );
+}
+
+// Payment History — the immutable ledger of individual "Add Payment" transactions.
+// `unrecorded_amount` (non-zero only for a case whose Total Paid predates this feature)
+// is shown as its own honest, unattributed line — never fabricated as a fake
+// transaction with an invented date/staff member.
+function PaymentHistorySection({ history }: { history: PaymentHistory | null }) {
+  return (
+    <Section title="Payment History">
+      {!history ? (
+        <p className="text-sm text-text/50">Loading…</p>
+      ) : history.transactions.length === 0 && history.unrecorded_amount === 0 ? (
+        <p className="text-sm text-text/50">No payments recorded yet.</p>
+      ) : (
+        <div className="space-y-2">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-text/50">
+                <th className="pb-1 font-normal">Date/Time</th>
+                <th className="pb-1 font-normal">Amount</th>
+                <th className="pb-1 font-normal">Added By</th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.unrecorded_amount > 0 && (
+                <tr className="border-t border-border/60">
+                  <td className="py-1.5 text-text/50 italic" colSpan={2}>
+                    Carried over before payment history tracking began
+                  </td>
+                  <td className="py-1.5 text-right font-medium">{formatINR(history.unrecorded_amount)}</td>
+                </tr>
+              )}
+              {history.transactions.map((t) => (
+                <tr key={t.id} className="border-t border-border/60">
+                  <td className="py-1.5">{formatISTDateTime(t.created_at)}</td>
+                  <td className="py-1.5">{formatINR(t.amount)}</td>
+                  <td className="py-1.5">{t.created_by_name ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="flex justify-between border-t border-border pt-2 text-sm font-semibold">
+            <span>Total Paid</span>
+            <span>{formatINR(history.total_paid)}</span>
+          </div>
+        </div>
+      )}
+    </Section>
   );
 }
 

@@ -216,10 +216,32 @@ export function moveToPayment(caseId: string) {
   return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/move-to-payment`, { method: "POST" });
 }
 
-// Record a payment — case stays at Payment. No `payment_status` field: it's always
-// server-computed from `amount_paid` vs. the recorded Premium Amount.
-export function updatePayment(caseId: string, payload: { amount_paid: number }) {
+// "Add Payment" — `amount` is ADDED to whatever is already recorded (server-side,
+// atomically), never a replacement of the total. No `payment_status` field: it's always
+// server-computed from the resulting cumulative total vs. the recorded Premium Amount.
+export function updatePayment(caseId: string, payload: { amount: number }) {
   return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/payment`, { method: "PATCH", body: JSON.stringify(payload) });
+}
+
+export interface PaymentTransaction {
+  id: string;
+  amount: number;
+  running_total: number;
+  created_by: string | null;
+  created_by_name: string | null;
+  created_at: string;
+}
+
+export interface PaymentHistory {
+  transactions: PaymentTransaction[];
+  // Non-zero only for a case whose amount_paid predates individual transaction
+  // tracking — never a fabricated transaction, just an honest unattributed figure.
+  unrecorded_amount: number;
+  total_paid: number;
+}
+
+export function getPaymentHistory(caseId: string) {
+  return apiRequest<PaymentHistory>(`/insurance-cases/${caseId}/payment-history`);
 }
 
 // Payment -> Policy Issued. The backend independently re-derives "fully paid" from the

@@ -42,60 +42,72 @@ function detail(over: Partial<InsuranceCaseDetail["insurance_details"]> = {}): I
 }
 
 describe("PaymentUpdateModal", () => {
-  it("shows the Premium in the description and starts from the current Amount Paid", () => {
-    render(<PaymentUpdateModal detail={detail({ amount_paid: 5000 })} onCancel={vi.fn()} onConfirm={vi.fn()} />);
+  it("shows the Premium plus the CURRENT Paid/Balance, and starts with a blank amount field", () => {
+    render(<PaymentUpdateModal detail={detail({ amount_paid: 9000 })} onCancel={vi.fn()} onConfirm={vi.fn()} />);
     expect(screen.getByText(/Premium ₹20,000/)).toBeInTheDocument();
-    expect(screen.getByLabelText("Amount Paid")).toHaveValue(5000);
+    expect(screen.getByText("Current Paid")).toBeInTheDocument();
+    expect(screen.getByText("₹9,000")).toBeInTheDocument();
+    expect(screen.getByText("Current Balance")).toBeInTheDocument();
+    expect(screen.getByText("₹11,000")).toBeInTheDocument();
+    // The field is for the NEW amount only — never pre-filled with the existing total
+    // (that would invite "replace the total" confusion, the exact production bug).
+    expect(screen.getByLabelText("Add Payment Amount")).toHaveValue(null);
   });
 
-  it("shows a live Balance / Payment Status preview that updates as you type — never submitted", async () => {
-    const user = userEvent.setup();
-    render(<PaymentUpdateModal detail={detail()} onCancel={vi.fn()} onConfirm={vi.fn()} />);
+  it("shows a live 'Total Paid after this payment' preview that ADDS to the current paid amount", () => {
+    const detailWithExisting = detail({ amount_paid: 9000 });
+    render(<PaymentUpdateModal detail={detailWithExisting} onCancel={vi.fn()} onConfirm={vi.fn()} />);
 
-    const input = screen.getByLabelText("Amount Paid");
-    await user.clear(input);
-    await user.type(input, "12000");
+    const input = screen.getByLabelText("Add Payment Amount");
+    fireEvent.change(input, { target: { value: "5000" } });
 
-    expect(screen.getByText("₹8,000")).toBeInTheDocument(); // Balance
+    expect(screen.getByText("Total Paid (after this payment)")).toBeInTheDocument();
+    expect(screen.getByText("₹14,000")).toBeInTheDocument(); // 9000 + 5000, never just 5000
+    expect(screen.getByText("₹6,000")).toBeInTheDocument(); // remaining balance 20000-14000
     expect(screen.getByText("Partially Paid")).toBeInTheDocument();
   });
 
-  it("Save sends only amount_paid — no payment_status field", async () => {
+  it("Save sends only the additional amount — never the total, never payment_status", async () => {
     const onConfirm = vi.fn();
     const user = userEvent.setup();
-    render(<PaymentUpdateModal detail={detail()} onCancel={vi.fn()} onConfirm={onConfirm} />);
+    render(<PaymentUpdateModal detail={detail({ amount_paid: 9000 })} onCancel={vi.fn()} onConfirm={onConfirm} />);
 
-    const input = screen.getByLabelText("Amount Paid");
-    await user.clear(input);
-    await user.type(input, "20000");
+    const input = screen.getByLabelText("Add Payment Amount");
+    fireEvent.change(input, { target: { value: "5000" } });
     await user.click(screen.getByRole("button", { name: "Save" }));
 
-    await waitFor(() => expect(onConfirm).toHaveBeenCalledWith({ amount_paid: 20000 }));
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledWith({ amount: 5000 }));
   });
 
-  it("blocks Save and shows an error when Amount Paid exceeds the Premium", async () => {
+  it("blocks Save and shows an error when the added amount exceeds the remaining balance", async () => {
     const onConfirm = vi.fn();
     const user = userEvent.setup();
-    render(<PaymentUpdateModal detail={detail()} onCancel={vi.fn()} onConfirm={onConfirm} />);
+    render(<PaymentUpdateModal detail={detail({ amount_paid: 9000 })} onCancel={vi.fn()} onConfirm={onConfirm} />);
 
-    const input = screen.getByLabelText("Amount Paid");
-    fireEvent.change(input, { target: { value: "25000" } });
+    const input = screen.getByLabelText("Add Payment Amount");
+    fireEvent.change(input, { target: { value: "20000" } }); // balance is only 11000
 
-    expect(screen.getByText(/must be between ₹0 and the Premium Amount/)).toBeInTheDocument();
+    expect(screen.getByText(/no more than the remaining balance/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
-  it("blocks Save for a negative Amount Paid", async () => {
-    const onConfirm = vi.fn();
-    const user = userEvent.setup();
-    render(<PaymentUpdateModal detail={detail()} onCancel={vi.fn()} onConfirm={onConfirm} />);
+  it("blocks Save for a zero or negative amount", () => {
+    render(<PaymentUpdateModal detail={detail()} onCancel={vi.fn()} onConfirm={vi.fn()} />);
+    const input = screen.getByLabelText("Add Payment Amount");
 
-    const input = screen.getByLabelText("Amount Paid");
-    await user.clear(input);
-    await user.type(input, "-5");
-
+    fireEvent.change(input, { target: { value: "0" } });
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+
+    fireEvent.change(input, { target: { value: "-5" } });
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("shows Fully Paid in the preview when the added amount exactly clears the balance", () => {
+    render(<PaymentUpdateModal detail={detail({ amount_paid: 15000 })} onCancel={vi.fn()} onConfirm={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("Add Payment Amount"), { target: { value: "5000" } });
+    expect(screen.getByText("Fully Paid")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   });
 });

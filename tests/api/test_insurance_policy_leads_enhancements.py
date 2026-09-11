@@ -572,7 +572,7 @@ async def test_issue_date_does_not_weaken_policy_login_gates(client, mock_db, ow
     assert r.status_code == 422, r.text
 
     # Fully paying opens the gate exactly as expected.
-    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount_paid": 20000}, headers=owner_headers)
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 20000}, headers=owner_headers)
     assert r.status_code == 200, r.text
     r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-issued", headers=owner_headers)
     assert r.status_code == 200, r.text
@@ -588,7 +588,7 @@ async def test_policy_issued_retains_and_returns_issue_date(client, mock_db, own
     )
     assert (await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-payment", headers=owner_headers)).status_code == 200
     assert (
-        await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount_paid": 20000}, headers=owner_headers)
+        await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 20000}, headers=owner_headers)
     ).status_code == 200
 
     r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-issued", headers=owner_headers)
@@ -653,7 +653,7 @@ async def test_not_paid_cannot_move_to_policy_issued(client, mock_db, owner_head
 async def test_partially_paid_cannot_move_to_policy_issued(client, mock_db, owner_headers):
     product = await _product(mock_db)
     case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500805", premium=20000)
-    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount_paid": 10000}, headers=owner_headers)
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 10000}, headers=owner_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["insurance_details"]["payment_status"] == "partially_paid"
 
@@ -664,7 +664,7 @@ async def test_partially_paid_cannot_move_to_policy_issued(client, mock_db, owne
 async def test_fully_paid_with_issue_date_can_move_to_policy_issued(client, mock_db, owner_headers):
     product = await _product(mock_db)
     case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500806", premium=20000, issue_date="2026-09-11")
-    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount_paid": 20000}, headers=owner_headers)
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 20000}, headers=owner_headers)
     assert r.json()["data"]["insurance_details"]["payment_status"] == "fully_paid"
 
     r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-issued", headers=owner_headers)
@@ -677,33 +677,65 @@ async def test_fully_paid_without_issue_date_cannot_move_to_policy_issued(client
     also be present, matching the Payment panel's own "Move to Policy Issued" gate."""
     product = await _product(mock_db)
     case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500807", premium=20000)
-    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount_paid": 20000}, headers=owner_headers)
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 20000}, headers=owner_headers)
     assert r.json()["data"]["insurance_details"]["payment_status"] == "fully_paid"
 
     r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-issued", headers=owner_headers)
     assert r.status_code == 422, r.text
 
 
-async def test_amount_paid_cannot_exceed_premium(client, mock_db, owner_headers):
+async def test_amount_cannot_exceed_the_remaining_balance(client, mock_db, owner_headers):
+    """Premium 20000, nothing paid yet — a single payment above the premium is rejected,
+    and the stored amount is left completely untouched (never partially applied)."""
     product = await _product(mock_db)
     case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500808", premium=20000)
-    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount_paid": 20001}, headers=owner_headers)
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 20001}, headers=owner_headers)
     assert r.status_code == 422, r.text
     detail = (await client.get(f"/api/v1/insurance-cases/{case_id}", headers=owner_headers)).json()["data"]
     assert detail["insurance_details"]["amount_paid"] == 0  # unchanged — the invalid write never landed
 
 
-async def test_negative_amount_paid_is_rejected(client, mock_db, owner_headers):
+async def test_second_payment_above_remaining_balance_is_rejected_and_first_is_preserved(client, mock_db, owner_headers):
+    """The exact example from the brief: Premium 50000, Paid 49000 (Balance 1000) —
+    trying to add 2000 is rejected, and the existing 49000 stays exactly as it was."""
     product = await _product(mock_db)
-    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500809")
-    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount_paid": -1}, headers=owner_headers)
+    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500828", premium=50000)
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 49000}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 2000}, headers=owner_headers)
+    assert r.status_code == 422, r.text
+
+    detail = (await client.get(f"/api/v1/insurance-cases/{case_id}", headers=owner_headers)).json()["data"]
+    assert detail["insurance_details"]["amount_paid"] == 49000
+    assert detail["insurance_details"]["payment_status"] == "partially_paid"
+
+
+async def test_zero_amount_is_rejected(client, mock_db, owner_headers):
+    product = await _product(mock_db)
+    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500829")
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 0}, headers=owner_headers)
     assert r.status_code == 422, r.text
 
 
-async def test_balance_is_premium_minus_amount_paid(client, mock_db, owner_headers):
+async def test_negative_amount_is_rejected(client, mock_db, owner_headers):
+    product = await _product(mock_db)
+    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500809")
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": -1}, headers=owner_headers)
+    assert r.status_code == 422, r.text
+
+
+async def test_invalid_amount_type_is_rejected(client, mock_db, owner_headers):
+    product = await _product(mock_db)
+    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500830")
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": "not-a-number"}, headers=owner_headers)
+    assert r.status_code == 422, r.text
+
+
+async def test_balance_is_premium_minus_cumulative_amount_paid(client, mock_db, owner_headers):
     product = await _product(mock_db)
     case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500810", premium=20000)
-    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount_paid": 12500}, headers=owner_headers)
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 12500}, headers=owner_headers)
     data = r.json()["data"]["insurance_details"]
     assert data["premium_amount"] - data["amount_paid"] == 7500
 
@@ -717,17 +749,168 @@ async def test_balance_is_premium_minus_amount_paid(client, mock_db, owner_heade
 
 async def test_payment_status_can_never_be_submitted_directly(client, mock_db, owner_headers):
     """No request schema accepts `payment_status` — even if a client stuffs it into the
-    body, the server-computed value (from `amount_paid`) is the only thing ever stored."""
+    body, the real, server-computed value (from the cumulative amount) is the only thing
+    ever stored."""
     product = await _product(mock_db)
     case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500811", premium=20000)
     r = await client.patch(
         f"/api/v1/insurance-cases/{case_id}/payment",
-        json={"amount_paid": 10000, "payment_status": "fully_paid"}, headers=owner_headers,
+        json={"amount": 10000, "payment_status": "fully_paid"}, headers=owner_headers,
     )
     assert r.status_code == 200, r.text
     # The extra field is silently ignored (Pydantic default) — the real, computed status
     # reflects the actual amount, not the spoofed one.
     assert r.json()["data"]["insurance_details"]["payment_status"] == "partially_paid"
+
+
+# ---------------------------------------------------------------- Payment: cumulative accounting + history
+
+
+async def test_payments_accumulate_not_overwrite(client, mock_db, owner_headers):
+    """The exact scenario from the production bug report: Premium 50000, add 9000, then
+    add 5000 — Total Paid must become 14000 (9000+5000), never overwritten to just 5000."""
+    product = await _product(mock_db)
+    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500901", premium=50000)
+
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 9000}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    d = r.json()["data"]["insurance_details"]
+    assert d["amount_paid"] == 9000 and d["premium_amount"] - d["amount_paid"] == 41000 and d["payment_status"] == "partially_paid"
+
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 5000}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    d = r.json()["data"]["insurance_details"]
+    assert d["amount_paid"] == 14000  # 9000 + 5000, not 5000
+    assert d["premium_amount"] - d["amount_paid"] == 36000
+    assert d["payment_status"] == "partially_paid"
+
+    # Refreshing (a fresh GET) shows the exact same cumulative values.
+    detail = (await client.get(f"/api/v1/insurance-cases/{case_id}", headers=owner_headers)).json()["data"]
+    assert detail["insurance_details"]["amount_paid"] == 14000
+
+
+async def test_three_cumulative_payments_reach_fully_paid(client, mock_db, owner_headers):
+    """0 -> +9000 -> +5000 -> +36000 = 50000, Fully Paid, matching the brief's worked example."""
+    product = await _product(mock_db)
+    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500902", premium=50000, issue_date="2026-09-11")
+
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 9000}, headers=owner_headers)
+    d = r.json()["data"]["insurance_details"]
+    assert d["amount_paid"] == 9000 and d["payment_status"] == "partially_paid"
+
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 5000}, headers=owner_headers)
+    d = r.json()["data"]["insurance_details"]
+    assert d["amount_paid"] == 14000 and d["payment_status"] == "partially_paid"
+
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 36000}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    d = r.json()["data"]["insurance_details"]
+    assert d["amount_paid"] == 50000 and d["premium_amount"] - d["amount_paid"] == 0
+    assert d["payment_status"] == "fully_paid"
+
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-issued", headers=owner_headers)
+    assert r.status_code == 200, r.text
+
+
+async def test_payment_history_contains_every_transaction_separately(client, mock_db, owner_headers):
+    product = await _product(mock_db)
+    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500903", premium=50000)
+    await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 9000}, headers=owner_headers)
+    await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 5000}, headers=owner_headers)
+    await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 36000}, headers=owner_headers)
+
+    r = await client.get(f"/api/v1/insurance-cases/{case_id}/payment-history", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    body = r.json()["data"]
+    txns = body["transactions"]
+    assert len(txns) == 3
+    assert [t["amount"] for t in txns] == [9000, 5000, 36000]
+    assert [t["running_total"] for t in txns] == [9000, 14000, 50000]
+    assert body["unrecorded_amount"] == 0
+    assert body["total_paid"] == 50000
+    # Every transaction records who added it (matches the existing created_by/created_at shape).
+    for t in txns:
+        assert t["created_by"] is not None and t["created_at"] is not None
+
+
+async def test_existing_pre_history_amount_is_preserved_and_not_fabricated_as_a_transaction(client, mock_db, owner_headers):
+    """A case whose `amount_paid` was set before this feature existed (no transaction
+    rows behind it) must keep that amount exactly, and the API must NOT invent a fake
+    historical transaction claiming who/when made it — the gap is surfaced as its own
+    honest `unrecorded_amount` figure instead."""
+    product = await _product(mock_db)
+    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500904", premium=50000)
+    # Simulate data written by the old (pre-history) overwrite-only behaviour.
+    await mock_db["application_workflows"].update_one(
+        {"_id": __import__("bson").ObjectId(case_id)},
+        {"$set": {"insurance_details.amount_paid": 9000, "insurance_details.payment_status": "partially_paid"}},
+    )
+
+    r = await client.get(f"/api/v1/insurance-cases/{case_id}/payment-history", headers=owner_headers)
+    body = r.json()["data"]
+    assert body["transactions"] == []
+    assert body["unrecorded_amount"] == 9000
+    assert body["total_paid"] == 9000
+
+    # Adding a real payment on top preserves the pre-existing 9000 and records ONLY the new one.
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 5000}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["insurance_details"]["amount_paid"] == 14000
+
+    body = (await client.get(f"/api/v1/insurance-cases/{case_id}/payment-history", headers=owner_headers)).json()["data"]
+    assert len(body["transactions"]) == 1
+    assert body["transactions"][0]["amount"] == 5000
+    assert body["unrecorded_amount"] == 9000
+    assert body["total_paid"] == 14000  # unrecorded 9000 + the one recorded transaction
+
+
+async def test_concurrent_payments_are_serialized_not_lost(client, mock_db, owner_headers):
+    """Two "simultaneous" adds (sequential calls simulate the atomic serialization a real
+    race would go through) that are both individually valid must BOTH be reflected in the
+    final total — never a lost update where the second silently clobbers the first."""
+    product = await _product(mock_db)
+    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500905", premium=100000)
+    await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 45000}, headers=owner_headers)
+
+    import asyncio
+
+    results = await asyncio.gather(
+        client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 3000}, headers=owner_headers),
+        client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 3000}, headers=owner_headers),
+    )
+    assert all(r.status_code == 200 for r in results)
+
+    detail = (await client.get(f"/api/v1/insurance-cases/{case_id}", headers=owner_headers)).json()["data"]
+    assert detail["insurance_details"]["amount_paid"] == 51000  # 45000 + 3000 + 3000 — neither add was lost
+
+    body = (await client.get(f"/api/v1/insurance-cases/{case_id}/payment-history", headers=owner_headers)).json()["data"]
+    assert len(body["transactions"]) == 3  # the initial 45000 + both concurrent 3000s, each its own row
+
+
+async def test_concurrent_payment_that_would_exceed_balance_is_rejected_not_silently_applied(client, mock_db, owner_headers):
+    """Premium 50000, Paid 45000 (balance 5000) — two concurrent adds of 3000 each cannot
+    BOTH succeed (that would total 51000 > premium). Exactly one must be accepted; the
+    other must be cleanly rejected, and the stored total must equal the true sum of only
+    the successfully-applied payment(s) — never silently wrong."""
+    product = await _product(mock_db)
+    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500906", premium=50000)
+    await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 45000}, headers=owner_headers)
+
+    import asyncio
+
+    results = await asyncio.gather(
+        client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 3000}, headers=owner_headers),
+        client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 3000}, headers=owner_headers),
+    )
+    statuses = sorted(r.status_code for r in results)
+    assert statuses == [200, 422], statuses  # exactly one succeeds, the other is rejected
+
+    detail = (await client.get(f"/api/v1/insurance-cases/{case_id}", headers=owner_headers)).json()["data"]
+    assert detail["insurance_details"]["amount_paid"] == 48000  # 45000 + exactly one successful 3000
+
+    body = (await client.get(f"/api/v1/insurance-cases/{case_id}/payment-history", headers=owner_headers)).json()["data"]
+    assert len(body["transactions"]) == 2  # the initial 45000 + exactly the one that succeeded
+    assert sum(t["amount"] for t in body["transactions"]) == 48000
 
 
 async def test_direct_move_to_policy_issued_from_policy_login_is_rejected(client, mock_db, owner_headers):
@@ -764,23 +947,24 @@ async def test_move_case_to_stage_walks_through_payment_and_stops_if_unpaid(clie
 async def test_payment_update_is_audited_and_recorded_in_history(client, mock_db, owner_headers):
     product = await _product(mock_db)
     case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500814", premium=20000)
-    await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount_paid": 10000}, headers=owner_headers)
-    await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount_paid": 20000}, headers=owner_headers)
+    await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 10000}, headers=owner_headers)
+    await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 10000}, headers=owner_headers)
 
     audits = await mock_db["audit_logs"].find({"event_type": "insurance_case_payment_updated"}).to_list(length=50)
     assert len(audits) == 2
-    assert audits[0]["metadata"]["to_amount"] == 10000
+    assert audits[0]["metadata"]["amount_added"] == 10000 and audits[0]["metadata"]["to_amount"] == 10000
+    assert audits[1]["metadata"]["amount_added"] == 10000
     assert audits[1]["metadata"]["from_amount"] == 10000 and audits[1]["metadata"]["to_amount"] == 20000
 
     timeline = (await client.get(f"/api/v1/insurance-cases/{case_id}/timeline", headers=owner_headers)).json()["data"]
-    assert any("Payment updated" in (e.get("text") or "") for e in timeline)
+    assert any("Payment added" in (e.get("text") or "") for e in timeline)
     assert any("partially_paid" in (e.get("text") or "") or "fully_paid" in (e.get("text") or "") for e in timeline)
 
 
 async def test_payment_can_only_be_updated_at_payment_stage(client, mock_db, owner_headers):
     product = await _product(mock_db)
     case_id = await _to_policy_login(client, owner_headers, mock_db, product, mobile="9876500815")
-    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount_paid": 100}, headers=owner_headers)
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 100}, headers=owner_headers)
     assert r.status_code == 409, r.text
 
 
@@ -812,3 +996,60 @@ async def test_move_back_from_payment_to_policy_login(client, mock_db, owner_hea
     r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-back", json={"target": "policy_login"}, headers=owner_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["current_status"] == "policy_login"
+
+
+# ---------------------------------------------------------------- Payment: authorization / IDOR
+
+
+async def test_update_payment_requires_edit_permission(client, mock_db, owner_headers, master_data):
+    """A view-only staff member cannot add a payment by calling the endpoint directly —
+    same edit-level gate every other Payment/Policy Login write action uses."""
+    product = await _product(mock_db)
+    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500819", premium=20000)
+
+    viewer = await _create_employee(client, owner_headers, master_data, mobile="9500000310", email="payview@example.com")
+    await _grant_case_permission(client, owner_headers, viewer["id"], module="insurance_management", actions=["view"])
+    viewer_headers = await _login(client, "9500000310")
+
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 5000}, headers=viewer_headers)
+    assert r.status_code == 403, r.text
+    detail = (await client.get(f"/api/v1/insurance-cases/{case_id}", headers=owner_headers)).json()["data"]
+    assert detail["insurance_details"]["amount_paid"] == 0
+
+
+async def test_update_payment_idor_employee_without_visibility_is_rejected(client, mock_db, owner_headers, master_data):
+    """An Employee who did not create the case (and it isn't legacy-assigned to them)
+    cannot add a payment to it, even with `edit` granted on the module — the same
+    created-by/assigned-to visibility rule `get_case` enforces everywhere else."""
+    product = await _product(mock_db)
+    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500820", premium=20000)
+
+    stranger = await _create_employee(client, owner_headers, master_data, mobile="9500000311", email="paystranger@example.com")
+    await _grant_case_permission(client, owner_headers, stranger["id"], module="insurance_management", actions=["view", "edit"])
+    stranger_headers = await _login(client, "9500000311")
+
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 5000}, headers=stranger_headers)
+    assert r.status_code == 403, r.text
+
+
+async def test_update_payment_requires_authentication(client, mock_db, owner_headers):
+    product = await _product(mock_db)
+    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500821", premium=20000)
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 5000})
+    assert r.status_code == 401, r.text
+
+
+async def test_payment_history_view_permission_and_idor(client, mock_db, owner_headers, master_data):
+    product = await _product(mock_db)
+    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500822", premium=20000)
+    await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount": 5000}, headers=owner_headers)
+
+    stranger = await _create_employee(client, owner_headers, master_data, mobile="9500000312", email="payhist@example.com")
+    await _grant_case_permission(client, owner_headers, stranger["id"], module="insurance_management", actions=["view", "edit"])
+    stranger_headers = await _login(client, "9500000312")
+    r = await client.get(f"/api/v1/insurance-cases/{case_id}/payment-history", headers=stranger_headers)
+    assert r.status_code == 403, r.text
+
+    r = await client.get(f"/api/v1/insurance-cases/{case_id}/payment-history", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["transactions"][0]["amount"] == 5000
