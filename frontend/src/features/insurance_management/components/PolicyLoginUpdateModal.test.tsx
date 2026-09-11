@@ -27,6 +27,9 @@ function detail(over: Partial<InsuranceCaseDetail["insurance_details"]> = {}): I
     next_follow_up_date: null,
     created_at: "2026-09-01T00:00:00Z",
     updated_at: "2026-09-01T00:00:00Z",
+    premium_amount: null,
+    amount_paid: null,
+    payment_status: null,
     on_hold_reason: null,
     on_hold_other_reason: null,
     required_documents: { required_total: 1, verified_total: 1, all_required_verified: true },
@@ -37,7 +40,8 @@ function detail(over: Partial<InsuranceCaseDetail["insurance_details"]> = {}): I
     },
     insurance_details: {
       sum_insured: null, premium_amount: null, ppt: null, pt: null, policy_login_remarks: null,
-      policy_number: null, policy_issue_date: null, policy_issued_at: null, re_eligibility_choice: null,
+      policy_number: null, policy_issue_date: null, policy_issued_at: null,
+      payment_status: null, amount_paid: null, re_eligibility_choice: null,
       re_eligible_date: null, re_eligibility_auto_transitioned: false, ...over,
     },
   };

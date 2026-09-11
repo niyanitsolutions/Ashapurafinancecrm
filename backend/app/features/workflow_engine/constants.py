@@ -123,6 +123,14 @@ class InsuranceStatus:
     FRESH_LEAD = "fresh_lead"
     POLICY_DOCUMENT = "policy_document"
     POLICY_LOGIN = "policy_login"
+    # Production add-on (2026-09-11): a real, backend-enforced stage between Policy Login
+    # and Policy Issued — not a frontend-only filter. `InsuranceCaseService.move_to_payment`
+    # / `update_payment` / `move_to_policy_issued` own its gates (Premium/PPT/PT already
+    # recorded to enter; fully paid + Issue Date present to leave). An already-seeded
+    # database needs `scripts/migrate_add_insurance_payment_stage.py` (Policy Login's
+    # existing `allowed_next_statuses` row won't pick this up on its own — same caveat as
+    # every other insurance workflow-definition change here).
+    PAYMENT = "payment"
     POLICY_ISSUED = "policy_issued"
     RE_ELIGIBLE = "re_eligible"
     ON_HOLD = ON_HOLD_STATUS
@@ -131,7 +139,7 @@ class InsuranceStatus:
     # `re_eligible` is resumable (it can be placed on hold) and deliberately NOT terminal
     # — a re-eligible case restarts from `fresh_lead`/`policy_document`. `rejected` stays
     # terminal (see `TERMINAL_STATUSES_BY_CASE_TYPE`'s consumers).
-    RESUMABLE = (FRESH_LEAD, POLICY_DOCUMENT, POLICY_LOGIN, RE_ELIGIBLE)
+    RESUMABLE = (FRESH_LEAD, POLICY_DOCUMENT, POLICY_LOGIN, PAYMENT, RE_ELIGIBLE)
     ALL = (*RESUMABLE, POLICY_ISSUED, ON_HOLD, REJECTED)
     TERMINAL = (POLICY_ISSUED, REJECTED)
 
@@ -262,6 +270,8 @@ class InsuranceAuditEvent:
     # Policy Leads redesign (2026-09-07).
     POLICY_DOCUMENT_STARTED = "insurance_case_policy_document_started"
     POLICY_LOGIN_STARTED = "insurance_case_policy_login_started"
+    PAYMENT_STARTED = "insurance_case_payment_started"
+    PAYMENT_UPDATED = "insurance_case_payment_updated"
     MOVED_BACK = "insurance_case_moved_back"
     POLICY_LOGIN_UPDATED = "insurance_case_policy_login_updated"
     PRODUCT_CHANGED = "insurance_case_product_changed"

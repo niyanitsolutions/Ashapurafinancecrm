@@ -190,16 +190,95 @@ async def test_has_password_flag_reflects_state_without_ever_leaking_the_secret(
     assert "password" not in detail_after and "password_hash" not in detail_after
 
 
+async def test_reveal_password_returns_the_actual_saved_password(client, mock_db, owner_headers):
+    """The dedicated reveal endpoint (eye toggle on Advisor Details) is the ONE place the
+    real, previously-entered password comes back — decrypted from `password_encrypted`
+    (reversible Fernet, never used for login), separate from the bcrypt `password_hash`
+    login actually verifies against."""
+    advisor = await _promote_advisor(client, owner_headers, mock_db)
+    aid = advisor["id"]
+    r = await client.patch(f"{ADV}/{aid}", json={"password": "Abc@123"}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+
+    r = await client.get(f"{ADV}/{aid}/password", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["password"] == "Abc@123"
+
+    # Never leaked anywhere else — list/detail still only ever expose the boolean flag.
+    detail = (await client.get(f"{ADV}/{aid}", headers=owner_headers)).json()["data"]
+    assert "password" not in detail and "password_hash" not in detail and "password_encrypted" not in detail
+
+    # Reveal is itself audited (who/when — never the value).
+    audits = await mock_db["audit_logs"].find({"event_type": "recruitment_advisor_password_accessed"}).to_list(length=50)
+    assert len(audits) == 1
+    assert audits[0]["metadata"]["advisor_id"] == aid
+    assert "Abc@123" not in str(audits[0])
+
+
+async def test_reveal_password_updates_after_password_change(client, mock_db, owner_headers):
+    advisor = await _promote_advisor(client, owner_headers, mock_db)
+    aid = advisor["id"]
+    await client.patch(f"{ADV}/{aid}", json={"password": "First123"}, headers=owner_headers)
+    assert (await client.get(f"{ADV}/{aid}/password", headers=owner_headers)).json()["data"]["password"] == "First123"
+
+    await client.patch(f"{ADV}/{aid}", json={"password": "Second456"}, headers=owner_headers)
+    assert (await client.get(f"{ADV}/{aid}/password", headers=owner_headers)).json()["data"]["password"] == "Second456"
+
+
+async def test_reveal_password_404_when_none_ever_set(client, mock_db, owner_headers):
+    advisor = await _promote_advisor(client, owner_headers, mock_db)
+    r = await client.get(f"{ADV}/{advisor['id']}/password", headers=owner_headers)
+    assert r.status_code == 404, r.text
+
+
+async def test_reveal_password_requires_edit_not_just_view_permission(client, mock_db, owner_headers, master_data):
+    """A view-only staff member can open Advisor Details (masked) but cannot reveal the
+    real password by calling the endpoint directly — same edit-level gate the
+    bank-statement document password reveal uses."""
+    advisor = await _promote_advisor(client, owner_headers, mock_db)
+    aid = advisor["id"]
+    await client.patch(f"{ADV}/{aid}", json={"password": "Abc@123"}, headers=owner_headers)
+
+    viewer = await _employee(client, owner_headers, master_data, mobile="9500000070")
+    await _grant(client, owner_headers, viewer["id"], ["view"], "Advisor Viewer")
+    viewer_headers = await _login(client, "9500000070")
+
+    r = await client.get(f"{ADV}/{aid}", headers=viewer_headers)
+    assert r.status_code == 200  # can see the masked page
+
+    r = await client.get(f"{ADV}/{aid}/password", headers=viewer_headers)
+    assert r.status_code == 403, r.text
+
+    editor = await _employee(client, owner_headers, master_data, mobile="9500000071")
+    await _grant(client, owner_headers, editor["id"], ["view", "edit"], "Advisor Editor")
+    editor_headers = await _login(client, "9500000071")
+    r = await client.get(f"{ADV}/{aid}/password", headers=editor_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["password"] == "Abc@123"
+
+
+async def test_reveal_password_requires_authentication(client, mock_db, owner_headers):
+    advisor = await _promote_advisor(client, owner_headers, mock_db)
+    aid = advisor["id"]
+    await client.patch(f"{ADV}/{aid}", json={"password": "Abc@123"}, headers=owner_headers)
+    r = await client.get(f"{ADV}/{aid}/password")
+    assert r.status_code == 401, r.text
+
+
 async def test_blank_password_preserves_existing(client, mock_db, owner_headers):
     advisor = await _promote_advisor(client, owner_headers, mock_db)
     aid = advisor["id"]
     await client.patch(f"{ADV}/{aid}", json={"password": "123"}, headers=owner_headers)
     original = (await mock_db["advisors"].find_one({"_id": __import__("bson").ObjectId(aid)}))["password_hash"]
+    original_encrypted = (await mock_db["advisors"].find_one({"_id": __import__("bson").ObjectId(aid)}))["password_encrypted"]
 
-    # A blank password + another field change must NOT touch the stored hash.
+    # A blank password + another field change must NOT touch the stored hash (or the
+    # reversible copy the reveal endpoint decrypts).
     await client.patch(f"{ADV}/{aid}", json={"password": "", "agent_code": "AGT-1"}, headers=owner_headers)
-    after_blank = (await mock_db["advisors"].find_one({"_id": __import__("bson").ObjectId(aid)}))["password_hash"]
-    assert after_blank == original
+    stored = await mock_db["advisors"].find_one({"_id": __import__("bson").ObjectId(aid)})
+    assert stored["password_hash"] == original
+    assert stored["password_encrypted"] == original_encrypted
+    assert (await client.get(f"{ADV}/{aid}/password", headers=owner_headers)).json()["data"]["password"] == "123"
 
     # ...and so must omitting the field entirely.
     await client.patch(f"{ADV}/{aid}", json={"agency_code": "AG-9"}, headers=owner_headers)

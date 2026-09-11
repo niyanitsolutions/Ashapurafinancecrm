@@ -13,10 +13,16 @@ export type InsuranceStatus =
   | "fresh_lead"
   | "policy_document"
   | "policy_login"
+  | "payment"
   | "policy_issued"
   | "re_eligible"
   | "on_hold"
   | "rejected";
+
+// Payment stage — `payment_status` is always server-computed from `amount_paid` vs. the
+// case's Premium Amount (`InsurancePaymentStatus.compute` on the backend); no request
+// ever sends it directly.
+export type InsurancePaymentStatus = "not_paid" | "partially_paid" | "fully_paid";
 
 export interface InsuranceCaseDetails {
   sum_insured: number | null;
@@ -30,6 +36,9 @@ export interface InsuranceCaseDetails {
   // timestamp. `null` on a case saved before this field existed.
   policy_issue_date: string | null;
   policy_issued_at: string | null;
+  // Payment stage — both `null` until the case first reaches Payment.
+  payment_status: InsurancePaymentStatus | null;
+  amount_paid: number | null;
   re_eligibility_choice: string | null;
   re_eligible_date: string | null;
   re_eligibility_auto_transitioned: boolean;
@@ -55,6 +64,11 @@ export interface InsuranceCaseListItem {
   rejection_reason: string | null;
   next_follow_up_date: string | null;
   created_at: string;
+  // Payment tab columns — present on every row (reuse of one shared list-item shape,
+  // same as Loan's `selected_bank_name`/`approved_amount`); `null` before Payment.
+  premium_amount: number | null;
+  amount_paid: number | null;
+  payment_status: InsurancePaymentStatus | null;
 }
 
 export interface InsuranceApplicantDetails {
@@ -141,6 +155,7 @@ export interface InsuranceCaseCounts {
   fresh_lead: number;
   policy_document: number;
   policy_login: number;
+  payment: number;
   policy_issued: number;
   re_eligible: number;
   on_hold: number;
@@ -195,13 +210,29 @@ export async function moveToPolicyLogin(caseId: string) {
   });
 }
 
+// Policy Login -> Payment. Same gate as before (Premium/PPT/PT already recorded);
+// initializes the case to a clean Not Paid / ₹0 state.
+export function moveToPayment(caseId: string) {
+  return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/move-to-payment`, { method: "POST" });
+}
+
+// Record a payment — case stays at Payment. No `payment_status` field: it's always
+// server-computed from `amount_paid` vs. the recorded Premium Amount.
+export function updatePayment(caseId: string, payload: { amount_paid: number }) {
+  return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/payment`, { method: "PATCH", body: JSON.stringify(payload) });
+}
+
+// Payment -> Policy Issued. The backend independently re-derives "fully paid" from the
+// stored amount_paid/premium_amount (never trusts a saved payment_status string) and
+// requires the Issue Date (Policy Login -> Update) to already be recorded.
 export function moveToPolicyIssued(caseId: string) {
   return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/move-to-policy-issued`, { method: "POST" });
 }
 
 // "Move Back" one stage — the backend derives the single valid target from the
-// transition graph (`policy_login -> policy_document`, `policy_document -> fresh_lead`).
-export function moveInsuranceCaseBack(caseId: string, target: "fresh_lead" | "policy_document") {
+// transition graph (`payment -> policy_login`, `policy_login -> policy_document`,
+// `policy_document -> fresh_lead`).
+export function moveInsuranceCaseBack(caseId: string, target: "fresh_lead" | "policy_document" | "policy_login") {
   return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}/move-back`, { method: "POST", body: JSON.stringify({ target }) });
 }
 

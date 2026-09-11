@@ -267,7 +267,7 @@ async def test_counts_reflect_status_distribution(client, mock_db, owner_headers
     assert counts["policy_document"] == 2
     assert counts["on_hold"] == 1
     assert set(counts) == {
-        "fresh_lead", "policy_document", "policy_login", "policy_issued", "re_eligible", "on_hold", "rejected",
+        "fresh_lead", "policy_document", "policy_login", "payment", "policy_issued", "re_eligible", "on_hold", "rejected",
     }
 
     # Moving one case updates the counts.
@@ -548,13 +548,14 @@ async def test_invalid_issue_date_rejected(client, mock_db, owner_headers):
 
 async def test_issue_date_does_not_weaken_policy_login_gates(client, mock_db, owner_headers):
     """Adding Issue Date must not bypass the existing Premium/PPT/PT-required gate for
-    Move to Policy Issued, and must not itself unlock the move."""
+    Move to Payment, nor the Payment stage's own fully-paid gate for Move to Policy
+    Issued (production add-on: Payment now sits between the two)."""
     product = await _product(mock_db)
     case_id = await _to_policy_login(client, owner_headers, mock_db, product, mobile="9876500705")
 
-    # Issue Date alone (no premium/ppt/pt) does NOT satisfy the Policy Issued gate.
+    # Issue Date alone (no premium/ppt/pt) does NOT satisfy the Move-to-Payment gate.
     await client.patch(f"/api/v1/insurance-cases/{case_id}/policy-login", json={"policy_issue_date": "2026-09-10"}, headers=owner_headers)
-    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-issued", headers=owner_headers)
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-payment", headers=owner_headers)
     assert r.status_code == 422, r.text
 
     # Once premium/ppt/pt are also recorded, the existing gate opens exactly as before.
@@ -562,6 +563,17 @@ async def test_issue_date_does_not_weaken_policy_login_gates(client, mock_db, ow
         f"/api/v1/insurance-cases/{case_id}/policy-login",
         json={"premium_amount": 20000, "ppt": 10, "pt": 10}, headers=owner_headers,
     )
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-payment", headers=owner_headers)
+    assert r.status_code == 200, r.text
+
+    # At Payment, Issue Date being set does NOT itself unlock Move to Policy Issued —
+    # the case is still Not Paid.
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-issued", headers=owner_headers)
+    assert r.status_code == 422, r.text
+
+    # Fully paying opens the gate exactly as expected.
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount_paid": 20000}, headers=owner_headers)
+    assert r.status_code == 200, r.text
     r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-issued", headers=owner_headers)
     assert r.status_code == 200, r.text
 
@@ -574,6 +586,11 @@ async def test_policy_issued_retains_and_returns_issue_date(client, mock_db, own
         json={"premium_amount": 20000, "ppt": 10, "pt": 10, "policy_number": "POL42", "policy_issue_date": "2026-09-10"},
         headers=owner_headers,
     )
+    assert (await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-payment", headers=owner_headers)).status_code == 200
+    assert (
+        await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount_paid": 20000}, headers=owner_headers)
+    ).status_code == 200
+
     r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-issued", headers=owner_headers)
     assert r.status_code == 200, r.text
     data = r.json()["data"]["insurance_details"]
@@ -583,3 +600,215 @@ async def test_policy_issued_retains_and_returns_issue_date(client, mock_db, own
     detail = (await client.get(f"/api/v1/insurance-cases/{case_id}", headers=owner_headers)).json()["data"]
     assert datetime.fromisoformat(detail["insurance_details"]["policy_issue_date"]) == _expected_issue_date_iso("2026-09-10")
     assert detail["current_status"] == "policy_issued"
+
+
+# ---------------------------------------------------------------- Payment stage (production add-on)
+
+
+async def _to_payment(client, headers, mock_db, product, *, mobile, premium=20000, ppt=10, pt=10, issue_date=None):
+    case_id = await _to_policy_login(client, headers, mock_db, product, mobile=mobile)
+    body = {"premium_amount": premium, "ppt": ppt, "pt": pt}
+    if issue_date:
+        body["policy_issue_date"] = issue_date
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/policy-login", json=body, headers=headers)
+    assert r.status_code == 200, r.text
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-payment", headers=headers)
+    assert r.status_code == 200, r.text
+    return case_id
+
+
+async def test_policy_login_to_payment_works_and_starts_not_paid(client, mock_db, owner_headers):
+    product = await _product(mock_db)
+    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500801")
+
+    detail = (await client.get(f"/api/v1/insurance-cases/{case_id}", headers=owner_headers)).json()["data"]
+    assert detail["current_status"] == "payment"
+    assert detail["insurance_details"]["payment_status"] == "not_paid"
+    assert detail["insurance_details"]["amount_paid"] == 0
+
+
+async def test_payment_is_a_real_stage_with_correct_tab_count(client, mock_db, owner_headers):
+    product = await _product(mock_db)
+    await _to_payment(client, owner_headers, mock_db, product, mobile="9876500802")
+    await _to_payment(client, owner_headers, mock_db, product, mobile="9876500803")
+
+    counts = (await client.get("/api/v1/insurance-cases/counts", headers=owner_headers)).json()["data"]
+    assert counts["payment"] == 2
+
+    r = await client.get("/api/v1/insurance-cases?status=payment&page_size=100", headers=owner_headers)
+    body = r.json()
+    assert body["meta"]["pagination"]["total"] == 2
+    assert all(row["current_status"] == "payment" for row in body["data"])
+
+
+async def test_not_paid_cannot_move_to_policy_issued(client, mock_db, owner_headers):
+    product = await _product(mock_db)
+    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500804")
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-issued", headers=owner_headers)
+    assert r.status_code == 422, r.text
+    detail = (await client.get(f"/api/v1/insurance-cases/{case_id}", headers=owner_headers)).json()["data"]
+    assert detail["current_status"] == "payment"
+
+
+async def test_partially_paid_cannot_move_to_policy_issued(client, mock_db, owner_headers):
+    product = await _product(mock_db)
+    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500805", premium=20000)
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount_paid": 10000}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["insurance_details"]["payment_status"] == "partially_paid"
+
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-issued", headers=owner_headers)
+    assert r.status_code == 422, r.text
+
+
+async def test_fully_paid_with_issue_date_can_move_to_policy_issued(client, mock_db, owner_headers):
+    product = await _product(mock_db)
+    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500806", premium=20000, issue_date="2026-09-11")
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount_paid": 20000}, headers=owner_headers)
+    assert r.json()["data"]["insurance_details"]["payment_status"] == "fully_paid"
+
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-issued", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["current_status"] == "policy_issued"
+
+
+async def test_fully_paid_without_issue_date_cannot_move_to_policy_issued(client, mock_db, owner_headers):
+    """Fully Paid alone is not enough — the Issue Date (recorded at Policy Login) must
+    also be present, matching the Payment panel's own "Move to Policy Issued" gate."""
+    product = await _product(mock_db)
+    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500807", premium=20000)
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount_paid": 20000}, headers=owner_headers)
+    assert r.json()["data"]["insurance_details"]["payment_status"] == "fully_paid"
+
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-issued", headers=owner_headers)
+    assert r.status_code == 422, r.text
+
+
+async def test_amount_paid_cannot_exceed_premium(client, mock_db, owner_headers):
+    product = await _product(mock_db)
+    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500808", premium=20000)
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount_paid": 20001}, headers=owner_headers)
+    assert r.status_code == 422, r.text
+    detail = (await client.get(f"/api/v1/insurance-cases/{case_id}", headers=owner_headers)).json()["data"]
+    assert detail["insurance_details"]["amount_paid"] == 0  # unchanged — the invalid write never landed
+
+
+async def test_negative_amount_paid_is_rejected(client, mock_db, owner_headers):
+    product = await _product(mock_db)
+    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500809")
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount_paid": -1}, headers=owner_headers)
+    assert r.status_code == 422, r.text
+
+
+async def test_balance_is_premium_minus_amount_paid(client, mock_db, owner_headers):
+    product = await _product(mock_db)
+    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500810", premium=20000)
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount_paid": 12500}, headers=owner_headers)
+    data = r.json()["data"]["insurance_details"]
+    assert data["premium_amount"] - data["amount_paid"] == 7500
+
+    # Same numbers on the Payment tab's list row (frontend computes Balance from these).
+    row = next(
+        r for r in (await client.get("/api/v1/insurance-cases?status=payment&page_size=100", headers=owner_headers)).json()["data"]
+        if r["id"] == case_id
+    )
+    assert row["premium_amount"] == 20000 and row["amount_paid"] == 12500
+
+
+async def test_payment_status_can_never_be_submitted_directly(client, mock_db, owner_headers):
+    """No request schema accepts `payment_status` — even if a client stuffs it into the
+    body, the server-computed value (from `amount_paid`) is the only thing ever stored."""
+    product = await _product(mock_db)
+    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500811", premium=20000)
+    r = await client.patch(
+        f"/api/v1/insurance-cases/{case_id}/payment",
+        json={"amount_paid": 10000, "payment_status": "fully_paid"}, headers=owner_headers,
+    )
+    assert r.status_code == 200, r.text
+    # The extra field is silently ignored (Pydantic default) — the real, computed status
+    # reflects the actual amount, not the spoofed one.
+    assert r.json()["data"]["insurance_details"]["payment_status"] == "partially_paid"
+
+
+async def test_direct_move_to_policy_issued_from_policy_login_is_rejected(client, mock_db, owner_headers):
+    """Bypassing Payment entirely (calling the endpoint straight from Policy Login) is
+    rejected — Payment is a real, backend-enforced stage, not a frontend-only filter."""
+    product = await _product(mock_db)
+    case_id = await _to_policy_login(client, owner_headers, mock_db, product, mobile="9876500812")
+    await client.patch(
+        f"/api/v1/insurance-cases/{case_id}/policy-login",
+        json={"premium_amount": 20000, "ppt": 10, "pt": 10, "policy_issue_date": "2026-09-11"}, headers=owner_headers,
+    )
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-issued", headers=owner_headers)
+    assert r.status_code == 409, r.text
+    detail = (await client.get(f"/api/v1/insurance-cases/{case_id}", headers=owner_headers)).json()["data"]
+    assert detail["current_status"] == "policy_login"
+
+
+async def test_move_case_to_stage_walks_through_payment_and_stops_if_unpaid(client, mock_db, owner_headers):
+    """The generic staff "Move To" jump from Policy Login straight to Policy Issued walks
+    the chain hop by hop and stops at Payment (still genuinely unpaid) rather than
+    silently skipping it."""
+    product = await _product(mock_db)
+    case_id = await _to_policy_login(client, owner_headers, mock_db, product, mobile="9876500813")
+    await client.patch(
+        f"/api/v1/insurance-cases/{case_id}/policy-login",
+        json={"premium_amount": 20000, "ppt": 10, "pt": 10}, headers=owner_headers,
+    )
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-stage", json={"target": "policy_issued"}, headers=owner_headers)
+    assert r.status_code == 422, r.text
+    detail = (await client.get(f"/api/v1/insurance-cases/{case_id}", headers=owner_headers)).json()["data"]
+    assert detail["current_status"] == "payment"  # got as far as it legally could
+
+
+async def test_payment_update_is_audited_and_recorded_in_history(client, mock_db, owner_headers):
+    product = await _product(mock_db)
+    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500814", premium=20000)
+    await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount_paid": 10000}, headers=owner_headers)
+    await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount_paid": 20000}, headers=owner_headers)
+
+    audits = await mock_db["audit_logs"].find({"event_type": "insurance_case_payment_updated"}).to_list(length=50)
+    assert len(audits) == 2
+    assert audits[0]["metadata"]["to_amount"] == 10000
+    assert audits[1]["metadata"]["from_amount"] == 10000 and audits[1]["metadata"]["to_amount"] == 20000
+
+    timeline = (await client.get(f"/api/v1/insurance-cases/{case_id}/timeline", headers=owner_headers)).json()["data"]
+    assert any("Payment updated" in (e.get("text") or "") for e in timeline)
+    assert any("partially_paid" in (e.get("text") or "") or "fully_paid" in (e.get("text") or "") for e in timeline)
+
+
+async def test_payment_can_only_be_updated_at_payment_stage(client, mock_db, owner_headers):
+    product = await _product(mock_db)
+    case_id = await _to_policy_login(client, owner_headers, mock_db, product, mobile="9876500815")
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount_paid": 100}, headers=owner_headers)
+    assert r.status_code == 409, r.text
+
+
+async def test_hold_and_resume_work_from_payment_stage(client, mock_db, owner_headers):
+    product = await _product(mock_db)
+    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500816")
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/hold", json={"reason": "payment_pending"}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["current_status"] == "on_hold"
+
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/resume", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["current_status"] == "payment"  # returns to the stage it was held from
+
+
+async def test_reject_works_from_payment_stage(client, mock_db, owner_headers):
+    product = await _product(mock_db)
+    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500817")
+    r = await client.post(
+        f"/api/v1/insurance-cases/{case_id}/reject", json={"reason": "Customer withdrew", "re_eligibility": "no"}, headers=owner_headers
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["current_status"] == "rejected"
+
+
+async def test_move_back_from_payment_to_policy_login(client, mock_db, owner_headers):
+    product = await _product(mock_db)
+    case_id = await _to_payment(client, owner_headers, mock_db, product, mobile="9876500818")
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-back", json={"target": "policy_login"}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["current_status"] == "policy_login"

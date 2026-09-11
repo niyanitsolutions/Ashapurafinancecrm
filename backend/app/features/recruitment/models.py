@@ -156,11 +156,19 @@ class Advisor(BaseDocument):
     # under "All" and render as "—" — never guessed. Separate from `channel` and `status`.
     profession: str | None = None  # Profession.ALL
     other_profession: str | None = None  # free text, set iff profession == "other"
-    # Optional advisor-portal credential — set by staff on the Agency Code edit form,
-    # hashed via `app.security.password.hash_password`. NEVER included in any response
-    # schema/mapper (`AdvisorListItem` / `AdvisorDetailResponse` / `AdvisorSummary` have
-    # no such field) and never written to an audit-log payload.
+    # Optional advisor-portal credential — set by staff on the Agency Code edit form.
+    # `password_hash` (bcrypt, one-way via `app.security.password.hash_password`) is the
+    # ONLY field advisor login ever reads — unchanged by the fields below, so
+    # authentication behavior is untouched. `password_encrypted` (reversible, via the
+    # existing `app.security.encryption` Fernet utility — same mechanism already used for
+    # `ApplicationDocument.password_encrypted`/Customer PAN/Aadhaar) is written alongside
+    # it purely so an authorized staff member can reveal the actual saved password on the
+    # Advisor Details page (`AdvisorService.reveal_password`) — never used for login.
+    # NEITHER field is ever included in any list/detail response schema/mapper
+    # (`AdvisorListItem` / `AdvisorDetailResponse` / `AdvisorSummary` only ever expose the
+    # `has_password` boolean) or written to an audit-log payload.
     password_hash: str | None = None
+    password_encrypted: str | None = None
     # `status` ("active" default) comes from BaseDocument; "inactive" is also supported.
     # No stored policy count / premium total — aggregated from `advisor_business` records
     # (brief §37: prefer reliable aggregation over denormalized totals).

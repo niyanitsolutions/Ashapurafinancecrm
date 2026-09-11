@@ -44,14 +44,16 @@ _LOAN_ROWS = [
 _INSURANCE_ROWS = [
     (InsuranceStatus.FRESH_LEAD, "Fresh Lead", 1, [InsuranceStatus.POLICY_DOCUMENT, InsuranceStatus.REJECTED], InsuranceAuditEvent.CASE_CREATED),
     (InsuranceStatus.POLICY_DOCUMENT, "Policy Document", 2, [InsuranceStatus.POLICY_LOGIN, InsuranceStatus.REJECTED], InsuranceAuditEvent.POLICY_DOCUMENT_STARTED),
-    (InsuranceStatus.POLICY_LOGIN, "Policy Login", 3, [InsuranceStatus.POLICY_ISSUED, InsuranceStatus.REJECTED], InsuranceAuditEvent.POLICY_LOGIN_STARTED),
-    (InsuranceStatus.POLICY_ISSUED, "Policy Issued", 4, [], InsuranceAuditEvent.POLICY_ISSUED),
-    (InsuranceStatus.RE_ELIGIBLE, "Re-Eligible", 5, [InsuranceStatus.FRESH_LEAD, InsuranceStatus.POLICY_DOCUMENT, InsuranceStatus.REJECTED], InsuranceAuditEvent.MARKED_RE_ELIGIBLE),
-    (InsuranceStatus.REJECTED, "Application Rejected", 6, [InsuranceStatus.RE_ELIGIBLE], InsuranceAuditEvent.REJECTED),
+    (InsuranceStatus.POLICY_LOGIN, "Policy Login", 3, [InsuranceStatus.PAYMENT, InsuranceStatus.REJECTED], InsuranceAuditEvent.POLICY_LOGIN_STARTED),
+    (InsuranceStatus.PAYMENT, "Payment", 4, [InsuranceStatus.POLICY_ISSUED, InsuranceStatus.REJECTED], InsuranceAuditEvent.PAYMENT_STARTED),
+    (InsuranceStatus.POLICY_ISSUED, "Policy Issued", 5, [], InsuranceAuditEvent.POLICY_ISSUED),
+    (InsuranceStatus.RE_ELIGIBLE, "Re-Eligible", 6, [InsuranceStatus.FRESH_LEAD, InsuranceStatus.POLICY_DOCUMENT, InsuranceStatus.REJECTED], InsuranceAuditEvent.MARKED_RE_ELIGIBLE),
+    (InsuranceStatus.REJECTED, "Application Rejected", 7, [InsuranceStatus.RE_ELIGIBLE], InsuranceAuditEvent.REJECTED),
 ]
 _INSURANCE_ALLOWED_PREVIOUS = {
     InsuranceStatus.POLICY_DOCUMENT: [InsuranceStatus.FRESH_LEAD],
     InsuranceStatus.POLICY_LOGIN: [InsuranceStatus.POLICY_DOCUMENT],
+    InsuranceStatus.PAYMENT: [InsuranceStatus.POLICY_LOGIN],
 }
 
 
@@ -427,17 +429,31 @@ async def test_insurance_pipeline_fresh_lead_to_policy_issued(client, mock_db, o
     assert r.json()["data"]["current_status"] == "policy_login"
     assert r.json()["data"]["required_documents"]["all_required_verified"] is True
 
-    # Policy Issued is gated on Premium / PPT / PT.
-    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-issued", headers=owner_headers)
+    # Move to Payment is gated on Premium / PPT / PT (Payment sits between Policy Login
+    # and Policy Issued — production add-on).
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-payment", headers=owner_headers)
     assert r.status_code == 422, r.text
 
     r = await client.patch(
         f"/api/v1/insurance-cases/{case_id}/policy-login",
-        json={"premium_amount": 25000, "ppt": 10, "pt": 20, "remarks": "Family plan"}, headers=owner_headers,
+        json={"premium_amount": 25000, "ppt": 10, "pt": 20, "remarks": "Family plan", "policy_issue_date": "2026-09-11"},
+        headers=owner_headers,
     )
     assert r.status_code == 200, r.text
     assert r.json()["data"]["insurance_details"]["premium_amount"] == 25000
     assert r.json()["data"]["insurance_details"]["ppt"] == 10
+
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-payment", headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["current_status"] == "payment"
+
+    # Policy Issued is gated on the Premium being fully paid.
+    r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-issued", headers=owner_headers)
+    assert r.status_code == 422, r.text
+
+    r = await client.patch(f"/api/v1/insurance-cases/{case_id}/payment", json={"amount_paid": 25000}, headers=owner_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["insurance_details"]["payment_status"] == "fully_paid"
 
     r = await client.post(f"/api/v1/insurance-cases/{case_id}/move-to-policy-issued", headers=owner_headers)
     assert r.status_code == 200, r.text

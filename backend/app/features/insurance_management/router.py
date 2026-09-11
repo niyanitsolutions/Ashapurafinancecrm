@@ -41,6 +41,7 @@ from app.features.insurance_management.schemas import (
     OtherDocumentResponse,
     OtherDocumentUploadUrlRequest,
     OtherDocumentUploadUrlResponse,
+    PaymentUpdateRequest,
     PolicyLoginUpdateRequest,
     RejectCaseDocumentRequest,
     RejectInsuranceCaseRequest,
@@ -243,6 +244,22 @@ async def move_to_policy_login(
     coords = payload or GeoCoordinatesRequest()
     await enforce_geo_fence(db, actor=actor, activity=GeoActivity.DOCUMENT_COLLECTION, latitude=coords.latitude, longitude=coords.longitude)
     await service.move_to_policy_login(case_id, actor)
+    return await _detail(service, case_id, actor)
+
+
+@router.post("/{case_id}/move-to-payment")
+async def move_to_payment(
+    case_id: str, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[InsuranceCaseDetailResponse]:
+    await service.move_to_payment(case_id, actor)
+    return await _detail(service, case_id, actor)
+
+
+@router.patch("/{case_id}/payment")
+async def update_payment(
+    case_id: str, payload: PaymentUpdateRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[InsuranceCaseDetailResponse]:
+    await service.update_payment(case_id, payload, actor)
     return await _detail(service, case_id, actor)
 
 

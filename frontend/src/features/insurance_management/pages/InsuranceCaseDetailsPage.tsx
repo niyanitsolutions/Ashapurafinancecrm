@@ -15,6 +15,10 @@ import { getErrorMessage } from "@/features/customer/errors";
 import { useProductSchema } from "@/features/customer/useProductSchema";
 import { AddOtherDocumentPanel } from "@/features/insurance_management/components/AddOtherDocumentPanel";
 import {
+  PaymentUpdateModal,
+  type PaymentUpdatePayload,
+} from "@/features/insurance_management/components/PaymentUpdateModal";
+import {
   PolicyLoginUpdateModal,
   type PolicyLoginUpdatePayload,
 } from "@/features/insurance_management/components/PolicyLoginUpdateModal";
@@ -31,6 +35,7 @@ import {
   listInsuranceCaseDocuments,
   moveInsuranceCaseBack,
   moveInsuranceCaseToStage,
+  moveToPayment,
   moveToPolicyDocument,
   moveToPolicyIssued,
   moveToPolicyLogin,
@@ -38,6 +43,7 @@ import {
   rejectInsuranceCaseDocument,
   restartFromReEligible,
   resumeInsuranceCase,
+  updatePayment,
   updatePolicyLogin,
   verifyInsuranceCaseDocument,
   type CaseTimelineEntry,
@@ -49,14 +55,15 @@ import {
   getInsuranceStatusControlInfo,
   INSURANCE_HOLD_REASON_LABELS,
   INSURANCE_HOLD_REASONS,
+  INSURANCE_PAYMENT_STATUS_LABELS,
   INSURANCE_STATUS_LABELS,
 } from "@/features/insurance_management/statusControl";
 import { listAdvisors, type AdvisorListItem } from "@/features/recruitment/api";
 import { ADVISOR_CHANNEL_LABELS } from "@/features/recruitment/labels";
 
 // Every stage staff can deliberately "Move To" — the backend still validates the case
-// can legally exist there (documents verified, premium recorded, …).
-const MOVE_TO_STAGES = ["fresh_lead", "policy_document", "policy_login", "policy_issued", "re_eligible", "rejected"];
+// can legally exist there (documents verified, premium recorded, fully paid + Issue Date, …).
+const MOVE_TO_STAGES = ["fresh_lead", "policy_document", "policy_login", "payment", "policy_issued", "re_eligible", "rejected"];
 import { formatISTDate, formatISTDateTime } from "@/shared/dateFormat";
 import { useDocumentCollectionBackContext } from "@/shared/navigationContext";
 
@@ -112,6 +119,7 @@ export function InsuranceCaseDetailsPage() {
   const [rejectDocReason, setRejectDocReason] = useState("");
   const [showReject, setShowReject] = useState(false);
   const [showPolicyLogin, setShowPolicyLogin] = useState(false);
+  const [showPayment, setShowPayment] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [confirmIssue, setConfirmIssue] = useState(false);
   const [moveTarget, setMoveTarget] = useState("");
@@ -238,6 +246,21 @@ export function InsuranceCaseDetailsPage() {
     }
   };
 
+  const doPayment = async (payload: PaymentUpdatePayload) => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      await updatePayment(caseId, payload);
+      setShowPayment(false);
+      setMessage("Payment updated.");
+      load();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <SimplePageLayout title={`${insuranceCase.case_code} — ${STATUS_LABELS[status] ?? status}`} backTo={backTo} backLabel={backLabel}>
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
@@ -318,16 +341,67 @@ export function InsuranceCaseDetailsPage() {
                     <Button size="sm" onClick={() => setShowPolicyLogin(true)}>
                       Update Premium / PPT / PT
                     </Button>
-                    {canIssuePolicy && (
-                      <Button size="sm" disabled={!premiumReady} onClick={() => setConfirmIssue(true)}>
-                        Move to Policy Issued
+                    {canEdit && (
+                      <Button size="sm" disabled={!premiumReady} onClick={() => run(() => moveToPayment(caseId), "Moved to Payment.")}>
+                        Move to Payment
                       </Button>
                     )}
                     <Button size="sm" variant="secondary" onClick={() => run(() => moveInsuranceCaseBack(caseId, "policy_document"), "Moved back to Policy Document.")}>
                       Move Back to Policy Document
                     </Button>
                   </div>
-                  {!premiumReady && <p className="text-xs text-text/50">Record Premium, PPT and PT before issuing the policy.</p>}
+                  {!premiumReady && <p className="text-xs text-text/50">Record Premium, PPT and PT before moving to Payment.</p>}
+                </div>
+              )}
+
+              {status === "payment" && (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
+                    <Field label="Premium Amount" value={formatINR(details.premium_amount)} />
+                    <Field label="Amount Paid" value={formatINR(details.amount_paid)} />
+                    <Field
+                      label="Balance"
+                      value={
+                        details.premium_amount != null && details.amount_paid != null
+                          ? formatINR(details.premium_amount - details.amount_paid)
+                          : null
+                      }
+                    />
+                    <Field
+                      label="Payment Status"
+                      value={details.payment_status ? INSURANCE_PAYMENT_STATUS_LABELS[details.payment_status] : null}
+                    />
+                    <Field label="Issue Date" value={details.policy_issue_date ? formatISTDate(details.policy_issue_date) : null} />
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" onClick={() => setShowPayment(true)}>
+                      Update Payment
+                    </Button>
+                    {canIssuePolicy && (
+                      <Button
+                        size="sm"
+                        disabled={
+                          details.payment_status !== "fully_paid" ||
+                          details.premium_amount == null ||
+                          details.amount_paid == null ||
+                          details.amount_paid < details.premium_amount ||
+                          details.policy_issue_date == null
+                        }
+                        onClick={() => setConfirmIssue(true)}
+                      >
+                        Move to Policy Issued
+                      </Button>
+                    )}
+                    <Button size="sm" variant="secondary" onClick={() => run(() => moveInsuranceCaseBack(caseId, "policy_login"), "Moved back to Policy Login.")}>
+                      Move Back to Policy Login
+                    </Button>
+                  </div>
+                  {details.payment_status !== "fully_paid" && (
+                    <p className="text-xs text-text/50">The Premium Amount must be fully paid before issuing the policy.</p>
+                  )}
+                  {details.payment_status === "fully_paid" && details.policy_issue_date == null && (
+                    <p className="text-xs text-text/50">Record the Issue Date (Policy Login → Update) before issuing the policy.</p>
+                  )}
                 </div>
               )}
 
@@ -548,6 +622,16 @@ export function InsuranceCaseDetailsPage() {
           error={error}
           onCancel={() => setShowPolicyLogin(false)}
           onConfirm={doPolicyLogin}
+        />
+      )}
+
+      {showPayment && (
+        <PaymentUpdateModal
+          detail={insuranceCase}
+          submitting={submitting}
+          error={error}
+          onCancel={() => setShowPayment(false)}
+          onConfirm={doPayment}
         />
       )}
 

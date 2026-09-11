@@ -154,6 +154,18 @@ class InsuranceCaseDetails(BaseModel):
     pt: int | None = None  # policy term, whole years
     policy_login_remarks: str | None = None
 
+    # Payment stage (production add-on, 2026-09-11) — set once the case reaches
+    # `InsuranceStatus.PAYMENT` (`move_to_payment` initializes both to a clean "Not Paid"
+    # state) and updated in place by `update_payment` while the case stays at that stage
+    # (mirrors how `update_policy_login` edits in place without transitioning). `balance`
+    # is deliberately NOT stored — always `premium_amount - amount_paid`, computed where
+    # displayed, so it can never drift out of sync with the two source numbers.
+    # `payment_status` is SERVER-COMPUTED ONLY (`InsurancePaymentStatus.compute`) — no
+    # request schema field ever writes it directly, so a client can never submit a
+    # `payment_status` that disagrees with the actual `amount_paid`/`premium_amount`.
+    payment_status: str | None = None  # InsurancePaymentStatus.ALL
+    amount_paid: float | None = None
+
     policy_number: str | None = None
     # The calendar date printed on the policy (staff-entered at Policy Login, editable) —
     # UTC instant of IST midnight, same convention as `AdvisorBusiness.policy_issue_date` /

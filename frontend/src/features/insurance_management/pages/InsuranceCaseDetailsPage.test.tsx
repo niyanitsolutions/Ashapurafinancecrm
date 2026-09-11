@@ -9,6 +9,10 @@ const getInsuranceCase = vi.fn();
 const listInsuranceCaseDocuments = vi.fn();
 const rejectInsuranceCase = vi.fn();
 const moveToPolicyLogin = vi.fn();
+const moveToPayment = vi.fn();
+const updatePayment = vi.fn();
+const moveToPolicyIssued = vi.fn();
+const moveInsuranceCaseBack = vi.fn();
 const moveInsuranceCaseToStage = vi.fn();
 const assignInsuranceCase = vi.fn();
 const holdInsuranceCase = vi.fn();
@@ -23,6 +27,10 @@ vi.mock("@/features/insurance_management/api", async () => {
     listOtherDocuments: () => Promise.resolve([]),
     rejectInsuranceCase: (...a: unknown[]) => rejectInsuranceCase(...(a as [])),
     moveToPolicyLogin: (...a: unknown[]) => moveToPolicyLogin(...(a as [])),
+    moveToPayment: (...a: unknown[]) => moveToPayment(...(a as [])),
+    updatePayment: (...a: unknown[]) => updatePayment(...(a as [])),
+    moveToPolicyIssued: (...a: unknown[]) => moveToPolicyIssued(...(a as [])),
+    moveInsuranceCaseBack: (...a: unknown[]) => moveInsuranceCaseBack(...(a as [])),
     moveInsuranceCaseToStage: (...a: unknown[]) => moveInsuranceCaseToStage(...(a as [])),
     assignInsuranceCase: (...a: unknown[]) => assignInsuranceCase(...(a as [])),
     holdInsuranceCase: (...a: unknown[]) => holdInsuranceCase(...(a as [])),
@@ -71,9 +79,13 @@ const baseCase: InsuranceCaseDetail = {
   next_follow_up_date: null,
   created_at: "2026-09-01T00:00:00Z",
   updated_at: "2026-09-01T00:00:00Z",
+  premium_amount: null,
+  amount_paid: null,
+  payment_status: null,
   insurance_details: {
     sum_insured: null, premium_amount: null, ppt: null, pt: null, policy_login_remarks: null,
-    policy_number: null, policy_issue_date: null, policy_issued_at: null, re_eligibility_choice: null, re_eligible_date: null,
+    policy_number: null, policy_issue_date: null, policy_issued_at: null,
+    payment_status: null, amount_paid: null, re_eligibility_choice: null, re_eligible_date: null,
     re_eligibility_auto_transitioned: false,
   },
   required_documents: { required_total: 1, verified_total: 0, all_required_verified: false },
@@ -351,5 +363,96 @@ describe("InsuranceCaseDetailsPage", () => {
     const { container } = renderPage();
     await screen.findByText("Policy");
     expect(container.querySelector('input[type="file"]')).toBeNull();
+  });
+
+  // ---------------------------------------------------------------- Payment stage
+
+  function policyLoginCase(over: Partial<InsuranceCaseDetail> = {}): InsuranceCaseDetail {
+    return {
+      ...baseCase,
+      current_status: "policy_login",
+      insurance_details: { ...baseCase.insurance_details, premium_amount: 20000, ppt: 10, pt: 10 },
+      ...over,
+    };
+  }
+
+  function paymentCase(over: Partial<InsuranceCaseDetail["insurance_details"]> = {}): InsuranceCaseDetail {
+    return {
+      ...baseCase,
+      current_status: "payment",
+      premium_amount: 20000,
+      amount_paid: 0,
+      payment_status: "not_paid",
+      insurance_details: {
+        ...baseCase.insurance_details, premium_amount: 20000, ppt: 10, pt: 10,
+        amount_paid: 0, payment_status: "not_paid", ...over,
+      },
+    };
+  }
+
+  it("at Policy Login, Move to Payment is disabled until Premium/PPT/PT are recorded", async () => {
+    getInsuranceCase.mockResolvedValue({ ...baseCase, current_status: "policy_login" });
+    renderPage();
+    expect(await screen.findByRole("button", { name: "Move to Payment" })).toBeDisabled();
+  });
+
+  it("at Policy Login, Move to Payment is enabled once Premium/PPT/PT are recorded, and calls moveToPayment", async () => {
+    getInsuranceCase.mockResolvedValue(policyLoginCase());
+    moveToPayment.mockResolvedValue(paymentCase());
+    renderPage();
+    const moveBtn = await screen.findByRole("button", { name: "Move to Payment" });
+    expect(moveBtn).toBeEnabled();
+    await userEvent.setup().click(moveBtn);
+    await waitFor(() => expect(moveToPayment).toHaveBeenCalledWith("c1"));
+  });
+
+  it("at Payment, shows Premium / Amount Paid / Balance / Payment Status and opens Update Payment on click", async () => {
+    getInsuranceCase.mockResolvedValue(paymentCase({ amount_paid: 12000, payment_status: "partially_paid" }));
+    renderPage();
+
+    await screen.findByText("Payment");
+    expect(screen.getByText("₹12,000")).toBeInTheDocument(); // Amount Paid
+    expect(screen.getByText("₹8,000")).toBeInTheDocument(); // Balance
+    expect(screen.getByText("Partially Paid")).toBeInTheDocument();
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Update Payment" }));
+    expect(await screen.findByLabelText("Amount Paid")).toBeInTheDocument();
+  });
+
+  it("at Payment, Move to Policy Issued stays disabled until Fully Paid AND Issue Date are both present", async () => {
+    // Fully paid but no Issue Date.
+    getInsuranceCase.mockResolvedValue(paymentCase({ amount_paid: 20000, payment_status: "fully_paid" }));
+    renderPage();
+    expect(await screen.findByRole("button", { name: "Move to Policy Issued" })).toBeDisabled();
+  });
+
+  it("at Payment, Move to Policy Issued is enabled once fully paid with an Issue Date, and confirms before issuing", async () => {
+    getInsuranceCase.mockResolvedValue(
+      paymentCase({ amount_paid: 20000, payment_status: "fully_paid", policy_issue_date: "2026-09-11T00:00:00Z" }),
+    );
+    moveToPolicyIssued.mockResolvedValue({ ...baseCase, current_status: "policy_issued" });
+    renderPage();
+
+    const issueBtn = await screen.findByRole("button", { name: "Move to Policy Issued" });
+    expect(issueBtn).toBeEnabled();
+    await userEvent.setup().click(issueBtn);
+
+    // The confirm dialog reuses the same label for its own confirm button — the trigger
+    // button is still on the page underneath it, so disambiguate by picking the last one.
+    await waitFor(async () => {
+      const buttons = await screen.findAllByRole("button", { name: "Move to Policy Issued" });
+      expect(buttons.length).toBeGreaterThan(1);
+    });
+    const buttons = screen.getAllByRole("button", { name: "Move to Policy Issued" });
+    await userEvent.setup().click(buttons[buttons.length - 1]);
+    await waitFor(() => expect(moveToPolicyIssued).toHaveBeenCalledWith("c1"));
+  });
+
+  it("at Payment, Move Back to Policy Login calls moveInsuranceCaseBack with the right target", async () => {
+    getInsuranceCase.mockResolvedValue(paymentCase());
+    moveInsuranceCaseBack.mockResolvedValue({ ...baseCase, current_status: "policy_login" });
+    renderPage();
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Move Back to Policy Login" }));
+    await waitFor(() => expect(moveInsuranceCaseBack).toHaveBeenCalledWith("c1", "policy_login"));
   });
 });

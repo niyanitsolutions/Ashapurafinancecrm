@@ -11,7 +11,8 @@ export type StatusControlInfo =
 const INSURANCE_STATUS_CONTROL: Record<string, StatusControlInfo> = {
   fresh_lead: { kind: "simple", nextStatus: "policy_document" },
   policy_document: { kind: "dedicated", actionLabel: "Move to Policy Login" },
-  policy_login: { kind: "dedicated", actionLabel: "Move to Policy Issued" },
+  policy_login: { kind: "dedicated", actionLabel: "Move to Payment" },
+  payment: { kind: "dedicated", actionLabel: "Move to Policy Issued" },
   re_eligible: { kind: "dedicated", actionLabel: "Restart" },
   on_hold: { kind: "dedicated", actionLabel: "Resume" },
   policy_issued: { kind: "none" },
@@ -26,10 +27,17 @@ export const INSURANCE_STATUS_LABELS: Record<string, string> = {
   fresh_lead: "Fresh Lead",
   policy_document: "Policy Document",
   policy_login: "Policy Login",
+  payment: "Payment",
   policy_issued: "Policy Issued",
   re_eligible: "Re-Eligible",
   on_hold: "On Hold",
   rejected: "Rejected",
+};
+
+export const INSURANCE_PAYMENT_STATUS_LABELS: Record<string, string> = {
+  not_paid: "Not Paid",
+  partially_paid: "Partially Paid",
+  fully_paid: "Fully Paid",
 };
 
 // Policy Lead "Place On Hold" reasons — matches backend `InsuranceHoldReason`. Separate

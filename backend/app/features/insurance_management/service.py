@@ -46,12 +46,14 @@ from app.features.customer.repository import (
 )
 from app.features.customer.service import CustomerService
 from app.features.employee.repository import EmployeeRepository
+from app.features.insurance_management.constants import InsurancePaymentStatus
 from app.features.insurance_management.models import InsuranceCaseAdditionalDocument
 from app.features.insurance_management.repository import InsuranceCaseAdditionalDocumentRepository
 from app.features.insurance_management.schemas import (
     ConfirmOtherDocumentRequest,
     CreateManualInsuranceCaseRequest,
     OtherDocumentUploadUrlRequest,
+    PaymentUpdateRequest,
     PolicyLoginUpdateRequest,
 )
 from app.features.recruitment.constants import AdvisorStatus
@@ -329,19 +331,80 @@ class InsuranceCaseService:
             )
         return await self._engine.transition(case, InsuranceStatus.POLICY_LOGIN, actor)
 
-    async def move_to_policy_issued(self, case_id: str, actor: User) -> ApplicationWorkflow:
+    async def move_to_payment(self, case_id: str, actor: User) -> ApplicationWorkflow:
         case = await self.get_case(case_id, actor)
         if case.current_status != InsuranceStatus.POLICY_LOGIN:
-            raise ConflictError("Only a Policy Login case can be moved to Policy Issued.")
+            raise ConflictError("Only a Policy Login case can be moved to Payment.")
         details = case.insurance_details or InsuranceCaseDetails()
         if details.premium_amount is None or details.ppt is None or details.pt is None:
-            raise ValidationError("Record Premium, PPT and PT (Policy Login → Update) before issuing the policy.")
+            raise ValidationError("Record Premium, PPT and PT (Policy Login → Update) before moving to Payment.")
+        # Starts every case at a clean, unambiguous "Not Paid" state — never inherits a
+        # stale amount from a prior Payment cycle (e.g. a case moved back and forward
+        # again), and gives `update_payment`/`move_to_policy_issued` a guaranteed non-None
+        # `amount_paid` to compare against `premium_amount`.
+        started = details.model_copy(update={"payment_status": InsurancePaymentStatus.NOT_PAID, "amount_paid": 0.0})
+        return await self._engine.transition(case, InsuranceStatus.PAYMENT, actor, updates={"insurance_details": started.model_dump()})
+
+    async def update_payment(self, case_id: str, payload: PaymentUpdateRequest, actor: User) -> ApplicationWorkflow:
+        """Record a payment against the case's Premium — case stays at `payment` (same
+        "edit in place, no transition" shape as `update_policy_login`). `payment_status`
+        is never taken from the request: it's always recomputed here from
+        `amount_paid`/`premium_amount`, so it can never be saved out of sync with the
+        actual numbers (see `InsuranceCaseDetails.payment_status`)."""
+        case = await self.get_case(case_id, actor)
+        if case.current_status != InsuranceStatus.PAYMENT:
+            raise ConflictError("Payment can only be updated at the Payment stage.")
+        details = case.insurance_details or InsuranceCaseDetails()
+        premium = details.premium_amount
+        if premium is None:
+            raise ConflictError("This case has no Premium recorded — update Policy Login first.")
+        if payload.amount_paid > premium:
+            raise ValidationError(f"Amount paid cannot exceed the Premium Amount of ₹{premium:,.2f}.")
+
+        old_status, old_amount = details.payment_status, details.amount_paid
+        new_status = InsurancePaymentStatus.compute(payload.amount_paid, premium)
+        updated_details = details.model_copy(update={"payment_status": new_status, "amount_paid": payload.amount_paid})
+        updated = await self._workflows.update(
+            case_id, {"insurance_details": updated_details.model_dump()}, updated_by=actor.require_id()
+        )
+        assert updated is not None
+        await write_audit_log(
+            self._db, event_type=InsuranceAuditEvent.PAYMENT_UPDATED, user_id=actor.require_id(),
+            metadata={
+                "application_workflow_id": case_id, "from_status": old_status, "to_status": new_status,
+                "from_amount": old_amount, "to_amount": payload.amount_paid,
+            },
+        )
+        await self._notes.insert(ApplicationNote(
+            application_workflow_id=case_id, created_by=actor.require_id(),
+            text=(
+                f"Payment updated: Status {old_status or '—'} → {new_status}. "
+                f"Amount ₹{old_amount or 0:,.2f} → ₹{payload.amount_paid:,.2f}."
+            ),
+        ))
+        return updated
+
+    async def move_to_policy_issued(self, case_id: str, actor: User) -> ApplicationWorkflow:
+        case = await self.get_case(case_id, actor)
+        if case.current_status != InsuranceStatus.PAYMENT:
+            raise ConflictError("Only a Payment case can be moved to Policy Issued.")
+        details = case.insurance_details or InsuranceCaseDetails()
+        # Independently re-derived from the actual stored numbers — never trusts a
+        # previously-saved `payment_status` string. A direct API call that tries to jump
+        # to Policy Issued while genuinely under-paid (or with no Issue Date) is rejected
+        # here regardless of what `payment_status` label was last saved.
+        premium, paid = details.premium_amount, details.amount_paid
+        if premium is None or paid is None or paid < premium:
+            raise ValidationError("The Premium Amount must be fully paid before issuing the policy.")
+        if details.policy_issue_date is None:
+            raise ValidationError("Record the Issue Date (Policy Login → Update) before issuing the policy.")
         issued = details.model_copy(update={"policy_issued_at": utc_now()})
         return await self._engine.transition(case, InsuranceStatus.POLICY_ISSUED, actor, updates={"insurance_details": issued.model_dump()})
 
     _MOVE_BACK_TARGET: ClassVar[dict[str, str]] = {
         InsuranceStatus.POLICY_DOCUMENT: InsuranceStatus.FRESH_LEAD,
         InsuranceStatus.POLICY_LOGIN: InsuranceStatus.POLICY_DOCUMENT,
+        InsuranceStatus.PAYMENT: InsuranceStatus.POLICY_LOGIN,
     }
 
     async def move_back(self, case_id: str, target: str, actor: User) -> ApplicationWorkflow:
@@ -443,11 +506,12 @@ class InsuranceCaseService:
 
     _STAGE_CHAIN: ClassVar[tuple[str, ...]] = (
         InsuranceStatus.FRESH_LEAD, InsuranceStatus.POLICY_DOCUMENT,
-        InsuranceStatus.POLICY_LOGIN, InsuranceStatus.POLICY_ISSUED,
+        InsuranceStatus.POLICY_LOGIN, InsuranceStatus.PAYMENT, InsuranceStatus.POLICY_ISSUED,
     )
     _STAGE_LABELS: ClassVar[dict[str, str]] = {
         InsuranceStatus.FRESH_LEAD: "Fresh Lead", InsuranceStatus.POLICY_DOCUMENT: "Policy Document",
-        InsuranceStatus.POLICY_LOGIN: "Policy Login", InsuranceStatus.POLICY_ISSUED: "Policy Issued",
+        InsuranceStatus.POLICY_LOGIN: "Policy Login", InsuranceStatus.PAYMENT: "Payment",
+        InsuranceStatus.POLICY_ISSUED: "Policy Issued",
         InsuranceStatus.RE_ELIGIBLE: "Re-Eligible", InsuranceStatus.REJECTED: "Rejected",
     }
 
@@ -555,7 +619,7 @@ class InsuranceCaseService:
         from_i, to_i = self._STAGE_CHAIN.index(current), self._STAGE_CHAIN.index(target)
         updated = case
         if to_i > from_i:
-            forward = (self.move_to_policy_document, self.move_to_policy_login, self.move_to_policy_issued)
+            forward = (self.move_to_policy_document, self.move_to_policy_login, self.move_to_payment, self.move_to_policy_issued)
             for step in range(from_i, to_i):
                 updated = await forward[step](case_id, actor)
         else:

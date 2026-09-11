@@ -6,7 +6,7 @@ import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { Table, TableBody, TableHead, TableHeadRow, TableRow, Td, Th } from "@/components/tables/DataTable";
 import { Icon } from "@/theme/icons";
 import { usePermissions } from "@/features/access_control/usePermissions";
-import { getAdvisor, type AdvisorDetail } from "@/features/recruitment/api";
+import { getAdvisor, revealAdvisorPassword, type AdvisorDetail } from "@/features/recruitment/api";
 import { AddBusinessModal } from "@/features/recruitment/components/AddBusinessModal";
 import { EditAdvisorModal } from "@/features/recruitment/components/EditAdvisorModal";
 import {
@@ -26,29 +26,59 @@ import {
 import { getErrorMessage } from "@/shared/api/errors";
 import { formatISTDate } from "@/shared/dateFormat";
 
-// Secure masked "Password" row — the backend never returns the password hash or
-// plaintext (see `AdvisorDetail.has_password`, a plain boolean), so the eye toggle can
-// only switch between two equally-safe representations. It NEVER recovers or displays
-// the real credential; clicking it cannot leak anything the API didn't already send.
-function PasswordInfoRow({ hasPassword }: { hasPassword: boolean }) {
-  const [visible, setVisible] = useState(false);
+// "Password" row — masked by default. The backend never includes the password hash or
+// plaintext on the Advisor Details fetch itself (see `AdvisorDetail.has_password`, a
+// plain boolean); the eye click makes a SEPARATE, dedicated, edit-permission-gated,
+// audited call (`GET /advisors/{id}/password`) that decrypts the real saved value on
+// demand. Nothing sensitive is fetched, cached, or rendered until that explicit click,
+// and hiding it again clears the revealed value from memory rather than just re-masking
+// a value still held in state.
+function PasswordInfoRow({ advisorId, hasPassword, canReveal }: { advisorId: string; hasPassword: boolean; canReveal: boolean }) {
+  const [state, setState] = useState<"hidden" | "loading" | "revealed" | "error">("hidden");
+  const [password, setPassword] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
   if (!hasPassword) {
     return <InfoRow label="Password" value="Not set" />;
   }
+
+  const reveal = async () => {
+    setState("loading");
+    setError(null);
+    try {
+      const { password: value } = await revealAdvisorPassword(advisorId);
+      setPassword(value);
+      setState("revealed");
+    } catch (err) {
+      setError(getErrorMessage(err));
+      setState("error");
+    }
+  };
+
+  const hide = () => {
+    setPassword(null);
+    setState("hidden");
+  };
+
   return (
     <InfoRow
       label="Password"
       value={
         <span className="inline-flex items-center gap-1.5">
-          {visible ? "Password set" : "••••••••"}
-          <button
-            type="button"
-            onClick={() => setVisible((v) => !v)}
-            aria-label={visible ? "Hide password state" : "Show password state"}
-            className="text-textSecondary transition-colors hover:text-text"
-          >
-            <Icon name={visible ? "eye-off" : "eye"} className="h-4 w-4" />
-          </button>
+          {state === "revealed" ? password : "••••••••"}
+          {state === "loading" && <span className="text-xs text-textSecondary">Loading…</span>}
+          {canReveal && (
+            <button
+              type="button"
+              onClick={state === "revealed" ? hide : reveal}
+              disabled={state === "loading"}
+              aria-label={state === "revealed" ? "Hide password" : "Show password"}
+              className="text-textSecondary transition-colors hover:text-text disabled:opacity-50"
+            >
+              <Icon name={state === "revealed" ? "eye-off" : "eye"} className="h-4 w-4" />
+            </button>
+          )}
+          {state === "error" && error && <span className="text-xs text-danger">{error}</span>}
         </span>
       }
     />
@@ -110,7 +140,7 @@ export function AdvisorDetailsPage() {
           />
           <InfoRow label="Agency code" value={advisor.agency_code} />
           <InfoRow label="Agent code" value={advisor.agent_code} />
-          <PasswordInfoRow hasPassword={advisor.has_password} />
+          <PasswordInfoRow advisorId={advisor.id} hasPassword={advisor.has_password} canReveal={canEdit} />
           <InfoRow label="Status" value={ADVISOR_STATUS_LABELS[advisor.status]} />
           <InfoRow label="No. of Policies" value={advisor.no_of_policies} />
           <InfoRow label="Premium Amount" value={formatINR(advisor.total_premium)} />

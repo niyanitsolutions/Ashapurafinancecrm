@@ -354,6 +354,15 @@ class AdvisorListItem(BaseModel):
     has_password: bool = False
 
 
+class AdvisorPasswordResponse(BaseModel):
+    """Response for the dedicated, staff-only reveal endpoint — deliberately its own
+    narrow schema (mirrors `customer.schemas.DocumentPasswordResponse`), never merged
+    into `AdvisorListItem`/`AdvisorDetailResponse`, so the plaintext password can never
+    accidentally ride along on a list/get call."""
+
+    password: str
+
+
 class AdvisorDetailResponse(AdvisorListItem):
     updated_at: datetime
     # Linked recruitment lead (recruitment / application + documents + examination info).

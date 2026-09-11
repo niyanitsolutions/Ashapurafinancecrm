@@ -30,6 +30,7 @@ from app.features.recruitment.repository import (
 )
 from app.features.recruitment.schemas import AddAdvisorBusinessRequest, UpdateAdvisorRequest
 from app.features.recruitment.service import RecruitmentService
+from app.security.encryption import decrypt, encrypt
 from app.security.password import hash_password
 from app.shared.audit_log import write_audit_log
 from app.utils.datetime import ist_date_to_utc_midnight
@@ -124,11 +125,15 @@ class AdvisorService:
         if payload.status is not None:
             updates["status"] = payload.status
         if payload.password:
-            # Blank input = "keep the current password" (never hash an empty string).
-            # Write-only: store the hash, never echo the plaintext (or the hash) anywhere.
-            # No length/complexity policy on this field (see UpdateAdvisorRequest); bcrypt's
+            # Blank input = "keep the current password" (never hash/encrypt an empty
+            # string). `password_hash` (bcrypt, one-way) is the credential login actually
+            # verifies against — unchanged behavior. `password_encrypted` (reversible) is
+            # written alongside it purely so `reveal_password` can show the real value
+            # back to an authorized staff member later; login never reads this field. No
+            # length/complexity policy on this field (see UpdateAdvisorRequest); bcrypt's
             # 72-byte cap is still enforced by hash_password.
             updates["password_hash"] = hash_password(payload.password)
+            updates["password_encrypted"] = encrypt(payload.password)
 
         if not updates:
             return advisor
@@ -146,6 +151,22 @@ class AdvisorService:
             metadata=audit_meta,
         )
         return updated
+
+    async def reveal_password(self, advisor_id: str, actor: User) -> str:
+        """Staff-only, on-demand decrypt of an advisor's saved portal password — same
+        pattern as `CustomerService.reveal_document_password` (bank-statement document
+        passwords): never returned from `list_advisors`/`get_advisor`, only this one
+        explicit, audited, edit-permission-gated call ever decrypts
+        `password_encrypted` back to plaintext. Advisor login is untouched — it verifies
+        against `password_hash` only, never this field."""
+        advisor = await self.get_advisor(advisor_id)
+        if advisor.password_encrypted is None:
+            raise NotFoundError("This advisor has no password on file.")
+        await write_audit_log(
+            self._db, event_type=RecruitmentAuditEvent.ADVISOR_PASSWORD_ACCESSED, user_id=actor.require_id(),
+            metadata={"advisor_id": advisor_id},
+        )
+        return decrypt(advisor.password_encrypted)
 
     async def add_business(self, advisor_id: str, payload: AddAdvisorBusinessRequest, actor: User) -> AdvisorBusiness:
         await self.get_advisor(advisor_id)

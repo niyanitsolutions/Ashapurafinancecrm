@@ -27,11 +27,15 @@ def _details_response(case: ApplicationWorkflow) -> InsuranceCaseDetailsResponse
 
 
 def to_list_item(case: ApplicationWorkflow, customer_name: str | None, product_name: str, assigned_to_name: str | None) -> InsuranceCaseListItem:
+    details = case.insurance_details
     return InsuranceCaseListItem(
         id=case.require_id(), case_code=case.case_code, application_id=case.application_id, customer_id=case.customer_id,
         customer_name=customer_name, product_id=case.product_id, product_name=product_name,
         assigned_to=case.assigned_to, assigned_to_name=assigned_to_name, current_status=case.current_status,
         rejection_reason=case.rejection_reason, next_follow_up_date=case.next_follow_up_date, created_at=case.created_at,
+        premium_amount=details.premium_amount if details else None,
+        amount_paid=details.amount_paid if details else None,
+        payment_status=details.payment_status if details else None,
     )
 
 

@@ -203,6 +203,7 @@ class RecruitmentAuditEvent:
     ADVISOR_CREATED = "recruitment_advisor_created"
     ADVISOR_UPDATED = "recruitment_advisor_updated"
     ADVISOR_BUSINESS_ADDED = "recruitment_advisor_business_added"
+    ADVISOR_PASSWORD_ACCESSED = "recruitment_advisor_password_accessed"
     LEAD_ASSIGNED = "recruitment_lead_assigned"
     NOTE_ADDED = "recruitment_note_added"
 

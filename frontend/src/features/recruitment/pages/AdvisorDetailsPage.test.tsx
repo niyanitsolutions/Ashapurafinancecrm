@@ -1,18 +1,25 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AdvisorDetailsPage } from "./AdvisorDetailsPage";
 import type { AdvisorDetail } from "@/features/recruitment/api";
+import { ApiError } from "@/shared/api/client";
 
 const getAdvisor = vi.fn();
+const revealAdvisorPassword = vi.fn();
 vi.mock("@/features/recruitment/api", async () => {
   const actual = await vi.importActual<typeof import("@/features/recruitment/api")>("@/features/recruitment/api");
-  return { ...actual, getAdvisor: (...a: unknown[]) => getAdvisor(...(a as [])) };
+  return {
+    ...actual,
+    getAdvisor: (...a: unknown[]) => getAdvisor(...(a as [])),
+    revealAdvisorPassword: (...a: unknown[]) => revealAdvisorPassword(...(a as [])),
+  };
 });
 
+let canValue = true;
 vi.mock("@/features/access_control/usePermissions", () => ({
-  usePermissions: () => ({ can: () => true }),
+  usePermissions: () => ({ can: () => canValue }),
 }));
 
 function advisor(over: Partial<AdvisorDetail> = {}): AdvisorDetail {
@@ -52,32 +59,57 @@ function renderPage() {
 }
 
 describe("AdvisorDetailsPage — password display", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    canValue = true;
+  });
 
   it("shows 'Not set' with no eye toggle when no password has ever been set", async () => {
     getAdvisor.mockResolvedValue(advisor({ has_password: false }));
     renderPage();
     await screen.findByText("Not set");
-    expect(screen.queryByRole("button", { name: /password state/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /password/i })).not.toBeInTheDocument();
+    expect(revealAdvisorPassword).not.toHaveBeenCalled();
   });
 
-  it("shows a masked placeholder with an eye toggle when a password is set — never the real value", async () => {
+  it("shows a masked placeholder; clicking the eye reveals the real saved password via the dedicated endpoint", async () => {
     getAdvisor.mockResolvedValue(advisor({ has_password: true }));
+    revealAdvisorPassword.mockResolvedValue({ password: "Abc@123" });
     renderPage();
 
     expect(await screen.findByText("••••••••")).toBeInTheDocument();
-    // The raw response body never contains a secret; confirm nothing resembling one renders.
-    expect(screen.queryByText(/\$2[aby]\$/)).not.toBeInTheDocument();
+    expect(revealAdvisorPassword).not.toHaveBeenCalled(); // nothing fetched until the click
 
-    const toggle = screen.getByRole("button", { name: "Show password state" });
+    const toggle = screen.getByRole("button", { name: "Show password" });
     await userEvent.setup().click(toggle);
-    expect(screen.getByText("Password set")).toBeInTheDocument();
-    expect(screen.queryByText("••••••••")).not.toBeInTheDocument();
-    // Still never a real credential — just the fixed, safe label.
-    expect(screen.getByText("Password set")).not.toHaveTextContent(/\$2[aby]\$/);
 
-    await userEvent.setup().click(screen.getByRole("button", { name: "Hide password state" }));
+    await waitFor(() => expect(screen.getByText("Abc@123")).toBeInTheDocument());
+    expect(revealAdvisorPassword).toHaveBeenCalledWith("a1");
+    expect(screen.queryByText("••••••••")).not.toBeInTheDocument();
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Hide password" }));
     expect(screen.getByText("••••••••")).toBeInTheDocument();
+    expect(screen.queryByText("Abc@123")).not.toBeInTheDocument();
+  });
+
+  it("shows an error and no eye toggle disappearing when the reveal call fails", async () => {
+    getAdvisor.mockResolvedValue(advisor({ has_password: true }));
+    revealAdvisorPassword.mockRejectedValue(new ApiError("conflict", "This advisor has no password on file."));
+    renderPage();
+    await screen.findByText("••••••••");
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Show password" }));
+    await waitFor(() => expect(screen.getByText("This advisor has no password on file.")).toBeInTheDocument());
+    expect(screen.queryByText(/\$2[aby]\$/)).not.toBeInTheDocument();
+  });
+
+  it("hides the eye toggle for a view-only user (no edit permission) — masked value only", async () => {
+    canValue = false;
+    getAdvisor.mockResolvedValue(advisor({ has_password: true }));
+    renderPage();
+    await screen.findByText("••••••••");
+    expect(screen.queryByRole("button", { name: /password/i })).not.toBeInTheDocument();
+    expect(revealAdvisorPassword).not.toHaveBeenCalled();
   });
 
   it("Edit Advisor's password field is unaffected — opens blank, unrelated to the masked display", async () => {

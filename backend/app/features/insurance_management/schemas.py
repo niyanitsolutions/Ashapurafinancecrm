@@ -54,7 +54,8 @@ class InsuranceStatusUpdateRequest(BaseModel):
 
 
 class MoveBackRequest(BaseModel):
-    target: str = Field(pattern=f"^({InsuranceStatus.FRESH_LEAD}|{InsuranceStatus.POLICY_DOCUMENT})$")
+    # Also accepts `policy_login` — Payment's one-step-back target (production add-on).
+    target: str = Field(pattern=f"^({InsuranceStatus.FRESH_LEAD}|{InsuranceStatus.POLICY_DOCUMENT}|{InsuranceStatus.POLICY_LOGIN})$")
 
 
 class RestartFromReEligibleRequest(BaseModel):
@@ -88,6 +89,16 @@ class PolicyLoginUpdateRequest(BaseModel):
     # before this schema is even constructed. Converted to the stored UTC-midnight
     # instant the same way every other calendar-date-only field in this codebase is.
     policy_issue_date: date | None = None
+
+
+class PaymentUpdateRequest(BaseModel):
+    """No `payment_status` field on purpose — it's always server-computed from
+    `amount_paid` vs. the case's stored Premium Amount (`InsurancePaymentStatus.compute`),
+    never accepted from the client, so it can never be submitted out of sync with the
+    actual amount. Negative input is rejected here (`ge=0`); exceeding the Premium is
+    rejected in the service (needs the case's Premium to check against)."""
+
+    amount_paid: float = Field(ge=0)
 
 
 class ChangeProductRequest(BaseModel):
@@ -136,6 +147,11 @@ class InsuranceCaseDetailsResponse(BaseModel):
     # this field existed (the UI shows "—"). Distinct from `policy_issued_at` below.
     policy_issue_date: datetime | None = None
     policy_issued_at: datetime | None = None
+    # Payment stage (production add-on) — `payment_status` is server-computed only, never
+    # settable by any request schema (see `PaymentUpdateRequest`). Both `None` until the
+    # case first reaches `payment` (`move_to_payment` initializes them to Not Paid / 0).
+    payment_status: str | None = None
+    amount_paid: float | None = None
     re_eligibility_choice: str | None = None
     re_eligible_date: datetime | None = None
     re_eligibility_auto_transitioned: bool = False
@@ -155,6 +171,7 @@ class InsuranceCaseCountsResponse(BaseModel):
     fresh_lead: int
     policy_document: int
     policy_login: int
+    payment: int
     policy_issued: int
     re_eligible: int
     on_hold: int
@@ -175,6 +192,13 @@ class InsuranceCaseListItem(BaseModel):
     rejection_reason: str | None
     next_follow_up_date: datetime | None = None
     created_at: datetime
+    # Payment tab columns (Premium / Amount Paid / Payment Status — Balance is
+    # `premium_amount - amount_paid`, computed by the frontend rather than duplicated
+    # here). Present on every row for reuse of the one shared list-item schema; `None` on
+    # any case that hasn't reached Payment yet.
+    premium_amount: float | None = None
+    amount_paid: float | None = None
+    payment_status: str | None = None
 
 
 class InsuranceApplicantDetailsResponse(BaseModel):

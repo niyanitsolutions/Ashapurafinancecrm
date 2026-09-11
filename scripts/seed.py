@@ -689,21 +689,27 @@ async def seed_workflow_definitions() -> None:
         ),
         (
             InsuranceStatus.POLICY_LOGIN, "Policy Login", 3,
-            [InsuranceStatus.POLICY_ISSUED, InsuranceStatus.REJECTED],
+            [InsuranceStatus.PAYMENT, InsuranceStatus.REJECTED],
             False, True, InsuranceAuditEvent.POLICY_LOGIN_STARTED, "insurance_case.policy_login_started",
         ),
-        (InsuranceStatus.POLICY_ISSUED, "Policy Issued", 4, [], False, False, InsuranceAuditEvent.POLICY_ISSUED, "insurance_case.policy_issued"),
         (
-            InsuranceStatus.RE_ELIGIBLE, "Re-Eligible", 5,
+            InsuranceStatus.PAYMENT, "Payment", 4,
+            [InsuranceStatus.POLICY_ISSUED, InsuranceStatus.REJECTED],
+            False, True, InsuranceAuditEvent.PAYMENT_STARTED, "insurance_case.payment_started",
+        ),
+        (InsuranceStatus.POLICY_ISSUED, "Policy Issued", 5, [], False, False, InsuranceAuditEvent.POLICY_ISSUED, "insurance_case.policy_issued"),
+        (
+            InsuranceStatus.RE_ELIGIBLE, "Re-Eligible", 6,
             [InsuranceStatus.FRESH_LEAD, InsuranceStatus.POLICY_DOCUMENT, InsuranceStatus.REJECTED],
             False, True, InsuranceAuditEvent.MARKED_RE_ELIGIBLE, "insurance_case.marked_re_eligible",
         ),
-        (InsuranceStatus.REJECTED, "Application Rejected", 6, [InsuranceStatus.RE_ELIGIBLE], False, False, InsuranceAuditEvent.REJECTED, "insurance_case.rejected"),
+        (InsuranceStatus.REJECTED, "Application Rejected", 7, [InsuranceStatus.RE_ELIGIBLE], False, False, InsuranceAuditEvent.REJECTED, "insurance_case.rejected"),
     ]
     # "Move Back" — one step back only, matching the "Move Back to X" spec examples.
     insurance_allowed_previous: dict[str, list[str]] = {
         InsuranceStatus.POLICY_DOCUMENT: [InsuranceStatus.FRESH_LEAD],
         InsuranceStatus.POLICY_LOGIN: [InsuranceStatus.POLICY_DOCUMENT],
+        InsuranceStatus.PAYMENT: [InsuranceStatus.POLICY_LOGIN],
     }
     allowed_previous_by_case = {CaseType.LOAN: loan_allowed_previous, CaseType.INSURANCE: insurance_allowed_previous}
 

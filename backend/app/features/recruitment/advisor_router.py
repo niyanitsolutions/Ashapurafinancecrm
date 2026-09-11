@@ -22,6 +22,7 @@ from app.features.recruitment.schemas import (
     AdvisorBusinessResponse,
     AdvisorDetailResponse,
     AdvisorListItem,
+    AdvisorPasswordResponse,
     UpdateAdvisorRequest,
 )
 
@@ -66,6 +67,18 @@ async def list_advisors(
 @router.get("/{advisor_id}")
 async def get_advisor(advisor_id: str, service: ServiceDep, _actor: Annotated[User, _perm("view")]) -> ApiResponse[AdvisorDetailResponse]:
     return await _detail(service, advisor_id)
+
+
+@router.get("/{advisor_id}/password")
+async def reveal_advisor_password(
+    advisor_id: str, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[AdvisorPasswordResponse]:
+    # `edit` (not `view`) — same, stricter-than-read gate the bank-statement document
+    # password reveal uses (`CustomerService.reveal_document_password`): a view-only
+    # staff member can see the masked Advisor Details page but cannot reveal a secret.
+    # Never returned from `list_advisors`/`get_advisor`; every call is audited.
+    password = await service.reveal_password(advisor_id, actor)
+    return ApiResponse[AdvisorPasswordResponse].ok(AdvisorPasswordResponse(password=password))
 
 
 @router.patch("/{advisor_id}")

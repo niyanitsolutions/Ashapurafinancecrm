@@ -48,14 +48,16 @@ _LOAN_ROWS = [
 _INSURANCE_ROWS = [
     (InsuranceStatus.FRESH_LEAD, "Fresh Lead", 1, [InsuranceStatus.POLICY_DOCUMENT, InsuranceStatus.REJECTED], "insurance_case_created"),
     (InsuranceStatus.POLICY_DOCUMENT, "Policy Document", 2, [InsuranceStatus.POLICY_LOGIN, InsuranceStatus.REJECTED], "insurance_case_policy_document_started"),
-    (InsuranceStatus.POLICY_LOGIN, "Policy Login", 3, [InsuranceStatus.POLICY_ISSUED, InsuranceStatus.REJECTED], "insurance_case_policy_login_started"),
-    (InsuranceStatus.POLICY_ISSUED, "Policy Issued", 4, [], "insurance_case_policy_issued"),
-    (InsuranceStatus.RE_ELIGIBLE, "Re-Eligible", 5, [InsuranceStatus.FRESH_LEAD, InsuranceStatus.POLICY_DOCUMENT, InsuranceStatus.REJECTED], "insurance_case_marked_re_eligible"),
-    (InsuranceStatus.REJECTED, "Application Rejected", 6, [InsuranceStatus.RE_ELIGIBLE], "insurance_case_rejected"),
+    (InsuranceStatus.POLICY_LOGIN, "Policy Login", 3, [InsuranceStatus.PAYMENT, InsuranceStatus.REJECTED], "insurance_case_policy_login_started"),
+    (InsuranceStatus.PAYMENT, "Payment", 4, [InsuranceStatus.POLICY_ISSUED, InsuranceStatus.REJECTED], "insurance_case_payment_started"),
+    (InsuranceStatus.POLICY_ISSUED, "Policy Issued", 5, [], "insurance_case_policy_issued"),
+    (InsuranceStatus.RE_ELIGIBLE, "Re-Eligible", 6, [InsuranceStatus.FRESH_LEAD, InsuranceStatus.POLICY_DOCUMENT, InsuranceStatus.REJECTED], "insurance_case_marked_re_eligible"),
+    (InsuranceStatus.REJECTED, "Application Rejected", 7, [InsuranceStatus.RE_ELIGIBLE], "insurance_case_rejected"),
 ]
 _INSURANCE_ALLOWED_PREVIOUS = {
     InsuranceStatus.POLICY_DOCUMENT: [InsuranceStatus.FRESH_LEAD],
     InsuranceStatus.POLICY_LOGIN: [InsuranceStatus.POLICY_DOCUMENT],
+    InsuranceStatus.PAYMENT: [InsuranceStatus.POLICY_LOGIN],
 }
 
 
@@ -933,3 +935,47 @@ async def test_staff_override_does_not_change_normal_flow(client, mock_db, owner
     r = await client.post(f"/api/v1/loan-cases/{case_id}/new-customer-details", json={}, headers=employee_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["current_status"] == "credit_evaluation"
+
+
+async def test_staff_override_case_appears_in_target_stage_list_and_counts(client, mock_db, owner_headers, master_data):
+    """Regression lock for the reported "override moves the case but it doesn't show up
+    in the target tab" bug. Traced the full chain end-to-end
+    (override_move_to_stage -> WorkflowEngine.transition(force=True) -> DB write ->
+    list_cases/get_counts -> current_status filter) and found no defect — this test
+    pins that finding so it can never silently regress."""
+    case_id, employee_headers, _c, _a = await _loan_case(client, mock_db, owner_headers, master_data, mobile_suffix="00000025")
+
+    r = await client.post(
+        f"/api/v1/loan-cases/{case_id}/override-stage",
+        json={"status": "credit_evaluation", "reason": "Management requested direct movement"},
+        headers=employee_headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["current_status"] == "credit_evaluation"
+
+    # 1/2. DB status is correct and the case appears in the target stage's list —
+    # for the assigned employee (who did the move) AND the Owner.
+    for headers in (employee_headers, owner_headers):
+        r = await client.get("/api/v1/loan-cases?status=credit_evaluation&page_size=100", headers=headers)
+        body = r.json()
+        assert body["data"][0]["id"] == case_id, body
+        assert body["meta"]["pagination"]["total"] == 1
+
+        r = await client.get("/api/v1/loan-cases?status=new_customer&page_size=100", headers=headers)
+        assert r.json()["meta"]["pagination"]["total"] == 0
+
+    # 3. Counts/badges agree with the list.
+    counts = (await client.get("/api/v1/loan-cases/counts", headers=owner_headers)).json()["data"]
+    assert counts["credit_evaluation"] == 1
+    assert counts["new_customer"] == 0
+
+    # 4. Case detail reflects the new stage.
+    detail = (await client.get(f"/api/v1/loan-cases/{case_id}", headers=owner_headers)).json()["data"]
+    assert detail["current_status"] == "credit_evaluation"
+
+    # 5/6. Refreshing (re-issuing the same list/detail GETs, simulating a page reload or
+    # navigating away and back) still shows it — there is no caching layer to go stale.
+    r = await client.get("/api/v1/loan-cases?status=credit_evaluation&page_size=100", headers=owner_headers)
+    assert r.json()["data"][0]["id"] == case_id
+    detail_again = (await client.get(f"/api/v1/loan-cases/{case_id}", headers=owner_headers)).json()["data"]
+    assert detail_again["current_status"] == "credit_evaluation"

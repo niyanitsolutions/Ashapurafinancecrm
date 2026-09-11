@@ -326,6 +326,12 @@ export function getAdvisor(id: string) {
   return apiRequest<AdvisorDetail>(`/advisors/${id}`);
 }
 
+// Dedicated, staff-only reveal endpoint (edit permission required) — the ONE call that
+// ever returns the real saved password. Never part of getAdvisor/listAdvisors.
+export function revealAdvisorPassword(id: string) {
+  return apiRequest<{ password: string }>(`/advisors/${id}/password`);
+}
+
 export function updateAdvisor(
   id: string,
   payload: {

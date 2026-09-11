@@ -292,6 +292,7 @@ export const router = createBrowserRouter([
               { path: "fresh-leads", element: <InsuranceCaseListPage key="fresh_lead" fixedStatus="fresh_lead" /> },
               { path: "policy-document", element: <InsuranceCaseListPage key="policy_document" fixedStatus="policy_document" /> },
               { path: "policy-login", element: <InsuranceCaseListPage key="policy_login" fixedStatus="policy_login" /> },
+              { path: "payment", element: <InsuranceCaseListPage key="payment" fixedStatus="payment" /> },
               { path: "policy-issued", element: <InsuranceCaseListPage key="policy_issued" fixedStatus="policy_issued" /> },
               { path: "re-eligible", element: <InsuranceCaseListPage key="re_eligible" fixedStatus="re_eligible" /> },
               { path: "rejected", element: <InsuranceCaseListPage key="rejected" fixedStatus="rejected" /> },
