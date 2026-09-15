@@ -15,7 +15,10 @@ from app.core.response import ApiResponse, ResponseMeta
 from app.features.access_control.permission_engine import require_any_permission, require_permission
 from app.features.auth.models import User
 from app.features.recruitment import mappers
-from app.features.recruitment.dependencies import get_recruitment_service
+from app.features.recruitment.dependencies import (
+    InsuranceManagementReadDep,
+    get_recruitment_service,
+)
 from app.features.recruitment.schemas import (
     AddRecruitmentNoteRequest,
     AdvisorSummaryResponse,
@@ -63,7 +66,7 @@ async def _detail(service: RecruitmentService, lead_id: str, actor: User) -> Api
 
 @router.get("")
 async def list_recruitment_leads(
-    service: ServiceDep, actor: Annotated[User, _perm("view")], page: PageParamsDep,
+    service: ServiceDep, actor: InsuranceManagementReadDep, page: PageParamsDep,
     stage: str | None = None, assigned_to: str | None = None,
 ) -> ApiResponse[list[RecruitmentLeadListItem]]:
     leads, total = await service.list_leads(
@@ -75,12 +78,12 @@ async def list_recruitment_leads(
 
 
 @router.get("/counts")
-async def get_recruitment_counts(service: ServiceDep, actor: Annotated[User, _perm("view")]) -> ApiResponse[RecruitmentCountsResponse]:
+async def get_recruitment_counts(service: ServiceDep, actor: InsuranceManagementReadDep) -> ApiResponse[RecruitmentCountsResponse]:
     return ApiResponse[RecruitmentCountsResponse].ok(RecruitmentCountsResponse(**await service.get_counts(actor)))
 
 
 @router.get("/lookup")
-async def get_recruitment_lookup(service: ServiceDep, actor: Annotated[User, _perm("view")]) -> ApiResponse[RecruitmentLookupResponse]:
+async def get_recruitment_lookup(service: ServiceDep, actor: InsuranceManagementReadDep) -> ApiResponse[RecruitmentLookupResponse]:
     sources = await service.get_lookup()
     return ApiResponse[RecruitmentLookupResponse].ok(
         RecruitmentLookupResponse(sources=[LookupItem(id=s.require_id(), name=s.name) for s in sources])
@@ -99,7 +102,7 @@ async def create_recruitment_lead(
 
 
 @router.get("/{lead_id}")
-async def get_recruitment_lead(lead_id: str, service: ServiceDep, actor: Annotated[User, _perm("view")]) -> ApiResponse[RecruitmentLeadDetailResponse]:
+async def get_recruitment_lead(lead_id: str, service: ServiceDep, actor: InsuranceManagementReadDep) -> ApiResponse[RecruitmentLeadDetailResponse]:
     return await _detail(service, lead_id, actor)
 
 
@@ -192,7 +195,7 @@ async def move_to_advisor(lead_id: str, service: ServiceDep, actor: Annotated[Us
 
 
 @router.get("/{lead_id}/advisor")
-async def get_lead_advisor(lead_id: str, service: ServiceDep, actor: Annotated[User, _perm("view")]) -> ApiResponse[AdvisorSummaryResponse | None]:
+async def get_lead_advisor(lead_id: str, service: ServiceDep, actor: InsuranceManagementReadDep) -> ApiResponse[AdvisorSummaryResponse | None]:
     lead = await service.get_lead_scoped(lead_id, actor)
     advisor = await service.get_advisor_for_lead(lead)
     return ApiResponse[AdvisorSummaryResponse | None].ok(mappers.advisor_to_summary(advisor) if advisor is not None else None)
@@ -211,7 +214,7 @@ async def assign_recruitment_lead(
 
 @router.get("/{lead_id}/timeline")
 async def get_timeline(
-    lead_id: str, service: ServiceDep, actor: Annotated[User, _perm("view")]
+    lead_id: str, service: ServiceDep, actor: InsuranceManagementReadDep
 ) -> ApiResponse[list[RecruitmentTimelineEntryResponse]]:
     entries = await service.get_timeline(lead_id, actor)
     return ApiResponse[list[RecruitmentTimelineEntryResponse]].ok(

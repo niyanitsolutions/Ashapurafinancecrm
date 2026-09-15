@@ -16,7 +16,7 @@ from app.features.access_control.permission_engine import require_permission
 from app.features.auth.models import User
 from app.features.recruitment import mappers
 from app.features.recruitment.advisor_service import AdvisorService
-from app.features.recruitment.dependencies import get_advisor_service
+from app.features.recruitment.dependencies import InsuranceManagementReadDep, get_advisor_service
 from app.features.recruitment.schemas import (
     AddAdvisorBusinessRequest,
     AdvisorBusinessResponse,
@@ -51,7 +51,7 @@ async def _detail(service: AdvisorService, advisor_id: str) -> ApiResponse[Advis
 
 @router.get("")
 async def list_advisors(
-    service: ServiceDep, actor: Annotated[User, _perm("view")], page: PageParamsDep,
+    service: ServiceDep, actor: InsuranceManagementReadDep, page: PageParamsDep,
     channel: str | None = None, profession: str | None = None, status: str | None = None,
 ) -> ApiResponse[list[AdvisorListItem]]:
     """`channel` (QR / Non-QR "Type"), `profession` and `status` are independent optional
@@ -65,7 +65,7 @@ async def list_advisors(
 
 
 @router.get("/{advisor_id}")
-async def get_advisor(advisor_id: str, service: ServiceDep, _actor: Annotated[User, _perm("view")]) -> ApiResponse[AdvisorDetailResponse]:
+async def get_advisor(advisor_id: str, service: ServiceDep, _actor: InsuranceManagementReadDep) -> ApiResponse[AdvisorDetailResponse]:
     return await _detail(service, advisor_id)
 
 
@@ -91,7 +91,7 @@ async def update_advisor(
 
 @router.get("/{advisor_id}/business")
 async def list_advisor_business(
-    advisor_id: str, service: ServiceDep, _actor: Annotated[User, _perm("view")]
+    advisor_id: str, service: ServiceDep, _actor: InsuranceManagementReadDep
 ) -> ApiResponse[list[AdvisorBusinessResponse]]:
     businesses = await service.list_business(advisor_id)
     return ApiResponse[list[AdvisorBusinessResponse]].ok([mappers.business_to_response(b) for b in businesses])

@@ -4,16 +4,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { InsuranceManagementLayout } from "./InsuranceManagementLayout";
 
 const getInsuranceCaseCounts = vi.fn();
+let navKeys = new Set(["insurance_cases", "recruitment_leads"]);
 vi.mock("@/features/insurance_management/api", async () => {
   const actual = await vi.importActual<typeof import("@/features/insurance_management/api")>("@/features/insurance_management/api");
   return { ...actual, getInsuranceCaseCounts: (...a: unknown[]) => getInsuranceCaseCounts(...(a as [])) };
 });
 
 vi.mock("@/components/layout/useNavKeys", () => ({
-  useNavKeys: () => new Set(["insurance_cases", "recruitment_leads"]),
+  useNavKeys: () => navKeys,
 }));
 
 beforeEach(() => {
+  navKeys = new Set(["insurance_cases", "recruitment_leads"]);
   getInsuranceCaseCounts.mockReset();
   getInsuranceCaseCounts.mockRejectedValue(new Error("no counts"));
 });
@@ -76,5 +78,18 @@ describe("InsuranceManagementLayout", () => {
     // DOM order matches.
     expect(top[0].compareDocumentPosition(top[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(top[1].compareDocumentPosition(top[2]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("keeps every Insurance Management tab visible to an employee with only Insurance case access", async () => {
+    navKeys = new Set(["insurance_cases"]);
+    getInsuranceCaseCounts.mockResolvedValue({
+      fresh_lead: 0, policy_document: 0, policy_login: 0, payment: 0,
+      policy_issued: 0, re_eligible: 0, rejected: 0, on_hold: 0,
+    });
+    renderAt("/insurance-management/fresh-leads");
+
+    for (const label of ["Policy Leads", "Recruitment Leads", "Advisors", "Fresh Leads 0", "Policy Document 0", "Policy Login 0", "Payment 0", "Policy Issued 0", "Re-Eligible 0", "Rejected 0", "On Hold 0", "Settings"]) {
+      expect(await screen.findByRole("link", { name: label })).toBeInTheDocument();
+    }
   });
 });

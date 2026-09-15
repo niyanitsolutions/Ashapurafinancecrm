@@ -26,11 +26,14 @@ const TOP_TABS = [
     matchKey: "insurance_cases",
     activePrefixes: POLICY_LEADS_PREFIXES,
   },
-  { label: "Recruitment Leads", to: "/insurance-management/recruitment", matchKey: "recruitment_leads" },
+  // These are workflows within Insurance Management, not separately-entered modules.
+  // An employee who can enter Insurance Management sees the complete navigation; each
+  // workflow API then returns only the records/counts that employee may access.
+  { label: "Recruitment Leads", to: "/insurance-management/recruitment", matchKey: "insurance_cases" },
   {
     label: "Advisors",
     to: "/insurance-management/advisors",
-    matchKey: "recruitment_leads",
+    matchKey: "insurance_cases",
     activePrefixes: ["/insurance-management/advisors"],
   },
 ];

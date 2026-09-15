@@ -26,16 +26,18 @@ export function RecruitmentLayout() {
   }, [loadCounts]);
 
   // 2026 redesign: one flat top-level tab per recruitment stage (Doc Collection is its
-  // own stage, no longer a parent of Examination / Re-Examination / Agency Code).
+  // own stage, no longer a parent of Examination / Re-Examination / Agency Code). Like
+  // Policy Leads, these tabs are visible to anyone who can enter Insurance Management;
+  // the API scopes the count and list rows, never tab visibility.
   const tabs = [
-    { label: "Fresh Leads", to: `${BASE}/fresh`, matchKey: "recruitment_leads", count: counts?.fresh },
-    { label: "BOP", to: `${BASE}/bop`, matchKey: "recruitment_leads", count: counts?.bop },
-    { label: "Doc Collection", to: `${BASE}/doc-collection`, matchKey: "recruitment_leads", count: counts?.doc_collection },
-    { label: "Exam Fee Status", to: `${BASE}/exam-fee-status`, matchKey: "recruitment_leads", count: counts?.exam_fee_status },
-    { label: "Examination", to: `${BASE}/examination`, matchKey: "recruitment_leads", count: counts?.examination },
-    { label: "Re-Examination", to: `${BASE}/re-examination`, matchKey: "recruitment_leads", count: counts?.re_examination },
-    { label: "Agency Code", to: `${BASE}/agency-code`, matchKey: "recruitment_leads", count: counts?.agency_code },
-    { label: "Rejected", to: `${BASE}/rejected`, matchKey: "recruitment_leads", count: counts?.rejected },
+    { label: "Fresh Leads", to: `${BASE}/fresh`, matchKey: "insurance_cases", count: counts?.fresh },
+    { label: "BOP", to: `${BASE}/bop`, matchKey: "insurance_cases", count: counts?.bop },
+    { label: "Doc Collection", to: `${BASE}/doc-collection`, matchKey: "insurance_cases", count: counts?.doc_collection },
+    { label: "Exam Fee Status", to: `${BASE}/exam-fee-status`, matchKey: "insurance_cases", count: counts?.exam_fee_status },
+    { label: "Examination", to: `${BASE}/examination`, matchKey: "insurance_cases", count: counts?.examination },
+    { label: "Re-Examination", to: `${BASE}/re-examination`, matchKey: "insurance_cases", count: counts?.re_examination },
+    { label: "Agency Code", to: `${BASE}/agency-code`, matchKey: "insurance_cases", count: counts?.agency_code },
+    { label: "Rejected", to: `${BASE}/rejected`, matchKey: "insurance_cases", count: counts?.rejected },
   ];
 
   return (

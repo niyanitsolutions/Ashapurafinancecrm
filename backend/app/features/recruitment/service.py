@@ -13,7 +13,6 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.constants.roles import OWNER
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
-from app.features.access_control.permission_engine import PermissionEngine
 from app.features.auth.models import User
 from app.features.employee.repository import EmployeeRepository
 from app.features.recruitment.constants import (
@@ -76,7 +75,6 @@ class RecruitmentService:
         self._advisors = AdvisorRepository(db)
         self._employees = EmployeeRepository(db)
         self._sources = LeadSourceRepository(db)
-        self._permissions = PermissionEngine(db)
 
     # ---------------------------------------------------------------- helpers
 
@@ -92,11 +90,7 @@ class RecruitmentService:
         """An Owner, or an Employee whose role holds `insurance_management:recruitment:
         assign` (already trusted to distribute recruitment leads), sees the whole pool —
         same posture as `LeadService._has_broad_visibility`."""
-        if actor.role == OWNER:
-            return True
-        return await self._permissions.has_permission(
-            actor, module="insurance_management", resource="recruitment", action="assign"
-        )
+        return actor.role == OWNER
 
     async def _scope(self, actor: User) -> tuple[str | None, str | None]:
         """`(scope_user_id, scope_employee_id)` for the repository — `(None, None)` means

@@ -511,6 +511,36 @@ async def _grant(client, owner_headers, employee_id, actions, role_name):
     await client.post(f"/api/v1/roles/{role_id}/assign", json={"employee_id": employee_id}, headers=owner_headers)
 
 
+async def _grant_insurance_case_view(client, owner_headers, employee_id, role_name):
+    response = await client.post(
+        "/api/v1/permissions",
+        json={"module": "insurance_management", "resource": "applications", "actions": ["view"]},
+        headers=owner_headers,
+    )
+    if response.status_code == 409:
+        permissions = await client.get("/api/v1/permissions", headers=owner_headers)
+        permission = next(
+            item for item in permissions.json()["data"]
+            if item["module"] == "insurance_management" and item["resource"] == "applications"
+        )
+    else:
+        assert response.status_code == 200, response.text
+        permission = response.json()["data"]
+    role = await client.post("/api/v1/roles", json={"name": role_name}, headers=owner_headers)
+    assert role.status_code == 200, role.text
+    role_id = role.json()["data"]["id"]
+    grant = await client.put(
+        f"/api/v1/roles/{role_id}/permissions",
+        json={"grants": [{"permission_id": permission["id"], "granted_actions": ["view"]}]},
+        headers=owner_headers,
+    )
+    assert grant.status_code == 200, grant.text
+    assigned = await client.post(
+        f"/api/v1/roles/{role_id}/assign", json={"employee_id": employee_id}, headers=owner_headers
+    )
+    assert assigned.status_code == 200, assigned.text
+
+
 async def _login(client, mobile, password="InitialPass1!"):
     r = await client.post("/api/v1/auth/login", json={"mobile": mobile, "password": password})
     assert r.status_code == 200, r.text
@@ -533,18 +563,74 @@ async def test_employee_sees_only_own_or_assigned(client, mock_db, owner_headers
     headers = await _login(client, "9500000031")
 
     mine = await _create(client, headers, source_id, mobile="9700000001")
-    await _create(client, owner_headers, source_id, mobile="9700000002")  # owner's, not visible
+    assigned = await _create(client, owner_headers, source_id, mobile="9700000002")
+    other = await _create(client, owner_headers, source_id, mobile="9700000003")
+    assigned_response = await client.post(
+        f"{API}/{assigned['id']}/assign", json={"employee_id": emp["id"]}, headers=owner_headers
+    )
+    assert assigned_response.status_code == 200, assigned_response.text
 
     listed = await client.get(API, headers=headers)
-    assert [x["id"] for x in listed.json()["data"]] == [mine["id"]]
+    assert {x["id"] for x in listed.json()["data"]} == {mine["id"], assigned["id"]}
+    assert (await client.get(f"{API}/{other['id']}", headers=headers)).status_code == 403
 
 
-async def test_employee_with_assign_has_broad_visibility(client, mock_db, owner_headers, master_data):
+async def test_employee_with_assign_cannot_broaden_recruitment_record_visibility(client, mock_db, owner_headers, master_data):
     source_id = await _source_id(mock_db)
     emp = await _employee(client, owner_headers, master_data, mobile="9500000041")
     await _grant(client, owner_headers, emp["id"], ["view", "assign"], role_name="Recruit Lead")
     headers = await _login(client, "9500000041")
 
-    await _create(client, owner_headers, source_id, mobile="9700000011")
+    other = await _create(client, owner_headers, source_id, mobile="9700000011")
     listed = await client.get(API, headers=headers)
-    assert listed.json()["meta"]["pagination"]["total"] == 1
+    assert listed.json()["meta"]["pagination"]["total"] == 0
+    assert (await client.get(f"{API}/{other['id']}", headers=headers)).status_code == 403
+
+
+async def test_insurance_case_view_grants_scoped_recruitment_and_unscoped_advisor_reads(
+    client, mock_db, owner_headers, master_data
+):
+    """Module-entry access can read every Insurance workflow, but never edit it.
+
+    Recruitment rows still use their own creator/current-employee-assignment scope;
+    Advisors deliberately remain a complete shared directory.
+    """
+    from app.features.recruitment.models import Advisor
+
+    source_id = await _source_id(mock_db)
+    employee = await _employee(client, owner_headers, master_data, mobile="9500000051")
+    await _grant_insurance_case_view(client, owner_headers, employee["id"], "Insurance Case Viewer")
+    headers = await _login(client, "9500000051")
+
+    assigned = await _create(client, owner_headers, source_id, mobile="9700000051")
+    unrelated = await _create(client, owner_headers, source_id, mobile="9700000052")
+    assert (await client.post(
+        f"{API}/{assigned['id']}/assign", json={"employee_id": employee["id"]}, headers=owner_headers
+    )).status_code == 200
+
+    listed = await client.get(API, headers=headers)
+    assert listed.status_code == 200, listed.text
+    assert [item["id"] for item in listed.json()["data"]] == [assigned["id"]]
+    counts = await client.get(f"{API}/counts", headers=headers)
+    assert counts.status_code == 200, counts.text
+    assert counts.json()["data"]["fresh"] == 1
+    assert (await client.get(f"{API}/{unrelated['id']}", headers=headers)).status_code == 403
+    assert (await client.post(API, json=_payload(source_id, mobile="9700000053"), headers=headers)).status_code == 403
+
+    advisor_one = Advisor(
+        advisor_code="AFS-ADV-005101", recruitment_lead_id="legacy-005101", full_name="Visible QR",
+        mobile="9700000054", profession="salaried", channel="qr",
+    )
+    advisor_two = Advisor(
+        advisor_code="AFS-ADV-005102", recruitment_lead_id="legacy-005102", full_name="Visible Non QR",
+        mobile="9700000055", profession="retired", channel="non_qr", status="inactive",
+    )
+    await mock_db["advisors"].insert_many([
+        advisor_one.model_dump(by_alias=True, exclude={"id"}), advisor_two.model_dump(by_alias=True, exclude={"id"}),
+    ])
+    advisors = await client.get("/api/v1/advisors", headers=headers)
+    assert advisors.status_code == 200, advisors.text
+    assert {item["full_name"] for item in advisors.json()["data"]} == {"Visible QR", "Visible Non QR"}
+    filtered = await client.get("/api/v1/advisors?profession=salaried&channel=qr&status=active", headers=headers)
+    assert filtered.status_code == 200, filtered.text
+    assert [item["full_name"] for item in filtered.json()["data"]] == ["Visible QR"]
