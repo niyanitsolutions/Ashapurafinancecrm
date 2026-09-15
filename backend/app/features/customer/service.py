@@ -1568,8 +1568,19 @@ class CustomerService:
             return 1, None
         return existing.doc_version + 1, existing.require_id()
 
-    async def get_document_upload_url(self, application_id: str, document_type_id: str, file_name: str, actor: User, content_type: str | None) -> tuple[str, str]:
-        application = await self._resolve_application_for_actor(application_id, actor)
+    async def get_document_upload_url(
+        self, application_id: str, document_type_id: str, file_name: str, actor: User, content_type: str | None,
+        *, _authorized_application: Application | None = None,
+    ) -> tuple[str, str]:
+        """Mint a document upload URL after the normal application authorization check.
+
+        ``_authorized_application`` is an internal composition hook for an Insurance
+        case endpoint which has already applied the stricter case-level visibility rule.
+        It is not exposed by the generic Application router.
+        """
+        application = _authorized_application or await self._resolve_application_for_actor(application_id, actor)
+        if application.require_id() != application_id:
+            raise NotFoundError("Application not found.")
         if await self._document_types.find_by_id(document_type_id) is None:
             raise ValidationError("Unknown document_type_id.")
         rd = await self._required_document_definition(application, document_type_id)
@@ -1578,7 +1589,10 @@ class CustomerService:
         url = generate_presigned_upload_url(s3_key, expires_in=_UPLOAD_URL_EXPIRE_SECONDS, content_type=content_type)
         return url, s3_key
 
-    async def confirm_document(self, application_id: str, payload: ConfirmDocumentRequest, actor: User) -> ApplicationDocument:
+    async def confirm_document(
+        self, application_id: str, payload: ConfirmDocumentRequest, actor: User, *,
+        _authorized_application: Application | None = None,
+    ) -> ApplicationDocument:
         # `s3_key` is never trusted from the client (see the request schema's own
         # docstring on this field): a caller could otherwise point this at ANY key in the
         # shared bucket (e.g. another customer's document, or an employee-documents key)
@@ -1586,7 +1600,9 @@ class CustomerService:
         # server-side with the exact same expression `get_document_upload_url` used to
         # mint the presigned PUT, so the only key ever persisted is the one this
         # application's own upload flow actually issued.
-        application = await self._resolve_application_for_actor(application_id, actor)
+        application = _authorized_application or await self._resolve_application_for_actor(application_id, actor)
+        if application.require_id() != application_id:
+            raise NotFoundError("Application not found.")
         document_type = await self._document_types.find_by_id(payload.document_type_id)
         if document_type is None:
             raise ValidationError("Unknown document_type_id.")
@@ -1697,12 +1713,20 @@ class CustomerService:
         await self.get_own_application(application_id, actor)
         return await self._documents.find_current_for_application(application_id)
 
-    async def list_documents_for_staff(self, application_id: str, actor: User) -> list[ApplicationDocument]:
-        await self.get_application_for_staff(application_id, actor)
+    async def list_documents_for_staff(
+        self, application_id: str, actor: User, *, _authorized_application: Application | None = None,
+    ) -> list[ApplicationDocument]:
+        application = _authorized_application or await self.get_application_for_staff(application_id, actor)
+        if application.require_id() != application_id:
+            raise NotFoundError("Application not found.")
         return await self._documents.find_current_for_application(application_id)
 
-    async def get_document_history(self, application_id: str, document_type_id: str, actor: User) -> list[ApplicationDocument]:
-        await self._resolve_application_for_actor(application_id, actor)
+    async def get_document_history(
+        self, application_id: str, document_type_id: str, actor: User, *, _authorized_application: Application | None = None,
+    ) -> list[ApplicationDocument]:
+        application = _authorized_application or await self._resolve_application_for_actor(application_id, actor)
+        if application.require_id() != application_id:
+            raise NotFoundError("Application not found.")
         history = await self._documents.find_for_application_and_type(application_id, document_type_id)
         return sorted(history, key=lambda d: d.created_at, reverse=True)
 
@@ -1723,8 +1747,12 @@ class CustomerService:
             document.s3_key, expires_in=_DOWNLOAD_URL_EXPIRE_SECONDS, response_content_disposition=disposition
         )
 
-    async def _get_document_for_staff(self, application_id: str, document_id: str, actor: User) -> ApplicationDocument:
-        await self.get_application_for_staff(application_id, actor)
+    async def _get_document_for_staff(
+        self, application_id: str, document_id: str, actor: User, *, _authorized_application: Application | None = None,
+    ) -> ApplicationDocument:
+        application = _authorized_application or await self.get_application_for_staff(application_id, actor)
+        if application.require_id() != application_id:
+            raise NotFoundError("Application not found.")
         document = await self._documents.find_by_id(document_id)
         if document is None or document.application_id != application_id:
             raise NotFoundError("Document not found.")
@@ -1748,8 +1776,12 @@ class CustomerService:
         )
         return decrypt(document.password_encrypted)
 
-    async def verify_document(self, application_id: str, document_id: str, actor: User) -> ApplicationDocument:
-        document = await self._get_document_for_staff(application_id, document_id, actor)
+    async def verify_document(
+        self, application_id: str, document_id: str, actor: User, *, _authorized_application: Application | None = None,
+    ) -> ApplicationDocument:
+        document = await self._get_document_for_staff(
+            application_id, document_id, actor, _authorized_application=_authorized_application
+        )
         if document.document_status == DocumentAvailabilityStatus.NOT_AVAILABLE:
             raise ValidationError("This document has not been uploaded yet and cannot be verified.")
         updated = await self._documents.update(
@@ -1767,8 +1799,12 @@ class CustomerService:
         )
         return updated
 
-    async def reject_document(self, application_id: str, document_id: str, reason: str, actor: User) -> ApplicationDocument:
-        document = await self._get_document_for_staff(application_id, document_id, actor)
+    async def reject_document(
+        self, application_id: str, document_id: str, reason: str, actor: User, *, _authorized_application: Application | None = None,
+    ) -> ApplicationDocument:
+        document = await self._get_document_for_staff(
+            application_id, document_id, actor, _authorized_application=_authorized_application
+        )
         if document.document_status == DocumentAvailabilityStatus.NOT_AVAILABLE:
             raise ValidationError("This document has not been uploaded yet and cannot be rejected.")
         # Notify only on a genuinely NEW rejection event, not on every API call — an
@@ -1867,7 +1903,9 @@ class CustomerService:
         # same case. Mirrored in the other direction by
         # LoanCaseService/InsuranceCaseService.assign_case.
         case = await self._workflows.find_by_application_id(application_id)
-        if case is not None and case.assigned_to != employee_id:
+        # Insurance case.assigned_to is an Advisor. Application.assigned_to remains its
+        # independent employee-visibility assignment, so only Loan cases are mirrored.
+        if case is not None and case.case_type == "loan" and case.assigned_to != employee_id:
             is_reassignment = case.assigned_to is not None
             await self._workflows.update(case.require_id(), {"assigned_to": employee_id}, updated_by=actor.require_id())
             await write_audit_log(

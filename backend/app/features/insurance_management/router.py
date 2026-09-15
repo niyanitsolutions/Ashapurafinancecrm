@@ -14,6 +14,11 @@ from app.core.pagination import PageParams, page_params
 from app.core.response import ApiResponse, ResponseMeta
 from app.features.access_control.permission_engine import require_any_permission, require_permission
 from app.features.auth.models import User
+from app.features.customer.schemas import (
+    ConfirmDocumentRequest,
+    DocumentUploadUrlRequest,
+    DocumentUploadUrlResponse,
+)
 from app.features.geo_fencing.constants import GeoActivity
 from app.features.geo_fencing.enforcement import enforce_geo_fence
 from app.features.geo_fencing.schemas import GeoCoordinatesRequest
@@ -347,6 +352,22 @@ async def _document_response(
         verifier_names.get(document.verified_by or ""), attachment_url=service.document_attachment_url(document),
         is_in_schema=document.document_type_id in schema_type_ids,
     )
+
+
+@router.post("/{case_id}/documents/upload-url")
+async def get_case_document_upload_url(
+    case_id: str, payload: DocumentUploadUrlRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[DocumentUploadUrlResponse]:
+    upload_url, s3_key = await service.get_case_document_upload_url(case_id, payload, actor)
+    return ApiResponse[DocumentUploadUrlResponse].ok(DocumentUploadUrlResponse(upload_url=upload_url, s3_key=s3_key))
+
+
+@router.post("/{case_id}/documents/confirm")
+async def confirm_case_document_upload(
+    case_id: str, payload: ConfirmDocumentRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+) -> ApiResponse[InsuranceCaseDocumentResponse]:
+    document, schema_type_ids = await service.confirm_case_document_upload(case_id, payload, actor)
+    return ApiResponse[InsuranceCaseDocumentResponse].ok(await _document_response(service, document, schema_type_ids))
 
 
 @router.get("/{case_id}/documents")

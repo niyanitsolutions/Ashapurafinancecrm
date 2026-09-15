@@ -17,6 +17,7 @@ const moveInsuranceCaseBack = vi.fn();
 const moveInsuranceCaseToStage = vi.fn();
 const assignInsuranceCase = vi.fn();
 const holdInsuranceCase = vi.fn();
+const uploadInsuranceCaseDocument = vi.fn();
 
 vi.mock("@/features/insurance_management/api", async () => {
   const actual = await vi.importActual<typeof import("@/features/insurance_management/api")>("@/features/insurance_management/api");
@@ -36,6 +37,7 @@ vi.mock("@/features/insurance_management/api", async () => {
     moveInsuranceCaseToStage: (...a: unknown[]) => moveInsuranceCaseToStage(...(a as [])),
     assignInsuranceCase: (...a: unknown[]) => assignInsuranceCase(...(a as [])),
     holdInsuranceCase: (...a: unknown[]) => holdInsuranceCase(...(a as [])),
+    uploadInsuranceCaseDocument: (...a: unknown[]) => uploadInsuranceCaseDocument(...(a as [])),
   };
 });
 
@@ -43,12 +45,6 @@ const listAdvisors = vi.fn();
 vi.mock("@/features/recruitment/api", async () => {
   const actual = await vi.importActual<typeof import("@/features/recruitment/api")>("@/features/recruitment/api");
   return { ...actual, listAdvisors: (...a: unknown[]) => listAdvisors(...(a as [])) };
-});
-
-const uploadApplicationDocument = vi.fn();
-vi.mock("@/features/customer/api", async () => {
-  const actual = await vi.importActual<typeof import("@/features/customer/api")>("@/features/customer/api");
-  return { ...actual, uploadApplicationDocument: (...a: unknown[]) => uploadApplicationDocument(...(a as [])) };
 });
 
 vi.mock("@/features/access_control/usePermissions", () => ({
@@ -331,10 +327,10 @@ describe("InsuranceCaseDetailsPage", () => {
     expect(moveInsuranceCaseToStage).not.toHaveBeenCalled();
   });
 
-  it("at Policy Document, an un-uploaded required document shows an upload control wired to the staff upload endpoint", async () => {
+  it("at Policy Document, an un-uploaded required document uses the case-scoped upload endpoint", async () => {
     getInsuranceCase.mockResolvedValue(baseCase);
     listInsuranceCaseDocuments.mockResolvedValue([]); // nothing uploaded yet
-    uploadApplicationDocument.mockResolvedValue({ id: "d1" });
+    uploadInsuranceCaseDocument.mockResolvedValue({ id: "d1" });
     const { container } = renderPage();
     await screen.findByRole("button", { name: "Move to Policy Login" });
 
@@ -343,7 +339,7 @@ describe("InsuranceCaseDetailsPage", () => {
     const input = container.querySelector('input[type="file"]') as HTMLInputElement;
     await userEvent.setup().upload(input, new File(["x"], "pan.pdf", { type: "application/pdf" }));
     await waitFor(() =>
-      expect(uploadApplicationDocument).toHaveBeenCalledWith("app-1", "dt-pan", expect.any(File), undefined, undefined),
+      expect(uploadInsuranceCaseDocument).toHaveBeenCalledWith("c1", "dt-pan", expect.any(File), undefined, undefined),
     );
   });
 

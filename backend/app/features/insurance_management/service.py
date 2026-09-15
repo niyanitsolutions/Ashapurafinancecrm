@@ -45,6 +45,7 @@ from app.features.customer.repository import (
     ApplicationRepository,
     CustomerRepository,
 )
+from app.features.customer.schemas import ConfirmDocumentRequest, DocumentUploadUrlRequest
 from app.features.customer.service import CustomerService
 from app.features.employee.repository import EmployeeRepository
 from app.features.insurance_management.constants import InsurancePaymentStatus
@@ -150,7 +151,11 @@ class InsuranceCaseService:
             case_code=case_code, case_type=CaseType.INSURANCE, application_id=application.require_id(),
             customer_id=application.customer_id or "", product_id=application.product_id,
             product_category=application.product_category, assigned_to=None,
-            actor_id=actor_id, initial_status=InsuranceStatus.FRESH_LEAD, insurance_details=InsuranceCaseDetails(),
+            # A manually-created Insurance application records the staff creator on the
+            # authoritative Application row. Preserve that creator on the workflow even
+            # when lazy/eager case creation occurs later in a separate request.
+            actor_id=actor_id if actor_id is not None else application.created_by,
+            initial_status=InsuranceStatus.FRESH_LEAD, insurance_details=InsuranceCaseDetails(),
         )
 
     async def _sync_new_cases(self) -> None:
@@ -196,19 +201,43 @@ class InsuranceCaseService:
         return case
 
     async def _employee_can_see(self, case: ApplicationWorkflow, actor: User) -> bool:
-        """Policy Leads are assigned to Advisors now (not staff users), so an Employee's
-        visibility is by authorship: they see the cases they created (e.g. their own
-        "+ Add Insurance Lead" walk-ins). A legacy `assigned_to` that still holds their
-        employee id also counts, so no historical case silently disappears."""
+        """The single Insurance employee-visibility rule.
+
+        An employee may access a case they created, or one assigned to their Employee
+        record through the linked Application.  Insurance `case.assigned_to` deliberately
+        remains the Advisor assignment and is never used for employee authorization.
+        The Application creator fallback preserves access for cases created before the
+        workflow creator was populated.
+        """
         if case.created_by == actor.require_id():
             return True
+        application = await self._applications.find_by_id(case.application_id)
+        if application is None:
+            return False
+        if application.created_by == actor.require_id():
+            return True
         employee_id = await self._acting_employee_id(actor)
-        return employee_id != _NO_ASSIGNMENT_SENTINEL and case.assigned_to == employee_id
+        return employee_id != _NO_ASSIGNMENT_SENTINEL and application.assigned_to == employee_id
 
-    def _employee_scope_filter(self, actor: User, employee_id: str | None) -> dict[str, Any]:
-        clauses: list[dict[str, Any]] = [{"created_by": actor.require_id()}]
+    async def _employee_scope_filter(self, actor: User) -> dict[str, Any]:
+        """Build the list/count predicate from the same data used by ``get_case``.
+
+        Case creation is asynchronous relative to Application creation, so include both
+        the workflow creator and the linked Application's creator/employee assignee.
+        This keeps historical rows and newly-created rows consistent without changing
+        Advisor assignments or adding a denormalized employee-assignee field.
+        """
+        employee_id = await self._acting_employee_id(actor)
+        application_clauses: list[dict[str, Any]] = [{"created_by": actor.require_id()}]
         if employee_id is not None and employee_id != _NO_ASSIGNMENT_SENTINEL:
-            clauses.append({"assigned_to": employee_id})
+            application_clauses.append({"assigned_to": employee_id})
+        cursor = self._db["applications"].find(
+            {"is_deleted": {"$ne": True}, "$or": application_clauses}, {"_id": 1}
+        )
+        application_ids = [str(row["_id"]) async for row in cursor]
+        clauses: list[dict[str, Any]] = [{"created_by": actor.require_id()}]
+        if application_ids:
+            clauses.append({"application_id": {"$in": application_ids}})
         return {"$and": [{"$or": clauses}]}
 
     async def get_own_case(self, case_id: str, actor: User) -> ApplicationWorkflow:
@@ -227,7 +256,7 @@ class InsuranceCaseService:
         await self._sync_new_cases()
         extra_filter: dict[str, Any] | None = None
         if actor.role == EMPLOYEE:
-            extra_filter = self._employee_scope_filter(actor, await self._acting_employee_id(actor))
+            extra_filter = await self._employee_scope_filter(actor)
             assigned_to, unassigned_only = None, False
         return await self._workflows.search_and_filter(
             case_type=CaseType.INSURANCE, search=search, customer_id=customer_id, assigned_to=assigned_to,
@@ -242,7 +271,7 @@ class InsuranceCaseService:
         await self._sync_new_cases()
         extra_filter: dict[str, Any] | None = None
         if actor.role == EMPLOYEE:
-            extra_filter = self._employee_scope_filter(actor, await self._acting_employee_id(actor))
+            extra_filter = await self._employee_scope_filter(actor)
         return {
             status: await self._workflows.count_filtered(
                 case_type=CaseType.INSURANCE, status=status, extra_filter=extra_filter,
@@ -263,9 +292,7 @@ class InsuranceCaseService:
         separate collection). The advisor must exist AND be Active; an inactive-advisor id
         sent straight to the API is rejected here, not just hidden from the dropdown. The
         "only an Owner can reassign an already-assigned case" rule is unchanged."""
-        case = await self._workflows.find_by_id(case_id)
-        if case is None or case.case_type != CaseType.INSURANCE:
-            raise NotFoundError("Insurance case not found.")
+        case = await self.get_case(case_id, actor)
         if actor.role != OWNER and case.assigned_to is not None:
             raise ForbiddenError("Only an Owner can reassign a case that's already assigned to someone.")
         advisor = await self._advisors.find_by_id(advisor_id)
@@ -856,29 +883,69 @@ class InsuranceCaseService:
             return set()
         return {rd.document_type_id for rd in form_def.required_documents}
 
+    async def _application_for_case(self, case: ApplicationWorkflow) -> Application:
+        application = await self._applications.find_by_id(case.application_id)
+        if application is None:
+            raise NotFoundError("Application not found.")
+        return application
+
+    async def get_case_document_upload_url(
+        self, case_id: str, payload: DocumentUploadUrlRequest, actor: User
+    ) -> tuple[str, str]:
+        case = await self.get_case(case_id, actor)
+        application = await self._application_for_case(case)
+        # The case-level check above is the authorization boundary. The CustomerService
+        # still performs all document-type, schema, filename and storage-key validation.
+        return await self._customer_service().get_document_upload_url(
+            case.application_id, payload.document_type_id, payload.file_name, actor, payload.content_type,
+            _authorized_application=application,
+        )
+
+    async def confirm_case_document_upload(
+        self, case_id: str, payload: ConfirmDocumentRequest, actor: User
+    ) -> tuple[ApplicationDocument, set[str]]:
+        case = await self.get_case(case_id, actor)
+        application = await self._application_for_case(case)
+        document = await self._customer_service().confirm_document(
+            case.application_id, payload, actor, _authorized_application=application,
+        )
+        return document, await self._schema_document_type_ids(case)
+
     async def list_case_documents(
         self, case_id: str, actor: User
     ) -> tuple[list[ApplicationDocument], set[str]]:
         case = await self.get_case(case_id, actor)
-        documents = await self._customer_service().list_documents_for_staff(case.application_id, actor)
+        application = await self._application_for_case(case)
+        documents = await self._customer_service().list_documents_for_staff(
+            case.application_id, actor, _authorized_application=application
+        )
         return documents, await self._schema_document_type_ids(case)
 
     async def case_document_history(self, case_id: str, document_type_id: str, actor: User) -> list[ApplicationDocument]:
         case = await self.get_case(case_id, actor)
-        return await self._customer_service().get_document_history(case.application_id, document_type_id, actor)
+        application = await self._application_for_case(case)
+        return await self._customer_service().get_document_history(
+            case.application_id, document_type_id, actor, _authorized_application=application
+        )
 
     async def verify_case_document(
         self, case_id: str, document_id: str, actor: User
     ) -> tuple[ApplicationDocument, set[str]]:
         case = await self.get_case(case_id, actor)
-        document = await self._customer_service().verify_document(case.application_id, document_id, actor)
+        application = await self._application_for_case(case)
+        document = await self._customer_service().verify_document(
+            case.application_id, document_id, actor, _authorized_application=application
+        )
         return document, await self._schema_document_type_ids(case)
 
     async def reject_case_document(
         self, case_id: str, document_id: str, reason: str, actor: User
     ) -> tuple[ApplicationDocument, set[str]]:
         case = await self.get_case(case_id, actor)
-        document = await self._customer_service().reject_document(case.application_id, document_id, reason, actor)
+        application = await self._application_for_case(case)
+        document = await self._customer_service().reject_document(
+            case.application_id, document_id, reason, actor, _authorized_application=application
+        )
         return document, await self._schema_document_type_ids(case)
 
     async def resolve_document_type_names(self, documents: list[ApplicationDocument]) -> dict[str, str]:

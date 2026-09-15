@@ -9,7 +9,7 @@ import { TextareaField } from "@/components/forms/TextareaField";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
 import { usePermissions } from "@/features/access_control/usePermissions";
-import { uploadApplicationDocument, type ApplicationDocument } from "@/features/customer/api";
+import type { ApplicationDocument } from "@/features/customer/api";
 import { DocumentChecklist } from "@/features/customer/components/DocumentChecklist";
 import { getErrorMessage } from "@/features/customer/errors";
 import { useProductSchema } from "@/features/customer/useProductSchema";
@@ -46,6 +46,7 @@ import {
   resumeInsuranceCase,
   updatePayment,
   updatePolicyLogin,
+  uploadInsuranceCaseDocument,
   verifyInsuranceCaseDocument,
   type CaseTimelineEntry,
   type InsuranceApplicantDetails,
@@ -190,7 +191,7 @@ export function InsuranceCaseDetailsPage() {
     setMessage(null);
     setUploadingFor(documentTypeId);
     try {
-      await uploadApplicationDocument(insuranceCase.application_id, documentTypeId, file, password, side);
+      await uploadInsuranceCaseDocument(caseId, documentTypeId, file, password, side);
       setMessage("Document uploaded.");
       load();
     } catch (err) {

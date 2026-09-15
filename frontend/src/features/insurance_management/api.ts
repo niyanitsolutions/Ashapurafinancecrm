@@ -1,5 +1,5 @@
 import { ApiError, apiRequest, apiRequestRaw, type PaginationMeta } from "@/shared/api/client";
-import type { ApplicationDocument } from "@/features/customer/api";
+import { putFileToStorage, type ApplicationDocument } from "@/features/customer/api";
 import { getCurrentCoordinates } from "@/shared/geolocation";
 
 // Insurance "Policy Leads" pipeline (redesign 2026-09) — the full replacement of the
@@ -170,6 +170,26 @@ export function getInsuranceCaseCounts() {
 
 export function getInsuranceCase(caseId: string) {
   return apiRequest<InsuranceCaseDetail>(`/insurance-cases/${caseId}`);
+}
+
+/** Insurance-only staff upload flow. The case ID, rather than a client-supplied
+ * Application ID, is the authorization boundary for Owner/creator/current-assignee
+ * access on Policy Document cases. */
+export async function uploadInsuranceCaseDocument(
+  caseId: string, documentTypeId: string, file: File, password?: string, side?: string,
+): Promise<InsuranceCaseDocument> {
+  const upload = await apiRequest<{ upload_url: string; s3_key: string }>(`/insurance-cases/${caseId}/documents/upload-url`, {
+    method: "POST",
+    body: JSON.stringify({ document_type_id: documentTypeId, file_name: file.name, content_type: file.type }),
+  });
+  await putFileToStorage(upload.upload_url, file);
+  return apiRequest<InsuranceCaseDocument>(`/insurance-cases/${caseId}/documents/confirm`, {
+    method: "POST",
+    body: JSON.stringify({
+      document_type_id: documentTypeId, file_name: file.name, s3_key: upload.s3_key,
+      content_type: file.type, password, side,
+    }),
+  });
 }
 
 export function getInsuranceCaseTimeline(caseId: string) {

@@ -607,7 +607,7 @@ export function getDocumentHistory(applicationId: string, documentTypeId: string
 // throwing. Both are normalized into the same ApiError shape the rest of the app already
 // knows how to turn into friendly copy (see shared/api/errors.ts) — full technical detail
 // goes to the console either way, never into the message shown to the customer.
-async function putFileToStorage(uploadUrl: string, file: File): Promise<void> {
+export async function putFileToStorage(uploadUrl: string, file: File): Promise<void> {
   let response: Response;
   try {
     response = await fetch(uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type || "application/octet-stream" } });
