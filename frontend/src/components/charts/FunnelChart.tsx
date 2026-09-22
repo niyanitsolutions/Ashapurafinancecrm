@@ -2,30 +2,31 @@ import { useState } from "react";
 import { BRAND_ORANGE, FUNNEL_OPACITIES, withOpacity } from "@/components/charts/chartColors";
 
 export interface FunnelStage {
+  status?: string;
   label: string;
   value: number;
 }
 
-// Ordinal color job (position in a sequence, not identity) — one hue, monotone lightness
-// via opacity steps, per choosing-a-form.md's "funnel stage" example. Stages are the
-// backend's group-by-status counts with no guaranteed semantic order (see dashboard
-// redesign notes), so they're sorted by count descending — the conventional funnel shape,
-// and a defensible ordering when the true pipeline sequence isn't exposed by the API.
-export function FunnelChart({ stages }: { stages: FunnelStage[] }) {
+// Preserve workflow order; each percentage is a share of current cases, not conversion.
+export function FunnelChart({ stages, onStageClick }: { stages: FunnelStage[]; onStageClick?: (stage: FunnelStage) => void }) {
   const [hovered, setHovered] = useState<number | null>(null);
-  const sorted = [...stages].sort((a, b) => b.value - a.value);
-  const max = sorted[0]?.value || 1;
+  const max = Math.max(...stages.map((stage) => stage.value), 1);
+  const total = stages.reduce((sum, stage) => sum + stage.value, 0);
 
   return (
     <div className="space-y-2">
-      {sorted.map((stage, i) => {
+      {stages.map((stage, i) => {
         const widthPct = Math.max((stage.value / max) * 100, 8);
         const color = withOpacity(BRAND_ORANGE, FUNNEL_OPACITIES[i % FUNNEL_OPACITIES.length]);
-        const percentOfFirst = max > 0 ? Math.round((stage.value / max) * 100) : 0;
+        const shareOfTotal = total > 0 ? Math.round((stage.value / total) * 100) : 0;
         return (
-          <div
+          <button
             key={stage.label}
-            className="relative flex items-center gap-3"
+            type="button"
+            onClick={() => onStageClick?.(stage)}
+            disabled={!onStageClick}
+            aria-label={onStageClick ? `View ${stage.label} cases` : undefined}
+            className={`relative flex w-full items-center gap-3 text-left ${onStageClick ? "cursor-pointer rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/40" : "cursor-default"}`}
             onMouseEnter={() => setHovered(i)}
             onMouseLeave={() => setHovered(null)}
           >
@@ -39,9 +40,9 @@ export function FunnelChart({ stages }: { stages: FunnelStage[] }) {
             </div>
             <div className="w-32 shrink-0 flex items-center justify-between text-2xs">
               <span className="text-textSecondary truncate">{stage.label}</span>
-              <span className="font-semibold text-text">{percentOfFirst}%</span>
+              <span className="font-semibold text-text">{shareOfTotal}%</span>
             </div>
-          </div>
+          </button>
         );
       })}
     </div>

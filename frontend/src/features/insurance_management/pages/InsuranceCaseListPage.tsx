@@ -53,6 +53,7 @@ export function InsuranceCaseListPage({ fixedStatus }: { fixedStatus?: string } 
         fixedStatus={fixedStatus}
         showFollowUp={isReEligible}
         listFn={listInsuranceCases}
+        refreshIntervalMs={15_000}
         extraColumns={fixedStatus === "payment" ? PAYMENT_COLUMNS : undefined}
         defaultDescription="Every insurance application moving from Fresh Lead through Policy Login to Policy Issued."
         reEligibleDescription="Rejected insurance cases that have become eligible to restart after their cooldown period."

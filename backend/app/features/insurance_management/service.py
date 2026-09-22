@@ -551,26 +551,22 @@ class InsuranceCaseService:
         choice = re_eligibility or ReEligibilityPeriod.NO
         now = utc_now()
         computed_date = compute_re_eligible_date(choice, re_eligible_date, now)
-        await self._engine.transition(
-            case, InsuranceStatus.REJECTED, actor, updates={"rejection_reason": reason}, remarks=reason
+        details = (case.insurance_details or InsuranceCaseDetails()).model_copy(
+            update=re_eligibility_detail_updates(choice, computed_date, actor.require_id(), now)
         )
-        return await self._apply_re_eligibility_schedule(case_id, choice, computed_date, now, actor)
-
-    async def _apply_re_eligibility_schedule(
-        self, case_id: str, choice: str, re_eligible_date: Any, now: Any, actor: User
-    ) -> ApplicationWorkflow:
-        """Records the per-case Re-Eligibility schedule chosen at rejection time. Date
-        math / validation happened in `reject_case` (before the transition); note copy is
-        the shared `workflow_engine/re_eligibility.py` helper. Insurance-side writes only."""
-        case = await self._workflows.find_by_id(case_id)
-        assert case is not None
-        details = case.insurance_details or InsuranceCaseDetails()
-
-        updated_details = details.model_copy(
-            update=re_eligibility_detail_updates(choice, re_eligible_date, actor.require_id(), now)
+        # Persist rejection and its schedule together. A failure between separate
+        # writes used to leave a rejected case with no due date for the worker to find.
+        updated = await self._engine.transition(
+            case, InsuranceStatus.REJECTED, actor,
+            updates={"rejection_reason": reason, "insurance_details": details.model_dump()}, remarks=reason,
         )
-        updated = await self._workflows.update(case_id, {"insurance_details": updated_details.model_dump()}, updated_by=actor.require_id())
-        assert updated is not None
+        await self._record_re_eligibility_schedule(case_id, choice, computed_date, actor)
+        return updated
+
+    async def _record_re_eligibility_schedule(
+        self, case_id: str, choice: str, re_eligible_date: Any, actor: User,
+    ) -> None:
+        """Record the normal audit/note after rejection and schedule were persisted."""
         await write_audit_log(
             self._db, event_type=InsuranceAuditEvent.RE_ELIGIBILITY_SCHEDULED, user_id=actor.require_id(),
             metadata={
@@ -584,7 +580,6 @@ class InsuranceCaseService:
                 text=re_eligibility_note_text(choice, re_eligible_date),
             )
         )
-        return updated
 
     async def mark_re_eligible(self, case_id: str, actor: User) -> ApplicationWorkflow:
         """Move a `rejected` case straight to `re_eligible` (the seeded `rejected →

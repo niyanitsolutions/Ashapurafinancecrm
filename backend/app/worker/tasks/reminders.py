@@ -11,12 +11,13 @@ hardcoded here — every job reads its behavior from `reminder_rules` (an Owner-
 collection), per explicit instruction.
 """
 
+import logging
 from datetime import timedelta
 from typing import Any
 
 from app.config.database import get_database
 from app.constants.roles import OWNER
-from app.features.auth.models import User
+from app.core.exceptions import ConflictError
 from app.features.auth.repository import UserRepository
 from app.features.customer.repository import ApplicationRepository
 from app.features.employee.repository import EmployeeRepository
@@ -41,14 +42,18 @@ from app.features.workflow_engine.constants import (
     InsuranceStatus,
     LoanAuditEvent,
     LoanStatus,
+    ReEligibilityPeriod,
 )
 from app.features.workflow_engine.engine import WorkflowEngine
+from app.features.workflow_engine.models import ApplicationWorkflow
 from app.features.workflow_engine.repository import (
     ApplicationStatusHistoryRepository,
     ApplicationWorkflowRepository,
 )
 from app.shared.audit_log import write_audit_log
 from app.utils.datetime import ensure_utc, utc_now
+
+logger = logging.getLogger(__name__)
 
 
 async def poll_audit_events(_ctx: dict[Any, Any], *_args: Any, **_kwargs: Any) -> Any:
@@ -186,46 +191,56 @@ _RE_ELIGIBILITY_PIPELINES = (
 
 
 async def auto_transition_re_eligible_cases(_ctx: dict[Any, Any], *_args: Any, **_kwargs: Any) -> Any:
-    """Reject → Re-Eligibility scheduling (production add-on). Flips a rejected Loan OR
-    Insurance case to `re_eligible` on/after the per-case date staff chose at rejection
-    time (`{loan,insurance}_details.re_eligible_date`, set by the pipeline's
-    `_apply_re_eligibility_schedule`). A "No" rejection has `re_eligible_date is None` and
-    is therefore never selected here — it stays rejected forever, by construction. Reuses
-    the generic `WorkflowEngine.transition` (history + audit + event publish) exactly like
-    a manual "Mark Re-Eligible"; the `rejected -> re_eligible` edge is a real configured
-    transition for both case types (see scripts/seed.py / the migration scripts).
+    """Process due rejected cases from either pipeline, independent of their origin.
 
-    Timezone-safe as-is: `re_eligible_date <= now` is an absolute-instant comparison, not
-    a calendar-day boundary (same note as `check_re_eligible_cases` above)."""
+    Runs on startup and each minute. UTC instants govern eligibility; no employee,
+    owner, reminder rule, or previous stage is needed. Only the atomic transition's
+    winner writes history/audit and publishes the normal workflow event.
+    """
     db = get_database()
-    workflows = ApplicationWorkflowRepository(db)
     engine = WorkflowEngine(db)
     now = utc_now()
-
-    owner_doc = await db["users"].find_one({"role": OWNER, "is_deleted": False})
-    if owner_doc is None:
-        return  # every transition needs an attributable actor for its history/audit row
-    system_actor = User.model_validate(owner_doc)
-
+    processed = 0
+    skipped = 0
+    failed = 0
     for case_type, details_field, rejected_status, re_eligible_status, audit_event in _RE_ELIGIBILITY_PIPELINES:
-        cases, _total = await workflows.search_and_filter(
-            case_type=case_type, search=None, customer_id=None, assigned_to=None, unassigned_only=False,
-            status=rejected_status, skip=0, limit=1000, sort=None,
-            extra_filter={f"{details_field}.re_eligible_date": {"$ne": None, "$lte": now}},
-        )
-        for case in cases:
-            details_obj = getattr(case, details_field)
-            if details_obj is None:
-                continue
-            details = details_obj.model_copy(update={"re_eligibility_auto_transitioned": True, "re_eligible_date": None})
-            await engine.transition(
-                case, re_eligible_status, system_actor,
-                updates={details_field: details.model_dump()}, remarks="Automatically became Re-Eligible on the scheduled date.",
-            )
-            await write_audit_log(
-                db, event_type=audit_event, user_id=system_actor.require_id(),
-                metadata={"application_workflow_id": case.require_id(), "case_code": case.case_code},
-            )
+        date_field = f"{details_field}.re_eligible_date"
+        choice_field = f"{details_field}.re_eligibility_choice"
+        query = {
+            "is_deleted": False, "case_type": case_type, "current_status": rejected_status,
+            date_field: {"$ne": None, "$lte": now},
+            choice_field: {"$ne": ReEligibilityPeriod.NO},
+        }
+        # Stream the whole due backlog, rather than permanently limiting a sweep to
+        # the first 1,000. Validate/process independently so one bad Loan cannot starve Insurance.
+        async for doc in db["application_workflows"].find(query).batch_size(200):
+            try:
+                case = ApplicationWorkflow.model_validate(doc)
+                details = doc[details_field]
+                await engine.transition(
+                    case, re_eligible_status, None,
+                    expected={date_field: details["re_eligible_date"], choice_field: {"$ne": ReEligibilityPeriod.NO}},
+                    updates={f"{details_field}.re_eligibility_auto_transitioned": True, date_field: None},
+                    remarks="Automatically became Re-Eligible on the scheduled date.",
+                )
+                await write_audit_log(
+                    db, event_type=audit_event, user_id=None,
+                    metadata={
+                        "application_workflow_id": case.require_id(), "case_code": case.case_code,
+                        "automatic": True, "actor_type": "system",
+                        "scheduled_for": ensure_utc(details["re_eligible_date"]).isoformat(),
+                    },
+                )
+                processed += 1
+            except ConflictError:
+                skipped += 1  # another worker/manual action already claimed or changed it
+            except Exception:
+                failed += 1
+                logger.exception("Re-eligibility transition failed for %s case %s", case_type, doc.get("_id"))
+    logger.info("Re-eligibility sweep: processed=%s skipped=%s failed=%s", processed, skipped, failed)
+    if failed:
+        raise RuntimeError(f"Re-eligibility sweep failed for {failed} case(s); see worker logs.")
+    return {"processed": processed, "skipped": skipped, "failed": failed}
 
 
 async def check_task_reminders(_ctx: dict[Any, Any], *_args: Any, **_kwargs: Any) -> Any:

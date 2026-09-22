@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
@@ -43,6 +43,41 @@ function renderList(extraProps: Record<string, unknown> = {}) {
 }
 
 describe("CaseListPage row actions", () => {
+  it("refreshes an opted-in list when a worker moves its case, and stops on unmount", async () => {
+    vi.useFakeTimers();
+    const pollingList = vi.fn()
+      .mockResolvedValueOnce({ data: items, pagination: { total: 2 } })
+      .mockResolvedValue({ data: [], pagination: { total: 0 } });
+    const view = renderList({ listFn: pollingList, refreshIntervalMs: 15_000 });
+    try {
+      await act(async () => { await Promise.resolve(); });
+      expect(screen.getByText("AFS-LOAN-000001")).toBeInTheDocument();
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+      expect(pollingList).toHaveBeenCalledTimes(2);
+      expect(screen.queryByText("AFS-LOAN-000001")).not.toBeInTheDocument();
+      view.unmount();
+      await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+      expect(pollingList).toHaveBeenCalledTimes(2);
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not add polling to existing callers that omit the refresh interval", async () => {
+    vi.useFakeTimers();
+    const staticList = vi.fn(listFn);
+    const view = renderList({ listFn: staticList });
+    try {
+      await act(async () => { await Promise.resolve(); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(staticList).toHaveBeenCalledTimes(1);
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it("without onUpdate (Insurance's usage): renders only a View action per row, no Update button", async () => {
     renderList();
     await screen.findByText("AFS-LOAN-000001");
@@ -117,7 +152,7 @@ describe("CaseListPage row actions", () => {
     renderList({ listFn: withDates, showFollowUp: true });
     expect(await screen.findByRole("columnheader", { name: "Next Follow-up" })).toBeInTheDocument();
     // A date far in the past renders as a coloured badge (danger/Past tone).
-    const badge = screen.getByText(/2000/);
+    const badge = await screen.findByText(/2000/);
     expect(badge.className).toContain("danger");
   });
 

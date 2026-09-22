@@ -8,7 +8,7 @@ Three ways to run the stack, depending on what you're doing. **`deployment/docke
 | Redis | **Local Windows Service** (standalone, no Docker) | Docker | Docker |
 | Backend (FastAPI) | **local**, `uvicorn --reload` | Docker | Docker |
 | Frontend (Vite) | **local**, `npm run dev` | Docker | Docker |
-| Arq worker | **local, only when needed** | Docker | Docker |
+| Arq worker | **local, required for automatic jobs** | Docker | Docker |
 | Config | `backend/.env.local` / `frontend/.env.local` | `backend/.env.development` (via `docker-compose.yml`) | `backend/.env.production` |
 | Docker required? | **No — never started, never required** | Yes | Yes |
 | Use when | Everyday feature work — fastest edit/reload loop, lowest resource use | Verifying the actual production-shaped stack (all 5 containers, replica set) before a release / staging push | Real deployment — AWS, CI/CD |
@@ -45,7 +45,7 @@ Please start Redis.
 
 > **First run can take up to a minute.** Spawning the backend/frontend involves a PowerShell process (used internally for reliable process/PID tracking on Windows — see script comments) whose cold start can be slow on some machines; this is normal, not a hang.
 
-**2. Start the worker — only when you're testing Reminders (6D), Referral commission jobs (7), Lead Capture retry (9B), or Communication (9C):**
+**2. Start the worker — required for Loan/Insurance automatic Re-Eligibility, Reminders (6D), Referral commission jobs (7), Lead Capture retry (9B), or Communication (9C):**
 
 ```bash
 bash scripts/dev/start-worker.sh
@@ -53,6 +53,11 @@ bash scripts/dev/start-worker.sh
 PowerShell: `.\scripts\dev\start-worker.ps1`
 
 Runs in the foreground — `Ctrl+C` to stop it. Requires MongoDB and Redis already running, same as above.
+
+Starting the API/frontend alone does not run scheduled jobs. The existing Arq worker
+processes due Loan and Insurance rejected cases on startup and every minute. Keep it
+running while testing automatic Re-Eligibility; see [the automation runbook](INSURANCE_RE_ELIGIBILITY.md)
+for fields, scheduling, verification and deployment requirements.
 
 **3. Stop the backend/frontend:**
 

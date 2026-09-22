@@ -8,6 +8,24 @@ from app.features.dashboard.constants import WidgetType
 from app.features.dashboard.models import DashboardWidget, NavItem
 
 
+async def test_dashboard_accepts_custom_filters_and_rejects_invalid_ranges(client, mock_db, owner_headers):
+    from datetime import UTC, datetime
+
+    await _seed_widget(mock_db, key="total_leads")
+    await mock_db["leads"].insert_many([
+        {"is_deleted": False, "product_category": "loan", "created_at": datetime(2026, 9, 1, 18, 29, tzinfo=UTC)},
+        {"is_deleted": False, "product_category": "loan", "created_at": datetime(2026, 9, 1, 18, 30, tzinfo=UTC)},
+        {"is_deleted": False, "product_category": "insurance", "created_at": datetime(2026, 9, 1, 10, tzinfo=UTC)},
+    ])
+    params = {"range": "custom", "start_date": "2026-09-01", "end_date": "2026-09-01", "product_category": "loan"}
+    response = await client.get("/api/v1/dashboard", params=params, headers=owner_headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["data"][0]["data"] == {"available": True, "value": 1}
+    for invalid in ({"range": "custom"}, params | {"end_date": "2026-08-31"}, {"range": "invalid"}):
+        response = await client.get("/api/v1/dashboard", params=invalid, headers=owner_headers)
+        assert response.status_code == 422, response.text
+
+
 async def _seed_widget(mock_db, **overrides):
     defaults = {
         "key": "test_widget",

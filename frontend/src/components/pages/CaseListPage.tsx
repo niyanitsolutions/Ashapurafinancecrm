@@ -73,6 +73,7 @@ export function CaseListPage<T extends CaseListItem>({
   onUpdate,
   canUpdateRow,
   refreshToken,
+  refreshIntervalMs,
   rowActions,
   titleOverride,
   descriptionOverride,
@@ -110,6 +111,8 @@ export function CaseListPage<T extends CaseListItem>({
    * current page/search/filter state. Optional; omit if nothing external can change the
    * list's data (Insurance's read-only-list usage doesn't need it). */
   refreshToken?: unknown;
+  /** Opt in when background jobs can change this list's server-side status. */
+  refreshIntervalMs?: number;
   /** Top Up Loan (production add-on) — arbitrary extra row-level actions beyond View/
    * Update, rendered after them in the Actions cell. Generic on purpose (a render prop,
    * not fixed button variants) so a module-specific list (e.g. Reject/Move to Document
@@ -177,30 +180,46 @@ export function CaseListPage<T extends CaseListItem>({
       setIsLoading(false);
       return;
     }
-    setIsLoading(true);
-    listFn({
-      page,
-      page_size: pageSize,
-      search: search || undefined,
-      status: status || undefined,
-      unassigned_only: unassignedOnly || undefined,
-    })
-      .then((res) => {
-        const nextTotal = res.pagination?.total ?? res.data.length;
-        // Deleting the last row on a page (e.g. a bulk delete) can leave the current
-        // page out of range — snap back to the last valid page rather than showing an
-        // empty page. The deps-driven effect refetches for the corrected page.
-        const lastPage = Math.max(1, Math.ceil(nextTotal / pageSize));
-        if (page > lastPage) {
-          setPage(lastPage);
-          return;
-        }
-        setItems(res.data);
-        setTotal(nextTotal);
+    let active = true;
+    let pending = false;
+    const load = (quiet = false) => {
+      if (pending) return;
+      pending = true;
+      if (!quiet) setIsLoading(true);
+      listFn({
+        page,
+        page_size: pageSize,
+        search: search || undefined,
+        status: status || undefined,
+        unassigned_only: unassignedOnly || undefined,
       })
-      .catch((err) => setError(getErrorMessage(err)))
-      .finally(() => setIsLoading(false));
-  }, [page, pageSize, search, status, unassignedOnly, reEligible, listFn, refreshToken, deleteRefresh]);
+        .then((res) => {
+          if (!active) return;
+          setError(null);
+          const nextTotal = res.pagination?.total ?? res.data.length;
+          // A worker transition or deletion can empty the final page. Refetch the
+          // last valid page without resetting the user's search/status filters.
+          const lastPage = Math.max(1, Math.ceil(nextTotal / pageSize));
+          if (page > lastPage) {
+            setPage(lastPage);
+            return;
+          }
+          setItems(res.data);
+          setTotal(nextTotal);
+        })
+        .catch((err) => { if (active) setError(getErrorMessage(err)); })
+        .finally(() => { pending = false; if (active) setIsLoading(false); });
+    };
+    load();
+    const refresh = () => load(true);
+    const interval = refreshIntervalMs ? window.setInterval(refresh, refreshIntervalMs) : undefined;
+    if (refreshIntervalMs) window.addEventListener("focus", refresh);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refresh);
+    };
+  }, [page, pageSize, search, status, unassignedOnly, reEligible, listFn, refreshToken, deleteRefresh, refreshIntervalMs]);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 

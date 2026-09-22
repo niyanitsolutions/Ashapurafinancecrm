@@ -8,16 +8,14 @@ import { Icon } from "@/theme/icons";
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-function monthLabel(yyyyMm: string): string {
-  const [, m] = yyyyMm.split("-");
+function dateLabel(isoDate: string): string {
+  const [year, m, day] = isoDate.split("-");
   const index = Number(m) - 1;
-  return MONTH_NAMES[index] ?? yyyyMm;
+  const month = MONTH_NAMES[index];
+  return month ? `${day ? `${Number(day)} ` : ""}${month} ${year}` : isoDate;
 }
 
-// revenue_trend_chart — real, last 6 calendar months of combined loan+insurance revenue.
-// The reference calls the equivalent slot "Disbursed Amount Trend"; this is the closest
-// real time series (see dashboard redesign notes on the KPI row's "Disbursed Amount" using
-// the same underlying figure).
+// Daily loan disbursements for the selected business-calendar period.
 export function DisbursedTrendCard({ widgets }: { widgets: Widget[] | undefined }) {
   const data = widgetData(widgets, "revenue_trend_chart");
   const items = Array.isArray(data?.items) ? (data!.items as { label: string; value: number }[]) : [];
@@ -26,7 +24,7 @@ export function DisbursedTrendCard({ widgets }: { widgets: Widget[] | undefined 
     <Card>
       <CardHeader
         title="Disbursed Amount Trend"
-        subtitle="Last 6 months"
+        subtitle="Disbursed in selected period"
         icon={
           <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary shrink-0">
             <Icon name="commission" className="h-4 w-4" />
@@ -36,7 +34,9 @@ export function DisbursedTrendCard({ widgets }: { widgets: Widget[] | undefined 
       {items.length === 0 ? (
         <NoDataState icon="commission" />
       ) : (
-        <BarChart data={items.map((i) => ({ label: monthLabel(i.label), value: i.value }))} formatValue={formatINRCompact} />
+        <div className="overflow-x-auto"><div style={{ minWidth: Math.max(items.length * 72, 240) }}>
+          <BarChart data={items.map((i) => ({ label: dateLabel(i.label), value: i.value }))} formatValue={formatINRCompact} />
+        </div></div>
       )}
     </Card>
   );

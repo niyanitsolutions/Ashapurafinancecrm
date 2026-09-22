@@ -59,10 +59,17 @@ services:
         condition: service_healthy
 
   worker:
+    restart: unless-stopped
     build:
       context: ..
       dockerfile: docker/backend/Dockerfile
     command: ["arq", "app.worker.worker_settings.WorkerSettings"]
+    healthcheck:
+      test: ["CMD", "arq", "--check", "app.worker.worker_settings.WorkerSettings"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     env_file:
       - ../backend/.env.development
     environment:

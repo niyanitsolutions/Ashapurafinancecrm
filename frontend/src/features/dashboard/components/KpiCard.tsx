@@ -1,5 +1,6 @@
 import { Icon, type IconName } from "@/theme/icons";
 import { Card } from "@/components/cards/Card";
+import { Link } from "react-router-dom";
 
 export interface KpiTrend {
   direction: "up" | "down" | "flat";
@@ -16,17 +17,18 @@ export function KpiCard({
   value,
   subtitle,
   trend,
+  to,
 }: {
   icon: IconName;
   label: string;
   value: string;
   subtitle?: string;
   trend?: KpiTrend;
+  to?: string;
 }) {
   const trendColor = trend?.direction === "up" ? "text-success" : trend?.direction === "down" ? "text-danger" : "text-textSecondary";
 
-  return (
-    <Card className="hover-lift">
+  const content = <>
       <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-primary-dark text-white shadow-card mb-4">
         <Icon name={icon} className="h-5 w-5" />
       </span>
@@ -43,6 +45,6 @@ export function KpiCard({
           {subtitle && <span className="text-textSecondary">{subtitle}</span>}
         </div>
       )}
-    </Card>
-  );
+  </>;
+  return to ? <Link to={to} className="block rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/40"><Card className="hover-lift cursor-pointer">{content}</Card></Link> : <Card className="hover-lift">{content}</Card>;
 }

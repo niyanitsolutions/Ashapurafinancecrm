@@ -17,7 +17,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.exceptions import NotFoundError, ValidationError
+from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.features.auth.models import User
 from app.features.event_engine.bus import publish
 from app.features.workflow_engine.constants import WorkflowAuditEvent
@@ -64,8 +64,9 @@ class WorkflowEngine:
         return current
 
     async def transition(
-        self, workflow: ApplicationWorkflow, to_status: str, actor: User, *,
+        self, workflow: ApplicationWorkflow, to_status: str, actor: User | None, *,
         updates: dict[str, Any] | None = None, remarks: str | None = None, force: bool = False,
+        expected: dict[str, Any] | None = None,
     ) -> ApplicationWorkflow:
         """`force=True` skips ONLY the transition-graph check (`assert_transition_allowed`)
         — used exclusively by Loan Management's deliberate "Staff Override — Skip Stage
@@ -73,26 +74,42 @@ class WorkflowEngine:
         engine does — the DB write, the `ApplicationStatusHistory` row, the append-only
         `audit_logs` entry, the status-changed event — still happens identically, so an
         override move is just as recorded and just as much the single source of truth as a
-        normal one. Default `False`: every existing caller is byte-for-byte unchanged."""
+        normal one. `actor=None` attributes an internal scheduled transition to the
+        system. `expected` adds atomic preconditions for the scheduler's captured date;
+        Rejected → Re-Eligible also guards manual callers against duplicate transitions.
+        """
         from_status = workflow.current_status
         if not force:
             await self.assert_transition_allowed(workflow.case_type, from_status, to_status)
         target_definition = await self.get_definition(workflow.case_type, to_status)
 
+        actor_id = actor.require_id() if actor is not None else None
         set_updates: dict[str, Any] = {**(updates or {}), "current_status": to_status}
-        updated = await self._workflows.update(workflow.require_id(), set_updates, updated_by=actor.require_id())
+        # Manual Mark Re-Eligible and the scheduler must compete for the same atomic
+        # status change. Other workflow transitions retain their existing write path.
+        if expected is not None or (from_status == "rejected" and to_status == "re_eligible"):
+            updated = await self._workflows.update_if_current(
+                workflow, set_updates, expected=expected or {}, updated_by=actor_id,
+            )
+            if updated is None:
+                raise ConflictError("Case status or re-eligibility schedule changed; refresh and retry.")
+        else:
+            updated = await self._workflows.update(workflow.require_id(), set_updates, updated_by=actor_id)
         if updated is None:
             raise NotFoundError("Case not found.")
 
         await self._history.insert(
             ApplicationStatusHistory(
                 application_workflow_id=workflow.require_id(), case_type=workflow.case_type,
-                from_status=from_status, to_status=to_status, remarks=remarks, created_by=actor.require_id(),
+                from_status=from_status, to_status=to_status, remarks=remarks, created_by=actor_id,
             )
         )
         await write_audit_log(
-            self._db, event_type=target_definition.audit_event, user_id=actor.require_id(),
-            metadata={"application_workflow_id": workflow.require_id(), "from_status": from_status, "to_status": to_status},
+            self._db, event_type=target_definition.audit_event, user_id=actor_id,
+            metadata={
+                "application_workflow_id": workflow.require_id(), "from_status": from_status, "to_status": to_status,
+                **({"automatic": True, "actor_type": "system"} if actor is None else {}),
+            },
         )
         await publish(
             STATUS_CHANGED_EVENT,

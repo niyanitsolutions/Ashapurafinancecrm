@@ -32,6 +32,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.constants.roles import OWNER
 from app.features.auth.models import User
+from app.features.dashboard.filters import DashboardFilters
 from app.utils.datetime import (
     ist_month_start_utc,
     now_ist,
@@ -218,6 +219,146 @@ async def _total_leads(db: AsyncIOMotorDatabase[Any], user: User) -> dict[str, A
         query["assigned_to"] = employee_id
     count = await db["leads"].count_documents(query)
     return {"available": True, "value": count}
+
+
+async def _filtered_lead_query(db: AsyncIOMotorDatabase[Any], user: User, filters: DashboardFilters) -> dict[str, Any]:
+    query: dict[str, Any] = {"is_deleted": False, "created_at": {"$gte": filters.start, "$lt": filters.end}}
+    employee_id = await _scope_to_employee(db, user)
+    if employee_id is not None:
+        query["assigned_to"] = employee_id
+    if filters.product_category:
+        query["product_category"] = filters.product_category
+    if filters.source_id:
+        query["source_id"] = filters.source_id
+    return query
+
+
+async def _filtered_total_leads(db: AsyncIOMotorDatabase[Any], user: User, filters: DashboardFilters) -> dict[str, Any]:
+    return {"available": True, "value": await db["leads"].count_documents(await _filtered_lead_query(db, user, filters))}
+
+
+async def _filtered_assigned_leads(db: AsyncIOMotorDatabase[Any], user: User, filters: DashboardFilters) -> dict[str, Any]:
+    query = await _filtered_lead_query(db, user, filters)
+    if user.role == OWNER:
+        query["assigned_to"] = {"$ne": None}
+    return {"available": True, "value": await db["leads"].count_documents(query)}
+
+
+async def _lead_trend_chart(db: AsyncIOMotorDatabase[Any], user: User, filters: DashboardFilters) -> dict[str, Any]:
+    """Real created/assigned/converted lead counts, grouped by business day."""
+    leads = await db["leads"].find(
+        await _filtered_lead_query(db, user, filters), {"created_at": 1, "assigned_to": 1},
+    ).to_list(length=None)
+    lead_ids = [str(lead["_id"]) for lead in leads]
+    converted_ids = set(await db["applications"].distinct("lead_id", {"is_deleted": False, "status": "submitted", "lead_id": {"$in": lead_ids}})) if lead_ids else set()
+    series: dict[str, dict[str, int]] = {}
+    for lead in leads:
+        label = to_ist(lead["created_at"]).date().isoformat()
+        point = series.setdefault(label, {"total": 0, "assigned": 0, "converted": 0})
+        point["total"] += 1
+        point["assigned"] += int(lead.get("assigned_to") is not None)
+        point["converted"] += int(str(lead["_id"]) in converted_ids)
+    return {"available": True, "items": [{"label": day, **series[day]} for day in sorted(series)]}
+
+
+async def _filtered_customers_summary(db: AsyncIOMotorDatabase[Any], user: User, filters: DashboardFilters) -> dict[str, Any]:
+    query: dict[str, Any] = {"is_deleted": False, "status": "submitted", "submitted_at": {"$gte": filters.start, "$lt": filters.end}}
+    employee_id = await _scope_to_employee(db, user)
+    if employee_id is not None:
+        query["assigned_to"] = employee_id
+    if filters.product_category:
+        query["product_category"] = filters.product_category
+    if filters.source_id:
+        lead_ids = await db["leads"].distinct("_id", {"is_deleted": False, "source_id": filters.source_id})
+        query["lead_id"] = {"$in": [str(item) for item in lead_ids]}
+    customer_ids = await db["applications"].distinct("customer_id", {**query, "customer_id": {"$ne": None}})
+    return {"available": True, "value": len(customer_ids)}
+
+
+async def _filtered_case_query(
+    db: AsyncIOMotorDatabase[Any], user: User, filters: DashboardFilters,
+    case_type: str, date_field: str,
+) -> dict[str, Any]:
+    query: dict[str, Any] = {
+        "is_deleted": False, "case_type": case_type,
+        date_field: {"$gte": filters.start, "$lt": filters.end},
+    }
+    employee_id = await _scope_to_employee(db, user)
+    if employee_id is not None:
+        query["assigned_to"] = employee_id
+    if filters.source_id:
+        lead_ids = await db["leads"].distinct("_id", {"is_deleted": False, "source_id": filters.source_id})
+        application_ids = await db["applications"].distinct("_id", {
+            "is_deleted": False, "lead_id": {"$in": [str(item) for item in lead_ids]},
+        })
+        query["application_id"] = {"$in": [str(item) for item in application_ids]}
+    return query
+
+
+def _disbursed_value(row: dict[str, Any]) -> float:
+    details = row.get("loan_details") or {}
+    amount = details.get("disbursed_amount")
+    return amount if amount is not None else (details.get("offered_amount") or 0)
+
+
+async def _filtered_disbursed_amount(db: AsyncIOMotorDatabase[Any], user: User, filters: DashboardFilters) -> dict[str, Any]:
+    if filters.product_category == "insurance":
+        return {"available": True, "value": 0}
+    query = await _filtered_case_query(db, user, filters, "loan", "loan_details.disbursed_at")
+    query["current_status"] = "disbursed"
+    total = 0.0
+    async for row in db["application_workflows"].find(query, {"loan_details": 1}):
+        total += _disbursed_value(row)
+    return {"available": True, "value": round(total, 2)}
+
+
+async def _filtered_policies_issued(db: AsyncIOMotorDatabase[Any], user: User, filters: DashboardFilters) -> dict[str, Any]:
+    if filters.product_category == "loan":
+        return {"available": True, "value": 0}
+    query = await _filtered_case_query(db, user, filters, "insurance", "insurance_details.policy_issued_at")
+    query["current_status"] = "policy_issued"
+    return {"available": True, "value": await db["application_workflows"].count_documents(query)}
+
+
+async def _filtered_lead_source_chart(db: AsyncIOMotorDatabase[Any], user: User, filters: DashboardFilters) -> dict[str, Any]:
+    query = await _filtered_lead_query(db, user, filters)
+    rows = await db["leads"].aggregate([{"$match": query}, {"$group": {"_id": "$source_id", "count": {"$sum": 1}}}]).to_list(length=None)
+    # Options remain stable across date/product/source changes, but retain assignment scope.
+    option_query = {key: value for key, value in query.items() if key in ("is_deleted", "assigned_to")}
+    source_ids = await db["leads"].distinct("source_id", option_query)
+    sources = await db["lead_sources"].find({"_id": {"$in": [to_object_id(source_id) for source_id in source_ids if source_id]}}).sort("name", 1).to_list(length=None)
+    names = {str(source["_id"]): source["name"] for source in sources}
+    trend = await _lead_trend_chart(db, user, filters)
+    return {
+        "available": True,
+        "items": [{"id": row["_id"], "label": names.get(row["_id"], "Unknown"), "value": row["count"]} for row in rows],
+        "trend": trend["items"],
+        "source_options": [{"id": str(source["_id"]), "label": source["name"]} for source in sources],
+    }
+
+
+async def _filtered_pipeline_chart(db: AsyncIOMotorDatabase[Any], user: User, filters: DashboardFilters, case_type: str) -> dict[str, Any]:
+    if filters.product_category and filters.product_category != case_type:
+        return {"available": True, "items": []}
+    query = await _filtered_case_query(db, user, filters, case_type, "updated_at")
+    rows = await db["application_workflows"].aggregate([{"$match": query}, {"$group": {"_id": "$current_status", "count": {"$sum": 1}}}]).to_list(length=None)
+    definitions = await db["workflow_definitions"].find({"case_type": case_type, "is_deleted": False}).sort("sequence", 1).to_list(length=None)
+    labels = {definition["status"]: definition["label"] for definition in definitions}
+    order = {definition["status"]: index for index, definition in enumerate(definitions)}
+    rows.sort(key=lambda row: (order.get(row["_id"], len(order)), row["_id"]))
+    return {"available": True, "items": [{"status": row["_id"], "label": labels.get(row["_id"], row["_id"]), "value": row["count"]} for row in rows]}
+
+
+async def _filtered_revenue_trend(db: AsyncIOMotorDatabase[Any], user: User, filters: DashboardFilters) -> dict[str, Any]:
+    if filters.product_category == "insurance":
+        return {"available": True, "items": []}
+    query = await _filtered_case_query(db, user, filters, "loan", "loan_details.disbursed_at")
+    query["current_status"] = "disbursed"
+    totals: dict[str, float] = {}
+    async for row in db["application_workflows"].find(query):
+        day = to_ist((row.get("loan_details") or {})["disbursed_at"]).date().isoformat()
+        totals[day] = totals.get(day, 0) + _disbursed_value(row)
+    return {"available": True, "items": [{"label": day, "value": round(value, 2)} for day, value in sorted(totals.items())]}
 
 
 async def _customers_summary(db: AsyncIOMotorDatabase[Any], user: User) -> dict[str, Any]:
@@ -628,6 +769,24 @@ WIDGET_PROVIDERS: dict[str, WidgetProvider] = {
 }
 
 
-async def compute_widget_data(db: AsyncIOMotorDatabase[Any], user: User, widget_key: str) -> dict[str, Any]:
+async def compute_widget_data(
+    db: AsyncIOMotorDatabase[Any], user: User, widget_key: str, filters: DashboardFilters | None = None,
+) -> dict[str, Any]:
+    if filters is not None:
+        filtered_providers: dict[str, Callable[[], Awaitable[dict[str, Any]]]] = {
+            "total_leads": lambda: _filtered_total_leads(db, user, filters),
+            "assigned_leads": lambda: _filtered_assigned_leads(db, user, filters),
+            "customers_summary": lambda: _filtered_customers_summary(db, user, filters),
+            "monthly_revenue": lambda: _filtered_disbursed_amount(db, user, filters),
+            "policies_issued": lambda: _filtered_policies_issued(db, user, filters),
+            "lead_trend_chart": lambda: _lead_trend_chart(db, user, filters),
+            "lead_source_chart": lambda: _filtered_lead_source_chart(db, user, filters),
+            "loan_pipeline_chart": lambda: _filtered_pipeline_chart(db, user, filters, "loan"),
+            "insurance_pipeline_chart": lambda: _filtered_pipeline_chart(db, user, filters, "insurance"),
+            "revenue_trend_chart": lambda: _filtered_revenue_trend(db, user, filters),
+        }
+        filtered = filtered_providers.get(widget_key)
+        if filtered is not None:
+            return await filtered()
     provider = WIDGET_PROVIDERS.get(widget_key, _not_yet_available)
     return await provider(db, user)

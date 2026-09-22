@@ -1,4 +1,5 @@
 import { apiRequest } from "@/shared/api/client";
+import type { DashboardFilters } from "@/features/dashboard/DashboardFiltersContext";
 
 export interface NavItem {
   key: string;
@@ -48,8 +49,13 @@ export function updateLayout(widgets: UpdateLayoutItem[]) {
   return apiRequest<Widget[]>("/dashboard/layout", { method: "PUT", body: JSON.stringify({ widgets }) });
 }
 
-export function getDashboard() {
-  return apiRequest<Widget[]>("/dashboard");
+export function getDashboard(filters: DashboardFilters) {
+  const params = new URLSearchParams({ range: filters.range });
+  if (filters.startDate) params.set("start_date", filters.startDate);
+  if (filters.endDate) params.set("end_date", filters.endDate);
+  if (filters.productCategory) params.set("product_category", filters.productCategory);
+  if (filters.sourceId) params.set("source_id", filters.sourceId);
+  return apiRequest<Widget[]>(`/dashboard?${params.toString()}`);
 }
 
 export function search(q: string) {

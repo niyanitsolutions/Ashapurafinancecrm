@@ -1,6 +1,8 @@
 import re
 from typing import Any
 
+from pymongo import ReturnDocument
+
 from app.features.workflow_engine.models import (
     ApplicationDecision,
     ApplicationNote,
@@ -9,6 +11,8 @@ from app.features.workflow_engine.models import (
     WorkflowDefinition,
 )
 from app.shared.base_repository import BaseRepository
+from app.utils.datetime import utc_now
+from app.utils.helpers import to_object_id
 
 _SEARCH_FIELDS = ("case_code",)
 
@@ -28,6 +32,24 @@ class WorkflowDefinitionRepository(BaseRepository[WorkflowDefinition]):
 class ApplicationWorkflowRepository(BaseRepository[ApplicationWorkflow]):
     collection_name = "application_workflows"
     model = ApplicationWorkflow
+
+    async def update_if_current(
+        self, workflow: ApplicationWorkflow, updates: dict[str, Any], *,
+        expected: dict[str, Any], updated_by: str | None,
+    ) -> ApplicationWorkflow | None:
+        """Claim a transition only while its status and schedule still match the read."""
+        doc = await self.collection.find_one_and_update(
+            {
+                **expected, "_id": to_object_id(workflow.require_id()), "is_deleted": False,
+                "case_type": workflow.case_type, "current_status": workflow.current_status,
+            },
+            {
+                "$set": {**updates, "updated_at": utc_now(), "updated_by": updated_by},
+                "$inc": {"version": 1},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        return self.model.model_validate(doc) if doc else None
 
     async def find_by_application_id(self, application_id: str, *, include_deleted: bool = False) -> ApplicationWorkflow | None:
         query: dict[str, Any] = {"application_id": application_id}

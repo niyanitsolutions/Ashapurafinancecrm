@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { getDashboard, type Widget } from "@/features/dashboard/api";
+import { useDashboardFilters } from "@/features/dashboard/DashboardFiltersContext";
 
 const MIN_REFRESH_SECONDS = 30;
 
@@ -7,9 +8,10 @@ const MIN_REFRESH_SECONDS = 30;
 // it's cached/deduped and auto-refetches at the shortest of the still-visible widgets'
 // configured intervals (min 30s) — the same cadence rule the old manual setInterval used.
 export function useDashboardWidgets() {
+  const { filters } = useDashboardFilters();
   return useQuery({
-    queryKey: ["dashboard-widgets"],
-    queryFn: getDashboard,
+    queryKey: ["dashboard-widgets", filters],
+    queryFn: () => getDashboard(filters),
     staleTime: 30_000,
     refetchInterval: (query) => {
       const widgets = query.state.data;

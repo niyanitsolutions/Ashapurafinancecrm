@@ -40,6 +40,7 @@ export function RecentActivitiesCard({ widgets }: { widgets: Widget[] | undefine
     <Card>
       <CardHeader
         title="Recent Activities"
+        subtitle="Latest activity across all periods and products"
         icon={
           <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary shrink-0">
             <Icon name="clock" className="h-4 w-4" />

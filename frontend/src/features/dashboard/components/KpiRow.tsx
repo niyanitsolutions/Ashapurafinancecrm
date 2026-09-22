@@ -25,31 +25,35 @@ export function KpiRow({ widgets }: { widgets: Widget[] | undefined }) {
         icon="leads"
         label="Total Leads"
         value={totalLeads === null ? "—" : totalLeads.toLocaleString("en-IN")}
-        subtitle="All time"
+        subtitle="Created in selected period"
+        to="/leads"
       />
       <KpiCard
         icon="user"
         label="Assigned Leads"
         value={assignedLeads === null ? "—" : assignedLeads.toLocaleString("en-IN")}
-        subtitle="All time"
+        subtitle="Created in selected period"
+        to="/leads/assigned"
       />
       <KpiCard
         icon="customers"
         label="Converted Customers"
         value={convertedCustomers === null ? "—" : convertedCustomers.toLocaleString("en-IN")}
-        subtitle="All time"
+        subtitle="Converted in selected period"
       />
       <KpiCard
         icon="commission"
         label="Disbursed Amount"
         value={disbursedAmount === null ? "—" : formatINRCompact(disbursedAmount)}
-        subtitle="This month"
+        subtitle="Selected period"
+        to="/loan-management/disbursements"
       />
       <KpiCard
         icon="shield-check"
-        label="Active Policies"
+        label="Policies Issued"
         value={activePolicies === null ? "—" : activePolicies.toLocaleString("en-IN")}
-        subtitle="All time"
+        subtitle="Issued in selected period"
+        to="/insurance-management/policy-issued"
       />
     </div>
   );

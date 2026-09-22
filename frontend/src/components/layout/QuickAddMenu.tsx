@@ -11,7 +11,6 @@ const ITEMS: { label: string; to: string; icon: IconName; ownerOnly?: boolean }[
   { label: "Lead", to: "/leads/new", icon: "leads" },
   // Task assignment is Owner-only today (TaskListPage's own CreateTaskForm is gated the
   // same way) — matched here, not a new restriction.
-  { label: "Task", to: "/tasks", icon: "tasks", ownerOnly: true },
   { label: "Employee", to: "/employees/new", icon: "employees", ownerOnly: true },
 ];
 

@@ -55,17 +55,8 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
         )}
 
         <div className="flex items-center gap-2 shrink-0">
-          <DateScopePill />
-          <FiltersButton />
+          {location.pathname === "/dashboard" && <div className="hidden sm:flex items-center gap-2"><DateScopePill /><FiltersButton /></div>}
           <QuickAddMenu />
-          <Link
-            to="/tasks"
-            className="hidden sm:flex w-9 h-9 rounded-full hover:bg-background items-center justify-center text-text/70"
-            aria-label="Tasks"
-            title="Tasks"
-          >
-            <Icon name="tasks" className="h-5 w-5" />
-          </Link>
           <NotificationBell />
           <Link
             to="/settings"
@@ -79,6 +70,7 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
           <ProfileMenu displayName={profile?.name || mobile || "Account"} />
         </div>
       </div>
+      {location.pathname === "/dashboard" && <div className="mt-3 flex flex-wrap items-center justify-between gap-2 sm:hidden"><DateScopePill /><FiltersButton /></div>}
     </header>
   );
 }

@@ -14,6 +14,7 @@ from app.constants.roles import OWNER
 from app.core.exceptions import ValidationError
 from app.features.access_control.permission_engine import PermissionEngine
 from app.features.auth.models import User
+from app.features.dashboard.filters import DashboardFilters
 from app.features.dashboard.models import DashboardLayoutPreference, DashboardWidget, NavItem
 from app.features.dashboard.repository import (
     DashboardLayoutPreferenceRepository,
@@ -120,13 +121,13 @@ class DashboardService:
                 await self._layout.insert(pref)
         return await self.get_resolved_layout(user)
 
-    async def get_dashboard(self, user: User) -> list[tuple[ResolvedWidget, dict[str, Any]]]:
+    async def get_dashboard(self, user: User, filters: DashboardFilters | None = None) -> list[tuple[ResolvedWidget, dict[str, Any]]]:
         resolved = await self.get_resolved_layout(user)
         result = []
         for entry in resolved:
             if not entry.is_visible:
                 continue
-            data = await compute_widget_data(self._db, user, entry.widget.key)
+            data = await compute_widget_data(self._db, user, entry.widget.key, filters)
             result.append((entry, data))
         return result
 

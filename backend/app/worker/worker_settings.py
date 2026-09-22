@@ -73,7 +73,8 @@ class WorkerSettings:
         cron(check_task_reminders, minute=set(range(0, 60, 15)), run_at_startup=True),  # type: ignore[arg-type]  # every 15 minutes
         cron(purge_expired_bin_entries, hour={1}, minute={30}),  # type: ignore[arg-type]  # once daily; instant-based, timezone-safe
         cron(check_re_eligible_cases, hour={2}, minute={0}),  # type: ignore[arg-type]  # once daily, assumes server clock = UTC
-        cron(auto_transition_re_eligible_cases, hour={2}, minute={15}),  # type: ignore[arg-type]  # once daily; instant-based, timezone-safe
+        # Per-case due instants need prompt processing and catch-up after downtime.
+        cron(auto_transition_re_eligible_cases, minute=set(range(60)), run_at_startup=True),  # type: ignore[arg-type]
         cron(check_commission_triggers, hour={3}, minute={0}),  # type: ignore[arg-type]  # once daily, assumes server clock = UTC
         cron(refresh_meta_tokens, hour={4}, minute={0}),  # type: ignore[arg-type]  # once daily, assumes server clock = UTC
         cron(retry_capture_failures, minute=set(range(0, 60, 15)), run_at_startup=True),  # type: ignore[arg-type]  # every 15 minutes

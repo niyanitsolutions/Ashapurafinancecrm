@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Outlet } from "react-router-dom";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { Topbar } from "@/components/layout/Topbar";
+import { DashboardFiltersProvider } from "@/features/dashboard/DashboardFiltersContext";
 
 const COLLAPSE_STORAGE_KEY = "afs-crm-sidebar-collapsed";
 
@@ -20,6 +21,7 @@ export function AppShell() {
   }, [isCollapsed]);
 
   return (
+    <DashboardFiltersProvider>
     <div className="min-h-screen bg-background">
       <Sidebar
         isOpen={isSidebarOpen}
@@ -34,5 +36,6 @@ export function AppShell() {
         </main>
       </div>
     </div>
+    </DashboardFiltersProvider>
   );
 }
