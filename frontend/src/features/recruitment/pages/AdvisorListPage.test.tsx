@@ -6,10 +6,13 @@ import { AdvisorListPage } from "./AdvisorListPage";
 import type { AdvisorListItem } from "@/features/recruitment/api";
 
 const listAdvisors = vi.fn();
+const getAdvisor = vi.fn();
+const canEdit = vi.fn(() => false);
+vi.mock("@/features/access_control/usePermissions", () => ({ usePermissions: () => ({ can: canEdit }) }));
 
 vi.mock("@/features/recruitment/api", async () => {
   const actual = await vi.importActual<typeof import("@/features/recruitment/api")>("@/features/recruitment/api");
-  return { ...actual, listAdvisors: (...a: unknown[]) => listAdvisors(...(a as [])) };
+  return { ...actual, listAdvisors: (...a: unknown[]) => listAdvisors(...(a as [])), getAdvisor: (...a: unknown[]) => getAdvisor(...a) };
 });
 
 function advisor(over: Partial<AdvisorListItem> = {}): AdvisorListItem {
@@ -44,6 +47,25 @@ function renderPage() {
 }
 
 describe("AdvisorListPage", () => {
+  it("opens the existing edit form only with edit permission", async () => {
+    canEdit.mockReturnValue(true);
+    listAdvisors.mockResolvedValue({ data: [advisor()] });
+    getAdvisor.mockResolvedValue({ ...advisor(), recruitment: null, businesses: [], updated_at: "2026-09-01T00:00:00Z" });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Update" }));
+    expect(await screen.findByRole("dialog")).toHaveTextContent("Edit Advisor");
+    expect(getAdvisor).toHaveBeenCalledWith("a1");
+    canEdit.mockReturnValue(false);
+  });
+
+  it("does not offer Update or Delete to a viewer", async () => {
+    canEdit.mockReturnValue(false);
+    listAdvisors.mockResolvedValue({ data: [advisor()] });
+    renderPage();
+    await screen.findByText("Ravi Kumar");
+    expect(screen.queryByRole("button", { name: "Update" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+  });
   it("shows Profession / Type columns and no Individual / Total Employees filters", async () => {
     listAdvisors.mockResolvedValue({ data: [advisor()], pagination: { page: 1, page_size: 20, total: 1, total_pages: 1 } });
     renderPage();

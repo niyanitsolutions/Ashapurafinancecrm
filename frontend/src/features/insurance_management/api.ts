@@ -178,15 +178,17 @@ export function getInsuranceCase(caseId: string) {
 export async function uploadInsuranceCaseDocument(
   caseId: string, documentTypeId: string, file: File, password?: string, side?: string,
 ): Promise<InsuranceCaseDocument> {
+  // Distinct keys prevent same-named scans from overwriting the opposite side or history.
+  const fileName = `${crypto.randomUUID()}-${file.name}`;
   const upload = await apiRequest<{ upload_url: string; s3_key: string }>(`/insurance-cases/${caseId}/documents/upload-url`, {
     method: "POST",
-    body: JSON.stringify({ document_type_id: documentTypeId, file_name: file.name, content_type: file.type }),
+    body: JSON.stringify({ document_type_id: documentTypeId, file_name: fileName, content_type: file.type }),
   });
   await putFileToStorage(upload.upload_url, file);
   return apiRequest<InsuranceCaseDocument>(`/insurance-cases/${caseId}/documents/confirm`, {
     method: "POST",
     body: JSON.stringify({
-      document_type_id: documentTypeId, file_name: file.name, s3_key: upload.s3_key,
+      document_type_id: documentTypeId, file_name: fileName, s3_key: upload.s3_key,
       content_type: file.type, password, side,
     }),
   });

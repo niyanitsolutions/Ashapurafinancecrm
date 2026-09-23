@@ -1,9 +1,12 @@
 import { useState, type ReactNode } from "react";
 import { groupBySection } from "@/components/forms/ProductSchemaForm";
 import { FileDropZone } from "@/components/uploads/FileDropZone";
+import { Button } from "@/components/buttons/Button";
 import type { ApplicationDocument, RequiredDocument } from "@/features/customer/api";
 import { formatISTDateTime } from "@/shared/dateFormat";
 import { Icon, type IconName } from "@/theme/icons";
+
+type UploadDocument = (documentTypeId: string, file: File, password?: string, side?: string) => void | boolean | Promise<void | boolean>;
 
 const STATUS_BADGE: Record<ApplicationDocument["verification_status"], { label: string; className: string; icon: IconName }> = {
   verified: { label: "Verified", className: "text-success", icon: "check-circle" },
@@ -197,7 +200,7 @@ function DocumentRow({
 }: {
   doc: RequiredDocument;
   current: ApplicationDocument[];
-  onUpload: (documentTypeId: string, file: File, password?: string, side?: string) => void;
+  onUpload: UploadDocument;
   onMarkNotAvailable?: (documentTypeId: string) => void;
   uploadingFor: string | null;
   disabled: boolean;
@@ -213,12 +216,16 @@ function DocumentRow({
   // RequiredDocument's own docstring on where that flag comes from. Shown once per row
   // (not per Front/Back side) — a password protects the document as a whole.
   const [password, setPassword] = useState("");
+  const [pairFiles, setPairFiles] = useState<{ front?: File; back?: File }>({});
+  const [pairBusy, setPairBusy] = useState(false);
+  const [pairError, setPairError] = useState(false);
   const typeId = doc.document_type_id;
   const isRequired = doc.required !== false;
   const isMultiple = doc.multiple_upload === true;
   const previewEnabled = doc.preview_enabled !== false;
   const isUploading = uploadingFor === typeId;
-  const isFrontBack = doc.front_back_upload === true;
+  const [pairSelected, setPairSelected] = useState(doc.front_back_upload === true || current.some((d) => !!d.side));
+  const isFrontBack = doc.front_back_optional ? pairSelected : doc.front_back_upload === true;
   const displayName = current[0]?.document_type_name || doc.name_override || doc.document_type_name || "Document";
   // Front & Back has no "not available" concept server-side (see CustomerService.
   // mark_document_not_available's own rejection of this combination) — the two-sided
@@ -227,13 +234,13 @@ function DocumentRow({
 
   const makeUpload = (side?: "front" | "back") => (file: File) => {
     onUpload(typeId, file, doc.supports_password ? password || undefined : undefined, side);
-    setPassword("");
+    if (!isFrontBack || side === "back") setPassword("");
   };
 
   const passwordField = doc.supports_password && (
     <div className="mb-2">
       <label className="mb-1 block text-xs font-medium text-text/60" htmlFor={`doc-password-${typeId}`}>
-        Bank Statement Password (if applicable)
+        {doc.front_back_optional || doc.requirement_group ? "Document Password (Optional)" : "Bank Statement Password (if applicable)"}
       </label>
       <input
         id={`doc-password-${typeId}`}
@@ -241,11 +248,11 @@ function DocumentRow({
         autoComplete="off"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
-        placeholder="Enter statement password"
+        placeholder={doc.front_back_optional || doc.requirement_group ? "Enter password if the document is protected" : "Enter statement password"}
         className="w-full rounded-lg border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
       />
       <p className="mt-1 text-2xs text-text/40">
-        Enter the password only if your bank statement is password protected. Leave this blank if the statement is not password protected.
+        {doc.front_back_optional || doc.requirement_group ? "Leave blank if the document is not password protected." : "Enter the password only if your bank statement is password protected. Leave this blank if the statement is not password protected."}
       </p>
     </div>
   );
@@ -255,11 +262,18 @@ function DocumentRow({
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <span className="font-medium text-text">
           {displayName}
-          {isRequired ? <span className="text-danger"> *</span> : <span className="font-normal text-text/40"> (Optional)</span>}
+          {isRequired ? <span className="text-danger"> *</span> : !doc.requirement_group && <span className="font-normal text-text/40"> (Optional)</span>}
           {doc.note && <span className="font-normal text-text/40"> — {doc.note}</span>}
         </span>
       </div>
 
+      {doc.front_back_optional && (
+        <label className="my-2 flex items-center gap-2 text-xs">
+          <input type="checkbox" checked={isFrontBack} disabled={disabled || isUploading} onChange={(e) => setPairSelected(e.target.checked)} />
+          Document has Front &amp; Back
+        </label>
+      )}
+      {isFrontBack && <p className="my-2 text-xs text-textSecondary">Both Front Side and Back Side are required.</p>}
       {passwordField}
 
       {isFrontBack ? (
@@ -269,7 +283,7 @@ function DocumentRow({
             side="front"
             sideLabel="Front Side"
             current={current.filter((d) => d.side === "front")}
-            onUpload={makeUpload("front")}
+            onUpload={doc.front_back_optional ? (file) => setPairFiles((files) => ({ ...files, front: file })) : makeUpload("front")}
             isUploading={isUploading}
             disabled={disabled}
             canMarkNotAvailable={false}
@@ -285,7 +299,7 @@ function DocumentRow({
             side="back"
             sideLabel="Back Side"
             current={current.filter((d) => d.side === "back")}
-            onUpload={makeUpload("back")}
+            onUpload={doc.front_back_optional ? (file) => setPairFiles((files) => ({ ...files, back: file })) : makeUpload("back")}
             isUploading={isUploading}
             disabled={disabled}
             canMarkNotAvailable={false}
@@ -296,6 +310,27 @@ function DocumentRow({
             previewEnabled={previewEnabled}
             extraActions={extraActions}
           />
+          {doc.front_back_optional && (
+            <div className="mt-3 space-y-2">
+              <p className="text-xs text-textSecondary">Front: {pairFiles.front?.name ?? "Choose a file"} · Back: {pairFiles.back?.name ?? "Choose a file"}</p>
+              {pairError && <p role="alert" className="text-xs text-danger">Upload failed. Please retry both sides.</p>}
+              <Button size="sm" disabled={disabled || isUploading || pairBusy || !pairFiles.front || !pairFiles.back} onClick={async () => {
+                if (!pairFiles.front || !pairFiles.back) return;
+                setPairBusy(true);
+                setPairError(false);
+                try {
+                  if (await onUpload(typeId, pairFiles.front, password || undefined, "front") === false) { setPairError(true); return; }
+                  if (await onUpload(typeId, pairFiles.back, password || undefined, "back") === false) { setPairError(true); return; }
+                  setPairFiles({});
+                  setPassword("");
+                } catch {
+                  setPairError(true);
+                } finally {
+                  setPairBusy(false);
+                }
+              }}>Upload Front &amp; Back</Button>
+            </div>
+          )}
         </>
       ) : (
         <DocumentSlot
@@ -336,7 +371,7 @@ export function DocumentChecklist({
 }: {
   requiredDocuments: RequiredDocument[];
   uploadedDocuments: ApplicationDocument[];
-  onUpload: (documentTypeId: string, file: File, password?: string, side?: string) => void;
+  onUpload: UploadDocument;
   onMarkNotAvailable?: (documentTypeId: string) => void;
   uploadingFor: string | null;
   disabled?: boolean;
@@ -350,7 +385,9 @@ export function DocumentChecklist({
 }) {
   // Governance round — a `hidden` required-document entry (Owner-set, see
   // SchemaEditorPage) is never shown, same as a hidden field never renders.
-  const visibleDocuments = requiredDocuments.filter((d) => !d.hidden);
+  const visibleDocuments = requiredDocuments.filter((d) => !d.hidden).map((d) =>
+    d.requirement_group === "bank" ? { ...d, section: "Bank Statement or Cancelled Cheque * — Upload any ONE" } : d,
+  );
 
   return (
     <>
@@ -393,12 +430,15 @@ export function documentCompletionSummary(requiredDocuments: RequiredDocument[],
   // not_available (the backend refuses that combination), so they're still satisfied
   // only by a real upload of both sides.
   const isSatisfied = (d: RequiredDocument) => {
-    if (d.front_back_upload) {
+    if ((d.front_back_upload && !d.front_back_optional) || current.some((u) => u.document_type_id === d.document_type_id && !!u.side)) {
       const docs = uploaded.filter((u) => u.document_type_id === d.document_type_id);
       return docs.some((u) => u.side === "front") && docs.some((u) => u.side === "back");
     }
     return current.some((u) => u.document_type_id === d.document_type_id);
   };
   const missing = required.filter((d) => !isSatisfied(d));
-  return { total: required.length, completed: required.length - missing.length, missing };
+  const bank = requiredDocuments.filter((d) => !d.hidden && d.requirement_group === "bank");
+  if (bank.length && !bank.some((d) => isSatisfied(d) && uploaded.some((u) => u.document_type_id === d.document_type_id))) missing.push(bank[0]);
+  const total = required.length + (bank.length ? 1 : 0);
+  return { total, completed: total - missing.length, missing };
 }

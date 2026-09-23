@@ -51,6 +51,8 @@ describe("AgencyCodeListPage", () => {
     expect(screen.getByText("AG-1001")).toBeInTheDocument();
     expect(screen.getByText("AGT-9")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Type" })).toBeInTheDocument();
+    expect(screen.getAllByRole("columnheader", { name: "Agency Code" })).toHaveLength(1);
+    expect(screen.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["Name", "Mobile", "Agency Code", "Agent Code", "Password", "Join Date", "Type", "Status", "Actions"]);
     expect(screen.getByText("QR")).toBeInTheDocument();
   });
 });

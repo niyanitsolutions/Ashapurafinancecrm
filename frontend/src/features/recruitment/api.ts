@@ -258,6 +258,7 @@ export const ADVISOR_PRODUCT_CATEGORIES = [
 export type AdvisorProductCategory = (typeof ADVISOR_PRODUCT_CATEGORIES)[number];
 
 export interface AdvisorListItem {
+  joining_date?: string | null;
   id: string;
   advisor_code: string;
   recruitment_lead_id: string;
@@ -339,6 +340,7 @@ export function updateAdvisor(
     agent_code?: string;
     channel?: "qr" | "non_qr";
     password?: string;
+    joining_date?: string | null;
     status?: "active" | "inactive";
   },
 ) {

@@ -194,8 +194,10 @@ export function InsuranceCaseDetailsPage() {
       await uploadInsuranceCaseDocument(caseId, documentTypeId, file, password, side);
       setMessage("Document uploaded.");
       load();
+      return true;
     } catch (err) {
       setError(getErrorMessage(err));
+      return false;
     } finally {
       setUploadingFor(null);
     }

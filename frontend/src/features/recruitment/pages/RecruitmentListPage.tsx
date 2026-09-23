@@ -23,6 +23,8 @@ import type { RecruitmentOutletContext } from "@/features/recruitment/pages/Recr
 import { getErrorMessage } from "@/shared/api/errors";
 import { formatISTDate } from "@/shared/dateFormat";
 
+import { useListDelete } from "@/features/bin/useListDelete";
+
 const PAGE_SIZE = 20;
 const POLL_INTERVAL_MS = 15_000;
 
@@ -107,6 +109,8 @@ export function RecruitmentListPage({ variant }: { variant: Variant }) {
       .finally(() => setLoading(false));
   }, [page, variant]);
 
+  const deletion = useListDelete("recruitment_leads", () => { load(); refreshCounts(); });
+
   useEffect(() => {
     load();
     const interval = window.setInterval(load, POLL_INTERVAL_MS);
@@ -141,6 +145,8 @@ export function RecruitmentListPage({ variant }: { variant: Variant }) {
         )}
       </div>
 
+      {deletion.dialog}
+      {deletion.error && <ErrorBanner message={deletion.error} />}
       {error && <ErrorBanner message={error} />}
 
       {!loading && rows.length === 0 ? (
@@ -187,6 +193,7 @@ export function RecruitmentListPage({ variant }: { variant: Variant }) {
                   <Td>
                     <div className="flex justify-end gap-2">
                       <ActionButton to={`/insurance-management/recruitment/${row.id}`} variant="view" />
+                      {deletion.enabled && <ActionButton variant="delete" onClick={() => deletion.requestDelete(row.id)} />}
                       {variant === "fresh" && canEdit && (
                         <ActionButton variant="update" onClick={() => openWithLead(row.id, "fresh")} />
                       )}

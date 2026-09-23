@@ -8,6 +8,8 @@ import { Icon } from "@/theme/icons";
 import { updateAdvisor, type AdvisorDetail } from "@/features/recruitment/api";
 import { getErrorMessage } from "@/shared/api/errors";
 
+import { istDateKey as toISTDateInput } from "@/shared/dateFormat";
+
 type Channel = "qr" | "non_qr";
 
 // Password input with a show/hide eye toggle, styled to match FormField (the shared
@@ -54,6 +56,7 @@ export function EditAdvisorModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const [joiningDate, setJoiningDate] = useState(advisor.joining_date ? toISTDateInput(advisor.joining_date) : "");
   const [agencyCode, setAgencyCode] = useState(advisor.agency_code ?? "");
   const [agentCode, setAgentCode] = useState(advisor.agent_code ?? "");
   const [channel, setChannel] = useState<Channel>(advisor.channel);
@@ -73,6 +76,7 @@ export function EditAdvisorModal({
       if (channel !== advisor.channel) payload.channel = channel;
       if (status !== advisor.status) payload.status = status;
       if (password) payload.password = password;
+      if (joiningDate !== (advisor.joining_date ? toISTDateInput(advisor.joining_date) : "")) payload.joining_date = joiningDate || null;
 
       await updateAdvisor(advisor.id, payload);
       onSaved();
@@ -127,6 +131,7 @@ export function EditAdvisorModal({
         placeholder="Agent code"
       />
       <PasswordInput value={password} onChange={setPassword} />
+      <FormField id="advisor-joining-date" name="joining_date" label="Joining Date" type="date" value={joiningDate} onChange={(e) => setJoiningDate(e.target.value)} />
       <SelectField
         id="advisor-channel"
         name="channel"

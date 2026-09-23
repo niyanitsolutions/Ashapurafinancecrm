@@ -115,6 +115,8 @@ class AdvisorService:
         advisor = await self.get_advisor(advisor_id)
         updates: dict[str, Any] = {}
 
+        if "joining_date" in payload.model_fields_set:
+            updates["joining_date"] = ist_date_to_utc_midnight(payload.joining_date) if payload.joining_date else None
         if payload.agency_code is not None:
             updates["agency_code"] = payload.agency_code.strip() or None
         if payload.agent_code is not None:

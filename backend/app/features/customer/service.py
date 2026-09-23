@@ -1476,6 +1476,11 @@ class CustomerService:
                     missing_docs.append(rd.document_type_id)
             elif rd.document_type_id not in accounted_type_ids:
                 missing_docs.append(rd.document_type_id)
+        if application.product_category == "insurance":
+            from app.features.insurance_management.document_rules import requirements_status
+
+            names = await self.resolve_document_type_name_map({r.document_type_id for r in form_def.required_documents})
+            _, missing_docs = requirements_status(form_def.required_documents, names, documents, verified=False)
         if missing_docs:
             raise ValidationError("Please upload all required documents before submitting.")
 
@@ -1612,6 +1617,18 @@ class CustomerService:
         # Front & Back upload — generic: gated purely by this requirement's own
         # front_back_upload flag, never by document name/type matching.
         front_back = rd.front_back_upload if rd is not None else False
+        insurance_optional_pair = False
+        if application.product_category == "insurance":
+            from app.features.insurance_management.document_rules import (
+                document_kind,
+                front_back_supported,
+            )
+
+            insurance_optional_pair = front_back_supported(document_type.name) and rd is not None and not rd.multiple_upload
+            if document_kind(document_type.name) == "photo":
+                front_back = False
+            if insurance_optional_pair:
+                front_back = payload.side is not None
         if front_back and payload.side not in DocumentSide.ALL:
             raise ValidationError("This document requires a 'side' of 'front' or 'back'.")
         if not front_back and payload.side is not None:
@@ -1646,6 +1663,10 @@ class CustomerService:
         effective_supports_password = (
             rd.password_protected if (rd is not None and rd.password_protected is not None) else document_type.supports_password
         )
+        if application.product_category == "insurance":
+            from app.features.insurance_management.document_rules import password_supported
+
+            effective_supports_password = password_supported(document_type.name, effective_supports_password)
         password_encrypted = encrypt(payload.password) if (effective_supports_password and payload.password) else None
         document = ApplicationDocument(
             application_id=application_id, document_type_id=payload.document_type_id, file_name=payload.file_name,
@@ -1654,6 +1675,20 @@ class CustomerService:
             password_encrypted=password_encrypted, side=payload.side,
         )
         document_id = await self._documents.insert(document)
+        if insurance_optional_pair:
+            # Retire incompatible slots on single/pair replacement, keeping history.
+            await self._documents.collection.update_many(
+                {"application_id": application_id, "document_type_id": payload.document_type_id,
+                 "is_current": True, "side": None if payload.side else {"$in": ["front", "back"]}},
+                {"$set": {"is_current": False}},
+            )
+            if payload.side:
+                # One logical password for the current pair, including explicit clearing.
+                await self._documents.collection.update_many(
+                    {"application_id": application_id, "document_type_id": payload.document_type_id,
+                     "is_current": True, "side": {"$in": ["front", "back"]}},
+                    {"$set": {"password_encrypted": password_encrypted}},
+                )
         if not multiple_upload:
             # Insert-then-sweep, not find-then-demote-then-insert: this always converges
             # on exactly one current row per (application, document type, side) even if

@@ -29,7 +29,7 @@ export interface ListDelete {
   error: string | null;
 }
 
-export function useListDelete(resourceKey: string, onChanged: () => void): ListDelete {
+export function useListDelete(resourceKey: string, onChanged: () => void, retentionNotice?: string): ListDelete {
   // Delete is Owner-only and enforced server-side on every /bin route; the UI simply
   // hides the affordances for anyone else. Read the role straight from auth context (not
   // usePermissions / react-query) so this hook is usable from any list page without a
@@ -90,9 +90,9 @@ export function useListDelete(resourceKey: string, onChanged: () => void): ListD
       open
       title={count > 1 ? `Delete ${count} records?` : "Delete this record?"}
       message={
-        count > 1
+        retentionNotice ?? (count > 1
           ? "These records will be moved to Bin and permanently deleted after 30 days."
-          : "Are you sure you want to delete this record? It will be moved to Bin and permanently deleted after 30 days."
+          : "Are you sure you want to delete this record? It will be moved to Bin and permanently deleted after 30 days.")
       }
       confirmLabel="Delete"
       confirmVariant="danger"

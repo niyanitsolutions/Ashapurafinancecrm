@@ -13,6 +13,12 @@ import { ADVISOR_CHANNEL_LABELS, ADVISOR_STATUS_LABELS } from "@/features/recrui
 import type { RecruitmentOutletContext } from "@/features/recruitment/pages/RecruitmentLayout";
 import { getErrorMessage } from "@/shared/api/errors";
 
+import { AdvisorPassword } from "@/features/recruitment/components/AdvisorPassword";
+import { AdvisorEmployeeUpdate } from "@/features/recruitment/components/AdvisorEmployeeUpdate";
+import { formatISTDate } from "@/shared/dateFormat";
+
+import { useListDelete } from "@/features/bin/useListDelete";
+
 const PAGE_SIZE = 20;
 const POLL_INTERVAL_MS = 15_000;
 
@@ -42,6 +48,8 @@ export function AgencyCodeListPage() {
       .finally(() => setLoading(false));
   }, [page]);
 
+  const deletion = useListDelete("advisors", () => { load(); refreshCounts(); }, "Delete this advisor? It will move to Bin and can be restored. Records referenced by recruitment history are retained after 30 days.");
+
   useEffect(() => {
     load();
     const interval = window.setInterval(load, POLL_INTERVAL_MS);
@@ -70,6 +78,8 @@ export function AgencyCodeListPage() {
         </p>
       </div>
 
+      {deletion.dialog}
+      {deletion.error && <ErrorBanner message={deletion.error} />}
       {error && <ErrorBanner message={error} />}
 
       {!loading && rows.length === 0 ? (
@@ -83,6 +93,8 @@ export function AgencyCodeListPage() {
                 <Th>Mobile</Th>
                 <Th>Agency Code</Th>
                 <Th>Agent Code</Th>
+                <Th>Password</Th>
+                <Th>Join Date</Th>
                 <Th>Type</Th>
                 <Th>Status</Th>
                 <Th className="text-right">Actions</Th>
@@ -95,6 +107,8 @@ export function AgencyCodeListPage() {
                   <Td>{row.mobile}</Td>
                   <Td className="text-textSecondary">{row.agency_code ?? "—"}</Td>
                   <Td className="text-textSecondary">{row.agent_code ?? "—"}</Td>
+                  <Td><AdvisorPassword advisorId={row.id} hasPassword={row.has_password} canReveal={canEdit} /></Td>
+                  <Td>{row.joining_date ? formatISTDate(row.joining_date) : "—"}</Td>
                   <Td>{ADVISOR_CHANNEL_LABELS[row.channel] ?? row.channel}</Td>
                   <Td>
                     <Badge tone={row.status === "active" ? "success" : "neutral"}>
@@ -104,7 +118,9 @@ export function AgencyCodeListPage() {
                   <Td>
                     <div className="flex justify-end gap-2">
                       <ActionButton to={`/insurance-management/advisors/${row.id}`} variant="view" />
+                      {deletion.enabled && <ActionButton variant="delete" onClick={() => deletion.requestDelete(row.id)} />}
                       {canEdit && <ActionButton variant="update" onClick={() => openEdit(row.id)} />}
+                      <AdvisorEmployeeUpdate mobile={row.mobile} isEmployee={row.is_employee} />
                     </div>
                   </Td>
                 </TableRow>

@@ -1,4 +1,6 @@
-import type { ReactNode } from "react";
+import { useContext, type ReactNode } from "react";
+import { AuthContext } from "@/features/auth/authContext";
+import { ActionButton } from "@/components/tables/ActionButton";
 import { Badge } from "@/components/badges/Badge";
 import type { RecruitmentLeadDetail } from "@/features/recruitment/api";
 import { EXAM_LABELS, GENDER_LABELS, NOMINEE_RELATIONSHIP_LABELS, professionLabel } from "@/features/recruitment/labels";
@@ -35,6 +37,7 @@ const DOC_LABELS: Record<string, string> = {
 };
 
 export function PersonalInfoPanel({ lead }: { lead: RecruitmentLeadDetail }) {
+  const auth = useContext(AuthContext);
   return (
     <Panel title="Personal information">
       <InfoRow label="Mobile" value={lead.mobile} />
@@ -45,6 +48,7 @@ export function PersonalInfoPanel({ lead }: { lead: RecruitmentLeadDetail }) {
       <InfoRow label="Profession" value={professionLabel(lead.profession, lead.other_profession)} />
       <InfoRow label="Remarks" value={lead.remarks} />
       <InfoRow label="Assigned to" value={lead.assigned_to_name} />
+      {auth?.role === "owner" && lead.assigned_to && <InfoRow label="Employee" value={<ActionButton variant="update" to={`/employees/${lead.assigned_to}/edit`} />} />}
       {lead.rejected_reason && <InfoRow label="Rejection reason" value={lead.rejected_reason} />}
     </Panel>
   );

@@ -43,6 +43,7 @@ class DeletableResource:
     # (`application_workflows` holds both loan and insurance cases).
     case_type: str | None = None
     guard: Guard | None = field(default=None)
+    purge_guard: Guard | None = field(default=None)
 
     def matches(self, doc: dict[str, Any]) -> bool:
         return self.case_type is None or doc.get("case_type") == self.case_type
@@ -75,7 +76,37 @@ async def _guard_employee(doc: dict[str, Any], db: AsyncIOMotorDatabase[Any]) ->
 
 # ---------------------------------------------------------------------- registry
 
+
+async def _guard_recruitment(doc: dict[str, Any], db: AsyncIOMotorDatabase[Any]) -> None:
+    if await db["advisors"].find_one({"recruitment_lead_id": str(doc["_id"])}) is not None:
+        raise ValidationError("This recruitment record has an advisor and examination history. Keep it for reference.")
+
+
+async def _guard_advisor(doc: dict[str, Any], db: AsyncIOMotorDatabase[Any]) -> None:
+    advisor_id = str(doc["_id"])
+    for collection, field_name in (("application_workflows", "assigned_to"), ("applications", "assigned_to"), ("advisor_business", "advisor_id")):
+        # Include Bin records: restoring them must never produce an orphan.
+        if await db[collection].find_one({field_name: advisor_id}) is not None:
+            raise ValidationError("This advisor has policy or business records. Set Status to Inactive instead of deleting.")
+
+
+async def _guard_advisor_purge(doc: dict[str, Any], db: AsyncIOMotorDatabase[Any]) -> None:
+    await _guard_advisor(doc, db)
+    if await db["recruitment_leads"].find_one({"advisor_id": str(doc["_id"])}) is not None:
+        raise ValidationError("Retain this advisor in Bin while recruitment history references it.")
+
 _RESOURCES: tuple[DeletableResource, ...] = (
+    DeletableResource(
+        key="recruitment_leads", collection="recruitment_leads", module_label="Recruitment Leads",
+        stage_field="stage", code_field="recruitment_code", summary_fields=("full_name", "mobile"),
+        guard=_guard_recruitment, purge_guard=_guard_recruitment,
+        child_collections=(("recruitment_notes", "recruitment_lead_id"), ("recruitment_activities", "recruitment_lead_id")),
+    ),
+    DeletableResource(
+        key="advisors", collection="advisors", module_label="Advisors",
+        stage_field="status", code_field="advisor_code", summary_fields=("full_name", "mobile"),
+        guard=_guard_advisor, purge_guard=_guard_advisor_purge,
+    ),
     DeletableResource(
         key="leads", collection="leads", module_label="Leads",
         stage_field="stage", code_field="lead_code", summary_fields=("full_name", "mobile"),

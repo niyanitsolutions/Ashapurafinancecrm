@@ -5,7 +5,7 @@ import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { ActionButton } from "@/components/tables/ActionButton";
 import { Pagination } from "@/components/tables/Pagination";
 import { Table, TableBody, TableHead, TableHeadRow, TableRow, Td, Th } from "@/components/tables/DataTable";
-import { listAdvisors, PROFESSIONS, type AdvisorListItem } from "@/features/recruitment/api";
+import { getAdvisor, type AdvisorDetail, listAdvisors, PROFESSIONS, type AdvisorListItem } from "@/features/recruitment/api";
 import {
   ADVISOR_CHANNEL_LABELS,
   ADVISOR_STATUS_LABELS,
@@ -14,6 +14,12 @@ import {
   professionLabel,
 } from "@/features/recruitment/labels";
 import { getErrorMessage } from "@/shared/api/errors";
+
+import { usePermissions } from "@/features/access_control/usePermissions";
+import { EditAdvisorModal } from "@/features/recruitment/components/EditAdvisorModal";
+import { AdvisorEmployeeUpdate } from "@/features/recruitment/components/AdvisorEmployeeUpdate";
+
+import { useListDelete } from "@/features/bin/useListDelete";
 
 const PAGE_SIZE = 20;
 const POLL_INTERVAL_MS = 15_000;
@@ -26,6 +32,12 @@ const PROFESSION_CHIPS: { value: string; label: string }[] = [
 ];
 
 export function AdvisorListPage() {
+  const { can } = usePermissions();
+  const canEdit = can("insurance_management:recruitment", "edit");
+  const [editing, setEditing] = useState<AdvisorDetail | null>(null);
+  const openEdit = async (id: string) => {
+    try { setEditing(await getAdvisor(id)); } catch (err) { setError(getErrorMessage(err)); }
+  };
   const [profession, setProfession] = useState("");
   const [channel, setChannel] = useState("");
   const [status, setStatus] = useState("");
@@ -51,6 +63,8 @@ export function AdvisorListPage() {
       .catch((err) => setError(getErrorMessage(err)))
       .finally(() => setLoading(false));
   }, [page, profession, channel, status]);
+
+  const deletion = useListDelete("advisors", load, "Delete this advisor? It will move to Bin and can be restored. Records referenced by recruitment history are retained after 30 days.");
 
   useEffect(() => {
     load();
@@ -124,7 +138,10 @@ export function AdvisorListPage() {
         </label>
       </div>
 
+      {deletion.dialog}
+      {deletion.error && <ErrorBanner message={deletion.error} />}
       {error && <ErrorBanner message={error} />}
+      {editing && <EditAdvisorModal advisor={editing} onClose={() => setEditing(null)} onSaved={load} />}
 
       {!loading && rows.length === 0 ? (
         <EmptyState icon="user" title="No advisors match this view." />
@@ -161,8 +178,11 @@ export function AdvisorListPage() {
                     </Badge>
                   </Td>
                   <Td>
-                    <div className="flex justify-end">
+                    <div className="flex justify-end gap-2">
                       <ActionButton to={`/insurance-management/advisors/${row.id}`} variant="view" />
+                      {deletion.enabled && <ActionButton variant="delete" onClick={() => deletion.requestDelete(row.id)} />}
+                      {canEdit && <ActionButton variant="update" onClick={() => openEdit(row.id)} />}
+                      <AdvisorEmployeeUpdate mobile={row.mobile} isEmployee={row.is_employee} />
                     </div>
                   </Td>
                 </TableRow>

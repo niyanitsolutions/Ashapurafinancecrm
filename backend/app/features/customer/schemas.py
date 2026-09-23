@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Any
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import AliasChoices, BaseModel, EmailStr, Field
 
 from app.features.customer.constants import ConditionOperator, FieldFormat, FieldType, OptionsSource
 from app.features.employee.schemas import AddressSchema
@@ -207,6 +207,8 @@ class FormFieldResponse(BaseModel):
 
 
 class RequiredDocumentResponse(BaseModel):
+    front_back_optional: bool = False
+    requirement_group: str | None = None
     document_type_id: str
     document_type_name: str
     section: str | None = None
@@ -490,7 +492,7 @@ class ConfirmDocumentRequest(BaseModel):
     # CustomerService.confirm_document). Never logged: RequestLoggingMiddleware only
     # ever logs method/path/status/duration, never a request body. Encrypted at rest
     # immediately, never persisted as plaintext; never echoed back in any response.
-    password: str | None = Field(default=None, max_length=256)
+    password: str | None = Field(default=None, max_length=256, validation_alias=AliasChoices("document_password", "password"))
     # Front & Back upload — required (and validated against the document's own
     # front_back_upload configuration server-side) only for a document configured that
     # way; must be omitted for every ordinary document.

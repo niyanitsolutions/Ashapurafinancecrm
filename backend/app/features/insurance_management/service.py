@@ -37,7 +37,6 @@ from app.config.redis import get_redis
 from app.constants.roles import EMPLOYEE, OWNER
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from app.features.auth.models import User
-from app.features.customer.constants import DocumentSide, DocumentVerificationStatus
 from app.features.customer.models import Application, ApplicationDocument
 from app.features.customer.repository import (
     ApplicationDocumentRepository,
@@ -49,6 +48,7 @@ from app.features.customer.schemas import ConfirmDocumentRequest, DocumentUpload
 from app.features.customer.service import CustomerService
 from app.features.employee.repository import EmployeeRepository
 from app.features.insurance_management.constants import InsurancePaymentStatus
+from app.features.insurance_management.document_rules import requirements_status
 from app.features.insurance_management.models import (
     InsuranceCaseAdditionalDocument,
     InsurancePaymentTransaction,
@@ -582,23 +582,29 @@ class InsuranceCaseService:
         )
 
     async def mark_re_eligible(self, case_id: str, actor: User) -> ApplicationWorkflow:
-        """Move a `rejected` case straight to `re_eligible` (the seeded `rejected →
-        re_eligible` edge) — the manual equivalent of what the
-        `auto_transition_re_eligible_cases` worker does on the scheduled date."""
+        """Manually recover an applicable case along the catalog's re-eligibility path.
+
+        Preserve rejection history and claim the status atomically against the worker.
+        """
         case = await self.get_case(case_id, actor)
-        if case.current_status != InsuranceStatus.REJECTED:
-            raise ConflictError("Only a Rejected case can be marked Re-Eligible.")
+        if case.current_status == InsuranceStatus.RE_ELIGIBLE:
+            return case
+        if case.current_status in (InsuranceStatus.POLICY_ISSUED, InsuranceStatus.ON_HOLD):
+            raise ConflictError("A closed or on-hold case cannot be marked Re-Eligible.")
+        # Check the existing graph's complete path without manufacturing a rejection.
+        via_rejected = case.current_status != InsuranceStatus.REJECTED
+        if via_rejected:
+            await self._engine.assert_transition_allowed(case.case_type, case.current_status, InsuranceStatus.REJECTED)
+        await self._engine.assert_transition_allowed(case.case_type, InsuranceStatus.REJECTED, InsuranceStatus.RE_ELIGIBLE)
         details = (case.insurance_details or InsuranceCaseDetails()).model_copy(
             update={"re_eligible_date": None, "re_eligibility_auto_transitioned": False}
         )
         updated = await self._engine.transition(
             case, InsuranceStatus.RE_ELIGIBLE, actor,
             updates={"insurance_details": details.model_dump()}, remarks="Manually marked Re-Eligible.",
+            force=via_rejected, expected={},
         )
-        await write_audit_log(
-            self._db, event_type=InsuranceAuditEvent.MARKED_RE_ELIGIBLE, user_id=actor.require_id(),
-            metadata={"application_workflow_id": case_id},
-        )
+        # The engine already writes the target's audit event and one history entry.
         return updated
 
     # ---------------------------------------------------------------- manual creation + staff "Move To"
@@ -702,10 +708,6 @@ class InsuranceCaseService:
         if target == InsuranceStatus.REJECTED:
             return await self.reject_case(case_id, reason or "", re_eligibility, re_eligible_date, actor)
         if target == InsuranceStatus.RE_ELIGIBLE:
-            # `re_eligible` is only reachable from `rejected` (seeded edge). From any other
-            # stage, reject first (staff supplies the reason + schedule) then mark it.
-            if current != InsuranceStatus.REJECTED:
-                await self.reject_case(case_id, reason or "", re_eligibility, re_eligible_date, actor)
             return await self.mark_re_eligible(case_id, actor)
         if current == InsuranceStatus.RE_ELIGIBLE and target in (InsuranceStatus.FRESH_LEAD, InsuranceStatus.POLICY_DOCUMENT):
             return await self.restart_from_re_eligible(case_id, target, actor)
@@ -832,19 +834,8 @@ class InsuranceCaseService:
         if form_def is None:
             return True, []
         current = await self._documents.find_current_for_application(case.application_id)
-        verified = {
-            (d.document_type_id, d.side) for d in current if d.verification_status == DocumentVerificationStatus.VERIFIED
-        }
-        verified_types = {t for (t, _s) in verified}
-        missing: list[str] = []
-        for rd in form_def.required_documents:
-            if not rd.required or rd.hidden:
-                continue
-            if rd.front_back_upload:
-                if (rd.document_type_id, DocumentSide.FRONT) not in verified or (rd.document_type_id, DocumentSide.BACK) not in verified:
-                    missing.append(rd.document_type_id)
-            elif rd.document_type_id not in verified_types:
-                missing.append(rd.document_type_id)
+        names = await self._document_type_name_map([r.document_type_id for r in form_def.required_documents])
+        _, missing = requirements_status(form_def.required_documents, names, current, verified=True)
         return len(missing) == 0, missing
 
     async def applicant_details(self, case: ApplicationWorkflow) -> dict[str, Any]:
@@ -857,9 +848,11 @@ class InsuranceCaseService:
     async def required_documents_summary(self, case: ApplicationWorkflow) -> dict[str, Any]:
         application = await self._applications.find_by_id(case.application_id)
         form_def = await self._form_defs.find_by_id(application.form_definition_id) if application else None
-        required_total = (
-            sum(1 for rd in form_def.required_documents if rd.required and not rd.hidden) if form_def else 0
-        )
+        required_total = 0
+        if form_def:
+            names = await self._document_type_name_map([r.document_type_id for r in form_def.required_documents])
+            current = await self._documents.find_current_for_application(case.application_id)
+            required_total, _ = requirements_status(form_def.required_documents, names, current, verified=True)
         all_verified, missing = await self._required_documents_status(case)
         return {
             "required_total": required_total,

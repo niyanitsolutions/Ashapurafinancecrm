@@ -78,7 +78,8 @@ def field_to_response(f: FormFieldDefinition) -> FormFieldResponse:
 
 
 def required_document_to_response(
-    d: RequiredDocumentDefinition, document_type_names: dict[str, str] | None = None, document_type_password_support: dict[str, bool] | None = None
+    d: RequiredDocumentDefinition, document_type_names: dict[str, str] | None = None, document_type_password_support: dict[str, bool] | None = None,
+    *, insurance: bool = False,
 ) -> RequiredDocumentResponse:
     names = document_type_names or {}
     password_support = document_type_password_support or {}
@@ -87,11 +88,23 @@ def required_document_to_response(
     # global `supports_password` flag — today's exact behavior for every schema that
     # never sets an override, so this is backward compatible by construction.
     effective_password = d.password_protected if d.password_protected is not None else password_support.get(d.document_type_id, False)
+    from app.features.insurance_management.document_rules import (
+        document_kind,
+        front_back_supported,
+        password_supported,
+    )
+
+    name = names.get(d.document_type_id, "")
+    bank = insurance and document_kind(name) in {"bank", "cheque"}
+    if insurance:
+        effective_password = password_supported(name, effective_password)
     return RequiredDocumentResponse(
         document_type_id=d.document_type_id, document_type_name=names.get(d.document_type_id, ""), section=d.section, note=d.note,
-        name_override=d.name_override, required=d.required, allowed_types=d.allowed_types, max_size_mb=d.max_size_mb,
+        name_override=d.name_override, required=False if bank else d.required, allowed_types=d.allowed_types, max_size_mb=d.max_size_mb,
         multiple_upload=d.multiple_upload, preview_enabled=d.preview_enabled, source=d.source, hidden=d.hidden,
-        front_back_upload=d.front_back_upload, supports_password=effective_password,
+        front_back_upload=d.front_back_upload and not (insurance and document_kind(name) == "photo"), supports_password=effective_password,
+        front_back_optional=insurance and front_back_supported(name) and not d.multiple_upload,
+        requirement_group="bank" if bank else None,
     )
 
 
@@ -108,7 +121,7 @@ def form_definition_to_response(
         insurance_category_id=form_def.insurance_category_id,
         insurance_category_name=insurance_category_name,
         fields=[field_to_response(f) for f in form_def.fields],
-        required_documents=[required_document_to_response(d, names, document_type_password_support) for d in form_def.required_documents],
+        required_documents=[required_document_to_response(d, names, document_type_password_support, insurance=form_def.product_category == "insurance") for d in form_def.required_documents],
         repeatable_groups=[
             RepeatableGroupResponse(
                 key=g.key, label=g.label, add_button_label=g.add_button_label, min_count=g.min_count, max_count=g.max_count,

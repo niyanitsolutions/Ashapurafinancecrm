@@ -150,6 +150,7 @@ class Advisor(BaseDocument):
     channel: str = "non_qr"  # AdvisorChannel.ALL
     agency_code: str | None = None
     agent_code: str | None = None
+    joining_date: datetime | None = None
     # Profession classification — copied from the recruitment lead at promotion (Fresh
     # Leads' `Profession` values are the single source of truth; nothing is duplicated as a
     # new master). `None` on advisors promoted before this field existed: they stay visible

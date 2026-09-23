@@ -275,6 +275,7 @@ class RecruitmentLookupResponse(BaseModel):
 
 
 class UpdateAdvisorRequest(BaseModel):
+    joining_date: date | None = None
     # `None` for a field = "leave unchanged". Send `agency_code=""` to clear it.
     # `channel` (QR / Non-QR "Type") and `status` are explicit, independent choices.
     # `password` is write-only — the advisor-portal credential set on the Agency Code edit
@@ -329,6 +330,7 @@ class AdvisorBusinessResponse(BaseModel):
 
 
 class AdvisorListItem(BaseModel):
+    joining_date: datetime | None = None
     id: str
     advisor_code: str
     recruitment_lead_id: str

@@ -186,6 +186,10 @@ class BinService:
         for entry in due:
             try:
                 resource = get_resource(entry.resource_key)
+                if resource.purge_guard is not None:
+                    doc = await self._db[entry.target_collection].find_one({"_id": to_object_id(entry.document_id)})
+                    if doc is not None:
+                        await resource.purge_guard(dict(doc), self._db)
                 child_counts: dict[str, int] = {}
                 for child_collection, fk in resource.child_collections:
                     result = await self._db[child_collection].delete_many({fk: entry.document_id})

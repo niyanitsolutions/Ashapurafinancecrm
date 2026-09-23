@@ -107,6 +107,8 @@ export interface FormField {
 }
 
 export interface RequiredDocument {
+  front_back_optional?: boolean;
+  requirement_group?: string | null;
   document_type_id: string;
   document_type_name: string;
   section: string | null;
