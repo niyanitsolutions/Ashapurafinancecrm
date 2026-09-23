@@ -575,6 +575,58 @@ async def test_employee_sees_only_own_or_assigned(client, mock_db, owner_headers
     assert (await client.get(f"{API}/{other['id']}", headers=headers)).status_code == 403
 
 
+async def test_employee_create_stamps_authenticated_user_and_ignores_spoofed_creator(
+    client, mock_db, owner_headers, master_data
+):
+    source_id = await _source_id(mock_db)
+    employee = await _employee(client, owner_headers, master_data, mobile="9500000032")
+    await _grant(client, owner_headers, employee["id"], ["view", "create"], role_name="Recruitment Creator")
+    headers = await _login(client, "9500000032")
+
+    response = await client.post(
+        API,
+        json=_payload(source_id, mobile="9700000032", created_by="spoofed-user-id"),
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    stored = await mock_db["recruitment_leads"].find_one({"mobile": "9700000032"})
+    assert stored["created_by"] == employee["user_id"]
+    assert stored["created_by"] != "spoofed-user-id"
+
+
+async def test_creator_assignee_and_unrelated_employee_visibility(
+    client, mock_db, owner_headers, master_data
+):
+    source_id = await _source_id(mock_db)
+    creator = await _employee(client, owner_headers, master_data, mobile="9500000033")
+    assignee = await _employee(client, owner_headers, master_data, mobile="9500000034")
+    unrelated = await _employee(client, owner_headers, master_data, mobile="9500000035")
+    for employee, role_name in (
+        (creator, "Recruitment Creator A"),
+        (assignee, "Recruitment Viewer B"),
+        (unrelated, "Recruitment Viewer C"),
+    ):
+        actions = ["view", "create"] if employee == creator else ["view"]
+        await _grant(client, owner_headers, employee["id"], actions, role_name=role_name)
+
+    creator_headers = await _login(client, "9500000033")
+    assignee_headers = await _login(client, "9500000034")
+    unrelated_headers = await _login(client, "9500000035")
+    lead = await _create(client, creator_headers, source_id, mobile="9700000033")
+
+    assert [item["id"] for item in (await client.get(API, headers=creator_headers)).json()["data"]] == [lead["id"]]
+    assert (await client.get(API, headers=assignee_headers)).json()["data"] == []
+    assert (await client.get(API, headers=unrelated_headers)).json()["data"] == []
+
+    assigned = await client.post(
+        f"{API}/{lead['id']}/assign", json={"employee_id": assignee["id"]}, headers=owner_headers
+    )
+    assert assigned.status_code == 200, assigned.text
+    assert [item["id"] for item in (await client.get(API, headers=creator_headers)).json()["data"]] == [lead["id"]]
+    assert [item["id"] for item in (await client.get(API, headers=assignee_headers)).json()["data"]] == [lead["id"]]
+    assert (await client.get(API, headers=unrelated_headers)).json()["data"] == []
+
+
 async def test_employee_with_assign_cannot_broaden_recruitment_record_visibility(client, mock_db, owner_headers, master_data):
     source_id = await _source_id(mock_db)
     emp = await _employee(client, owner_headers, master_data, mobile="9500000041")

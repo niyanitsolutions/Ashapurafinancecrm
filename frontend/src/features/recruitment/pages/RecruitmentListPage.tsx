@@ -88,6 +88,7 @@ export function RecruitmentListPage({ variant }: { variant: Variant }) {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const [modal, setModal] = useState<
@@ -127,6 +128,7 @@ export function RecruitmentListPage({ variant }: { variant: Variant }) {
   };
 
   const onSaved = () => {
+    setMessage("Recruitment lead saved.");
     load();
     refreshCounts();
   };
@@ -148,6 +150,7 @@ export function RecruitmentListPage({ variant }: { variant: Variant }) {
       {deletion.dialog}
       {deletion.error && <ErrorBanner message={deletion.error} />}
       {error && <ErrorBanner message={error} />}
+      {message && <p className="mb-4 text-sm text-success">{message}</p>}
 
       {!loading && rows.length === 0 ? (
         <EmptyState icon="user" title={meta.empty} />

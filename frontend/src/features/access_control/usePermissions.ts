@@ -20,13 +20,15 @@ export interface PermissionsApi {
 }
 
 export function usePermissions(): PermissionsApi {
-  const { role } = useAuth();
+  const { role, userId } = useAuth();
   const isOwner = role === "owner";
   const { data, isLoading } = useQuery({
-    queryKey: ["my-permissions"],
+    // Scope cached grants to the authenticated identity. A global key can reuse one
+    // employee's permissions after another employee signs in until the cache is stale.
+    queryKey: ["my-permissions", userId],
     queryFn: getMyPermissions,
     staleTime: 60_000,
-    enabled: !isOwner, // Owner never needs this — see docstring above
+    enabled: !isOwner && !!userId, // Owner never needs this — see docstring above
   });
 
   const can = (moduleResource: string, action: string): boolean => {
