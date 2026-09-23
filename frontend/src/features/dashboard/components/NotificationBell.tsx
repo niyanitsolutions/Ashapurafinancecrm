@@ -12,6 +12,8 @@ import { Icon } from "@/theme/icons";
 // member actually sees a notification when a customer uploads an Additional Document
 // (requirement 15) — no second notification system, just this UI catching up to the
 // one that already existed.
+import { notificationDestination } from "@/features/reminders/notificationDestination";
+
 const POLL_INTERVAL_MS = 15_000;
 const RECENT_LIMIT = 5;
 
@@ -84,7 +86,7 @@ export function NotificationBell() {
             <ul>
               {recent.map((n) => (
                 <li key={n.id} className={n.status === "unread" ? "bg-primary/5" : undefined}>
-                  <Link to="/notifications" onClick={() => onOpenNotification(n)} className="block px-4 py-2.5 hover:bg-background">
+                  <Link to={notificationDestination(n)} onClick={() => onOpenNotification(n)} className="block px-4 py-2.5 hover:bg-background">
                     <p className="text-sm font-medium text-text">{n.title}</p>
                     <p className="text-xs text-text/60">{n.message}</p>
                     <p className="text-2xs text-text/40 mt-0.5">{formatISTDateTime(n.created_at)}</p>

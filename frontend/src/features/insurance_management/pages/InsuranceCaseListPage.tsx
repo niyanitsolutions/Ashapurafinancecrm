@@ -1,3 +1,4 @@
+import { BulkUploadModal } from "@/features/bulk_import/BulkUploadModal";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/buttons/Button";
@@ -33,18 +34,23 @@ export function InsuranceCaseListPage({ fixedStatus }: { fixedStatus?: string } 
   const navigate = useNavigate();
   const { can } = usePermissions();
   const canCreate = can("insurance_management:applications", "edit");
+  const [showBulk, setShowBulk] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [showAdd, setShowAdd] = useState(false);
 
   return (
     <>
       {canCreate && (
-        <div className="flex justify-end px-6 pt-6">
+        <div className="flex justify-end gap-2 px-6 pt-6">
+          {(!fixedStatus || fixedStatus === "fresh_lead") && <Button variant="secondary" size="sm" onClick={() => setShowBulk(true)}>Bulk Upload</Button>}
           <Button size="sm" onClick={() => setShowAdd(true)}>
             + Add Insurance Lead
           </Button>
         </div>
       )}
+      {showBulk && <BulkUploadModal kind="insurance" onClose={() => setShowBulk(false)} onImported={() => setRefreshKey((key) => key + 1)} />}
       <CaseListPage
+        key={refreshKey}
         icon="insurance"
         entityLabel="Insurance"
         itemLabel="policy lead"

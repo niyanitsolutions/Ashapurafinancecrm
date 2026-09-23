@@ -16,7 +16,11 @@ from app.features.access_control.permission_engine import require_permission
 from app.features.auth.models import User
 from app.features.recruitment import mappers
 from app.features.recruitment.advisor_service import AdvisorService
-from app.features.recruitment.dependencies import InsuranceManagementReadDep, get_advisor_service
+from app.features.recruitment.dependencies import (
+    AdvisorBusinessEditDep,
+    InsuranceManagementReadDep,
+    get_advisor_service,
+)
 from app.features.recruitment.schemas import (
     AddAdvisorBusinessRequest,
     AdvisorBusinessResponse,
@@ -99,7 +103,7 @@ async def list_advisor_business(
 
 @router.post("/{advisor_id}/business")
 async def add_advisor_business(
-    advisor_id: str, payload: AddAdvisorBusinessRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+    advisor_id: str, payload: AddAdvisorBusinessRequest, service: ServiceDep, actor: AdvisorBusinessEditDep
 ) -> ApiResponse[AdvisorBusinessResponse]:
     business = await service.add_business(advisor_id, payload, actor)
     return ApiResponse[AdvisorBusinessResponse].ok(mappers.business_to_response(business))

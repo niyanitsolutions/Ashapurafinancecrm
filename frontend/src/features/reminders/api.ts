@@ -79,6 +79,10 @@ export function completeTask(taskId: string) {
   return apiRequest<Task>(`/tasks/${taskId}/complete`, { method: "POST" });
 }
 
+export function getTask(taskId: string) {
+  return apiRequest<Task>(`/tasks/${encodeURIComponent(taskId)}`);
+}
+
 // ---- Reminder Rules ----
 
 export function listReminderRules() {

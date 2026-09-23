@@ -25,7 +25,12 @@ from app.features.access_control.repository import (
 )
 from app.features.auth.models import User
 from app.features.auth.repository import UserRepository
-from app.features.customer.constants import ApplicationStatus, DocumentAvailabilityStatus, DocumentSide, DocumentVerificationStatus
+from app.features.customer.constants import (
+    ApplicationStatus,
+    DocumentAvailabilityStatus,
+    DocumentSide,
+    DocumentVerificationStatus,
+)
 from app.features.customer.models import Application
 from app.features.customer.repository import (
     ApplicationDocumentRepository,
@@ -140,7 +145,7 @@ class LeadService:
 
     # ---------------------------------------------------------------- create / read / update
 
-    async def create_lead(self, payload: CreateLeadRequest, actor: User) -> Lead:
+    async def validate_create_lead(self, payload: CreateLeadRequest, actor: User) -> list[str]:
         await self._validate_source(payload.source_id)
         await self._validate_product(payload.product_category, payload.product_id)
 
@@ -166,6 +171,14 @@ class LeadService:
         # "possible duplicate" flag (spec: duplicate detection flags a rejected-mobile
         # match, never blocks it).
         duplicate_ids = [d.require_id() for d in duplicates]
+
+        if payload.assigned_to:
+            assignee_id = await self._resolve_assignee(payload.assigned_to, actor)
+            await self._assignment_recipient(assignee_id)
+        return duplicate_ids
+
+    async def create_lead(self, payload: CreateLeadRequest, actor: User) -> Lead:
+        duplicate_ids = await self.validate_create_lead(payload, actor)
 
         # Looked up only to stamp `form_definition_id` for later reference — Create Lead
         # collects basic lead info only (see docs/decisions/DECISIONS.md); the Product
@@ -708,6 +721,20 @@ class LeadService:
 
     # ---------------------------------------------------------------- assignment
 
+    async def _assignment_recipient(self, assignee_id: str) -> str:
+        assignee_user = await self._users.find_by_id(assignee_id)
+        if assignee_user is not None and assignee_user.role == OWNER:
+            recipient_user_id = assignee_id
+        else:
+            employee = await self._employees.find_by_id(assignee_id)
+            if employee is None:
+                raise ValidationError("Unknown employee_id.")
+            if employee.status != EmploymentStatus.ACTIVE:
+                raise ValidationError("Cannot assign a lead to an inactive employee.")
+            recipient_user_id = employee.user_id
+
+        return recipient_user_id
+
     async def _assign(self, lead_id: str, assignee_id: str, actor: User) -> Lead:
         """Shared by `assign_lead` (POST /leads/{id}/assign), Create Lead's inline
         `assigned_to`, and Edit Lead's inline `assigned_to` — one place that stamps
@@ -730,16 +757,7 @@ class LeadService:
         able to hold either id space, exactly the same way `Lead.created_by` already
         holds a User id while `assigned_to` normally holds an Employee id (see
         `get_lead_scoped`'s docstring)."""
-        assignee_user = await self._users.find_by_id(assignee_id)
-        if assignee_user is not None and assignee_user.role == OWNER:
-            recipient_user_id = assignee_id
-        else:
-            employee = await self._employees.find_by_id(assignee_id)
-            if employee is None:
-                raise ValidationError("Unknown employee_id.")
-            if employee.status != EmploymentStatus.ACTIVE:
-                raise ValidationError("Cannot assign a lead to an inactive employee.")
-            recipient_user_id = employee.user_id
+        recipient_user_id = await self._assignment_recipient(assignee_id)
 
         updated = await self._leads.update(
             lead_id,

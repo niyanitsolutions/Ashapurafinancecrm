@@ -32,6 +32,7 @@ export function AdvisorDetailsPage() {
   const { advisorId = "" } = useParams();
   const { can } = usePermissions();
   const canEdit = can("insurance_management:recruitment", "edit");
+  const canAddBusiness = canEdit || can("insurance_management:applications", "edit");
 
   const [advisor, setAdvisor] = useState<AdvisorDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -82,7 +83,6 @@ export function AdvisorDetailsPage() {
             value={advisor.profession ? professionLabel(advisor.profession, advisor.other_profession) : null}
           />
           <InfoRow label="Agency code" value={advisor.agency_code} />
-            <InfoRow label="Agent code" value={advisor.agent_code} />
             <AdvisorEmployeeUpdate mobile={advisor.mobile} isEmployee={advisor.is_employee} />
           <InfoRow label="Password" value={<AdvisorPassword advisorId={advisor.id} hasPassword={advisor.has_password} canReveal={canEdit} />} />
           <InfoRow label="Status" value={ADVISOR_STATUS_LABELS[advisor.status]} />
@@ -113,7 +113,7 @@ export function AdvisorDetailsPage() {
               {advisor.no_of_policies} {advisor.no_of_policies === 1 ? "policy" : "policies"} · total premium{" "}
               {formatINR(advisor.total_premium)}
             </p>
-            {canEdit && (
+            {canAddBusiness && (
               <Button size="sm" onClick={() => setModal("add")}>
                 + Add
               </Button>

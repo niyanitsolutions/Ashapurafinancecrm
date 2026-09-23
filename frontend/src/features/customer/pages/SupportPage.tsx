@@ -1,3 +1,4 @@
+import { useSearchParams } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
@@ -37,6 +38,8 @@ const PRIORITY_STYLE: Record<TicketPriority, string> = {
 // attachment/history) alongside the existing lightweight Task/Notification side-effect
 // to the Relationship Manager, which still fires unchanged on every ticket created.
 export function SupportPage() {
+  const [searchParams] = useSearchParams();
+  const selectedTicket = searchParams.get("ticket");
   const [issueType, setIssueType] = useState<IssueType>("application");
   const [priority, setPriority] = useState<TicketPriority>("medium");
   const [subject, setSubject] = useState("");
@@ -79,6 +82,10 @@ export function SupportPage() {
       setIsSubmitting(false);
     }
   };
+
+  useEffect(() => {
+    if (selectedTicket && tickets) document.getElementById(`ticket-${selectedTicket}`)?.scrollIntoView?.({ block: "center" });
+  }, [selectedTicket, tickets]);
 
   return (
     <SimplePageLayout title="Support" backTo="/portal">
@@ -136,7 +143,7 @@ export function SupportPage() {
         {tickets !== null && tickets.length > 0 && (
           <div className="bg-card border border-border rounded-card shadow-card divide-y divide-border">
             {tickets.map((t) => (
-              <div key={t.id} className="p-4">
+              <div key={t.id} id={`ticket-${t.id}`} className={`p-4 ${selectedTicket === t.id ? "ring-2 ring-primary" : ""}`}>
                 <div className="flex items-center justify-between gap-2 mb-1">
                   <span className="text-sm font-medium text-text">{t.subject}</span>
                   <span className={`text-xs font-medium ${PRIORITY_STYLE[t.priority]}`}>{t.priority.toUpperCase()}</span>

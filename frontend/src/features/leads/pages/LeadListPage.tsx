@@ -1,3 +1,4 @@
+import { BulkUploadModal } from "@/features/bulk_import/BulkUploadModal";
 import { useEffect, useState } from "react";
 import { Link, useOutletContext } from "react-router-dom";
 import { ActionButton } from "@/components/tables/ActionButton";
@@ -126,6 +127,7 @@ async function downloadLeadsCsv(setError: (msg: string | null) => void) {
 
 export function LeadListPage({ tab }: { tab: LeadTab }) {
   const { can } = usePermissions();
+  const [showBulk, setShowBulk] = useState(false);
   const canCreate = can("leads:leads", "create");
   const canEdit = can("leads:leads", "edit");
   const canReject = can("leads:leads", "reject");
@@ -256,6 +258,7 @@ export function LeadListPage({ tab }: { tab: LeadTab }) {
 
   return (
     <div className="min-h-screen bg-background">
+      {showBulk && <BulkUploadModal kind="leads" onClose={() => setShowBulk(false)} onImported={refreshAfterAction} />}
       <div className="p-6">
         <ErrorBanner message={error} />
         <ErrorBanner message={del.error} />
@@ -283,6 +286,7 @@ export function LeadListPage({ tab }: { tab: LeadTab }) {
                   Export
                 </Button>
               )}
+              {canCreate && <Button variant="secondary" size="sm" onClick={() => setShowBulk(true)}>Bulk Upload</Button>}
               {canCreate && (
                 <Link
                   to="/leads/new"

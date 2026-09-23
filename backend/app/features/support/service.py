@@ -82,7 +82,7 @@ class SupportTicketService:
         # Keeps the existing Module 6B notification side-effect firing unchanged — a
         # persisted, listable ticket is additive, it doesn't replace that behavior.
         await self._customer_service.raise_support_request(
-            RaiseSupportRequestRequest(subject=payload.subject, message=payload.message), actor
+            RaiseSupportRequestRequest(subject=payload.subject, message=payload.message), actor, ticket_id=ticket_id
         )
 
         return await self._tickets.find_by_id(ticket_id) or ticket

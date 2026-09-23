@@ -739,6 +739,13 @@ class CustomerService:
             product_category=product_category, product_id=product_id, form_definition=form_def, actor=actor,
         )
 
+    async def validate_manual_insurance_customer(self, product_id: str, mobile: str) -> tuple[ApplicationFormDefinition, User | None]:
+        form_def = await self._get_or_error_form_definition("insurance", product_id)
+        existing_user = await self._users.find_by_mobile(mobile)
+        if existing_user is not None and existing_user.role != CUSTOMER:
+            raise ValidationError("This mobile number belongs to a staff account and cannot be used for a customer lead.")
+        return form_def, existing_user
+
     async def create_manual_insurance_application(
         self, *, full_name: str, mobile: str, email: str | None, gender: str | None, age: int | None,
         profession: str | None, annual_income: float | None, remarks: str | None, product_id: str, actor: User,
@@ -761,14 +768,10 @@ class CustomerService:
         Deliberately does NOT run `submit_application`'s required-document gate — a manual
         lead starts with no documents; the Policy Login transition still enforces
         verification later."""
-        form_def = await self._get_or_error_form_definition("insurance", product_id)
-
-        existing_user = await self._users.find_by_mobile(mobile)
+        form_def, existing_user = await self.validate_manual_insurance_customer(product_id, mobile)
         rollback_user_id: str | None = None
         rollback_customer_id: str | None = None
         if existing_user is not None:
-            if existing_user.role != CUSTOMER:
-                raise ValidationError("This mobile number belongs to a staff account and cannot be used for a customer lead.")
             customer = await self._customers.find_by_user_id(existing_user.require_id())
             if customer is None:
                 customer = await self._create_customer_from_profile(
@@ -2345,7 +2348,7 @@ class CustomerService:
         employees = await self._employees.find_many({}, limit=500)
         return {e.user_id: e.display_name for e in employees if e.user_id in user_ids}
 
-    async def raise_support_request(self, payload: RaiseSupportRequestRequest, actor: User) -> SupportRequestResponse:
+    async def raise_support_request(self, payload: RaiseSupportRequestRequest, actor: User, *, ticket_id: str | None = None) -> SupportRequestResponse:
         """"Support" stays the lightweight model the brief asks for — no new ticketing
         module. Reuses `RemindersService.create_task` verbatim (which already notifies
         the assignee) when a Relationship Manager is assigned. `Task.assigned_to` is
@@ -2364,6 +2367,7 @@ class CustomerService:
                 CreateTaskRequest(
                     title=f"Support request: {payload.subject}", description=payload.message,
                     assigned_to=employee_id, due_at=utc_now() + timedelta(days=1),
+                    related_entity_type="support_ticket" if ticket_id else None, related_entity_id=ticket_id,
                 ),
                 actor,
             )
@@ -2375,6 +2379,6 @@ class CustomerService:
             await self._reminders.create_notification(
                 recipient_user_id=str(owner_doc["_id"]), notification_type=NotificationType.SUPPORT_REQUEST_RAISED,
                 title=f"Support request: {payload.subject}", message=payload.message,
-                entity_type="customer", entity_id=customer.require_id() if customer else None,
+                entity_type="support_ticket" if ticket_id else "customer", entity_id=ticket_id or (customer.require_id() if customer else None),
             )
         return SupportRequestResponse(created_task=False)

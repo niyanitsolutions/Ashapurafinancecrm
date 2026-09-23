@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { Modal } from "@/components/overlays/Modal";
 import { Button } from "@/components/buttons/Button";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { EmptyState } from "@/components/layout/EmptyState";
@@ -8,7 +10,7 @@ import { Table, TableBody, TableHead, TableHeadRow, TableRow, Td, Th } from "@/c
 import { usePermissions } from "@/features/access_control/usePermissions";
 import { getErrorMessage } from "@/features/customer/errors";
 import { AddTaskModal } from "@/features/reminders/components/AddTaskModal";
-import { completeTask, listTasks, type Task } from "@/features/reminders/api";
+import { completeTask, getTask, listTasks, type Task } from "@/features/reminders/api";
 import { formatISTDateTime } from "@/shared/dateFormat";
 
 const PAGE_SIZE = 20;
@@ -28,6 +30,9 @@ function PriorityBadge({ priority }: { priority: string }) {
 }
 
 export function TaskListPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const taskId = searchParams.get("task");
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const { can } = usePermissions();
   const canCreate = can("reminders:tasks", "create");
   const [items, setItems] = useState<Task[]>([]);
@@ -53,6 +58,14 @@ export function TaskListPage() {
 
   useEffect(load, [page, status, priority]);
 
+  useEffect(() => {
+    if (!taskId) return;
+    let active = true;
+    getTask(taskId).then((task) => { if (active) setSelectedTask(task); })
+      .catch(() => { if (active) setError("This task is unavailable or you do not have access."); });
+    return () => { active = false; };
+  }, [taskId]);
+
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const hasFilters = Boolean(status || priority);
 
@@ -76,6 +89,14 @@ export function TaskListPage() {
     >
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
       <ErrorBanner message={error} />
+      {selectedTask && <Modal open title={selectedTask.title} onClose={() => { setSelectedTask(null); setSearchParams((params) => { params.delete("task"); return params; }); }}>
+        <div className="space-y-3 text-sm">
+          <p className="whitespace-pre-wrap">{selectedTask.description}</p>
+          <p>Assigned to: {selectedTask.assigned_to_name ?? "—"}</p>
+          <p>Due: {formatISTDateTime(selectedTask.due_at)}</p>
+          <p>Status: {selectedTask.status}</p>
+        </div>
+      </Modal>}
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <select value={status} onChange={(e) => { setPage(1); setStatus(e.target.value); }} className="rounded-xl border border-border px-3.5 py-2.5 text-sm bg-card">

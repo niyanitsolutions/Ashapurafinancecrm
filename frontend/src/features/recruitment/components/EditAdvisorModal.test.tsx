@@ -73,18 +73,19 @@ describe("EditAdvisorModal", () => {
     await waitFor(() => expect(updateAdvisor).toHaveBeenCalledWith("a1", { password: "123" }));
   });
 
-  it("sends only the changed fields (agent code, type, password)", async () => {
+  it("sends changed Agency Code, type and password without Agent Code", async () => {
     const user = userEvent.setup();
     render(<EditAdvisorModal advisor={advisor} onClose={vi.fn()} onSaved={vi.fn()} />);
 
-    await user.type(screen.getByLabelText("Agent Code"), "AGT-9");
+    expect(screen.queryByLabelText("Agent Code")).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText("Agency Code"), "AG-9");
     await user.selectOptions(screen.getByLabelText("Type"), "qr");
     await user.type(screen.getByLabelText("Password"), "S3cretPass!");
 
     await user.click(screen.getByRole("button", { name: /^save$/i }));
     await waitFor(() =>
       expect(updateAdvisor).toHaveBeenCalledWith("a1", {
-        agent_code: "AGT-9",
+        agency_code: "AG-9",
         channel: "qr",
         password: "S3cretPass!",
       }),

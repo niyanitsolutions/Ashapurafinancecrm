@@ -63,6 +63,12 @@ function renderDocumentCollectionTab() {
 }
 
 describe("LeadListPage — Document Collection tab, Lead-less rows", () => {
+  it("opens the shared bulk upload dialog from Leads", async () => {
+    renderDocumentCollectionTab();
+    await screen.findByText("AFS-APP-000001");
+    await userEvent.setup().click(screen.getByRole("button", { name: "Bulk Upload" }));
+    expect(screen.getByRole("dialog", { name: "Bulk Upload Leads" })).toBeInTheDocument();
+  });
   it("Lead-less row's Code links to its Application, not a Lead page", async () => {
     renderDocumentCollectionTab();
     await screen.findByText("AFS-APP-000001");

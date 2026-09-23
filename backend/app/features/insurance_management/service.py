@@ -633,6 +633,10 @@ class InsuranceCaseService:
         if category is None or category.status != MasterDataStatus.ACTIVE:
             raise ConflictError("That insurance product's category is inactive.")
 
+    async def validate_manual_case(self, payload: CreateManualInsuranceCaseRequest) -> None:
+        await self._assert_product_in_active_category(payload.product_id, expected_category_id=payload.insurance_category_id)
+        await self._customer_service().validate_manual_insurance_customer(payload.product_id, payload.mobile)
+
     async def create_manual_case(self, payload: CreateManualInsuranceCaseRequest, actor: User) -> ApplicationWorkflow:
         """Staff "Add Insurance Lead" — provisions the customer + application (never a
         `Lead`), creates the workflow at Fresh Lead through the ordinary

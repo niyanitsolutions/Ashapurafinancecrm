@@ -35,7 +35,7 @@ const advisor: AdvisorListItem = {
 };
 
 describe("AgencyCodeListPage", () => {
-  it("shows the agency code, agent code and QR / Non QR type columns", async () => {
+  it("shows Agency Code without exposing historical Agent Code", async () => {
     listAdvisors.mockResolvedValue({ data: [advisor], pagination: { page: 1, page_size: 20, total: 1, total_pages: 1 } });
     render(
       <MemoryRouter>
@@ -49,10 +49,11 @@ describe("AgencyCodeListPage", () => {
 
     await screen.findByText("Ravi Kumar");
     expect(screen.getByText("AG-1001")).toBeInTheDocument();
-    expect(screen.getByText("AGT-9")).toBeInTheDocument();
+    expect(screen.queryByText("AGT-9")).not.toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Agent Code" })).not.toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Type" })).toBeInTheDocument();
     expect(screen.getAllByRole("columnheader", { name: "Agency Code" })).toHaveLength(1);
-    expect(screen.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["Name", "Mobile", "Agency Code", "Agent Code", "Password", "Join Date", "Type", "Status", "Actions"]);
+    expect(screen.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["Name", "Mobile", "Agency Code", "Password", "Join Date", "Type", "Status", "Actions"]);
     expect(screen.getByText("QR")).toBeInTheDocument();
   });
 });

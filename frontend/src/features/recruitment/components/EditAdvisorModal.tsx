@@ -58,7 +58,6 @@ export function EditAdvisorModal({
 }) {
   const [joiningDate, setJoiningDate] = useState(advisor.joining_date ? toISTDateInput(advisor.joining_date) : "");
   const [agencyCode, setAgencyCode] = useState(advisor.agency_code ?? "");
-  const [agentCode, setAgentCode] = useState(advisor.agent_code ?? "");
   const [channel, setChannel] = useState<Channel>(advisor.channel);
   const [password, setPassword] = useState("");
   const [status, setStatus] = useState<"active" | "inactive">(advisor.status);
@@ -72,7 +71,6 @@ export function EditAdvisorModal({
       // Send only the fields the staff member actually changed.
       const payload: Parameters<typeof updateAdvisor>[1] = {};
       if (agencyCode.trim() !== (advisor.agency_code ?? "")) payload.agency_code = agencyCode.trim();
-      if (agentCode.trim() !== (advisor.agent_code ?? "")) payload.agent_code = agentCode.trim();
       if (channel !== advisor.channel) payload.channel = channel;
       if (status !== advisor.status) payload.status = status;
       if (password) payload.password = password;
@@ -121,14 +119,6 @@ export function EditAdvisorModal({
         value={agencyCode}
         onChange={(e) => setAgencyCode(e.target.value)}
         placeholder="Agency code"
-      />
-      <FormField
-        id="advisor-agent-code"
-        name="agent_code"
-        label="Agent Code"
-        value={agentCode}
-        onChange={(e) => setAgentCode(e.target.value)}
-        placeholder="Agent code"
       />
       <PasswordInput value={password} onChange={setPassword} />
       <FormField id="advisor-joining-date" name="joining_date" label="Joining Date" type="date" value={joiningDate} onChange={(e) => setJoiningDate(e.target.value)} />

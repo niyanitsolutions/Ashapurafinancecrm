@@ -58,7 +58,7 @@ export function listAllSupportTickets(params: { status?: string; search?: string
 }
 
 export function getSupportTicket(ticketId: string) {
-  return apiRequest<SupportTicket>(`/support-tickets/${ticketId}`);
+  return apiRequest<SupportTicket>(`/support-tickets/${encodeURIComponent(ticketId)}`);
 }
 
 export function respondToSupportTicket(ticketId: string, staffResponse: string, status?: TicketStatus) {

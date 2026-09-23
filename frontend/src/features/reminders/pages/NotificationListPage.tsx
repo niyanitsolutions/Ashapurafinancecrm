@@ -14,18 +14,7 @@ import {
 } from "@/features/reminders/api";
 import { formatISTDateTime } from "@/shared/dateFormat";
 
-// A "View" destination derived purely from `entity_type`/`entity_id` — role-aware since
-// this same list is shared by the Staff Notifications page and the Customer Portal's
-// own alerts inbox. Today only `document_rejected` ever produces an "application"
-// entity_type notification, but this stays generic rather than special-cased to that
-// one type, so any future application-related notification gets the same "View"
-// affordance for free.
-function entityLink(n: AppNotification, role: string | null): string | null {
-  if (n.entity_type === "application" && n.entity_id) {
-    return role === "owner" || role === "employee" ? `/applications/${n.entity_id}` : "/portal/documents";
-  }
-  return null;
-}
+import { notificationDestination as entityLink } from "@/features/reminders/notificationDestination";
 
 const PAGE_SIZE = 20;
 // Same rationale as LeadListPage's poll — no push transport exists in this project yet,

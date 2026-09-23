@@ -122,7 +122,8 @@ class RemindersService:
             recipient_user_id=employee.user_id, notification_type=NotificationType.TASK_ASSIGNED,
             default_title="New Task Assigned", default_message=f'You have been assigned a new task: "{payload.title}".',
             variables={"task_title": payload.title},
-            entity_type="task", entity_id=task_id,
+            entity_type="support_ticket" if payload.related_entity_type == "support_ticket" else "task",
+            entity_id=payload.related_entity_id if payload.related_entity_type == "support_ticket" else task_id,
         )
 
         found = await self._tasks.find_by_id(task_id)

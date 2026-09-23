@@ -20,6 +20,7 @@ from app.features.auth.indexes import ensure_auth_indexes
 from app.features.auth.router import router as auth_router
 from app.features.bin.indexes import ensure_bin_indexes
 from app.features.bin.router import router as bin_router
+from app.features.bulk_import.router import router as bulk_import_router
 from app.features.communication.indexes import ensure_communication_indexes
 from app.features.communication.router import public_router as communication_public_router
 from app.features.communication.router import router as communication_router
@@ -132,6 +133,7 @@ def create_app() -> FastAPI:
     app.include_router(geo_fencing_router, prefix=settings.api_v1_prefix)
     app.include_router(system_settings_router, prefix=settings.api_v1_prefix)
     app.include_router(dashboard_router, prefix=settings.api_v1_prefix)
+    app.include_router(bulk_import_router, prefix=settings.api_v1_prefix)
     app.include_router(leads_router, prefix=settings.api_v1_prefix)
     app.include_router(customer_public_router, prefix=settings.api_v1_prefix)
     app.include_router(customer_router, prefix=settings.api_v1_prefix)

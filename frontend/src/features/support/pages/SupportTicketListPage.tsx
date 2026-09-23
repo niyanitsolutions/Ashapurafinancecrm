@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Badge, StatusBadge } from "@/components/badges/Badge";
 import { Button } from "@/components/buttons/Button";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
@@ -9,6 +10,7 @@ import { SelectField } from "@/components/forms/SelectField";
 import { TextareaField } from "@/components/forms/TextareaField";
 import { Table, TableBody, TableHead, TableHeadRow, TableRow, Td, Th } from "@/components/tables/DataTable";
 import {
+  getSupportTicket,
   listAllSupportTickets,
   respondToSupportTicket,
   type SupportTicket,
@@ -88,6 +90,8 @@ function RespondModal({ ticket, onClose, onResponded }: { ticket: SupportTicket;
 // support/service.py's list_all_tickets/respond_to_ticket). The customer-facing
 // create/list-own flow (SupportPage) is untouched.
 export function SupportTicketListPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const ticketId = searchParams.get("ticket");
   const [tickets, setTickets] = useState<SupportTicket[] | null>(null);
   const [statusFilter, setStatusFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -100,6 +104,13 @@ export function SupportTicketListPage() {
   };
 
   useEffect(load, [statusFilter]);
+  useEffect(() => {
+    if (!ticketId) return;
+    let active = true;
+    getSupportTicket(ticketId).then((ticket) => { if (active) setRespondingTo(ticket); })
+      .catch(() => { if (active) setError("This ticket is unavailable or you do not have access."); });
+    return () => { active = false; };
+  }, [ticketId]);
 
   return (
     <SimplePageLayout title="Support Tickets">
@@ -160,7 +171,7 @@ export function SupportTicketListPage() {
       {respondingTo && (
         <RespondModal
           ticket={respondingTo}
-          onClose={() => setRespondingTo(null)}
+          onClose={() => { setRespondingTo(null); setSearchParams({}); }}
           onResponded={load}
         />
       )}

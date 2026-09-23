@@ -75,12 +75,12 @@ describe("NotificationListPage — role-aware View link for application-related 
     expect(link).toHaveAttribute("href", "/portal/documents");
   });
 
-  it("does not show a View link for a notification with no application entity", async () => {
+  it("opens a lead notification at the exact Lead record", async () => {
     mockRole = "employee";
     listNotifications.mockResolvedValue({ data: [leadNotification], pagination: { total: 1 } });
     renderPage();
 
     await screen.findByText("New Lead Assigned");
-    expect(screen.queryByRole("link", { name: "View" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View" })).toHaveAttribute("href", "/leads/lead-1");
   });
 });

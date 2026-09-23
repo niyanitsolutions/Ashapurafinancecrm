@@ -74,7 +74,7 @@ export function AgencyCodeListPage() {
       <div className="mb-4">
         <h1 className="text-xl font-bold text-text">Agency Code</h1>
         <p className="mt-0.5 text-sm text-textSecondary">
-          Advisors created from cleared examinations. Assign the agency code, agent code and QR / Non QR type here.
+          Advisors created from cleared examinations. Assign the agency code and QR / Non QR type here.
         </p>
       </div>
 
@@ -92,7 +92,6 @@ export function AgencyCodeListPage() {
                 <Th>Name</Th>
                 <Th>Mobile</Th>
                 <Th>Agency Code</Th>
-                <Th>Agent Code</Th>
                 <Th>Password</Th>
                 <Th>Join Date</Th>
                 <Th>Type</Th>
@@ -106,7 +105,6 @@ export function AgencyCodeListPage() {
                   <Td className="font-medium text-text">{row.full_name}</Td>
                   <Td>{row.mobile}</Td>
                   <Td className="text-textSecondary">{row.agency_code ?? "—"}</Td>
-                  <Td className="text-textSecondary">{row.agent_code ?? "—"}</Td>
                   <Td><AdvisorPassword advisorId={row.id} hasPassword={row.has_password} canReveal={canEdit} /></Td>
                   <Td>{row.joining_date ? formatISTDate(row.joining_date) : "—"}</Td>
                   <Td>{ADVISOR_CHANNEL_LABELS[row.channel] ?? row.channel}</Td>

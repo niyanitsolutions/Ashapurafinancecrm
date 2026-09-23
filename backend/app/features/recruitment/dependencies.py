@@ -46,3 +46,17 @@ async def require_insurance_management_read_access(
 
 
 InsuranceManagementReadDep = Annotated[User, Depends(require_insurance_management_read_access)]
+
+
+async def require_advisor_business_edit(
+    actor: InsuranceManagementReadDep,
+    db: Annotated[AsyncIOMotorDatabase[Any], Depends(get_database)],
+) -> User:
+    engine = PermissionEngine(db)
+    for resource in ("applications", "recruitment"):
+        if await engine.has_permission(actor, module="insurance_management", resource=resource, action="edit"):
+            return actor
+    raise ForbiddenError("Missing Insurance business edit permission.")
+
+
+AdvisorBusinessEditDep = Annotated[User, Depends(require_advisor_business_edit)]

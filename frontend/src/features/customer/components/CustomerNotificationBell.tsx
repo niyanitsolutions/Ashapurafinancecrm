@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { notificationDestination } from "@/features/reminders/notificationDestination";
 import {
   getUnreadNotificationCount,
   listNotifications,
@@ -88,7 +89,7 @@ export function CustomerNotificationBell() {
               {recent.map((n) => (
                 <li key={n.id} className={n.status === "unread" ? "bg-primary/5" : undefined}>
                   <Link
-                    to="/portal/documents"
+                    to={notificationDestination(n, "customer")}
                     onClick={() => onOpenNotification(n)}
                     className="block px-4 py-2.5 hover:bg-background"
                   >

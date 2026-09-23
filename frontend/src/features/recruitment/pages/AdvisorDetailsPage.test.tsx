@@ -18,8 +18,9 @@ vi.mock("@/features/recruitment/api", async () => {
 });
 
 let canValue = true;
+let insuranceEdit = false;
 vi.mock("@/features/access_control/usePermissions", () => ({
-  usePermissions: () => ({ can: () => canValue }),
+  usePermissions: () => ({ can: (resource: string, action: string) => canValue || (insuranceEdit && resource === "insurance_management:applications" && action === "edit") }),
 }));
 
 function advisor(over: Partial<AdvisorDetail> = {}): AdvisorDetail {
@@ -62,14 +63,16 @@ describe("AdvisorDetailsPage — password display", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     canValue = true;
+    insuranceEdit = false;
   });
 
   it("shows 'Not set' with no eye toggle when no password has ever been set", async () => {
-    getAdvisor.mockResolvedValue(advisor({ has_password: false }));
+    getAdvisor.mockResolvedValue(advisor({ has_password: false, agent_code: "HISTORICAL-AGENT" }));
     renderPage();
     await screen.findByText("Not set");
     expect(screen.queryByRole("button", { name: /password/i })).not.toBeInTheDocument();
     expect(revealAdvisorPassword).not.toHaveBeenCalled();
+    expect(screen.queryByText("HISTORICAL-AGENT")).not.toBeInTheDocument();
   });
 
   it("shows a masked placeholder; clicking the eye reveals the real saved password via the dedicated endpoint", async () => {
@@ -120,4 +123,22 @@ describe("AdvisorDetailsPage — password display", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: "Edit" }));
     expect(await screen.findByLabelText("Password")).toHaveValue("");
   });
+});
+
+it("shows Existing Business Add for an employee with Insurance edit but no Recruitment edit", async () => {
+  canValue = false;
+  insuranceEdit = true;
+  getAdvisor.mockResolvedValue(advisor());
+  renderPage();
+  expect(await screen.findByRole("button", { name: /Add/ })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+});
+
+it("hides Existing Business Add for an unauthorized employee", async () => {
+  canValue = false;
+  insuranceEdit = false;
+  getAdvisor.mockResolvedValue(advisor());
+  renderPage();
+  await screen.findByText("Existing Business");
+  expect(screen.queryByRole("button", { name: /Add/ })).not.toBeInTheDocument();
 });
