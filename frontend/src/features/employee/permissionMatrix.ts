@@ -25,6 +25,10 @@ export const PERMISSION_MATRIX_ROWS: MatrixRow[] = [
   { module: "reminders", resource: "tasks", label: "Tasks" },
   { module: "loan_management", resource: "applications", label: "Loan Management" },
   { module: "insurance_management", resource: "applications", label: "Insurance Management" },
+  // Recruitment and Advisors share this existing backend permission resource. Keeping
+  // it as its own row lets an Owner grant Create/Edit without broadening Insurance Case
+  // permissions, and ensures Edit Employee preserves those grants on its full replace.
+  { module: "insurance_management", resource: "recruitment", label: "Recruitment & Advisors" },
   { module: "referral_partner_management", resource: "partners", label: "Referral Partners" },
   { module: "reporting", resource: "reports", label: "Reports & Analytics" },
   { module: "communication", resource: "templates", label: "Message Center" },

@@ -17,7 +17,7 @@ function applyCellChange(next: Record<string, Set<string>>, permission: Permissi
 // checkbox state (`checked`, keyed by permission_id -> the set of checked actions for
 // that row) lives in the parent page so Create can start empty and Edit can
 // pre-populate from the employee's existing grants. Renders a real table at `sm:` and
-// above; below that an 8-row x 3-column table doesn't reflow sensibly, so it switches to
+// above; below that the multi-row, three-action table doesn't reflow sensibly, so it switches to
 // a stacked block per module instead, sharing the same `checked`/`onChange` state.
 //
 // The backend independently enforces the same View-gates-Create/Edit rule

@@ -124,7 +124,7 @@ export function EditEmployeePage() {
         const nextChecked: Record<string, Set<string>> = {};
         for (const grant of grants) {
           const row = PERMISSION_MATRIX_ROWS.find((r) => r.module === grant.module && r.resource === grant.resource);
-          if (!row) continue; // a grant outside this simplified 8-row matrix — no checkbox to set
+          if (!row) continue; // a grant outside this simplified matrix — no checkbox to set
           const relevant = grant.granted_actions.filter((a) => a === "view" || a === "create" || a === "edit");
           nextChecked[grant.permission_id] = sanitizeGrantedActions(relevant, MATRIX_ACTIONS);
         }

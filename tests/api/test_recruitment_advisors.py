@@ -554,3 +554,12 @@ async def test_permission_gating(client, mock_db, owner_headers, master_data):
     assert (await client.get(ADV, headers=h2)).status_code == 200
     assert (await client.patch(f"{ADV}/{aid}", json={"status": "inactive"}, headers=h2)).status_code == 403
     assert (await _add_business(client, h2, aid)).status_code == 403
+
+    editor = await _employee(client, owner_headers, master_data, mobile="9500000063")
+    await _grant(client, owner_headers, editor["id"], ["view", "edit"], "Adv Editor")
+    h3 = await _login(client, "9500000063")
+    updated = await client.patch(f"{ADV}/{aid}", json={"status": "inactive"}, headers=h3)
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["data"]["status"] == "inactive"
+    business = await _add_business(client, h3, aid)
+    assert business.status_code == 200, business.text

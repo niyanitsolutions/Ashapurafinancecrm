@@ -36,4 +36,27 @@ describe("usePermissions", () => {
     await waitFor(() => expect(getMyPermissions).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(result.current.can("insurance_management:recruitment", "create")).toBe(true));
   });
+
+  it("loads the employee's grants after switching from an Owner session", async () => {
+    auth.role = "owner";
+    auth.userId = "owner-a";
+    getMyPermissions.mockResolvedValue({
+      grants: { "insurance_management:recruitment": ["view", "create", "edit"] },
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const { result, rerender } = renderHook(() => usePermissions(), { wrapper });
+
+    expect(result.current.can("insurance_management:recruitment", "create")).toBe(true);
+    expect(getMyPermissions).not.toHaveBeenCalled();
+
+    auth.role = "employee";
+    auth.userId = "employee-a";
+    rerender();
+
+    await waitFor(() => expect(getMyPermissions).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.can("insurance_management:recruitment", "edit")).toBe(true));
+  });
 });

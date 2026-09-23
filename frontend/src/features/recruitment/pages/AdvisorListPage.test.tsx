@@ -47,7 +47,7 @@ function renderPage() {
 }
 
 describe("AdvisorListPage", () => {
-  it("opens the existing edit form only with edit permission", async () => {
+  it("lets an authorized employee open the existing edit form with Recruitment edit permission", async () => {
     canEdit.mockReturnValue(true);
     listAdvisors.mockResolvedValue({ data: [advisor()] });
     getAdvisor.mockResolvedValue({ ...advisor(), recruitment: null, businesses: [], updated_at: "2026-09-01T00:00:00Z" });
@@ -55,6 +55,7 @@ describe("AdvisorListPage", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Update" }));
     expect(await screen.findByRole("dialog")).toHaveTextContent("Edit Advisor");
     expect(getAdvisor).toHaveBeenCalledWith("a1");
+    expect(canEdit).toHaveBeenCalledWith("insurance_management:recruitment", "edit");
     canEdit.mockReturnValue(false);
   });
 
