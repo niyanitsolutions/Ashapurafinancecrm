@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useOutletContext } from "react-router-dom";
+import { Navigate, useOutletContext } from "react-router-dom";
 import { Badge } from "@/components/badges/Badge";
 import { Button } from "@/components/buttons/Button";
 import { EmptyState } from "@/components/layout/EmptyState";
@@ -80,9 +80,11 @@ const META: Record<Variant, { title: string; description: string; empty: string 
 
 export function RecruitmentListPage({ variant }: { variant: Variant }) {
   const { refreshCounts } = useOutletContext<RecruitmentOutletContext>();
-  const { can } = usePermissions();
-  const canEdit = can("insurance_management:recruitment", "edit");
-  const canCreate = can("insurance_management:recruitment", "create");
+  const { can, loading: permissionsLoading } = usePermissions();
+  const resource = `insurance_management:recruitment.${VARIANT_STAGE[variant]}`;
+  const canView = can(resource, "view");
+  const canEdit = can(resource, "edit");
+  const canCreate = can(resource, "create");
 
   const [rows, setRows] = useState<RecruitmentLeadListItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -100,6 +102,7 @@ export function RecruitmentListPage({ variant }: { variant: Variant }) {
   const meta = META[variant];
 
   const load = useCallback(() => {
+    if (permissionsLoading || !canView) return;
     listRecruitmentLeads({ page, page_size: PAGE_SIZE, stage: VARIANT_STAGE[variant] })
       .then(({ data, pagination }) => {
         setRows(data);
@@ -108,7 +111,7 @@ export function RecruitmentListPage({ variant }: { variant: Variant }) {
       })
       .catch((err) => setError(getErrorMessage(err)))
       .finally(() => setLoading(false));
-  }, [page, variant]);
+  }, [canView, page, permissionsLoading, variant]);
 
   const deletion = useListDelete("recruitment_leads", () => { load(); refreshCounts(); });
 
@@ -132,6 +135,9 @@ export function RecruitmentListPage({ variant }: { variant: Variant }) {
     load();
     refreshCounts();
   };
+
+  if (permissionsLoading) return null;
+  if (!canView) return <Navigate to="/dashboard" replace />;
 
   return (
     <div className="p-4 lg:p-6">

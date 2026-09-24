@@ -1,22 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
 import { SubmitButton } from "@/components/forms/SubmitButton";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
-import {
-  createPermission,
-  getRolePermissions,
-  listPermissions,
-  setRolePermissions,
-  type Permission,
-} from "@/features/access_control/api";
+import { createPermission, getRolePermissions, listPermissions, setRolePermissions, type Permission } from "@/features/access_control/api";
 import { getErrorMessage } from "@/features/access_control/errors";
-import { applyActionToggle, sanitizeGrantedActions } from "@/features/access_control/permissionHierarchy";
+import { sanitizeGrantedActions } from "@/features/access_control/permissionHierarchy";
+import { PermissionMatrixSection } from "@/features/employee/components/PermissionMatrixSection";
+import { buildMatrixGrants, DENY_PREFIX, MODULE_DISABLED, MODULE_ENABLED } from "@/features/employee/permissionMatrix";
 
-// Rows = catalog entries (module:resource); columns = only the actions each entry
-// declares as applicable (per the data-driven design — not every action applies to
-// every resource).
 export function PermissionMatrixPage() {
   const { roleId } = useParams<{ roleId: string }>();
   const [permissions, setPermissions] = useState<Permission[]>([]);
@@ -24,7 +17,6 @@ export function PermissionMatrixPage() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-
   const [newModule, setNewModule] = useState("");
   const [newResource, setNewResource] = useState("");
   const [newActions, setNewActions] = useState("view,create,edit");
@@ -34,43 +26,35 @@ export function PermissionMatrixPage() {
     try {
       const [allPermissions, roleGrants] = await Promise.all([listPermissions(), getRolePermissions(roleId)]);
       setPermissions(allPermissions);
-      const permissionById = new Map(allPermissions.map((p) => [p.id, p]));
-      const grantMap: Record<string, Set<string>> = {};
-      for (const g of roleGrants) {
-        const availableActions = permissionById.get(g.permission_id)?.actions ?? g.granted_actions;
-        grantMap[g.permission_id] = sanitizeGrantedActions(g.granted_actions, availableActions);
+      const permissionById = new Map(allPermissions.map((permission) => [permission.id, permission]));
+      const next: Record<string, Set<string>> = {};
+      for (const grant of roleGrants) {
+        const available = permissionById.get(grant.permission_id)?.actions ?? grant.granted_actions;
+        const selected = sanitizeGrantedActions(grant.granted_actions, available);
+        for (const action of grant.denied_actions ?? []) selected.add(`${DENY_PREFIX}${action}`);
+        if (grant.module_enabled === true) selected.add(MODULE_ENABLED);
+        if (grant.module_enabled === false) selected.add(MODULE_DISABLED);
+        next[grant.permission_id] = selected;
       }
-      setGrants(grantMap);
+      setGrants(next);
     } catch (err) {
       setError(getErrorMessage(err));
     }
   };
 
   useEffect(() => {
-    load();
+    void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roleId]);
 
   if (!roleId) return null;
-
-  const toggle = (permissionId: string, action: string) => {
-    setGrants((prev) => {
-      const current = prev[permissionId] ?? new Set<string>();
-      const availableActions = permissions.find((p) => p.id === permissionId)?.actions ?? [];
-      const next = applyActionToggle(current, action, !current.has(action), availableActions);
-      return { ...prev, [permissionId]: next };
-    });
-  };
 
   const onSave = async () => {
     setError(null);
     setMessage(null);
     setIsSaving(true);
     try {
-      const payload = Object.entries(grants)
-        .filter(([, actions]) => actions.size > 0)
-        .map(([permission_id, actions]) => ({ permission_id, granted_actions: Array.from(actions) }));
-      await setRolePermissions(roleId, payload);
+      await setRolePermissions(roleId, buildMatrixGrants(permissions, grants));
       setMessage("Permission matrix saved.");
     } catch (err) {
       setError(getErrorMessage(err));
@@ -79,15 +63,15 @@ export function PermissionMatrixPage() {
     }
   };
 
-  const onCreatePermission = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const onCreatePermission = async (event: FormEvent) => {
+    event.preventDefault();
     setError(null);
     try {
-      const actions = newActions.split(",").map((a) => a.trim()).filter(Boolean);
+      const actions = newActions.split(",").map((action) => action.trim()).filter(Boolean);
       await createPermission(newModule.trim(), newResource.trim(), actions);
       setNewModule("");
       setNewResource("");
-      load();
+      await load();
     } catch (err) {
       setError(getErrorMessage(err));
     }
@@ -97,57 +81,14 @@ export function PermissionMatrixPage() {
     <SimplePageLayout title="Permission Matrix" backTo={`/roles/${roleId}`} actions={<SubmitButton onClick={onSave} isSubmitting={isSaving}>Save Matrix</SubmitButton>}>
       <ErrorBanner message={error} />
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
-
-      <div className="bg-card border border-border rounded-card shadow-card overflow-x-auto mb-6">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border text-left text-text/60">
-              <th className="px-4 py-3">Module</th>
-              <th className="px-4 py-3">Resource</th>
-              <th className="px-4 py-3">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {permissions.length === 0 && (
-              <tr>
-                <td colSpan={3} className="px-4 py-6 text-center text-text/50">
-                  No permission catalog entries yet — add one below.
-                </td>
-              </tr>
-            )}
-            {permissions.map((p) => (
-              <tr key={p.id} className="border-b border-border last:border-0">
-                <td className="px-4 py-3 font-medium">{p.module}</td>
-                <td className="px-4 py-3">{p.resource}</td>
-                <td className="px-4 py-3">
-                  <div className="flex flex-wrap gap-3">
-                    {p.actions.map((action) => (
-                      <label key={action} className="flex items-center gap-1.5 text-xs capitalize">
-                        <input
-                          type="checkbox"
-                          checked={grants[p.id]?.has(action) ?? false}
-                          onChange={() => toggle(p.id, action)}
-                        />
-                        {action}
-                      </label>
-                    ))}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="max-w-xl bg-card border border-border rounded-card shadow-card p-6">
-        <h2 className="text-sm font-semibold text-text/70 mb-3">Add a new permission (module + resource)</h2>
+      <div className="mb-6"><PermissionMatrixSection permissions={permissions} checked={grants} onChange={setGrants} /></div>
+      <div className="max-w-xl rounded-card border border-border bg-card p-6 shadow-card">
+        <h2 className="mb-3 text-sm font-semibold text-text/70">Add a new permission (module + resource)</h2>
         <form onSubmit={onCreatePermission} className="grid grid-cols-1 gap-x-3 sm:grid-cols-3 sm:items-end">
-          <FormField label="Module" value={newModule} onChange={(e) => setNewModule(e.target.value)} placeholder="loan_management" />
-          <FormField label="Resource" value={newResource} onChange={(e) => setNewResource(e.target.value)} placeholder="leads" />
-          <FormField label="Actions (comma-separated)" value={newActions} onChange={(e) => setNewActions(e.target.value)} />
-          <div className="sm:col-span-3">
-            <SubmitButton>Add to Catalog</SubmitButton>
-          </div>
+          <FormField label="Module" value={newModule} onChange={(event) => setNewModule(event.target.value)} placeholder="loan_management" />
+          <FormField label="Resource" value={newResource} onChange={(event) => setNewResource(event.target.value)} placeholder="leads" />
+          <FormField label="Actions (comma-separated)" value={newActions} onChange={(event) => setNewActions(event.target.value)} />
+          <div className="sm:col-span-3"><SubmitButton>Add to Catalog</SubmitButton></div>
         </form>
       </div>
     </SimplePageLayout>

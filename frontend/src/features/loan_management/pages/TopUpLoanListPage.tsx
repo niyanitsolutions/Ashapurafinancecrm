@@ -21,7 +21,7 @@ const EXTRA_COLUMNS: CaseListExtraColumn<LoanCaseListItem>[] = [
 // spec — only the query filter and the row actions differ.
 export function TopUpLoanListPage() {
   const { can } = usePermissions();
-  const canEdit = can("loan_management:applications", "edit");
+  const canEdit = can("loan_management:applications.disbursed", "edit");
   const [reschedulingCaseId, setReschedulingCaseId] = useState<string | null>(null);
   const [movingCaseId, setMovingCaseId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);

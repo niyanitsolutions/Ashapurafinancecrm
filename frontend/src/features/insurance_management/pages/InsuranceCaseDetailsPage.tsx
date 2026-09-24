@@ -106,10 +106,6 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 export function InsuranceCaseDetailsPage() {
   const { can } = usePermissions();
-  const canEdit = can("insurance_management:applications", "edit");
-  const canAssign = can("insurance_management:applications", "assign");
-  const canIssuePolicy = can("insurance_management:applications", "approve");
-  const canReject = canEdit || can("insurance_management:applications", "reject");
   const { caseId } = useParams<{ caseId: string }>();
   const { backTo, backLabel } = useDocumentCollectionBackContext("/insurance-management/fresh-leads");
 
@@ -128,6 +124,13 @@ export function InsuranceCaseDetailsPage() {
   const [confirmIssue, setConfirmIssue] = useState(false);
   const [moveTarget, setMoveTarget] = useState("");
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
+  const stageResource = insuranceCase
+    ? `insurance_management:applications.${insuranceCase.current_status}`
+    : "insurance_management:applications";
+  const canEdit = can(stageResource, "edit");
+  const canAssign = can("insurance_management:applications", "assign");
+  const canIssuePolicy = can("insurance_management:applications", "approve");
+  const canReject = canEdit || can("insurance_management:applications", "reject");
 
   const { data: formDef } = useProductSchema("insurance", insuranceCase?.product_id);
 

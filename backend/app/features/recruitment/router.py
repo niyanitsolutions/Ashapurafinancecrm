@@ -12,13 +12,13 @@ from fastapi import APIRouter, Depends
 
 from app.core.pagination import PageParams, page_params
 from app.core.response import ApiResponse, ResponseMeta
-from app.features.access_control.permission_engine import require_any_permission, require_permission
+from app.features.access_control.permission_engine import (
+    require_any_stage_permission,
+    require_stage_permission,
+)
 from app.features.auth.models import User
 from app.features.recruitment import mappers
-from app.features.recruitment.dependencies import (
-    InsuranceManagementReadDep,
-    get_recruitment_service,
-)
+from app.features.recruitment.dependencies import get_recruitment_service
 from app.features.recruitment.schemas import (
     AddRecruitmentNoteRequest,
     AdvisorSummaryResponse,
@@ -49,8 +49,25 @@ _MODULE = "insurance_management"
 _RESOURCE = "recruitment"
 
 
-def _perm(action: str) -> Any:
-    return require_permission(_MODULE, _RESOURCE, action)
+def _perm(
+    action: str, *, default_stage: str | None = None,
+    require_all_children_without_stage: bool = False,
+) -> Any:
+    return require_stage_permission(
+        _MODULE, _RESOURCE, action,
+        collection="recruitment_leads", path_id="lead_id",
+        status_field="stage", query_status="stage", default_stage=default_stage,
+        require_all_children_without_stage=require_all_children_without_stage,
+        legacy_parent_resources=("applications",),
+    )
+
+
+def _any_perm(actions: tuple[str, ...], *, default_stage: str | None = None) -> Any:
+    return require_any_stage_permission(
+        _MODULE, _RESOURCE, actions,
+        collection="recruitment_leads", path_id="lead_id",
+        status_field="stage", query_status="stage", default_stage=default_stage,
+    )
 
 
 async def _detail(service: RecruitmentService, lead_id: str, actor: User) -> ApiResponse[RecruitmentLeadDetailResponse]:
@@ -66,7 +83,7 @@ async def _detail(service: RecruitmentService, lead_id: str, actor: User) -> Api
 
 @router.get("")
 async def list_recruitment_leads(
-    service: ServiceDep, actor: InsuranceManagementReadDep, page: PageParamsDep,
+    service: ServiceDep, actor: Annotated[User, _perm("view", require_all_children_without_stage=True)], page: PageParamsDep,
     stage: str | None = None, assigned_to: str | None = None,
 ) -> ApiResponse[list[RecruitmentLeadListItem]]:
     leads, total = await service.list_leads(
@@ -78,12 +95,12 @@ async def list_recruitment_leads(
 
 
 @router.get("/counts")
-async def get_recruitment_counts(service: ServiceDep, actor: InsuranceManagementReadDep) -> ApiResponse[RecruitmentCountsResponse]:
+async def get_recruitment_counts(service: ServiceDep, actor: Annotated[User, _perm("view", require_all_children_without_stage=True)]) -> ApiResponse[RecruitmentCountsResponse]:
     return ApiResponse[RecruitmentCountsResponse].ok(RecruitmentCountsResponse(**await service.get_counts(actor)))
 
 
 @router.get("/lookup")
-async def get_recruitment_lookup(service: ServiceDep, actor: InsuranceManagementReadDep) -> ApiResponse[RecruitmentLookupResponse]:
+async def get_recruitment_lookup(service: ServiceDep, actor: Annotated[User, _perm("view")]) -> ApiResponse[RecruitmentLookupResponse]:
     sources = await service.get_lookup()
     return ApiResponse[RecruitmentLookupResponse].ok(
         RecruitmentLookupResponse(sources=[LookupItem(id=s.require_id(), name=s.name) for s in sources])
@@ -95,14 +112,16 @@ async def get_recruitment_lookup(service: ServiceDep, actor: InsuranceManagement
 
 @router.post("")
 async def create_recruitment_lead(
-    payload: CreateRecruitmentLeadRequest, service: ServiceDep, actor: Annotated[User, _perm("create")]
+    payload: CreateRecruitmentLeadRequest,
+    service: ServiceDep,
+    actor: Annotated[User, _perm("create", default_stage="fresh")],
 ) -> ApiResponse[RecruitmentLeadDetailResponse]:
     lead = await service.create_lead(payload, actor)
     return await _detail(service, lead.require_id(), actor)
 
 
 @router.get("/{lead_id}")
-async def get_recruitment_lead(lead_id: str, service: ServiceDep, actor: InsuranceManagementReadDep) -> ApiResponse[RecruitmentLeadDetailResponse]:
+async def get_recruitment_lead(lead_id: str, service: ServiceDep, actor: Annotated[User, _perm("view")]) -> ApiResponse[RecruitmentLeadDetailResponse]:
     return await _detail(service, lead_id, actor)
 
 
@@ -140,7 +159,7 @@ async def move_to_doc_collection(
 @router.post("/{lead_id}/reject")
 async def reject_recruitment_lead(
     lead_id: str, payload: RejectRecruitmentLeadRequest, service: ServiceDep,
-    actor: Annotated[User, require_any_permission(_MODULE, _RESOURCE, ("edit", "approve"))],
+    actor: Annotated[User, _any_perm(("edit", "approve"))],
 ) -> ApiResponse[RecruitmentLeadDetailResponse]:
     await service.reject(lead_id, payload.reason, actor)
     return await _detail(service, lead_id, actor)
@@ -182,7 +201,7 @@ async def record_exam_fee(
 @router.post("/{lead_id}/examination")
 async def record_examination(
     lead_id: str, payload: RecordExaminationRequest, service: ServiceDep,
-    actor: Annotated[User, require_any_permission(_MODULE, _RESOURCE, ("edit", "approve"))],
+    actor: Annotated[User, _any_perm(("edit", "approve"))],
 ) -> ApiResponse[RecruitmentLeadDetailResponse]:
     await service.record_examination(lead_id, payload, actor)
     return await _detail(service, lead_id, actor)
@@ -195,7 +214,7 @@ async def move_to_advisor(lead_id: str, service: ServiceDep, actor: Annotated[Us
 
 
 @router.get("/{lead_id}/advisor")
-async def get_lead_advisor(lead_id: str, service: ServiceDep, actor: InsuranceManagementReadDep) -> ApiResponse[AdvisorSummaryResponse | None]:
+async def get_lead_advisor(lead_id: str, service: ServiceDep, actor: Annotated[User, _perm("view")]) -> ApiResponse[AdvisorSummaryResponse | None]:
     lead = await service.get_lead_scoped(lead_id, actor)
     advisor = await service.get_advisor_for_lead(lead)
     return ApiResponse[AdvisorSummaryResponse | None].ok(mappers.advisor_to_summary(advisor) if advisor is not None else None)
@@ -214,7 +233,7 @@ async def assign_recruitment_lead(
 
 @router.get("/{lead_id}/timeline")
 async def get_timeline(
-    lead_id: str, service: ServiceDep, actor: InsuranceManagementReadDep
+    lead_id: str, service: ServiceDep, actor: Annotated[User, _perm("view")]
 ) -> ApiResponse[list[RecruitmentTimelineEntryResponse]]:
     entries = await service.get_timeline(lead_id, actor)
     return ApiResponse[list[RecruitmentTimelineEntryResponse]].ok(

@@ -59,13 +59,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 
+from seed_product_schemas import seed_real_product_schemas
+
 from app.config.database import get_database
 from app.constants.roles import OWNER
 from app.features.access_control.constants import PermissionAction
 from app.features.access_control.models import Permission
 from app.features.auth.models import ACCOUNT_STATUS_ACTIVE, User
 from app.features.dashboard.constants import WidgetType
-from seed_product_schemas import seed_real_product_schemas
 from app.features.dashboard.models import DashboardWidget, NavItem
 from app.features.employee.models import Branch, Department, Designation
 from app.features.integrations.constants import IntegrationType
@@ -189,7 +190,7 @@ async def seed_permission_catalog() -> None:
     # matches the exact name Dashboard's own "Disbursed"/"Rejected" widget catalog rows
     # already reference (decision 032/044's forward-compatibility pattern), so those
     # widgets become grantable to an Employee with zero Dashboard code changes.
-    case_actions = [PermissionAction.VIEW, PermissionAction.EDIT, PermissionAction.APPROVE, PermissionAction.REJECT, PermissionAction.ASSIGN]
+    case_actions = [PermissionAction.VIEW, PermissionAction.CREATE, PermissionAction.EDIT, PermissionAction.APPROVE, PermissionAction.REJECT, PermissionAction.ASSIGN]
     entries.append(Permission(module="loan_management", resource="applications", actions=case_actions, label="Loan Cases"))
     entries.append(Permission(module="insurance_management", resource="applications", actions=case_actions, label="Insurance Cases"))
     # Insurance Advisor Recruitment — a second workflow inside Insurance Management,
@@ -292,6 +293,64 @@ async def seed_permission_catalog() -> None:
     # a real two-way Customer<->Staff conversation (no prior module built one to reuse).
     entries.append(
         Permission(module="messaging", resource="conversations", actions=[PermissionAction.VIEW, PermissionAction.CREATE], label="Customer Messages")
+    )
+
+    # Hierarchical defaults for fresh installations. Existing installations use the
+    # separate idempotent migrate_permission_hierarchy.py script; this seed is not a
+    # production migration and is never run by the application at startup.
+    module_labels = {entry.module: entry.module.replace("_", " ").title() for entry in entries}
+    for entry in entries:
+        entry.parent_resource = "__module__"
+        entry.node_type = "page"
+    entries.extend(
+        Permission(
+            module=module,
+            resource="__module__",
+            actions=[PermissionAction.VIEW, PermissionAction.CREATE, PermissionAction.EDIT],
+            label=label,
+            node_type="module",
+        )
+        for module, label in module_labels.items()
+    )
+
+    hierarchy_children = {
+        ("loan_management", "applications"): (
+            ("new_customer", "Loan Cases / New Customer"), ("credit_evaluation", "Credit Evaluation"),
+            ("offer_acceptance", "Offer Acceptance"), ("additional_documents", "Additional Documents"),
+            ("rv_ov_ref", "RV / OV / Ref"), ("esign_nach_kyc", "eSign / NACH / KYC"),
+            ("final_evaluation", "Final Evaluation"), ("send_for_disbursement", "Send For Disbursement"),
+            ("disbursed", "Disbursed"), ("on_hold", "On Hold"), ("rejected", "Rejected"),
+        ),
+        ("insurance_management", "applications"): (
+            ("fresh_lead", "Fresh Leads"), ("policy_document", "Policy Document"),
+            ("policy_login", "Policy Login"), ("payment", "Payment"), ("policy_issued", "Policy Issued"),
+            ("re_eligible", "Re-Eligible"), ("rejected", "Rejected"), ("on_hold", "On Hold"),
+            ("settings", "Settings"),
+        ),
+        ("insurance_management", "recruitment"): (
+            ("fresh", "Fresh Leads"), ("bop", "BOP"), ("doc_collection", "Doc Collection"),
+            ("exam_fee_status", "Exam Fee Status"), ("examination", "Examination"),
+            ("re_examination", "Re-Examination"), ("agency_code", "Agency Code"), ("rejected", "Rejected"),
+        ),
+    }
+    for (module, parent), children in hierarchy_children.items():
+        entries.extend(
+            Permission(
+                module=module,
+                resource=f"{parent}.{suffix}",
+                actions=[PermissionAction.VIEW, PermissionAction.CREATE, PermissionAction.EDIT],
+                label=label,
+                parent_resource=parent,
+                node_type="tab",
+            )
+            for suffix, label in children
+        )
+    entries.append(
+        Permission(
+            module="insurance_management", resource="advisors",
+            actions=[PermissionAction.VIEW, PermissionAction.CREATE, PermissionAction.EDIT],
+            label="Advisors", parent_resource="__module__", node_type="page",
+        )
     )
 
     for entry in entries:

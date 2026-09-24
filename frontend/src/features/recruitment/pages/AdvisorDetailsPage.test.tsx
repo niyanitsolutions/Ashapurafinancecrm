@@ -20,7 +20,13 @@ vi.mock("@/features/recruitment/api", async () => {
 let canValue = true;
 let insuranceEdit = false;
 vi.mock("@/features/access_control/usePermissions", () => ({
-  usePermissions: () => ({ can: (resource: string, action: string) => canValue || (insuranceEdit && resource === "insurance_management:applications" && action === "edit") }),
+  usePermissions: () => ({
+    can: (resource: string, action: string) =>
+      (resource === "insurance_management:advisors" && action === "view") ||
+      canValue ||
+      (insuranceEdit && resource === "insurance_management:applications" && action === "edit"),
+    loading: false,
+  }),
 }));
 
 function advisor(over: Partial<AdvisorDetail> = {}): AdvisorDetail {

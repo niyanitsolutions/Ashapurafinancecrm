@@ -6,6 +6,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.config.database import get_database
 from app.core.exceptions import ForbiddenError, UnauthorizedError
 from app.features.access_control.permission_engine import PermissionEngine
+from app.features.access_control.repository import PermissionRepository
 from app.features.auth.models import ACCOUNT_STATUS_ACTIVE, User
 from app.features.auth.repository import UserRepository
 from app.features.recruitment.advisor_service import AdvisorService
@@ -39,7 +40,17 @@ async def require_insurance_management_read_access(
         raise UnauthorizedError("Account is not active.")
 
     engine = PermissionEngine(db)
-    for resource in ("applications", "recruitment"):
+    resources = ["advisors"]
+    advisor_permission = await PermissionRepository(db).find_by_module_resource(
+        "insurance_management", "advisors"
+    )
+    if advisor_permission is None:
+        resources.append("applications")
+    agency_child = await PermissionRepository(db).find_by_module_resource(
+        "insurance_management", "recruitment.agency_code"
+    )
+    resources.append("recruitment.agency_code" if agency_child is not None else "recruitment")
+    for resource in resources:
         if await engine.has_permission(user, module="insurance_management", resource=resource, action="view"):
             return user
     raise ForbiddenError("Missing Insurance Management view permission.")
@@ -48,12 +59,41 @@ async def require_insurance_management_read_access(
 InsuranceManagementReadDep = Annotated[User, Depends(require_insurance_management_read_access)]
 
 
+async def require_advisor_edit(
+    actor: InsuranceManagementReadDep,
+    db: Annotated[AsyncIOMotorDatabase[Any], Depends(get_database)],
+) -> User:
+    engine = PermissionEngine(db)
+    resources = ["advisors"]
+    advisor_permission = await PermissionRepository(db).find_by_module_resource(
+        "insurance_management", "advisors"
+    )
+    if advisor_permission is None:
+        resources.append("applications")
+    agency_child = await PermissionRepository(db).find_by_module_resource(
+        "insurance_management", "recruitment.agency_code"
+    )
+    resources.append("recruitment.agency_code" if agency_child is not None else "recruitment")
+    for resource in resources:
+        if await engine.has_permission(actor, module="insurance_management", resource=resource, action="edit"):
+            return actor
+    raise ForbiddenError("Missing Advisor edit permission.")
+
+
+AdvisorEditDep = Annotated[User, Depends(require_advisor_edit)]
+
+
 async def require_advisor_business_edit(
     actor: InsuranceManagementReadDep,
     db: Annotated[AsyncIOMotorDatabase[Any], Depends(get_database)],
 ) -> User:
     engine = PermissionEngine(db)
-    for resource in ("applications", "recruitment"):
+    resources = ["applications", "advisors"]
+    agency_child = await PermissionRepository(db).find_by_module_resource(
+        "insurance_management", "recruitment.agency_code"
+    )
+    resources.append("recruitment.agency_code" if agency_child is not None else "recruitment")
+    for resource in resources:
         if await engine.has_permission(actor, module="insurance_management", resource=resource, action="edit"):
             return actor
     raise ForbiddenError("Missing Insurance business edit permission.")

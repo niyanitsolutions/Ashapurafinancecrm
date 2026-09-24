@@ -20,7 +20,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import ValidationError as PydanticValidationError
 
 from app.constants.roles import OWNER
-from app.core.exceptions import NotFoundError, ValidationError
+from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.features.auth.models import User
 from app.features.auth.repository import UserRepository
 from app.features.integrations import mappers as integrations_mappers
@@ -52,14 +52,22 @@ from app.features.lead_capture.schemas import (
     UpdateCaptureSourceRequest,
     WebsiteCaptureRequest,
 )
+from app.features.leads.constants import ProductCategory
 from app.features.leads.models import Lead, LeadActivity
 from app.features.leads.repository import LeadActivityRepository, LeadRepository
 from app.features.leads.schemas import CreateLeadRequest
 from app.features.leads.service import LeadService
+from app.features.system_settings.constants import MasterDataStatus
+from app.features.system_settings.repository import (
+    InsuranceCategoryRepository,
+    InsuranceProductRepository,
+    LeadSourceRepository,
+    LoanProductRepository,
+)
 from app.security.encryption import decrypt
 from app.shared.audit_log import write_audit_log
 from app.utils.datetime import utc_now
-from app.utils.helpers import to_object_id
+from app.utils.helpers import is_valid_object_id, to_object_id
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +82,10 @@ class LeadCaptureService:
         self._leads = LeadRepository(db)
         self._activities = LeadActivityRepository(db)
         self._lead_service = LeadService(db)
+        self._lead_sources = LeadSourceRepository(db)
+        self._loan_products = LoanProductRepository(db)
+        self._insurance_categories = InsuranceCategoryRepository(db)
+        self._insurance_products = InsuranceProductRepository(db)
 
     # ================================================================== system actor (no human in the loop)
 
@@ -109,6 +121,10 @@ class LeadCaptureService:
             if existing is not None:
                 found = await self._leads.find_by_id(existing.lead_id)
                 if found is not None:
+                    logger.info(
+                        "Capture delivery already processed: source=%s external_id=%s lead_id=%s",
+                        capture_source, external_id, found.require_id(),
+                    )
                     return found  # already processed — idempotent no-op, not a failure
 
         source = await self._get_source(capture_source)
@@ -121,6 +137,10 @@ class LeadCaptureService:
             actor,
         )
         await self._leads.update(lead.require_id(), {"created_by": None})
+        logger.info(
+            "Capture created CRM lead: source=%s external_id=%s lead_id=%s lead_code=%s",
+            capture_source, external_id, lead.require_id(), lead.lead_code,
+        )
 
         activity = LeadActivity(
             lead_id=lead.require_id(), event_type=LEAD_ACTIVITY_CAPTURED,
@@ -140,12 +160,18 @@ class LeadCaptureService:
         if external_id:
             await self._receipts.insert(CaptureReceipt(capture_source=capture_source, external_id=external_id, lead_id=lead.require_id()))
 
+        logger.info(
+            "Capture processing completed: source=%s external_id=%s lead_id=%s activity_recorded=true audit_recorded=true receipt_recorded=%s",
+            capture_source, external_id, lead.require_id(), bool(external_id),
+        )
+
         return lead
 
     async def _parse_meta_entry(self, entry: dict[str, Any]) -> tuple[ParsedLead, str]:
         leadgen_id = entry.get("leadgen_id")
         if not leadgen_id:
             raise CaptureValidationError(FailureReason.MISSING_REQUIRED_FIELDS, "Meta webhook entry is missing leadgen_id.")
+        logger.info("Meta lead retrieval starting: leadgen_id=%s form_id=%s", leadgen_id, entry.get("form_id"))
 
         config = await self._active_config("meta")
         if config is None:
@@ -157,7 +183,22 @@ class LeadCaptureService:
 
         graph_payload = await meta_client.fetch_lead_fields(leadgen_id, access_token=access_token)
         fields = meta_client.parse_field_data(graph_payload)
+        logger.info(
+            "Meta lead fields retrieved: leadgen_id=%s has_name=%s has_mobile=%s has_email=%s",
+            leadgen_id, bool(fields.get("full_name")), bool(fields.get("mobile")), bool(fields.get("email")),
+        )
         source = await self._get_source(CaptureSourceKey.META_LEAD_ADS)
+        try:
+            await self._validate_source_mapping(source, {})
+        except ValidationError as exc:
+            raise CaptureValidationError(
+                FailureReason.INVALID_DATA,
+                f"Meta Lead Ads source mapping is invalid: {exc.message}",
+            ) from exc
+        logger.info(
+            "Meta source mapping selected: leadgen_id=%s product_category=%s product_id=%s lead_source_id=%s",
+            leadgen_id, source.default_product_category, source.default_product_id, source.lead_source_id,
+        )
         parsed = parse_meta_fields(
             fields, default_product_category=source.default_product_category, default_product_id=source.default_product_id, raw_entry=entry
         )
@@ -186,6 +227,10 @@ class LeadCaptureService:
         failure = CaptureFailure(capture_source=capture_source, failure_reason=reason, raw_payload=raw_payload, error_detail=detail, status=status, next_retry_at=next_retry_at)
         failure_id = await self._failures.insert(failure)
         await write_audit_log(self._db, event_type=AuditEvent.CAPTURE_FAILED, user_id=None, metadata={"failure_id": failure_id, "capture_source": capture_source, "reason": reason})
+        logger.warning(
+            "Capture processing failed: source=%s external_id=%s failure_id=%s reason=%s",
+            capture_source, raw_payload.get("leadgen_id"), failure_id, reason,
+        )
         found = await self._failures.find_by_id(failure_id)
         assert found is not None
         return found
@@ -354,6 +399,8 @@ class LeadCaptureService:
                     await self._process_raw_payload(CaptureSourceKey.META_LEAD_ADS, value)
                 except CaptureValidationError as exc:
                     await self._record_failure(CaptureSourceKey.META_LEAD_ADS, exc.reason, value, exc.detail)
+                except ConflictError as exc:
+                    await self._record_failure(CaptureSourceKey.META_LEAD_ADS, FailureReason.DUPLICATE, value, str(exc))
                 # `PydanticValidationError` added alongside the app's own `ValidationError`
                 # — e.g. a malformed email in a Meta form field previously escaped both
                 # this and the app-level catch, reaching the generic 500 handler with no
@@ -388,6 +435,11 @@ class LeadCaptureService:
         except CaptureValidationError:
             # Turned out to be permanently invalid, not transient — stop retrying.
             await self._failures.update(failure.require_id(), {"status": FailureStatus.IGNORED, "next_retry_at": None})
+        except ConflictError as exc:
+            await self._failures.update(
+                failure.require_id(),
+                {"status": FailureStatus.IGNORED, "next_retry_at": None, "failure_reason": FailureReason.DUPLICATE, "error_detail": str(exc)},
+            )
         except (httpx.HTTPError, ValidationError, PydanticValidationError) as exc:
             retry_count = failure.retry_count + 1
             if retry_count >= MAX_RETRY_ATTEMPTS:
@@ -409,10 +461,47 @@ class LeadCaptureService:
     async def update_source(self, key: str, payload: UpdateCaptureSourceRequest, actor: User) -> CaptureSource:
         source = await self._get_source(key)
         updates = payload.model_dump(exclude_unset=True)
+        await self._validate_source_mapping(source, updates)
         updated = await self._sources.update(source.require_id(), updates, updated_by=actor.require_id()) if updates else source
         assert updated is not None
         await write_audit_log(self._db, event_type=AuditEvent.SOURCE_REMAPPED, user_id=actor.require_id(), metadata={"key": key})
         return updated
+
+    async def _validate_source_mapping(self, source: CaptureSource, updates: dict[str, Any]) -> None:
+        lead_source_id = updates.get("lead_source_id", source.lead_source_id)
+        if not lead_source_id or not is_valid_object_id(lead_source_id):
+            raise ValidationError("Select a valid Lead Source.")
+        lead_source = await self._lead_sources.find_by_id(lead_source_id)
+        if lead_source is None or lead_source.status != MasterDataStatus.ACTIVE:
+            raise ValidationError("The selected Lead Source must exist and be active.")
+
+        category = updates.get("default_product_category", source.default_product_category)
+        product_id = updates.get("default_product_id", source.default_product_id)
+        if category is None and product_id is None:
+            return
+        if not category or not product_id:
+            raise ValidationError("Product Category and Product must be selected together.")
+        if not is_valid_object_id(product_id):
+            raise ValidationError("Select a valid Product.")
+
+        if category == ProductCategory.LOAN:
+            loan_product = await self._loan_products.find_by_id(product_id)
+            if loan_product is None or loan_product.status != MasterDataStatus.ACTIVE:
+                raise ValidationError("The selected Loan Product must exist and be active.")
+            return
+
+        if category == ProductCategory.INSURANCE:
+            insurance_product = await self._insurance_products.find_by_id(product_id)
+            if insurance_product is None or insurance_product.status != MasterDataStatus.ACTIVE:
+                raise ValidationError("The selected Insurance Product must exist and be active.")
+            if not insurance_product.category_id or not is_valid_object_id(insurance_product.category_id):
+                raise ValidationError("The selected Insurance Product must belong to an active Insurance Category.")
+            insurance_category = await self._insurance_categories.find_by_id(insurance_product.category_id)
+            if insurance_category is None or insurance_category.status != MasterDataStatus.ACTIVE:
+                raise ValidationError("The selected Insurance Product must belong to an active Insurance Category.")
+            return
+
+        raise ValidationError("Product Category must be loan or insurance.")
 
     async def list_failures(
         self, *, capture_source: str | None, status: str | None, failure_reason: str | None, skip: int, limit: int, sort: list[tuple[str, int]] | None

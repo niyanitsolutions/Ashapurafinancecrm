@@ -29,7 +29,7 @@ import {
   type BranchItem,
   type MasterDataItem,
 } from "@/features/employee/api";
-import { MATRIX_ACTIONS, PERMISSION_MATRIX_ROWS, buildMatrixGrants } from "@/features/employee/permissionMatrix";
+import { DENY_PREFIX, MATRIX_ACTIONS, MODULE_DISABLED, MODULE_ENABLED, PERMISSION_MATRIX_ROWS, buildMatrixGrants } from "@/features/employee/permissionMatrix";
 import { getErrorMessage } from "@/features/employee/errors";
 import { updateEmployeeSchema, type UpdateEmployeeFormValues } from "@/features/employee/validation";
 
@@ -124,9 +124,14 @@ export function EditEmployeePage() {
         const nextChecked: Record<string, Set<string>> = {};
         for (const grant of grants) {
           const row = PERMISSION_MATRIX_ROWS.find((r) => r.module === grant.module && r.resource === grant.resource);
-          if (!row) continue; // a grant outside this simplified matrix — no checkbox to set
+          const hierarchicalModule = permissions.some((p) => p.module === grant.module && p.node_type === "module");
+          if (!row && !hierarchicalModule) continue;
           const relevant = grant.granted_actions.filter((a) => a === "view" || a === "create" || a === "edit");
-          nextChecked[grant.permission_id] = sanitizeGrantedActions(relevant, MATRIX_ACTIONS);
+          const selected = sanitizeGrantedActions(relevant, MATRIX_ACTIONS);
+          for (const action of grant.denied_actions ?? []) selected.add(`${DENY_PREFIX}${action}`);
+          if (grant.module_enabled === true) selected.add(MODULE_ENABLED);
+          if (grant.module_enabled === false) selected.add(MODULE_DISABLED);
+          nextChecked[grant.permission_id] = selected;
         }
         setCheckedPermissions(nextChecked);
       })
@@ -136,7 +141,7 @@ export function EditEmployeePage() {
         // with no explanation — surface it instead of failing invisibly.
         setApiError("Couldn't load this employee's current permissions. Please refresh and try again before saving.");
       });
-  }, [employeeId]);
+  }, [employeeId, permissions]);
 
   if (!employeeId) return null;
 

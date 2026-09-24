@@ -8,6 +8,7 @@ from datetime import timedelta
 
 from app.features.access_control.permission_engine import PermissionEngine
 from app.features.auth.models import User
+from app.features.system_settings.models import LeadSource
 from app.utils.datetime import utc_now
 
 
@@ -597,6 +598,160 @@ async def test_my_permissions_empty_for_employee_with_no_roles(client, employee_
     assert r.json()["data"]["grants"] == {}
 
 
+async def test_hierarchical_permissions_inherit_override_and_cover_future_tabs(
+    client, owner_headers, master_data
+):
+    employee = await _create_employee(
+        client, owner_headers, master_data, mobile="9211119010", email="hierarchy@example.com"
+    )
+    headers = await _login(client, "9211119010")
+
+    async def permission(resource, label, parent=None, node_type="tab"):
+        response = await client.post(
+            "/api/v1/permissions",
+            json={
+                "module": "hierarchy_test", "resource": resource,
+                "actions": ["view", "create", "edit"], "label": label,
+                "parent_resource": parent, "node_type": node_type,
+            },
+            headers=owner_headers,
+        )
+        assert response.status_code == 200, response.text
+        return response.json()["data"]
+
+    root = await permission("__module__", "Hierarchy Test", node_type="module")
+    await permission("inherited", "Inherited", parent="__module__")
+    overridden = await permission("overridden", "Overridden", parent="__module__")
+    role = await _create_role(client, owner_headers, "Hierarchy Role")
+    saved = await client.put(
+        f"/api/v1/roles/{role['id']}/permissions",
+        json={"grants": [
+            {"permission_id": root["id"], "module_enabled": True,
+             "granted_actions": ["view", "create", "edit"]},
+            {"permission_id": overridden["id"], "granted_actions": [],
+             "denied_actions": ["create", "edit"]},
+        ]},
+        headers=owner_headers,
+    )
+    assert saved.status_code == 200, saved.text
+    await client.post(f"/api/v1/roles/{role['id']}/assign", json={"employee_id": employee["id"]}, headers=owner_headers)
+
+    grants = (await client.get("/api/v1/my-permissions", headers=headers)).json()["data"]["grants"]
+    assert set(grants["hierarchy_test:inherited"]) == {"view", "create", "edit"}
+    assert set(grants["hierarchy_test:overridden"]) == {"view"}
+
+    future = await permission("future_tab", "Future Tab", parent="__module__")
+    grants = (await client.get("/api/v1/my-permissions", headers=headers)).json()["data"]["grants"]
+    assert set(grants[f"hierarchy_test:{future['resource']}"]) == {"view", "create", "edit"}
+
+
+async def test_disabled_module_blocks_child_override(client, owner_headers, master_data):
+    employee = await _create_employee(
+        client, owner_headers, master_data, mobile="9211119011", email="disabled.module@example.com"
+    )
+    headers = await _login(client, "9211119011")
+    root = (await client.post(
+        "/api/v1/permissions",
+        json={"module": "disabled_test", "resource": "__module__", "actions": ["view", "create", "edit"],
+              "node_type": "module"}, headers=owner_headers,
+    )).json()["data"]
+    child = (await client.post(
+        "/api/v1/permissions",
+        json={"module": "disabled_test", "resource": "child", "actions": ["view", "create", "edit"],
+              "parent_resource": "__module__", "node_type": "tab"}, headers=owner_headers,
+    )).json()["data"]
+    role = await _create_role(client, owner_headers, "Disabled Module Role")
+    saved = await client.put(
+        f"/api/v1/roles/{role['id']}/permissions",
+        json={"grants": [
+            {"permission_id": root["id"], "module_enabled": False, "granted_actions": []},
+            {"permission_id": child["id"], "granted_actions": ["view", "edit"]},
+        ]}, headers=owner_headers,
+    )
+    assert saved.status_code == 200, saved.text
+    await client.post(f"/api/v1/roles/{role['id']}/assign", json={"employee_id": employee["id"]}, headers=owner_headers)
+    assert "disabled_test:child" not in (
+        await client.get("/api/v1/my-permissions", headers=headers)
+    ).json()["data"]["grants"]
+
+
+async def test_stage_override_enforced_by_direct_recruitment_api(
+    client, owner_headers, master_data, mock_db
+):
+    employee = await _create_employee(
+        client, owner_headers, master_data, mobile="9211119012", email="stage.api@example.com"
+    )
+    employee_headers = await _login(client, "9211119012")
+
+    async def permission(resource, parent=None, node_type="tab"):
+        response = await client.post(
+            "/api/v1/permissions",
+            json={
+                "module": "insurance_management", "resource": resource,
+                "actions": ["view", "create", "edit"],
+                "parent_resource": parent, "node_type": node_type,
+            },
+            headers=owner_headers,
+        )
+        assert response.status_code == 200, response.text
+        return response.json()["data"]
+
+    root = await permission("__module__", node_type="module")
+    page = await permission("recruitment", "__module__", "page")
+    fresh = await permission("recruitment.fresh", "recruitment")
+    bop = await permission("recruitment.bop", "recruitment")
+    role = await _create_role(client, owner_headers, "Recruitment View Only")
+    saved = await client.put(
+        f"/api/v1/roles/{role['id']}/permissions",
+        json={"grants": [
+            {"permission_id": root["id"], "module_enabled": True,
+             "granted_actions": ["view", "create", "edit"]},
+            {"permission_id": page["id"], "granted_actions": []},
+            {"permission_id": fresh["id"], "granted_actions": ["view"],
+             "denied_actions": ["create", "edit"]},
+            {"permission_id": bop["id"], "granted_actions": [],
+             "denied_actions": ["view", "create", "edit"]},
+        ]},
+        headers=owner_headers,
+    )
+    assert saved.status_code == 200, saved.text
+    assigned = await client.post(
+        f"/api/v1/roles/{role['id']}/assign",
+        json={"employee_id": employee["id"]}, headers=owner_headers,
+    )
+    assert assigned.status_code == 200, assigned.text
+
+    source = LeadSource(name="Stage API")
+    source_id = str((await mock_db["lead_sources"].insert_one(
+        source.model_dump(by_alias=True, exclude={"id"})
+    )).inserted_id)
+    payload = {
+        "full_name": "Stage Protected", "mobile": "9876500012", "gender": "male",
+        "age": 30, "source_id": source_id, "profession": "salaried",
+    }
+    created = await client.post("/api/v1/recruitment-leads", json=payload, headers=owner_headers)
+    assert created.status_code == 200, created.text
+    lead_id = created.json()["data"]["id"]
+
+    assert (await client.get(
+        "/api/v1/recruitment-leads?stage=fresh", headers=employee_headers
+    )).status_code == 200
+    assert (await client.get(
+        "/api/v1/recruitment-leads?stage=bop", headers=employee_headers
+    )).status_code == 403
+    # An aggregate request cannot bypass a hidden child by omitting the stage filter.
+    assert (await client.get(
+        "/api/v1/recruitment-leads", headers=employee_headers
+    )).status_code == 403
+    assert (await client.post(
+        "/api/v1/recruitment-leads", json=payload, headers=employee_headers
+    )).status_code == 403
+    assert (await client.patch(
+        f"/api/v1/recruitment-leads/{lead_id}", json={"remarks": "blocked"},
+        headers=employee_headers,
+    )).status_code == 403
+
+
 async def test_my_permissions_reflects_employee_grants_exactly(client, owner_headers, master_data):
     employee = await _create_employee(client, owner_headers, master_data, mobile="9211119002", email="myperm@example.com")
     headers = await _login(client, "9211119002")
@@ -664,7 +819,7 @@ async def test_my_permissions_never_authoritative_for_writes(client, owner_heade
     """This endpoint is UI support only — confirms the real gate (require_permission on
     the actual route) is untouched by it: an Employee whose /my-permissions shows no
     leads:leads:create grant is still, independently, rejected by POST /leads itself."""
-    employee = await _create_employee(client, owner_headers, master_data, mobile="9211119003", email="notauthoritative@example.com")
+    await _create_employee(client, owner_headers, master_data, mobile="9211119003", email="notauthoritative@example.com")
     headers = await _login(client, "9211119003")
 
     r = await client.get("/api/v1/my-permissions", headers=headers)

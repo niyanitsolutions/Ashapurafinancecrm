@@ -1,6 +1,6 @@
 import { BulkUploadModal } from "@/features/bulk_import/BulkUploadModal";
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Navigate, useNavigate } from "react-router-dom";
 import { Button } from "@/components/buttons/Button";
 import { CaseListPage, type CaseListExtraColumn } from "@/components/pages/CaseListPage";
 import { usePermissions } from "@/features/access_control/usePermissions";
@@ -32,11 +32,18 @@ const PAYMENT_COLUMNS: CaseListExtraColumn<InsuranceCaseListItem>[] = [
 export function InsuranceCaseListPage({ fixedStatus }: { fixedStatus?: string } = {}) {
   const isReEligible = fixedStatus === "re_eligible";
   const navigate = useNavigate();
-  const { can } = usePermissions();
-  const canCreate = can("insurance_management:applications", "edit");
+  const { can, loading } = usePermissions();
+  const resource = fixedStatus
+    ? `insurance_management:applications.${fixedStatus}`
+    : "insurance_management:applications";
+  const canView = can(resource, "view");
+  const canCreate = can(resource, "create");
   const [showBulk, setShowBulk] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [showAdd, setShowAdd] = useState(false);
+
+  if (loading) return null;
+  if (!canView) return <Navigate to="/dashboard" replace />;
 
   return (
     <>

@@ -25,10 +25,8 @@ export const PERMISSION_MATRIX_ROWS: MatrixRow[] = [
   { module: "reminders", resource: "tasks", label: "Tasks" },
   { module: "loan_management", resource: "applications", label: "Loan Management" },
   { module: "insurance_management", resource: "applications", label: "Insurance Management" },
-  // Recruitment and Advisors share this existing backend permission resource. Keeping
-  // it as its own row lets an Owner grant Create/Edit without broadening Insurance Case
-  // permissions, and ensures Edit Employee preserves those grants on its full replace.
-  { module: "insurance_management", resource: "recruitment", label: "Recruitment & Advisors" },
+  { module: "insurance_management", resource: "recruitment", label: "Recruitment Leads" },
+  { module: "insurance_management", resource: "advisors", label: "Advisors" },
   { module: "referral_partner_management", resource: "partners", label: "Referral Partners" },
   { module: "reporting", resource: "reports", label: "Reports & Analytics" },
   { module: "communication", resource: "templates", label: "Message Center" },
@@ -43,6 +41,9 @@ export const PERMISSION_MATRIX_ROWS: MatrixRow[] = [
 // against the row's own Permission before rendering or granting a cell.
 export const MATRIX_ACTIONS = ["view", "create", "edit"] as const;
 export type MatrixAction = (typeof MATRIX_ACTIONS)[number];
+export const DENY_PREFIX = "deny:";
+export const MODULE_ENABLED = "module:enabled";
+export const MODULE_DISABLED = "module:disabled";
 
 export function findRowPermission(permissions: Permission[], row: MatrixRow): Permission | undefined {
   return permissions.find((p) => p.module === row.module && p.resource === row.resource);
@@ -55,13 +56,29 @@ export function findRowPermission(permissions: Permission[], row: MatrixRow): Pe
 // on Loan Management) can never be silently included even if UI state somehow set it.
 export function buildMatrixGrants(permissions: Permission[], checked: Record<string, Set<string>>): RolePermissionGrantInput[] {
   const grants: RolePermissionGrantInput[] = [];
-  for (const row of PERMISSION_MATRIX_ROWS) {
-    const permission = findRowPermission(permissions, row);
-    if (!permission) continue;
+  const hierarchicalModules = new Set(permissions.filter((p) => p.node_type === "module").map((p) => p.module));
+  for (const permission of permissions) {
+    const legacyRow = PERMISSION_MATRIX_ROWS.some((row) => row.module === permission.module && row.resource === permission.resource);
+    if (!legacyRow && !hierarchicalModules.has(permission.module)) continue;
     const checkedForRow = checked[permission.id] ?? new Set<string>();
-    const actions = MATRIX_ACTIONS.filter((action) => permission.actions.includes(action) && checkedForRow.has(action));
-    if (actions.length === 0) continue;
-    grants.push({ permission_id: permission.id, granted_actions: actions });
+    const actions = permission.actions.filter((action) => checkedForRow.has(action));
+    const denied_actions = permission.actions.filter(
+      (action) => checkedForRow.has(`${DENY_PREFIX}${action}`),
+    );
+    const module_enabled = checkedForRow.has(MODULE_ENABLED)
+      ? true
+      : checkedForRow.has(MODULE_DISABLED)
+        ? false
+        : permission.node_type === "module"
+          ? false
+          : undefined;
+    if (actions.length === 0 && denied_actions.length === 0 && module_enabled === undefined) continue;
+    grants.push({
+      permission_id: permission.id,
+      granted_actions: actions,
+      ...(denied_actions.length > 0 ? { denied_actions } : {}),
+      ...(module_enabled !== undefined ? { module_enabled } : {}),
+    });
   }
   return grants;
 }

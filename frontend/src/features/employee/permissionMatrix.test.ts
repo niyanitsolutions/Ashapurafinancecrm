@@ -15,7 +15,7 @@ describe("employee permission matrix", () => {
     expect(PERMISSION_MATRIX_ROWS).toContainEqual({
       module: "insurance_management",
       resource: "recruitment",
-      label: "Recruitment & Advisors",
+      label: "Recruitment Leads",
     });
   });
 

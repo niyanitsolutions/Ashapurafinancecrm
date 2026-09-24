@@ -28,6 +28,7 @@ def permission_to_response(permission: Permission) -> PermissionResponse:
     return PermissionResponse(
         id=permission.require_id(), module=permission.module, resource=permission.resource,
         actions=permission.actions, label=permission.label,
+        parent_resource=permission.parent_resource, node_type=permission.node_type,
     )
 
 
@@ -35,7 +36,9 @@ def role_permission_to_response(grant: RolePermission, permission: Permission) -
     return RolePermissionResponse(
         id=grant.require_id(), role_id=grant.role_id, permission_id=grant.permission_id,
         module=permission.module, resource=permission.resource,
-        granted_actions=grant.granted_actions, department_ids=grant.department_ids, branch_ids=grant.branch_ids,
+        granted_actions=grant.granted_actions, denied_actions=grant.denied_actions,
+        module_enabled=grant.module_enabled,
+        department_ids=grant.department_ids, branch_ids=grant.branch_ids,
     )
 
 

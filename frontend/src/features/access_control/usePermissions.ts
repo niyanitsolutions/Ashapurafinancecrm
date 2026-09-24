@@ -27,7 +27,11 @@ export function usePermissions(): PermissionsApi {
     // employee's permissions after another employee signs in until the cache is stale.
     queryKey: ["my-permissions", userId],
     queryFn: getMyPermissions,
-    staleTime: 60_000,
+    // Permission changes are security-sensitive. Keep the cache identity-scoped and
+    // revalidate whenever a protected screen remounts; a re-login therefore never
+    // continues on a stale grant snapshot.
+    staleTime: 0,
+    refetchOnMount: "always",
     enabled: !isOwner && !!userId, // Owner never needs this — see docstring above
   });
 

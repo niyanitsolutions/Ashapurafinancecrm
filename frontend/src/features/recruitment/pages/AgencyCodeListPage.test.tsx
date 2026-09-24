@@ -11,7 +11,7 @@ vi.mock("@/features/recruitment/api", async () => {
 });
 
 vi.mock("@/features/access_control/usePermissions", () => ({
-  usePermissions: () => ({ can: () => true }),
+  usePermissions: () => ({ can: () => true, loading: false }),
 }));
 
 const advisor: AdvisorListItem = {

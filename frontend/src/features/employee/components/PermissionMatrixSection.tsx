@@ -1,7 +1,16 @@
 import type { Permission } from "@/features/access_control/api";
+import type { ReactNode } from "react";
 import { CheckboxField } from "@/components/forms/CheckboxField";
 import { applyActionToggle } from "@/features/access_control/permissionHierarchy";
-import { MATRIX_ACTIONS, PERMISSION_MATRIX_ROWS, findRowPermission, type MatrixAction } from "@/features/employee/permissionMatrix";
+import {
+  DENY_PREFIX,
+  MATRIX_ACTIONS,
+  MODULE_DISABLED,
+  MODULE_ENABLED,
+  PERMISSION_MATRIX_ROWS,
+  findRowPermission,
+  type MatrixAction,
+} from "@/features/employee/permissionMatrix";
 
 const ACTION_LABELS: Record<MatrixAction, string> = { view: "View", create: "Create", edit: "Edit" };
 
@@ -37,8 +46,115 @@ export function PermissionMatrixSection({
     const next = { ...checked };
     const isCurrentlyChecked = (checked[permission.id] ?? new Set()).has(action);
     applyCellChange(next, permission, action, !isCurrentlyChecked);
+    if (permission.node_type === "module" && action === "view" && isCurrentlyChecked) {
+      for (const child of permissions.filter((candidate) => candidate.module === permission.module && candidate.node_type !== "module")) {
+        const childSelection = new Set(next[child.id] ?? []);
+        if ((childSelection.has("create") || childSelection.has("edit")) && !childSelection.has("view")) {
+          childSelection.delete(`${DENY_PREFIX}view`);
+          childSelection.add("view");
+          next[child.id] = childSelection;
+        }
+      }
+    }
+    if (permission.node_type === "module" && !isCurrentlyChecked) {
+      next[permission.id].delete(MODULE_DISABLED);
+      next[permission.id].add(MODULE_ENABLED);
+    }
     onChange(next);
   };
+
+  const hierarchyRoots = permissions.filter((permission) => permission.node_type === "module");
+  const permissionByKey = new Map(permissions.map((permission) => [`${permission.module}:${permission.resource}`, permission]));
+
+  const effective = (permission: Permission, action: MatrixAction): boolean => {
+    const selected = checked[permission.id] ?? new Set<string>();
+    if (selected.has(action)) return true;
+    if (selected.has(`${DENY_PREFIX}${action}`)) return false;
+    if (!permission.parent_resource) return false;
+    const parent = permissionByKey.get(`${permission.module}:${permission.parent_resource}`);
+    return parent ? effective(parent, action) : false;
+  };
+
+  const cycleOverride = (permission: Permission, action: MatrixAction) => {
+    const next = { ...checked };
+    const selected = new Set(checked[permission.id] ?? []);
+    const deny = `${DENY_PREFIX}${action}`;
+    if (selected.has(action)) {
+      selected.delete(action);
+      selected.add(deny);
+    } else if (selected.has(deny)) {
+      selected.delete(deny);
+    } else {
+      selected.add(action);
+      if (action === "create" || action === "edit") {
+        selected.delete(`${DENY_PREFIX}view`);
+        if (!effective(permission, "view")) selected.add("view");
+      }
+    }
+    if (action === "view" && selected.has(deny)) {
+      for (const dependent of ["create", "edit"] as const) {
+        selected.delete(dependent);
+        selected.add(`${DENY_PREFIX}${dependent}`);
+      }
+    }
+    next[permission.id] = selected;
+    onChange(next);
+  };
+
+  const toggleModule = (permission: Permission) => {
+    const next = { ...checked };
+    const selected = new Set(checked[permission.id] ?? []);
+    const enabled = !selected.has(MODULE_ENABLED);
+    selected.delete(MODULE_ENABLED);
+    selected.delete(MODULE_DISABLED);
+    selected.add(enabled ? MODULE_ENABLED : MODULE_DISABLED);
+    next[permission.id] = selected;
+    onChange(next);
+  };
+
+  const renderNode = (permission: Permission, depth: number): ReactNode => {
+    const children = permissions.filter(
+      (candidate) => candidate.module === permission.module && candidate.parent_resource === permission.resource,
+    );
+    const selected = checked[permission.id] ?? new Set<string>();
+    const label = permission.label || permission.resource.replace(/_/g, " ");
+    const row = (
+      <div key={permission.id} className="grid grid-cols-[minmax(12rem,1fr)_repeat(3,5.5rem)] items-center border-t border-border py-2 text-sm">
+        <div className="flex items-center gap-2" style={{ paddingLeft: `${depth * 1.25}rem` }}>
+          {permission.node_type === "module" && (
+            <input type="checkbox" aria-label={`${label} module enabled`} checked={selected.has(MODULE_ENABLED)} onChange={() => toggleModule(permission)} />
+          )}
+          <span className={permission.node_type === "module" ? "font-semibold" : "text-text"}>{label}</span>
+        </div>
+        {MATRIX_ACTIONS.map((action) => {
+          if (!permission.actions.includes(action)) return <span key={action} className="text-center text-text/20">—</span>;
+          if (permission.node_type === "module") {
+            return <CheckboxField key={action} label={`${label} — ${ACTION_LABELS[action]}`} hideLabel className="justify-center" checked={selected.has(action)} onChange={() => toggleCell(permission, action)} />;
+          }
+          const state = selected.has(action) ? "Override Yes" : selected.has(`${DENY_PREFIX}${action}`) ? "Override No" : `Inherited ${effective(permission, action) ? "Yes" : "No"}`;
+          return <button key={action} type="button" aria-label={`${label} ${ACTION_LABELS[action]}: ${state}`} onClick={() => cycleOverride(permission, action)} className="mx-auto rounded px-1.5 py-1 text-[10px] text-primary hover:bg-primary/10">{state}</button>;
+        })}
+      </div>
+    );
+    return <div key={permission.id}>{row}{children.map((child) => renderNode(child, depth + 1))}</div>;
+  };
+
+  if (hierarchyRoots.length > 0) {
+    return (
+      <div className="rounded-card border border-border bg-card p-6 shadow-card">
+        <h2 className="mb-1 text-sm font-semibold text-text">Permissions</h2>
+        <p className="mb-4 text-xs text-text/50">Module actions are defaults. Select a child action to cycle through inherited, explicit allow, and explicit deny.</p>
+        <div className="overflow-x-auto">
+          <div className="min-w-[34rem]">
+            <div className="grid grid-cols-[minmax(12rem,1fr)_repeat(3,5.5rem)] text-xs font-semibold text-textSecondary">
+              <span>Module / page</span>{MATRIX_ACTIONS.map((action) => <span key={action} className="text-center">{ACTION_LABELS[action]}</span>)}
+            </div>
+            {hierarchyRoots.map((root) => <details key={root.id} open><summary className="cursor-pointer py-1 text-xs text-textSecondary">{root.label || root.module}</summary>{renderNode(root, 0)}</details>)}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // "Select all" for one action column — only ever touches rows whose live Permission
   // actually supports that action (e.g. clicking "Select all Create" never tries to

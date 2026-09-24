@@ -7,8 +7,8 @@ import type { AdvisorListItem } from "@/features/recruitment/api";
 
 const listAdvisors = vi.fn();
 const getAdvisor = vi.fn();
-const canEdit = vi.fn(() => false);
-vi.mock("@/features/access_control/usePermissions", () => ({ usePermissions: () => ({ can: canEdit }) }));
+const canEdit = vi.fn((_resource: string, action: string) => action === "view");
+vi.mock("@/features/access_control/usePermissions", () => ({ usePermissions: () => ({ can: canEdit, loading: false }) }));
 
 vi.mock("@/features/recruitment/api", async () => {
   const actual = await vi.importActual<typeof import("@/features/recruitment/api")>("@/features/recruitment/api");
@@ -47,20 +47,20 @@ function renderPage() {
 }
 
 describe("AdvisorListPage", () => {
-  it("lets an authorized employee open the existing edit form with Recruitment edit permission", async () => {
-    canEdit.mockReturnValue(true);
+  it("lets an authorized employee open the existing edit form with Advisors edit permission", async () => {
+    canEdit.mockImplementation((_resource, action) => action === "view" || action === "edit");
     listAdvisors.mockResolvedValue({ data: [advisor()] });
     getAdvisor.mockResolvedValue({ ...advisor(), recruitment: null, businesses: [], updated_at: "2026-09-01T00:00:00Z" });
     renderPage();
     await userEvent.click(await screen.findByRole("button", { name: "Update" }));
     expect(await screen.findByRole("dialog")).toHaveTextContent("Edit Advisor");
     expect(getAdvisor).toHaveBeenCalledWith("a1");
-    expect(canEdit).toHaveBeenCalledWith("insurance_management:recruitment", "edit");
-    canEdit.mockReturnValue(false);
+    expect(canEdit).toHaveBeenCalledWith("insurance_management:advisors", "edit");
+    canEdit.mockImplementation((_resource, action) => action === "view");
   });
 
   it("does not offer Update or Delete to a viewer", async () => {
-    canEdit.mockReturnValue(false);
+    canEdit.mockImplementation((_resource, action) => action === "view");
     listAdvisors.mockResolvedValue({ data: [advisor()] });
     renderPage();
     await screen.findByText("Ravi Kumar");

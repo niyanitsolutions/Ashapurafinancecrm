@@ -13,6 +13,9 @@ vi.mock("@/features/recruitment/api", async () => {
 vi.mock("@/components/layout/useNavKeys", () => ({
   useNavKeys: () => new Set(["insurance_cases"]),
 }));
+vi.mock("@/features/access_control/usePermissions", () => ({
+  usePermissions: () => ({ can: () => true, loading: false }),
+}));
 
 beforeEach(() => getRecruitmentCounts.mockReset());
 

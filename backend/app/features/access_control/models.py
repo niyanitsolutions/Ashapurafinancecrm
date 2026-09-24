@@ -8,6 +8,7 @@ as "HH:MM" strings and compared as such — never `datetime.time` directly.
 """
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -33,6 +34,10 @@ class Permission(BaseDocument):
     resource: str
     actions: list[str] = Field(default_factory=list)
     label: str | None = None
+    # Existing rows omit these fields and remain exact-match permissions until the
+    # hierarchy migration attaches them to a parent.
+    parent_resource: str | None = None
+    node_type: Literal["module", "page", "tab"] = "page"
 
 
 class RolePermission(BaseDocument):
@@ -44,6 +49,10 @@ class RolePermission(BaseDocument):
     role_id: str
     permission_id: str
     granted_actions: list[str] = Field(default_factory=list)
+    # Missing actions inherit from the closest parent permission. Entries here are
+    # explicit false overrides. Defaults keep every existing grant backward-compatible.
+    denied_actions: list[str] = Field(default_factory=list)
+    module_enabled: bool | None = None
     department_ids: list[str] | None = None
     branch_ids: list[str] | None = None
 

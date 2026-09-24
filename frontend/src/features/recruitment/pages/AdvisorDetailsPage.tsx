@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, Navigate, useParams } from "react-router-dom";
 import { Badge } from "@/components/badges/Badge";
 import { Button } from "@/components/buttons/Button";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
@@ -30,8 +30,9 @@ import { formatISTDate } from "@/shared/dateFormat";
 
 export function AdvisorDetailsPage() {
   const { advisorId = "" } = useParams();
-  const { can } = usePermissions();
-  const canEdit = can("insurance_management:recruitment", "edit");
+  const { can, loading: permissionsLoading } = usePermissions();
+  const canView = can("insurance_management:advisors", "view");
+  const canEdit = can("insurance_management:advisors", "edit");
   const canAddBusiness = canEdit || can("insurance_management:applications", "edit");
 
   const [advisor, setAdvisor] = useState<AdvisorDetail | null>(null);
@@ -47,6 +48,9 @@ export function AdvisorDetailsPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  if (permissionsLoading) return null;
+  if (!canView) return <Navigate to="/dashboard" replace />;
 
   if (error)
     return (

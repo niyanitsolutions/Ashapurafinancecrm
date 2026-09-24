@@ -56,11 +56,8 @@ export function LoanCaseDetailsPage() {
   // assign — no "create" (cases originate from the workflow engine). "edit" covers
   // every write below except Assign (assign) and Disburse (approve-or-edit), which are
   // separately permissioned server-side.
-  const canEdit = can("loan_management:applications", "edit");
-  const canAssign = can("loan_management:applications", "assign");
   // Disbursement is available to a case's `approve` holder OR its `edit` holder — mirrors
   // the backend's `require_any_permission(("approve", "edit"))` on POST /disburse.
-  const canDisburse = can("loan_management:applications", "approve") || canEdit;
   const { caseId } = useParams<{ caseId: string }>();
   // Reached via StaffApplicationDetailsPage's "Manage Status ->" link, which propagates
   // the Document Collection context forward when present — every normal Loan
@@ -79,6 +76,12 @@ export function LoanCaseDetailsPage() {
   const [documents, setDocuments] = useState<ApplicationDocument[]>([]);
   const [requiredDocuments, setRequiredDocuments] = useState<RequiredDocument[]>([]);
   const [additionalDocuments, setAdditionalDocuments] = useState<AdditionalDocument[]>([]);
+  const stageResource = loanCase
+    ? `loan_management:applications.${loanCase.current_status}`
+    : "loan_management:applications";
+  const canEdit = can(stageResource, "edit");
+  const canAssign = can("loan_management:applications", "assign");
+  const canDisburse = can("loan_management:applications", "approve") || canEdit;
 
   const load = () => {
     if (!caseId) return;

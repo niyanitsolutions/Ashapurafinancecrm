@@ -17,7 +17,10 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.config.database import get_database
 from app.core.pagination import PageParams, page_params
 from app.core.response import ApiResponse, ResponseMeta
-from app.features.access_control.permission_engine import require_any_permission, require_permission
+from app.features.access_control.permission_engine import (
+    require_any_stage_permission,
+    require_stage_permission,
+)
 from app.features.auth.models import User
 from app.features.geo_fencing.constants import GeoActivity
 from app.features.geo_fencing.enforcement import enforce_geo_fence
@@ -74,8 +77,26 @@ _MODULE = "loan_management"
 _RESOURCE = "applications"
 
 
-def _perm(action: str) -> Any:
-    return require_permission(_MODULE, _RESOURCE, action)
+def _perm(
+    action: str, *, default_stage: str | None = None,
+    require_all_children_without_stage: bool = False,
+) -> Any:
+    return require_stage_permission(
+        _MODULE, _RESOURCE, action,
+        collection="application_workflows", path_id="case_id",
+        status_field="current_status", query_status="status",
+        discriminator=("case_type", "loan"), default_stage=default_stage,
+        require_all_children_without_stage=require_all_children_without_stage,
+    )
+
+
+def _any_perm(actions: tuple[str, ...], *, default_stage: str | None = None) -> Any:
+    return require_any_stage_permission(
+        _MODULE, _RESOURCE, actions,
+        collection="application_workflows", path_id="case_id",
+        status_field="current_status", query_status="status",
+        discriminator=("case_type", "loan"), default_stage=default_stage,
+    )
 
 
 async def _detail(service: LoanCaseService, case_id: str, actor: User, *, own: bool = False) -> ApiResponse[LoanCaseDetailResponse]:
@@ -178,7 +199,7 @@ async def confirm_own_additional_document_upload(
 
 @router.get("")
 async def list_cases(
-    service: ServiceDep, actor: Annotated[User, _perm("view")], page: PageParamsDep,
+    service: ServiceDep, actor: Annotated[User, _perm("view", require_all_children_without_stage=True)], page: PageParamsDep,
     customer_id: str | None = None, assigned_to: str | None = None, unassigned_only: bool = False, status: str | None = None,
     top_up_eligible: bool = False,
 ) -> ApiResponse[list[LoanCaseListItem]]:
@@ -199,7 +220,7 @@ async def list_cases(
 
 
 @router.get("/counts")
-async def get_counts(service: ServiceDep, actor: Annotated[User, _perm("view")]) -> ApiResponse[LoanCaseCountsResponse]:
+async def get_counts(service: ServiceDep, actor: Annotated[User, _perm("view", require_all_children_without_stage=True)]) -> ApiResponse[LoanCaseCountsResponse]:
     # Registered before "/{case_id}" so "counts" is never captured as a case_id.
     counts = await service.get_counts(actor)
     return ApiResponse[LoanCaseCountsResponse].ok(LoanCaseCountsResponse(**counts))
@@ -207,7 +228,7 @@ async def get_counts(service: ServiceDep, actor: Annotated[User, _perm("view")])
 
 @router.get("/disbursements")
 async def list_disbursements(
-    service: ServiceDep, actor: Annotated[User, _perm("view")],
+    service: ServiceDep, actor: Annotated[User, _perm("view", default_stage="disbursed")],
     page: PageParamsDep,
     date_from: date | None = None, date_to: date | None = None, product_id: str | None = None, search: str | None = None,
 ) -> ApiResponse[DisbursementListResponse]:
@@ -477,7 +498,7 @@ async def disburse(
     # "reject"))`). Not a new permission and not a global weakening: a caller with neither
     # `approve` nor case `edit` is still refused, and `get_case`'s per-Employee assignment
     # check in the service still applies.
-    actor: Annotated[User, require_any_permission(_MODULE, _RESOURCE, ("approve", "edit"))],
+    actor: Annotated[User, _any_perm(("approve", "edit"))],
 ) -> ApiResponse[LoanCaseDetailResponse]:
     await service.disburse(case_id, payload, actor)
     return await _detail(service, case_id, actor)

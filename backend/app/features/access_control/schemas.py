@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -32,6 +33,8 @@ class CreatePermissionRequest(BaseModel):
     resource: str
     actions: list[str]
     label: str | None = None
+    parent_resource: str | None = None
+    node_type: Literal["module", "page", "tab"] = "page"
 
 
 class PermissionResponse(BaseModel):
@@ -40,11 +43,15 @@ class PermissionResponse(BaseModel):
     resource: str
     actions: list[str]
     label: str | None
+    parent_resource: str | None = None
+    node_type: Literal["module", "page", "tab"] = "page"
 
 
 class RolePermissionGrantInput(BaseModel):
     permission_id: str
     granted_actions: list[str] = Field(default_factory=list)
+    denied_actions: list[str] = Field(default_factory=list)
+    module_enabled: bool | None = None
     department_ids: list[str] | None = None
     branch_ids: list[str] | None = None
 
@@ -60,6 +67,8 @@ class RolePermissionResponse(BaseModel):
     module: str
     resource: str
     granted_actions: list[str]
+    denied_actions: list[str] = Field(default_factory=list)
+    module_enabled: bool | None = None
     department_ids: list[str] | None
     branch_ids: list[str] | None
 

@@ -256,7 +256,13 @@ async def test_meta_webhook_creates_lead_and_is_idempotent(client, mock_db, owne
 
     async def _fake_fetch(leadgen_id, *, access_token):
         assert access_token == "tok123"
-        return {"field_data": [{"name": "full_name", "values": ["Meta Prospect"]}, {"name": "phone_number", "values": ["+919876511111"]}]}
+        return {
+            "field_data": [
+                {"name": "name", "values": ["Meta Prospect"]},
+                {"name": "phone", "values": ["+919876511111"]},
+                {"name": "email", "values": ["meta.prospect@example.com"]},
+            ]
+        }
 
     monkeypatch.setattr(meta_client, "fetch_lead_fields", _fake_fetch)
 
@@ -268,6 +274,13 @@ async def test_meta_webhook_creates_lead_and_is_idempotent(client, mock_db, owne
 
     leads = await mock_db["leads"].find({"mobile": "9876511111"}).to_list(length=10)
     assert len(leads) == 1
+    assert leads[0]["full_name"] == "Meta Prospect"
+    assert leads[0]["email"] == "meta.prospect@example.com"
+
+    activity = await mock_db["lead_activities"].find_one({"lead_id": str(leads[0]["_id"]), "event_type": "captured"})
+    assert activity is not None
+    audit = await mock_db["audit_logs"].find_one({"event_type": "lead_captured", "metadata.lead_id": str(leads[0]["_id"])})
+    assert audit is not None
 
     receipts = await mock_db["capture_receipts"].find({"external_id": "LEADGEN1"}).to_list(length=10)
     assert len(receipts) == 1
@@ -289,6 +302,7 @@ async def test_meta_webhook_captures_campaign_details_and_custom_questions(clien
             "field_data": [
                 {"name": "full_name", "values": ["Campaign Prospect"]},
                 {"name": "phone_number", "values": ["9876555555"]},
+                {"name": "email", "values": ["campaign.prospect@example.com"]},
                 {"name": "Preferred City", "values": ["Ahmedabad"]},
             ]
         }
@@ -308,6 +322,8 @@ async def test_meta_webhook_captures_campaign_details_and_custom_questions(clien
 
     lead = await mock_db["leads"].find_one({"mobile": "9876555555"})
     assert lead is not None
+    assert lead["full_name"] == "Campaign Prospect"
+    assert lead["email"] == "campaign.prospect@example.com"
     activity = await mock_db["lead_activities"].find_one({"lead_id": str(lead["_id"]), "event_type": "captured"})
     assert activity is not None
     metadata = activity["metadata"]["source_metadata"]
@@ -495,9 +511,171 @@ async def test_source_mapping_admin_endpoints(client, mock_db, owner_headers, em
     keys = {s["key"] for s in r.json()["data"]}
     assert keys == {"website_form", "meta_lead_ads", "manual_api"}
 
-    r = await client.patch("/api/v1/lead-capture/sources/website_form", json={"default_product_category": "insurance"}, headers=owner_headers)
+    r = await client.patch(
+        "/api/v1/lead-capture/sources/meta_lead_ads",
+        json={"default_product_category": "loan", "default_product_id": product_id},
+        headers=owner_headers,
+    )
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["default_product_category"] == "insurance"
+    assert r.json()["data"]["default_product_category"] == "loan"
+    assert r.json()["data"]["default_product_id"] == product_id
+
+
+async def test_source_mapping_rejects_partial_mismatched_inactive_and_deleted_products(client, mock_db, owner_headers):
+    from app.features.system_settings.models import LoanProduct
+
+    product_id = await _seed_loan_product(mock_db)
+    await _seed_lead_sources_and_capture_sources(mock_db, product_id=product_id)
+    url = "/api/v1/lead-capture/sources/meta_lead_ads"
+
+    r = await client.patch(url, json={"default_product_category": None}, headers=owner_headers)
+    assert r.status_code == 422, r.text
+
+    r = await client.patch(
+        url,
+        json={"default_product_category": "insurance", "default_product_id": product_id},
+        headers=owner_headers,
+    )
+    assert r.status_code == 422, r.text
+
+    inactive_result = await mock_db["loan_products"].insert_one(
+        LoanProduct(name="Inactive Loan", status="inactive").model_dump(by_alias=True, exclude={"id"})
+    )
+    r = await client.patch(
+        url,
+        json={"default_product_category": "loan", "default_product_id": str(inactive_result.inserted_id)},
+        headers=owner_headers,
+    )
+    assert r.status_code == 422, r.text
+
+    deleted_result = await mock_db["loan_products"].insert_one(
+        LoanProduct(name="Deleted Loan", is_deleted=True).model_dump(by_alias=True, exclude={"id"})
+    )
+    r = await client.patch(
+        url,
+        json={"default_product_category": "loan", "default_product_id": str(deleted_result.inserted_id)},
+        headers=owner_headers,
+    )
+    assert r.status_code == 422, r.text
+
+
+async def test_source_mapping_accepts_insurance_product_only_with_active_category(client, mock_db, owner_headers):
+    from app.features.system_settings.models import InsuranceCategory, InsuranceProduct
+
+    loan_product_id = await _seed_loan_product(mock_db)
+    await _seed_lead_sources_and_capture_sources(mock_db, product_id=loan_product_id)
+    category_result = await mock_db["insurance_categories"].insert_one(
+        InsuranceCategory(name="Health Insurance").model_dump(by_alias=True, exclude={"id"})
+    )
+    category_id = str(category_result.inserted_id)
+    product_result = await mock_db["insurance_products"].insert_one(
+        InsuranceProduct(name="Health Protect", category_id=category_id).model_dump(by_alias=True, exclude={"id"})
+    )
+    product_id = str(product_result.inserted_id)
+    url = "/api/v1/lead-capture/sources/meta_lead_ads"
+
+    r = await client.patch(
+        url,
+        json={"default_product_category": "insurance", "default_product_id": product_id},
+        headers=owner_headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["default_product_id"] == product_id
+
+    await mock_db["insurance_categories"].update_one({"_id": category_result.inserted_id}, {"$set": {"status": "inactive"}})
+    r = await client.patch(
+        url,
+        json={"default_product_category": "insurance", "default_product_id": product_id},
+        headers=owner_headers,
+    )
+    assert r.status_code == 422, r.text
+
+
+async def test_meta_webhook_missing_category_or_product_creates_failure_without_lead(client, mock_db, monkeypatch):
+    product_id = await _seed_loan_product(mock_db)
+    await _seed_lead_sources_and_capture_sources(mock_db, product_id=product_id)
+    await _seed_active_meta_config(mock_db, app_secret="realsecret")
+
+    async def _fake_fetch(leadgen_id, *, access_token):
+        mobile = "9876500101" if leadgen_id == "MISSING_CATEGORY" else "9876500102"
+        return {"field_data": [{"name": "full_name", "values": ["Blocked Meta Lead"]}, {"name": "phone_number", "values": [mobile]}]}
+
+    monkeypatch.setattr(meta_client, "fetch_lead_fields", _fake_fetch)
+    meta_filter = {"key": "meta_lead_ads"}
+
+    await mock_db["capture_sources"].update_one(meta_filter, {"$set": {"default_product_category": None, "default_product_id": product_id}})
+    body = json.dumps({"entry": [{"changes": [{"value": {"leadgen_id": "MISSING_CATEGORY"}}]}]}).encode()
+    r = await client.post("/api/v1/lead-capture/webhooks/meta", content=body, headers={"X-Hub-Signature-256": _sign(body, "realsecret")})
+    assert r.status_code == 200, r.text
+
+    await mock_db["capture_sources"].update_one(meta_filter, {"$set": {"default_product_category": "loan", "default_product_id": None}})
+    body = json.dumps({"entry": [{"changes": [{"value": {"leadgen_id": "MISSING_PRODUCT"}}]}]}).encode()
+    r = await client.post("/api/v1/lead-capture/webhooks/meta", content=body, headers={"X-Hub-Signature-256": _sign(body, "realsecret")})
+    assert r.status_code == 200, r.text
+
+    assert await mock_db["leads"].count_documents({"mobile": {"$in": ["9876500101", "9876500102"]}}) == 0
+    failures = await mock_db["capture_failures"].find(
+        {"capture_source": "meta_lead_ads", "status": "ignored"}
+    ).to_list(length=10)
+    assert len(failures) == 2
+    assert {failure["failure_reason"] for failure in failures} == {"invalid_data"}
+
+
+async def test_meta_webhook_duplicate_is_acknowledged_and_recorded(client, mock_db, owner_headers, monkeypatch):
+    product_id = await _seed_loan_product(mock_db)
+    await _seed_lead_sources_and_capture_sources(mock_db, product_id=product_id)
+    await _seed_active_meta_config(mock_db, app_secret="realsecret")
+
+    async def _fake_fetch(leadgen_id, *, access_token):
+        return {"field_data": [{"name": "full_name", "values": ["Duplicate Prospect"]}, {"name": "phone_number", "values": ["9876500103"]}]}
+
+    monkeypatch.setattr(meta_client, "fetch_lead_fields", _fake_fetch)
+    for leadgen_id in ("DUPLICATE_ORIGINAL", "DUPLICATE_SECOND"):
+        body = json.dumps({"entry": [{"changes": [{"value": {"leadgen_id": leadgen_id}}]}]}).encode()
+        r = await client.post("/api/v1/lead-capture/webhooks/meta", content=body, headers={"X-Hub-Signature-256": _sign(body, "realsecret")})
+        assert r.status_code == 200, r.text
+
+    assert await mock_db["leads"].count_documents({"mobile": "9876500103"}) == 1
+    failure = await mock_db["capture_failures"].find_one({"raw_payload.leadgen_id": "DUPLICATE_SECOND"})
+    assert failure is not None
+    assert failure["failure_reason"] == "duplicate"
+    assert failure["status"] == "ignored"
+    assert await mock_db["capture_receipts"].count_documents({"external_id": "DUPLICATE_SECOND"}) == 0
+
+
+async def test_meta_webhook_allows_mobile_from_rejected_lead(client, mock_db, owner_headers, monkeypatch):
+    product_id = await _seed_loan_product(mock_db)
+    await _seed_lead_sources_and_capture_sources(mock_db, product_id=product_id)
+    await _seed_active_meta_config(mock_db, app_secret="realsecret")
+
+    async def _fake_fetch(leadgen_id, *, access_token):
+        return {"field_data": [{"name": "full_name", "values": ["Returning Prospect"]}, {"name": "phone_number", "values": ["9876500104"]}]}
+
+    monkeypatch.setattr(meta_client, "fetch_lead_fields", _fake_fetch)
+    first_body = json.dumps({"entry": [{"changes": [{"value": {"leadgen_id": "REJECTED_ORIGINAL"}}]}]}).encode()
+    r = await client.post(
+        "/api/v1/lead-capture/webhooks/meta",
+        content=first_body,
+        headers={"X-Hub-Signature-256": _sign(first_body, "realsecret")},
+    )
+    assert r.status_code == 200, r.text
+    original = await mock_db["leads"].find_one({"mobile": "9876500104"})
+    assert original is not None
+    await mock_db["leads"].update_one({"_id": original["_id"]}, {"$set": {"stage": "rejected", "rejected_at": utc_now()}})
+
+    second_body = json.dumps({"entry": [{"changes": [{"value": {"leadgen_id": "AFTER_REJECTION"}}]}]}).encode()
+    r = await client.post(
+        "/api/v1/lead-capture/webhooks/meta",
+        content=second_body,
+        headers={"X-Hub-Signature-256": _sign(second_body, "realsecret")},
+    )
+    assert r.status_code == 200, r.text
+
+    leads = await mock_db["leads"].find({"mobile": "9876500104"}).to_list(length=10)
+    assert len(leads) == 2
+    newest = next(lead for lead in leads if lead["_id"] != original["_id"])
+    assert newest["duplicate_of_lead_ids"] == [str(original["_id"])]
+    assert await mock_db["capture_receipts"].count_documents({"external_id": "AFTER_REJECTION"}) == 1
 
 
 async def test_capture_failures_list_and_manual_retry(client, mock_db, owner_headers, monkeypatch):

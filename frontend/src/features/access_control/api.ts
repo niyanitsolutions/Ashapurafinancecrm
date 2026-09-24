@@ -15,6 +15,8 @@ export interface Permission {
   resource: string;
   actions: string[];
   label: string | null;
+  parent_resource?: string | null;
+  node_type?: "module" | "page" | "tab";
 }
 
 export interface RolePermissionGrant {
@@ -24,6 +26,8 @@ export interface RolePermissionGrant {
   module: string;
   resource: string;
   granted_actions: string[];
+  denied_actions?: string[];
+  module_enabled?: boolean | null;
   department_ids: string[] | null;
   branch_ids: string[] | null;
 }
@@ -118,6 +122,8 @@ export function getRolePermissions(roleId: string) {
 export interface RolePermissionGrantInput {
   permission_id: string;
   granted_actions: string[];
+  denied_actions?: string[];
+  module_enabled?: boolean | null;
   department_ids?: string[] | null;
   branch_ids?: string[] | null;
 }

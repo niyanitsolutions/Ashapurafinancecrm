@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { ModuleTabs } from "@/components/layout/ModuleTabs";
+import { usePermissions } from "@/features/access_control/usePermissions";
 import { getInsuranceCaseCounts, type InsuranceCaseCounts } from "@/features/insurance_management/api";
 
 // Insurance Management hosts three workflows: the "Policy Leads" pipeline, Advisor
@@ -41,6 +42,7 @@ const TOP_TABS = [
 const COUNT_POLL_INTERVAL_MS = 15_000;
 
 export function InsuranceManagementLayout() {
+  const { can } = usePermissions();
   const { pathname } = useLocation();
   const onPolicyLeads = POLICY_LEADS_PREFIXES.some((prefix) => pathname.startsWith(prefix));
   const [counts, setCounts] = useState<InsuranceCaseCounts | null>(null);
@@ -57,20 +59,33 @@ export function InsuranceManagementLayout() {
   // the single source of truth for what each insurance product asks for (the
   // category-aware Product Schema Engine — no count).
   const policyTabs = [
-    { label: "Fresh Leads", to: "/insurance-management/fresh-leads", count: counts?.fresh_lead },
-    { label: "Policy Document", to: "/insurance-management/policy-document", count: counts?.policy_document },
-    { label: "Policy Login", to: "/insurance-management/policy-login", count: counts?.policy_login },
-    { label: "Payment", to: "/insurance-management/payment", count: counts?.payment },
-    { label: "Policy Issued", to: "/insurance-management/policy-issued", count: counts?.policy_issued },
-    { label: "Re-Eligible", to: "/insurance-management/re-eligible", count: counts?.re_eligible },
-    { label: "Rejected", to: "/insurance-management/rejected", count: counts?.rejected },
-    { label: "On Hold", to: "/insurance-management/on-hold", count: counts?.on_hold },
-    { label: "Settings", to: "/settings/product-schemas?category=insurance" },
-  ];
+    { key: "fresh_lead", label: "Fresh Leads", to: "/insurance-management/fresh-leads", count: counts?.fresh_lead },
+    { key: "policy_document", label: "Policy Document", to: "/insurance-management/policy-document", count: counts?.policy_document },
+    { key: "policy_login", label: "Policy Login", to: "/insurance-management/policy-login", count: counts?.policy_login },
+    { key: "payment", label: "Payment", to: "/insurance-management/payment", count: counts?.payment },
+    { key: "policy_issued", label: "Policy Issued", to: "/insurance-management/policy-issued", count: counts?.policy_issued },
+    { key: "re_eligible", label: "Re-Eligible", to: "/insurance-management/re-eligible", count: counts?.re_eligible },
+    { key: "rejected", label: "Rejected", to: "/insurance-management/rejected", count: counts?.rejected },
+    { key: "on_hold", label: "On Hold", to: "/insurance-management/on-hold", count: counts?.on_hold },
+    { key: "settings", label: "Settings", to: "/settings/product-schemas?category=insurance" },
+  ].filter((tab) => can(`insurance_management:applications.${tab.key}`, "view"));
+
+  const topTabs = TOP_TABS.filter((tab) => {
+    if (tab.label === "Policy Leads") {
+      return can("insurance_management:applications", "view") || policyTabs.some((item) => item.key);
+    }
+    if (tab.label === "Recruitment Leads") {
+      return can("insurance_management:recruitment", "view") || [
+        "fresh", "bop", "doc_collection", "exam_fee_status", "examination",
+        "re_examination", "agency_code", "rejected",
+      ].some((stage) => can(`insurance_management:recruitment.${stage}`, "view"));
+    }
+    return can("insurance_management:advisors", "view");
+  });
 
   return (
     <>
-      <ModuleTabs tabs={TOP_TABS} />
+      <ModuleTabs tabs={topTabs} />
       {onPolicyLeads && <ModuleTabs tabs={policyTabs} />}
       <Outlet />
     </>

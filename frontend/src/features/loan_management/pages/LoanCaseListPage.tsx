@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Navigate } from "react-router-dom";
 import { CaseListPage, type CaseListExtraColumn } from "@/components/pages/CaseListPage";
 import { usePermissions } from "@/features/access_control/usePermissions";
 import { getLoanCase, listLoanCases, type LoanCaseDetail, type LoanCaseListItem } from "@/features/loan_management/api";
@@ -20,14 +21,19 @@ const EXTRA_COLUMNS: CaseListExtraColumn<LoanCaseListItem>[] = [
 // separate update route/page. Re-Eligible Case Management enhancement: the Re-Eligible
 // tab opens a dedicated modal (status dropdown + follow-up + grouped history) instead.
 export function LoanCaseListPage({ fixedStatus }: { fixedStatus?: string } = {}) {
-  const { can } = usePermissions();
-  const canEdit = can("loan_management:applications", "edit");
+  const { can, loading } = usePermissions();
+  const resource = fixedStatus ? `loan_management:applications.${fixedStatus}` : "loan_management:applications";
+  const canView = can(resource, "view");
+  const canEdit = can(resource, "edit");
   // Disbursement is available to a case's `approve` holder OR its `edit` holder — mirrors
   // the backend's `require_any_permission(("approve", "edit"))` on POST /disburse.
   const canDisburse = can("loan_management:applications", "approve") || canEdit;
   const isReEligible = fixedStatus === "re_eligible";
   const [updatingCase, setUpdatingCase] = useState<LoanCaseDetail | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+
+  if (loading) return null;
+  if (!canView) return <Navigate to="/dashboard" replace />;
 
   const openUpdate = (row: LoanCaseListItem) => {
     getLoanCase(row.id).then(setUpdatingCase);

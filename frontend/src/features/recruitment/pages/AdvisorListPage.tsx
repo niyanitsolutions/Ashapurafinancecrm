@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Navigate } from "react-router-dom";
 import { Badge } from "@/components/badges/Badge";
 import { EmptyState } from "@/components/layout/EmptyState";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
@@ -32,8 +33,9 @@ const PROFESSION_CHIPS: { value: string; label: string }[] = [
 ];
 
 export function AdvisorListPage() {
-  const { can } = usePermissions();
-  const canEdit = can("insurance_management:recruitment", "edit");
+  const { can, loading: permissionsLoading } = usePermissions();
+  const canView = can("insurance_management:advisors", "view");
+  const canEdit = can("insurance_management:advisors", "edit");
   const [editing, setEditing] = useState<AdvisorDetail | null>(null);
   const openEdit = async (id: string) => {
     try { setEditing(await getAdvisor(id)); } catch (err) { setError(getErrorMessage(err)); }
@@ -48,6 +50,7 @@ export function AdvisorListPage() {
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(() => {
+    if (permissionsLoading || !canView) return;
     listAdvisors({
       page,
       page_size: PAGE_SIZE,
@@ -62,7 +65,7 @@ export function AdvisorListPage() {
       })
       .catch((err) => setError(getErrorMessage(err)))
       .finally(() => setLoading(false));
-  }, [page, profession, channel, status]);
+  }, [canView, page, permissionsLoading, profession, channel, status]);
 
   const deletion = useListDelete("advisors", load, "Delete this advisor? It will move to Bin and can be restored. Records referenced by recruitment history are retained after 30 days.");
 
@@ -76,6 +79,9 @@ export function AdvisorListPage() {
     setProfession(value);
     setPage(1);
   };
+
+  if (permissionsLoading) return null;
+  if (!canView) return <Navigate to="/dashboard" replace />;
 
   return (
     <div className="p-4 lg:p-6">

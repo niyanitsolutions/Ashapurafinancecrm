@@ -12,6 +12,7 @@ from app.config.redis import get_redis
 from app.core.exceptions import ForbiddenError, ValidationError
 from app.core.response import ApiResponse
 from app.features.access_control.permission_engine import PermissionEngine
+from app.features.access_control.repository import PermissionRepository
 from app.features.auth.dependencies import get_current_active_user
 from app.features.auth.models import User
 from app.features.bulk_import.files import MAX_BYTES, parse_file, sample_file
@@ -28,11 +29,16 @@ RedisDep = Annotated[Redis, Depends(get_redis)]
 async def authorize(
     kind: Kind, actor: Annotated[User, Depends(get_current_active_user)], db: DbDep
 ) -> User:
-    module, resource, action = (
-        ("leads", "leads", "create")
-        if kind == "leads"
-        else ("insurance_management", "applications", "edit")
-    )
+    module, resource, action = ("leads", "leads", "create")
+    if kind == "insurance":
+        module, resource, action = "insurance_management", "applications", "create"
+        repository = PermissionRepository(db)
+        if await repository.find_by_module_resource(module, "applications.fresh_lead") is not None:
+            resource = "applications.fresh_lead"
+        else:
+            legacy = await repository.find_by_module_resource(module, resource)
+            if legacy is not None and action not in legacy.actions:
+                action = "edit"
     if not await PermissionEngine(db).has_permission(
         actor, module=module, resource=resource, action=action
     ):

@@ -516,14 +516,14 @@ async def _employee(client, owner_headers, master_data, mobile="9500000061"):
 async def _grant(client, owner_headers, employee_id, actions, role_name):
     r = await client.post(
         "/api/v1/permissions",
-        json={"module": "insurance_management", "resource": "recruitment", "actions": ["view", "create", "edit", "assign", "approve"]},
+        json={"module": "insurance_management", "resource": "advisors", "actions": ["view", "create", "edit"]},
         headers=owner_headers,
     )
     if r.status_code == 200:
         perm_id = r.json()["data"]["id"]
     else:
         existing = await client.get("/api/v1/permissions", headers=owner_headers)
-        perm_id = next(p["id"] for p in existing.json()["data"] if p["module"] == "insurance_management" and p["resource"] == "recruitment")
+        perm_id = next(p["id"] for p in existing.json()["data"] if p["module"] == "insurance_management" and p["resource"] == "advisors")
     role = await client.post("/api/v1/roles", json={"name": role_name}, headers=owner_headers)
     role_id = role.json()["data"]["id"]
     grants = [{"permission_id": perm_id, "granted_actions": actions}] if actions else []

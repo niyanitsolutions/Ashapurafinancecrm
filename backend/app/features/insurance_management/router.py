@@ -12,7 +12,10 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.config.database import get_database
 from app.core.pagination import PageParams, page_params
 from app.core.response import ApiResponse, ResponseMeta
-from app.features.access_control.permission_engine import require_any_permission, require_permission
+from app.features.access_control.permission_engine import (
+    require_any_stage_permission,
+    require_stage_permission,
+)
 from app.features.auth.models import User
 from app.features.customer.schemas import (
     ConfirmDocumentRequest,
@@ -70,8 +73,28 @@ _MODULE = "insurance_management"
 _RESOURCE = "applications"
 
 
-def _perm(action: str) -> Any:
-    return require_permission(_MODULE, _RESOURCE, action)
+def _perm(
+    action: str, *, default_stage: str | None = None,
+    require_all_children_without_stage: bool = False,
+    legacy_parent_action: str | None = None,
+) -> Any:
+    return require_stage_permission(
+        _MODULE, _RESOURCE, action,
+        collection="application_workflows", path_id="case_id",
+        status_field="current_status", query_status="status",
+        discriminator=("case_type", "insurance"), default_stage=default_stage,
+        require_all_children_without_stage=require_all_children_without_stage,
+        legacy_parent_action=legacy_parent_action,
+    )
+
+
+def _any_perm(actions: tuple[str, ...], *, default_stage: str | None = None) -> Any:
+    return require_any_stage_permission(
+        _MODULE, _RESOURCE, actions,
+        collection="application_workflows", path_id="case_id",
+        status_field="current_status", query_status="status",
+        discriminator=("case_type", "insurance"), default_stage=default_stage,
+    )
 
 
 async def _detail(service: InsuranceCaseService, case_id: str, actor: User, *, own: bool = False) -> ApiResponse[InsuranceCaseDetailResponse]:
@@ -136,7 +159,7 @@ async def confirm_own_other_document_upload(
 
 @router.get("")
 async def list_cases(
-    service: ServiceDep, actor: Annotated[User, _perm("view")], page: PageParamsDep,
+    service: ServiceDep, actor: Annotated[User, _perm("view", require_all_children_without_stage=True)], page: PageParamsDep,
     customer_id: str | None = None, assigned_to: str | None = None, unassigned_only: bool = False, status: str | None = None,
 ) -> ApiResponse[list[InsuranceCaseListItem]]:
     cases, total = await service.list_cases(
@@ -153,7 +176,11 @@ async def list_cases(
 
 @router.post("/manual")
 async def create_manual_case(
-    payload: CreateManualInsuranceCaseRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]
+    payload: CreateManualInsuranceCaseRequest,
+    service: ServiceDep,
+    actor: Annotated[
+        User, _perm("create", default_stage="fresh_lead", legacy_parent_action="edit")
+    ],
 ) -> ApiResponse[InsuranceCaseDetailResponse]:
     case = await service.create_manual_case(payload, actor)
     return await _detail(service, case.require_id(), actor)
@@ -161,7 +188,7 @@ async def create_manual_case(
 
 # Registered before "/{case_id}" so "counts" is never captured as a case id.
 @router.get("/counts")
-async def get_counts(service: ServiceDep, actor: Annotated[User, _perm("view")]) -> ApiResponse[InsuranceCaseCountsResponse]:
+async def get_counts(service: ServiceDep, actor: Annotated[User, _perm("view", require_all_children_without_stage=True)]) -> ApiResponse[InsuranceCaseCountsResponse]:
     return ApiResponse[InsuranceCaseCountsResponse].ok(InsuranceCaseCountsResponse(**await service.get_counts(actor)))
 
 
@@ -305,7 +332,7 @@ async def restart_from_re_eligible(
 @router.post("/{case_id}/reject")
 async def reject_case(
     case_id: str, payload: RejectInsuranceCaseRequest, service: ServiceDep,
-    actor: Annotated[User, require_any_permission(_MODULE, _RESOURCE, ("edit", "reject"))],
+    actor: Annotated[User, _any_perm(("edit", "reject"))],
 ) -> ApiResponse[InsuranceCaseDetailResponse]:
     await service.reject_case(case_id, payload.reason, payload.re_eligibility, payload.re_eligible_date, actor)
     return await _detail(service, case_id, actor)
@@ -330,7 +357,7 @@ async def change_product(
 @router.post("/{case_id}/move-to-stage")
 async def move_case_to_stage(
     case_id: str, payload: MoveToStageRequest, service: ServiceDep,
-    actor: Annotated[User, require_any_permission(_MODULE, _RESOURCE, ("edit", "reject"))],
+    actor: Annotated[User, _any_perm(("edit", "reject"))],
 ) -> ApiResponse[InsuranceCaseDetailResponse]:
     await service.move_case_to_stage(
         case_id, payload.target, actor,

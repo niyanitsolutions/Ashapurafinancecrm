@@ -58,7 +58,7 @@ function presetRange(preset: DatePreset): { from: string; to: string } {
 // disagree (the backend computes list + count + total from a single aggregation).
 export function DisbursementsPage() {
   const { can } = usePermissions();
-  const canEdit = can("loan_management:applications", "edit");
+  const canEdit = can("loan_management:applications.disbursed", "edit");
   const [topUpCaseId, setTopUpCaseId] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [preset, setPreset] = useState<DatePreset>("this_month");

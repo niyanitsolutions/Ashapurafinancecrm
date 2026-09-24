@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useOutletContext } from "react-router-dom";
+import { Navigate, useOutletContext } from "react-router-dom";
 import { Badge } from "@/components/badges/Badge";
 import { EmptyState } from "@/components/layout/EmptyState";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
@@ -27,8 +27,9 @@ const POLL_INTERVAL_MS = 15_000;
 // assign the agency code / agent code / password and pick the QR vs Non QR type.
 export function AgencyCodeListPage() {
   const { refreshCounts } = useOutletContext<RecruitmentOutletContext>();
-  const { can } = usePermissions();
-  const canEdit = can("insurance_management:recruitment", "edit");
+  const { can, loading: permissionsLoading } = usePermissions();
+  const canView = can("insurance_management:recruitment.agency_code", "view");
+  const canEdit = can("insurance_management:recruitment.agency_code", "edit");
 
   const [rows, setRows] = useState<AdvisorListItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -68,6 +69,9 @@ export function AgencyCodeListPage() {
     load();
     refreshCounts();
   };
+
+  if (permissionsLoading) return null;
+  if (!canView) return <Navigate to="/dashboard" replace />;
 
   return (
     <div className="p-4 lg:p-6">

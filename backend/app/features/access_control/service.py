@@ -62,32 +62,6 @@ def _combine_date_time(value: Any, time_str: str) -> datetime:
     return datetime(value.year, value.month, value.day, hour, minute, tzinfo=UTC)
 
 
-# UI-support curation only — NOT a re-hardcoding of the permission system itself
-# (module/resource stay free-text/data-driven in the catalog, per this file's own
-# constants.py docstring). This is just the fixed set of (module, resource, actions)
-# pairs the main app's UI currently has buttons/routes for, so `get_my_permissions`
-# knows what to check. Adding a ninth module to the UI later means adding one row here,
-# not touching PermissionEngine or the catalog schema.
-_MY_PERMISSIONS_CATALOG: tuple[tuple[str, str, tuple[str, ...]], ...] = (
-    ("leads", "leads", ("view", "create", "edit", "assign", "export", "reject")),
-    ("customer", "customers", ("view", "create", "edit")),
-    ("reminders", "tasks", ("view", "create", "edit")),
-    ("reminders", "reminder_rules", ("view", "create", "edit")),
-    ("loan_management", "applications", ("view", "edit", "assign", "approve")),
-    ("insurance_management", "applications", ("view", "edit", "assign", "approve")),
-    ("insurance_management", "recruitment", ("view", "create", "edit", "assign", "approve")),
-    ("referral_partner_management", "partners", ("view", "create")),
-    ("reporting", "reports", ("view", "export")),
-    ("reporting", "scheduled_reports", ("view", "create", "edit", "delete")),
-    ("communication", "templates", ("view", "create", "edit")),
-    ("communication", "queue", ("view", "edit")),
-    ("communication", "send", ("view", "create")),
-    ("communication", "bulk", ("view", "create", "edit")),
-    ("support", "tickets", ("view", "edit")),
-    ("messaging", "conversations", ("view", "create")),
-)
-
-
 class AccessControlService:
     def __init__(self, db: AsyncIOMotorDatabase[Any]) -> None:
         self._db = db
@@ -153,6 +127,8 @@ class AccessControlService:
                 role_id=new_role_id,
                 permission_id=grant.permission_id,
                 granted_actions=list(grant.granted_actions),
+                denied_actions=list(grant.denied_actions),
+                module_enabled=grant.module_enabled,
                 department_ids=list(grant.department_ids) if grant.department_ids else None,
                 branch_ids=list(grant.branch_ids) if grant.branch_ids else None,
                 created_by=owner.require_id(),
@@ -179,9 +155,18 @@ class AccessControlService:
             raise ValidationError(f"Unknown action(s): {', '.join(invalid)}")
         if await self._permissions.find_by_module_resource(payload.module, payload.resource):
             raise ConflictError(f"Permission for '{payload.module}:{payload.resource}' already exists.")
+        if payload.parent_resource == payload.resource:
+            raise ValidationError("A permission cannot be its own parent.")
+        if payload.parent_resource and await self._permissions.find_by_module_resource(
+            payload.module, payload.parent_resource
+        ) is None:
+            raise ValidationError(
+                f"Parent permission '{payload.module}:{payload.parent_resource}' does not exist."
+            )
         permission = Permission(
             module=payload.module, resource=payload.resource, actions=payload.actions,
-            label=payload.label, created_by=owner.require_id(),
+            label=payload.label, parent_resource=payload.parent_resource,
+            node_type=payload.node_type, created_by=owner.require_id(),
         )
         permission_id = await self._permissions.insert(permission)
         await write_audit_log(
@@ -213,8 +198,7 @@ class AccessControlService:
 
     async def set_role_permissions(self, role_id: str, payload: SetRolePermissionsRequest, owner: User) -> list[RolePermission]:
         """Bulk replace — the Permission Matrix save action (also what Employee Create/
-        Edit's Business Modules section writes through, see
-        frontend/src/features/employee/businessModules.ts). Validates every
+        Edit's Permissions section writes through). Validates every
         `granted_actions` entry against both the fixed action vocabulary and the
         referenced catalog entry's own `actions` (can't grant an action the resource
         doesn't support), and rejects a payload naming the same permission twice —
@@ -234,6 +218,7 @@ class AccessControlService:
 
         seen_permission_ids: set[str] = set()
         resolved: list[RolePermission] = []
+        resolved_permissions: dict[str, Permission] = {}
         for grant in payload.grants:
             if grant.permission_id in seen_permission_ids:
                 await self._log_permission_validation_failure(
@@ -249,18 +234,27 @@ class AccessControlService:
                 )
                 raise ValidationError(f"Unknown permission_id '{grant.permission_id}'.")
             invalid = [a for a in grant.granted_actions if a not in permission.actions]
-            if invalid:
+            invalid_denies = [a for a in grant.denied_actions if a not in permission.actions]
+            if invalid or invalid_denies:
                 await self._log_permission_validation_failure(
                     role_id, "action(s) not available for resource", permission_id=grant.permission_id,
-                    module=permission.module, resource=permission.resource, invalid_actions=invalid,
+                    module=permission.module, resource=permission.resource,
+                    invalid_actions=invalid + invalid_denies,
                 )
-                raise ValidationError(f"Action(s) {invalid} not available for '{permission.module}:{permission.resource}'.")
+                raise ValidationError(
+                    f"Action(s) {invalid + invalid_denies} not available for '{permission.module}:{permission.resource}'."
+                )
+            overlap = sorted(set(grant.granted_actions) & set(grant.denied_actions))
+            if overlap:
+                raise ValidationError(f"Action(s) {overlap} cannot be both granted and denied.")
+            if grant.module_enabled is not None and permission.node_type != "module":
+                raise ValidationError("module_enabled is only valid for module permission nodes.")
 
             # Create/Edit must never independently grant access without View — same rule
             # PermissionEngine.has_permission enforces at read time; rejected here too so
             # a role is never saved in a state that looks like it grants Create/Edit but
             # silently doesn't.
-            needs_view = PermissionAction.VIEW in permission.actions and (
+            needs_view = permission.parent_resource is None and PermissionAction.VIEW in permission.actions and (
                 PermissionAction.CREATE in grant.granted_actions or PermissionAction.EDIT in grant.granted_actions
             )
             if needs_view and PermissionAction.VIEW not in grant.granted_actions:
@@ -275,9 +269,50 @@ class AccessControlService:
             resolved.append(
                 RolePermission(
                     role_id=role_id, permission_id=grant.permission_id, granted_actions=grant.granted_actions,
+                    denied_actions=grant.denied_actions, module_enabled=grant.module_enabled,
                     department_ids=grant.department_ids, branch_ids=grant.branch_ids, created_by=owner.require_id(),
                 )
             )
+            resolved_permissions[grant.permission_id] = permission
+
+        # Child Create/Edit may inherit View. Validate the final tree instead of forcing
+        # every override row to repeat its parent's View grant.
+        catalog = await self.list_permissions()
+        permission_by_key = {(p.module, p.resource): p for p in catalog}
+        grant_by_permission = {g.permission_id: g for g in resolved}
+
+        def inherited_action(permission: Permission, action: str, seen: set[str] | None = None) -> bool:
+            permission_id = permission.require_id()
+            visited = set() if seen is None else seen
+            if permission_id in visited:
+                return False
+            visited.add(permission_id)
+            row = grant_by_permission.get(permission_id)
+            if row is not None:
+                if permission.node_type == "module" and row.module_enabled is False:
+                    return False
+                if action in row.denied_actions:
+                    return False
+                if action in row.granted_actions:
+                    return True
+            if permission.parent_resource:
+                parent = permission_by_key.get((permission.module, permission.parent_resource))
+                if parent is not None:
+                    return inherited_action(parent, action, visited)
+            return False
+
+        touched_modules = {permission.module for permission in resolved_permissions.values()}
+        for permission in catalog:
+            if permission.module not in touched_modules or PermissionAction.VIEW not in permission.actions:
+                continue
+            effective_write = any(
+                action in permission.actions and inherited_action(permission, action)
+                for action in (PermissionAction.CREATE, PermissionAction.EDIT)
+            )
+            if effective_write and not inherited_action(permission, PermissionAction.VIEW):
+                raise ValidationError(
+                    f"'{permission.module}:{permission.resource}': View must be granted or inherited for Create/Edit."
+                )
 
         existing = await self._role_permissions.find_for_role(role_id)
         for old in existing:
@@ -446,7 +481,10 @@ class AccessControlService:
         if user.role == OWNER:
             return {}
         result: dict[str, list[str]] = {}
-        for module, resource, actions in _MY_PERMISSIONS_CATALOG:
+        # Resolve the live catalog so newly added child tabs automatically participate
+        # in inheritance without another hardcoded UI-support list change.
+        for permission in await self.list_permissions():
+            module, resource, actions = permission.module, permission.resource, permission.actions
             granted = [a for a in actions if await self._engine.has_permission(user, module=module, resource=resource, action=a)]
             if granted:
                 result[f"{module}:{resource}"] = granted

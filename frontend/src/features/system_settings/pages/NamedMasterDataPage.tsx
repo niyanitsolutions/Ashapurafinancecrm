@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, type ReactNode, useEffect, useState } from "react";
 import { Button } from "@/components/buttons/Button";
 import { CheckboxField } from "@/components/forms/CheckboxField";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
@@ -36,6 +36,7 @@ export function NamedMasterDataPage<T extends Item>({
   createPlaceholder,
   api,
   showPasswordSupport = false,
+  renderEditExtension,
 }: {
   title: string;
   createPlaceholder: string;
@@ -44,6 +45,7 @@ export function NamedMasterDataPage<T extends Item>({
   // own docstring for why this lives on the shared model/page rather than a
   // DocumentType-only fork of this component.
   showPasswordSupport?: boolean;
+  renderEditExtension?: (item: T) => ReactNode;
 }) {
   const [items, setItems] = useState<T[]>([]);
   const [newName, setNewName] = useState("");
@@ -165,42 +167,51 @@ export function NamedMasterDataPage<T extends Item>({
             )}
             {items.map((item) =>
               editingId === item.id ? (
-                <tr key={item.id} className="border-b border-border last:border-0">
-                  <td className="px-4 py-2">
-                    <input
-                      className={INLINE_EDIT_INPUT_CLASSES}
-                      value={editName}
-                      onChange={(e) => setEditName(e.target.value)}
-                      aria-label="Name"
-                    />
-                  </td>
-                  <td className="px-4 py-2">
-                    <input
-                      className={INLINE_EDIT_INPUT_CLASSES}
-                      value={editDescription}
-                      onChange={(e) => setEditDescription(e.target.value)}
-                      aria-label="Description"
-                    />
-                  </td>
-                  <td className="px-4 py-2 capitalize">{item.status}</td>
-                  {showPasswordSupport && (
+                <Fragment key={item.id}>
+                  <tr className="border-b border-border">
                     <td className="px-4 py-2">
-                      <CheckboxField
-                        label="Supports password"
-                        checked={editSupportsPassword}
-                        onChange={(e) => setEditSupportsPassword(e.target.checked)}
+                      <input
+                        className={INLINE_EDIT_INPUT_CLASSES}
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        aria-label="Name"
                       />
                     </td>
+                    <td className="px-4 py-2">
+                      <input
+                        className={INLINE_EDIT_INPUT_CLASSES}
+                        value={editDescription}
+                        onChange={(e) => setEditDescription(e.target.value)}
+                        aria-label="Description"
+                      />
+                    </td>
+                    <td className="px-4 py-2 capitalize">{item.status}</td>
+                    {showPasswordSupport && (
+                      <td className="px-4 py-2">
+                        <CheckboxField
+                          label="Supports password"
+                          checked={editSupportsPassword}
+                          onChange={(e) => setEditSupportsPassword(e.target.checked)}
+                        />
+                      </td>
+                    )}
+                    <td className="px-4 py-2 text-right space-x-2 whitespace-nowrap">
+                      <Button variant="ghost" size="sm" onClick={() => onSaveEdit(item.id)}>
+                        Save
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => setEditingId(null)}>
+                        Cancel
+                      </Button>
+                    </td>
+                  </tr>
+                  {renderEditExtension && (
+                    <tr className="border-b border-border">
+                      <td colSpan={showPasswordSupport ? 5 : 4} className="px-4 pb-4">
+                        {renderEditExtension(item)}
+                      </td>
+                    </tr>
                   )}
-                  <td className="px-4 py-2 text-right space-x-2 whitespace-nowrap">
-                    <Button variant="ghost" size="sm" onClick={() => onSaveEdit(item.id)}>
-                      Save
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => setEditingId(null)}>
-                      Cancel
-                    </Button>
-                  </td>
-                </tr>
+                </Fragment>
               ) : (
                 <tr key={item.id} className="border-b border-border last:border-0 hover:bg-background">
                   <td className="px-4 py-3">{item.name}</td>

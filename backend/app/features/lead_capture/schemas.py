@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 class WebsiteCaptureRequest(BaseModel):
@@ -56,8 +56,15 @@ class CaptureSourceResponse(BaseModel):
 
 class UpdateCaptureSourceRequest(BaseModel):
     lead_source_id: str | None = None
-    default_product_category: str | None = None
+    default_product_category: Literal["loan", "insurance"] | None = None
     default_product_id: str | None = None
+
+    @field_validator("lead_source_id", "default_product_id", mode="before")
+    @classmethod
+    def normalize_optional_id(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
 
 
 class CaptureFailureResponse(BaseModel):

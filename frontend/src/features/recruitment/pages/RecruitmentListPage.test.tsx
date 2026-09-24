@@ -13,7 +13,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/features/access_control/usePermissions", () => ({
   usePermissions: () => ({
     can: (resource: string, action: string) =>
-      resource === "insurance_management:recruitment" && action === "create" && mocks.canCreate,
+      resource === "insurance_management:recruitment.fresh" &&
+      (action === "view" || (action === "create" && mocks.canCreate)),
+    loading: false,
   }),
 }));
 vi.mock("@/features/recruitment/api", async () => {
