@@ -37,6 +37,12 @@ const TOP_TABS = [
     matchKey: "insurance_cases",
     activePrefixes: ["/insurance-management/advisors"],
   },
+  {
+    label: "Analytics",
+    to: "/insurance-management/analytics",
+    matchKey: "insurance_cases",
+    activePrefixes: ["/insurance-management/analytics"],
+  },
 ];
 
 const COUNT_POLL_INTERVAL_MS = 15_000;
@@ -79,6 +85,11 @@ export function InsuranceManagementLayout() {
         "fresh", "bop", "doc_collection", "exam_fee_status", "examination",
         "re_examination", "agency_code", "rejected",
       ].some((stage) => can(`insurance_management:recruitment.${stage}`, "view"));
+    }
+    if (tab.label === "Analytics") {
+      return can("insurance_management:advisors", "view")
+        || can("insurance_management:applications", "view")
+        || policyTabs.some((item) => item.key !== "settings");
     }
     return can("insurance_management:advisors", "view");
   });

@@ -77,15 +77,16 @@ describe("InsuranceManagementLayout", () => {
     expect(screen.getByRole("link", { name: "Settings" })).toBeInTheDocument();
   });
 
-  it("orders the top tabs Policy Leads, Recruitment Leads, Advisors", () => {
+  it("orders the top tabs Policy Leads, Recruitment Leads, Advisors, Analytics", () => {
     renderAt("/insurance-management/recruitment");
-    const top = ["Policy Leads", "Recruitment Leads", "Advisors"].map(
+    const top = ["Policy Leads", "Recruitment Leads", "Advisors", "Analytics"].map(
       (label) => screen.getByRole("link", { name: label }),
     );
-    expect(top.map((el) => el.textContent)).toEqual(["Policy Leads", "Recruitment Leads", "Advisors"]);
+    expect(top.map((el) => el.textContent)).toEqual(["Policy Leads", "Recruitment Leads", "Advisors", "Analytics"]);
     // DOM order matches.
     expect(top[0].compareDocumentPosition(top[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(top[1].compareDocumentPosition(top[2]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(top[2].compareDocumentPosition(top[3]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("hides unrelated workflows from an employee with only Policy Leads access", async () => {
@@ -102,5 +103,6 @@ describe("InsuranceManagementLayout", () => {
     }
     expect(screen.queryByRole("link", { name: "Recruitment Leads" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Advisors" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Analytics" })).toBeInTheDocument();
   });
 });

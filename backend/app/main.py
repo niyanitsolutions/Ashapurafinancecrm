@@ -35,6 +35,7 @@ from app.features.employee.router import router as employee_router
 from app.features.geo_fencing.indexes import ensure_geo_fencing_indexes
 from app.features.geo_fencing.router import router as geo_fencing_router
 from app.features.health.router import router as health_router
+from app.features.insurance_management.analytics_router import router as insurance_analytics_router
 from app.features.insurance_management.router import router as insurance_management_router
 from app.features.integrations.indexes import ensure_integrations_indexes
 from app.features.integrations.router import public_router as integrations_public_router
@@ -139,6 +140,7 @@ def create_app() -> FastAPI:
     app.include_router(customer_router, prefix=settings.api_v1_prefix)
     app.include_router(loan_management_router, prefix=settings.api_v1_prefix)
     app.include_router(insurance_management_router, prefix=settings.api_v1_prefix)
+    app.include_router(insurance_analytics_router, prefix=settings.api_v1_prefix)
     app.include_router(recruitment_router, prefix=settings.api_v1_prefix)
     app.include_router(advisor_router, prefix=settings.api_v1_prefix)
     app.include_router(reminders_router, prefix=settings.api_v1_prefix)

@@ -52,6 +52,7 @@ import { PermissionMatrixPage } from "@/features/access_control/pages/Permission
 import { RoleDetailsPage } from "@/features/access_control/pages/RoleDetailsPage";
 import { LeadCapturePage } from "@/features/lead_capture/pages/LeadCapturePage";
 import { InsuranceCaseDetailsPage } from "@/features/insurance_management/pages/InsuranceCaseDetailsPage";
+import { InsuranceAnalyticsPage } from "@/features/insurance_management/pages/InsuranceAnalyticsPage";
 import { InsuranceCaseListPage } from "@/features/insurance_management/pages/InsuranceCaseListPage";
 import { InsuranceManagementLayout } from "@/features/insurance_management/pages/InsuranceManagementLayout";
 import { AdvisorDetailsPage } from "@/features/recruitment/pages/AdvisorDetailsPage";
@@ -331,6 +332,7 @@ export const router = createBrowserRouter([
               { path: "advisors/qr", element: <Navigate to="/insurance-management/advisors" replace /> },
               { path: "advisors/non-qr", element: <Navigate to="/insurance-management/advisors" replace /> },
               { path: "advisors/:advisorId", element: <AdvisorDetailsPage /> },
+              { path: "analytics", element: <InsuranceAnalyticsPage /> },
             ],
           },
           // Module 6D — Tasks permission-gated server-side (require_permission
