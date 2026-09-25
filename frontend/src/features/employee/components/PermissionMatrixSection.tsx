@@ -1,7 +1,7 @@
+import { useMemo, useState, type ReactNode } from "react";
 import type { Permission } from "@/features/access_control/api";
-import type { ReactNode } from "react";
-import { CheckboxField } from "@/components/forms/CheckboxField";
 import { applyActionToggle } from "@/features/access_control/permissionHierarchy";
+import { Icon, type IconName } from "@/theme/icons";
 import {
   DENY_PREFIX,
   MATRIX_ACTIONS,
@@ -12,36 +12,87 @@ import {
   type MatrixAction,
 } from "@/features/employee/permissionMatrix";
 
-const ACTION_LABELS: Record<MatrixAction, string> = { view: "View", create: "Create", edit: "Edit" };
+const ACTION_COPY: Record<MatrixAction, { title: string; help: string }> = {
+  view: { title: "View", help: "Can view" },
+  create: { title: "Create", help: "Can add" },
+  edit: { title: "Edit", help: "Can modify" },
+};
 
-// Applies one checkbox change to a working copy of `checked`, enforcing the dependency
-// rule between View and Create/Edit via the shared applyActionToggle (see
-// permissionHierarchy.ts). Mutates `next` in place; callers pass a fresh shallow copy of
-// `checked` before applying one or more cells.
+const MODULE_ICONS: Record<string, IconName> = {
+  audit: "shield-check",
+  communication: "communication",
+  customer: "customers",
+  employee: "employees",
+  employee_management: "employees",
+  insurance_management: "insurance",
+  integrations: "integrations",
+  lead_capture: "lead-capture",
+  leads: "leads",
+  loan_management: "loan",
+  owner: "shield-check",
+  recruitment: "employees",
+  referral_partner_management: "referral",
+  reminders: "tasks",
+  reporting: "reports",
+  system_settings: "settings",
+};
+
 function applyCellChange(next: Record<string, Set<string>>, permission: Permission, action: MatrixAction, isChecked: boolean): void {
   next[permission.id] = applyActionToggle(next[permission.id] ?? new Set(), action, isChecked, permission.actions);
 }
 
-// Shared by CreateEmployeePage and EditEmployeePage — a controlled component; all
-// checkbox state (`checked`, keyed by permission_id -> the set of checked actions for
-// that row) lives in the parent page so Create can start empty and Edit can
-// pre-populate from the employee's existing grants. Renders a real table at `sm:` and
-// above; below that the multi-row, three-action table doesn't reflow sensibly, so it switches to
-// a stacked block per module instead, sharing the same `checked`/`onChange` state.
-//
-// The backend independently enforces the same View-gates-Create/Edit rule
-// (PermissionEngine.has_permission / set_role_permissions) — this component's version is
-// UI convenience so the Owner never sees a nonsensical state in the first place, not the
-// security boundary itself.
-export function PermissionMatrixSection({
-  permissions,
-  checked,
-  onChange,
-}: {
+function PermissionCheckbox({ label, checked, onChange }: { label: string; checked: boolean; onChange: () => void }) {
+  return (
+    <label role="cell" className="flex min-h-12 w-full cursor-pointer items-center justify-center rounded-lg transition-colors hover:bg-primary/5 focus-within:ring-2 focus-within:ring-primary/30">
+      <input
+        type="checkbox"
+        aria-label={label}
+        checked={checked}
+        onChange={onChange}
+        className="h-[22px] w-[22px] cursor-pointer rounded-md border-2 border-border accent-primary focus-visible:outline-none"
+      />
+    </label>
+  );
+}
+
+function ActionHeader() {
+  return (
+    <div role="row" className="sticky top-0 z-10 grid grid-cols-[minmax(16rem,1fr)_repeat(3,6.5rem)] border-b border-border bg-card/95 px-4 py-3 shadow-sm backdrop-blur">
+      <span role="columnheader" className="self-center text-xs font-semibold uppercase tracking-wide text-textSecondary">Module / Page</span>
+      {MATRIX_ACTIONS.map((action) => <span role="columnheader" key={action} className="text-center"><span className="block text-xs font-semibold uppercase tracking-wide text-text">{ACTION_COPY[action].title}</span><span className="mt-0.5 block text-[10px] font-normal text-text/45">{ACTION_COPY[action].help}</span></span>)}
+    </div>
+  );
+}
+
+export function PermissionMatrixSection({ permissions, checked, onChange }: {
   permissions: Permission[];
   checked: Record<string, Set<string>>;
   onChange: (next: Record<string, Set<string>>) => void;
 }) {
+  const [query, setQuery] = useState("");
+  const hierarchyRoots = useMemo(() => permissions.filter((permission) => permission.node_type === "module"), [permissions]);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const permissionByKey = useMemo(() => new Map(permissions.map((permission) => [`${permission.module}:${permission.resource}`, permission])), [permissions]);
+  const childrenByParent = useMemo(() => {
+    const map = new Map<string, Permission[]>();
+    for (const permission of permissions) {
+      if (!permission.parent_resource) continue;
+      const key = `${permission.module}:${permission.parent_resource}`;
+      map.set(key, [...(map.get(key) ?? []), permission]);
+    }
+    return map;
+  }, [permissions]);
+
+  const labelFor = (permission: Permission) => permission.label || permission.resource.replace(/_/g, " ");
+  const effective = (permission: Permission, action: MatrixAction): boolean => {
+    const selected = checked[permission.id] ?? new Set<string>();
+    if (selected.has(action)) return true;
+    if (selected.has(`${DENY_PREFIX}${action}`)) return false;
+    if (!permission.parent_resource) return false;
+    const parent = permissionByKey.get(`${permission.module}:${permission.parent_resource}`);
+    return parent ? effective(parent, action) : false;
+  };
+
   const toggleCell = (permission: Permission, action: MatrixAction) => {
     const next = { ...checked };
     const isCurrentlyChecked = (checked[permission.id] ?? new Set()).has(action);
@@ -63,28 +114,13 @@ export function PermissionMatrixSection({
     onChange(next);
   };
 
-  const hierarchyRoots = permissions.filter((permission) => permission.node_type === "module");
-  const permissionByKey = new Map(permissions.map((permission) => [`${permission.module}:${permission.resource}`, permission]));
-
-  const effective = (permission: Permission, action: MatrixAction): boolean => {
-    const selected = checked[permission.id] ?? new Set<string>();
-    if (selected.has(action)) return true;
-    if (selected.has(`${DENY_PREFIX}${action}`)) return false;
-    if (!permission.parent_resource) return false;
-    const parent = permissionByKey.get(`${permission.module}:${permission.parent_resource}`);
-    return parent ? effective(parent, action) : false;
-  };
-
   const cycleOverride = (permission: Permission, action: MatrixAction) => {
     const next = { ...checked };
     const selected = new Set(checked[permission.id] ?? []);
     const deny = `${DENY_PREFIX}${action}`;
-    if (selected.has(action)) {
-      selected.delete(action);
-      selected.add(deny);
-    } else if (selected.has(deny)) {
-      selected.delete(deny);
-    } else {
+    if (selected.has(action)) { selected.delete(action); selected.add(deny); }
+    else if (selected.has(deny)) selected.delete(deny);
+    else {
       selected.add(action);
       if (action === "create" || action === "edit") {
         selected.delete(`${DENY_PREFIX}view`);
@@ -92,10 +128,7 @@ export function PermissionMatrixSection({
       }
     }
     if (action === "view" && selected.has(deny)) {
-      for (const dependent of ["create", "edit"] as const) {
-        selected.delete(dependent);
-        selected.add(`${DENY_PREFIX}${dependent}`);
-      }
+      for (const dependent of ["create", "edit"] as const) { selected.delete(dependent); selected.add(`${DENY_PREFIX}${dependent}`); }
     }
     next[permission.id] = selected;
     onChange(next);
@@ -105,154 +138,89 @@ export function PermissionMatrixSection({
     const next = { ...checked };
     const selected = new Set(checked[permission.id] ?? []);
     const enabled = !selected.has(MODULE_ENABLED);
-    selected.delete(MODULE_ENABLED);
-    selected.delete(MODULE_DISABLED);
+    selected.delete(MODULE_ENABLED); selected.delete(MODULE_DISABLED);
     selected.add(enabled ? MODULE_ENABLED : MODULE_DISABLED);
     next[permission.id] = selected;
     onChange(next);
   };
 
-  const renderNode = (permission: Permission, depth: number): ReactNode => {
-    const children = permissions.filter(
-      (candidate) => candidate.module === permission.module && candidate.parent_resource === permission.resource,
-    );
-    const selected = checked[permission.id] ?? new Set<string>();
-    const label = permission.label || permission.resource.replace(/_/g, " ");
-    const row = (
-      <div key={permission.id} className="grid grid-cols-[minmax(12rem,1fr)_repeat(3,5.5rem)] items-center border-t border-border py-2 text-sm">
-        <div className="flex items-center gap-2" style={{ paddingLeft: `${depth * 1.25}rem` }}>
-          {permission.node_type === "module" && (
-            <input type="checkbox" aria-label={`${label} module enabled`} checked={selected.has(MODULE_ENABLED)} onChange={() => toggleModule(permission)} />
-          )}
-          <span className={permission.node_type === "module" ? "font-semibold" : "text-text"}>{label}</span>
-        </div>
-        {MATRIX_ACTIONS.map((action) => {
-          if (!permission.actions.includes(action)) return <span key={action} className="text-center text-text/20">—</span>;
-          if (permission.node_type === "module") {
-            return <CheckboxField key={action} label={`${label} — ${ACTION_LABELS[action]}`} hideLabel className="justify-center" checked={selected.has(action)} onChange={() => toggleCell(permission, action)} />;
-          }
-          const state = selected.has(action) ? "Override Yes" : selected.has(`${DENY_PREFIX}${action}`) ? "Override No" : `Inherited ${effective(permission, action) ? "Yes" : "No"}`;
-          return <button key={action} type="button" aria-label={`${label} ${ACTION_LABELS[action]}: ${state}`} onClick={() => cycleOverride(permission, action)} className="mx-auto rounded px-1.5 py-1 text-[10px] text-primary hover:bg-primary/10">{state}</button>;
-        })}
-      </div>
-    );
-    return <div key={permission.id}>{row}{children.map((child) => renderNode(child, depth + 1))}</div>;
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const nodeMatches = (permission: Permission): boolean => {
+    if (!normalizedQuery) return true;
+    if (labelFor(permission).toLocaleLowerCase().includes(normalizedQuery)) return true;
+    return (childrenByParent.get(`${permission.module}:${permission.resource}`) ?? []).some(nodeMatches);
   };
+
+  const renderNode = (permission: Permission, depth: number): ReactNode => {
+    if (!nodeMatches(permission)) return null;
+    const children = childrenByParent.get(`${permission.module}:${permission.resource}`) ?? [];
+    const label = labelFor(permission);
+    return <div key={permission.id}>
+      <div role="row" className="grid grid-cols-[minmax(16rem,1fr)_repeat(3,6.5rem)] items-center border-b border-border/70 px-4 text-sm transition-colors hover:bg-primary/[0.035]">
+        <div role="rowheader" className="relative flex min-h-14 items-center gap-3" style={{ paddingLeft: `${Math.min(depth, 3) * 1.25}rem` }}>
+          {depth > 0 && <span className="absolute bottom-0 top-0 w-px bg-border/70" style={{ left: `${Math.max(0, depth * 1.25 - 0.65)}rem` }} />}
+          <span className={depth > 1 ? "text-text/75" : "font-medium text-text"}>{label}</span>
+        </div>
+        {MATRIX_ACTIONS.map((action) => permission.actions.includes(action) ? (
+          <PermissionCheckbox key={action} label={`${ACTION_COPY[action].help} ${label}`} checked={effective(permission, action)} onChange={() => cycleOverride(permission, action)} />
+        ) : <span key={action} aria-label={`${ACTION_COPY[action].title} not available for ${label}`} className="text-center text-lg text-text/20">—</span>)}
+      </div>
+      {children.map((child) => renderNode(child, depth + 1))}
+    </div>;
+  };
+
+  const toggleCollapsed = (id: string) => setCollapsed((current) => {
+    const next = new Set(current);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
 
   if (hierarchyRoots.length > 0) {
-    return (
-      <div className="rounded-card border border-border bg-card p-6 shadow-card">
-        <h2 className="mb-1 text-sm font-semibold text-text">Permissions</h2>
-        <p className="mb-4 text-xs text-text/50">Module actions are defaults. Select a child action to cycle through inherited, explicit allow, and explicit deny.</p>
-        <div className="overflow-x-auto">
-          <div className="min-w-[34rem]">
-            <div className="grid grid-cols-[minmax(12rem,1fr)_repeat(3,5.5rem)] text-xs font-semibold text-textSecondary">
-              <span>Module / page</span>{MATRIX_ACTIONS.map((action) => <span key={action} className="text-center">{ACTION_LABELS[action]}</span>)}
-            </div>
-            {hierarchyRoots.map((root) => <details key={root.id} open><summary className="cursor-pointer py-1 text-xs text-textSecondary">{root.label || root.module}</summary>{renderNode(root, 0)}</details>)}
-          </div>
+    const visibleRoots = hierarchyRoots.filter(nodeMatches);
+    return <section className="overflow-hidden rounded-card border border-border bg-card shadow-card" aria-labelledby="permissions-heading">
+      <div className="flex flex-col gap-4 border-b border-border p-5 sm:flex-row sm:items-start sm:justify-between sm:p-6">
+        <div><h2 id="permissions-heading" className="text-base font-semibold text-text">Permissions</h2><p className="mt-1 max-w-2xl text-sm text-text/55">Choose what this employee can access and what actions they can perform.</p><p className="mt-1 text-xs text-text/40">View allows access. Create allows adding new records. Edit allows modifying existing records.</p></div>
+        <label className="relative block w-full sm:w-72"><span className="sr-only">Search permissions</span><Icon name="search" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text/40" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search permissions..." className="w-full rounded-xl border border-border bg-background py-2.5 pl-9 pr-3 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/25" /></label>
+      </div>
+      <div className="max-h-[36rem] overflow-auto">
+        <div role="table" aria-label="Permission matrix" className="min-w-[44rem]"><ActionHeader />
+          {permissions.length === 0 && <p className="p-6 text-sm text-text/40">Loading...</p>}
+          {visibleRoots.length === 0 && permissions.length > 0 && <p className="p-8 text-center text-sm text-text/45">No permissions match your search.</p>}
+          {visibleRoots.map((root) => {
+            const selected = checked[root.id] ?? new Set<string>();
+            const label = labelFor(root);
+            const isCollapsed = collapsed.has(root.id) && !normalizedQuery;
+            return <div key={root.id} className="border-b-4 border-background last:border-b-0">
+              <div role="row" className="grid grid-cols-[minmax(16rem,1fr)_repeat(3,6.5rem)] items-center bg-primary/[0.055] px-4">
+                <div role="rowheader" className="flex min-h-[4.25rem] items-center gap-2">
+                  <button type="button" aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${label}`} aria-expanded={!isCollapsed} onClick={() => toggleCollapsed(root.id)} className="flex min-w-0 flex-1 items-center gap-3 rounded-lg py-2 text-left hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-text/55"><Icon name={isCollapsed ? "chevron-right" : "chevron-down"} className="h-4 w-4" /></span>
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><Icon name={MODULE_ICONS[root.module] ?? "grid"} className="h-[18px] w-[18px]" /></span>
+                    <span className="truncate font-semibold text-text">{label}</span>
+                  </button>
+                  <label title={`Enable ${label} access`} className="flex cursor-pointer items-center rounded-lg p-2 focus-within:ring-2 focus-within:ring-primary/30"><input type="checkbox" aria-label={`Enable ${label}`} checked={selected.has(MODULE_ENABLED)} onChange={() => toggleModule(root)} className="h-[22px] w-[22px] rounded-md border-2 border-border accent-primary" /></label>
+                </div>
+                {MATRIX_ACTIONS.map((action) => root.actions.includes(action) ? <PermissionCheckbox key={action} label={`${ACTION_COPY[action].help} ${label}`} checked={selected.has(action)} onChange={() => toggleCell(root, action)} /> : <span key={action} aria-label={`${ACTION_COPY[action].title} not available for ${label}`} className="text-center text-lg text-text/20">—</span>)}
+              </div>
+              {!isCollapsed && (childrenByParent.get(`${root.module}:${root.resource}`) ?? []).map((child) => renderNode(child, 1))}
+            </div>;
+          })}
         </div>
       </div>
-    );
+    </section>;
   }
 
-  // "Select all" for one action column — only ever touches rows whose live Permission
-  // actually supports that action (e.g. clicking "Select all Create" never tries to
-  // grant Loan Management create, which doesn't exist as a real action).
   const toggleColumn = (action: MatrixAction) => {
-    const applicable = PERMISSION_MATRIX_ROWS.map((row) => findRowPermission(permissions, row)).filter(
-      (p): p is Permission => !!p && p.actions.includes(action)
-    );
+    const applicable = PERMISSION_MATRIX_ROWS.map((row) => findRowPermission(permissions, row)).filter((p): p is Permission => !!p && p.actions.includes(action));
     if (applicable.length === 0) return;
-    const allChecked = applicable.every((p) => (checked[p.id] ?? new Set()).has(action));
+    const allChecked = applicable.every((permission) => (checked[permission.id] ?? new Set()).has(action));
     const next = { ...checked };
-    for (const permission of applicable) {
-      applyCellChange(next, permission, action, !allChecked);
-    }
+    for (const permission of applicable) applyCellChange(next, permission, action, !allChecked);
     onChange(next);
   };
-
-  return (
-    <div className="bg-card border border-border rounded-card shadow-card p-6">
-      <h2 className="text-sm font-semibold text-text mb-1">Permissions</h2>
-      <p className="text-xs text-text/50 mb-4">
-        View controls access to the module. Create and Edit provide additional actions and never grant access by
-        themselves. View does not mean they see every record either — e.g. granting Leads View/Create/Edit lets them
-        use Leads and manage the ones they created or are assigned, not the whole company's list.
-      </p>
-      {permissions.length === 0 && <p className="text-sm text-text/40">Loading…</p>}
-
-      <div className="hidden sm:block overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border text-left">
-              <th className="py-2 pr-4 font-medium text-text">Module</th>
-              {MATRIX_ACTIONS.map((action) => (
-                <th key={action} className="py-2 px-2 font-medium text-text text-center">
-                  <button type="button" onClick={() => toggleColumn(action)} className="text-xs text-primary hover:underline">
-                    {ACTION_LABELS[action]}
-                  </button>
-                  <div className="text-[10px] font-normal text-text/40">Select all</div>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {PERMISSION_MATRIX_ROWS.map((row) => {
-              const permission = findRowPermission(permissions, row);
-              return (
-                <tr key={`${row.module}:${row.resource}`} className="border-b border-border last:border-0">
-                  <td className="py-2.5 pr-4 text-text">{row.label}</td>
-                  {MATRIX_ACTIONS.map((action) => {
-                    const supported = permission ? permission.actions.includes(action) : false;
-                    return (
-                      <td key={action} className="py-2.5 px-2 text-center">
-                        {supported && permission ? (
-                          <CheckboxField
-                            label={`${row.label} — ${ACTION_LABELS[action]}`}
-                            hideLabel
-                            className="justify-center"
-                            checked={(checked[permission.id] ?? new Set()).has(action)}
-                            onChange={() => toggleCell(permission, action)}
-                          />
-                        ) : (
-                          <span className="text-text/20">—</span>
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="sm:hidden space-y-3">
-        {PERMISSION_MATRIX_ROWS.map((row) => {
-          const permission = findRowPermission(permissions, row);
-          const availableActions = MATRIX_ACTIONS.filter((action) => permission?.actions.includes(action));
-          return (
-            <div key={`${row.module}:${row.resource}`} className="border border-border rounded-lg p-3">
-              <p className="text-sm font-medium text-text mb-2">{row.label}</p>
-              {permission && availableActions.length > 0 ? (
-                <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-                  {availableActions.map((action) => (
-                    <CheckboxField
-                      key={action}
-                      label={ACTION_LABELS[action]}
-                      checked={(checked[permission.id] ?? new Set()).has(action)}
-                      onChange={() => toggleCell(permission, action)}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-text/40">Not available.</p>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
+  const visibleRows = PERMISSION_MATRIX_ROWS.filter((row) => !normalizedQuery || row.label.toLocaleLowerCase().includes(normalizedQuery));
+  return <section className="overflow-hidden rounded-card border border-border bg-card shadow-card" aria-labelledby="permissions-heading">
+    <div className="flex flex-col gap-4 border-b border-border p-5 sm:flex-row sm:items-start sm:justify-between sm:p-6"><div><h2 id="permissions-heading" className="text-base font-semibold">Permissions</h2><p className="mt-1 text-sm text-text/55">Choose what this employee can access and what actions they can perform.</p></div><label className="relative block w-full sm:w-72"><span className="sr-only">Search permissions</span><Icon name="search" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text/40" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search permissions..." className="w-full rounded-xl border border-border bg-background py-2.5 pl-9 pr-3 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/25" /></label></div>
+    <div className="max-h-[36rem] overflow-auto"><div className="min-w-[44rem]"><div className="sticky top-0 z-10 grid grid-cols-[minmax(16rem,1fr)_repeat(3,6.5rem)] border-b border-border bg-card px-4 py-3"><span className="text-xs font-semibold uppercase tracking-wide text-textSecondary">Module / Page</span>{MATRIX_ACTIONS.map((action) => <button key={action} type="button" onClick={() => toggleColumn(action)} className="rounded-lg text-center hover:bg-primary/5"><span className="block text-xs font-semibold uppercase tracking-wide">{ACTION_COPY[action].title}</span><span className="block text-[10px] font-normal text-primary">Select all</span></button>)}</div>{visibleRows.map((row) => { const permission = findRowPermission(permissions, row); return <div key={`${row.module}:${row.resource}`} className="grid grid-cols-[minmax(16rem,1fr)_repeat(3,6.5rem)] items-center border-b border-border/70 px-4 hover:bg-primary/[0.035]"><div className="flex min-h-14 items-center gap-3 font-medium"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary"><Icon name={MODULE_ICONS[row.module] ?? "grid"} className="h-4 w-4" /></span>{row.label}</div>{MATRIX_ACTIONS.map((action) => permission?.actions.includes(action) ? <PermissionCheckbox key={action} label={`${ACTION_COPY[action].help} ${row.label}`} checked={(checked[permission.id] ?? new Set()).has(action)} onChange={() => toggleCell(permission, action)} /> : <span key={action} className="text-center text-lg text-text/20">—</span>)}</div>; })}</div></div>
+  </section>;
 }
