@@ -14,7 +14,7 @@ from app.features.integrations import oauth as integrations_oauth
 from app.features.integrations.models import IntegrationConfig
 from app.features.lead_capture import meta_client
 from app.features.lead_capture.constants import FailureStatus
-from app.features.lead_capture.models import CaptureFailure, CaptureSource
+from app.features.lead_capture.models import CaptureFailure, CaptureSource, MetaLeadRouting
 from app.features.lead_capture.service import LeadCaptureService
 from app.features.system_settings.models import LeadSource
 from app.security.encryption import encrypt
@@ -71,6 +71,12 @@ async def _seed_lead_sources_and_capture_sources(mock_db, *, product_id: str) ->
     ]
     for row in rows:
         await mock_db["capture_sources"].insert_one(row.model_dump(by_alias=True, exclude={"id"}))
+    for form_id in ("FORM1", "FORM_A", "FORM_DEFAULT"):
+        route = MetaLeadRouting(
+            meta_form_id=form_id, form_name=form_id, category="loan", product_mode="default",
+            default_product_id=product_id, destination_module="leads", destination_type="fresh_leads",
+        )
+        await mock_db["meta_lead_routings"].insert_one(route.model_dump(by_alias=True, exclude={"id"}))
 
 
 async def _seed_loan_product(mock_db) -> str:
@@ -315,7 +321,7 @@ async def test_meta_webhook_captures_campaign_details_and_custom_questions(clien
     monkeypatch.setattr(meta_client, "fetch_lead_fields", _fake_fetch)
     monkeypatch.setattr(integrations_oauth, "fetch_ad_campaign_details", _fake_campaign_details)
 
-    body = json.dumps({"entry": [{"changes": [{"value": {"leadgen_id": "LEADGEN_CAMPAIGN", "ad_id": "AD1"}}]}]}).encode()
+    body = json.dumps({"entry": [{"changes": [{"value": {"leadgen_id": "LEADGEN_CAMPAIGN", "form_id": "FORM_DEFAULT", "ad_id": "AD1"}}]}]}).encode()
     signature = _sign(body, "realsecret")
     r = await client.post("/api/v1/lead-capture/webhooks/meta", content=body, headers={"X-Hub-Signature-256": signature})
     assert r.status_code == 200, r.text
@@ -447,7 +453,7 @@ async def test_meta_webhook_transient_failure_is_queued_for_retry(client, mock_d
 
     monkeypatch.setattr(meta_client, "fetch_lead_fields", _fake_fetch_failure)
 
-    body = json.dumps({"entry": [{"changes": [{"value": {"leadgen_id": "LEADGEN2"}}]}]}).encode()
+    body = json.dumps({"entry": [{"changes": [{"value": {"leadgen_id": "LEADGEN2", "form_id": "FORM_DEFAULT"}}]}]}).encode()
     signature = _sign(body, "realsecret")
     r = await client.post("/api/v1/lead-capture/webhooks/meta", content=body, headers={"X-Hub-Signature-256": signature})
     assert r.status_code == 200, r.text  # always ack once signature-verified
@@ -465,7 +471,7 @@ async def test_retry_queue_resolves_then_exhausts(mock_db, owner_headers, monkey
 
     service = LeadCaptureService(mock_db)
     failure = CaptureFailure(
-        capture_source="meta_lead_ads", failure_reason="api_error", raw_payload={"leadgen_id": "LEADGEN3"}, status=FailureStatus.PENDING,
+        capture_source="meta_lead_ads", failure_reason="api_error", raw_payload={"leadgen_id": "LEADGEN3", "form_id": "FORM_DEFAULT"}, status=FailureStatus.PENDING,
         next_retry_at=utc_now() - timedelta(minutes=1),
     )
     failure_id = await service._failures.insert(failure)
@@ -482,7 +488,7 @@ async def test_retry_queue_resolves_then_exhausts(mock_db, owner_headers, monkey
 
     # A fresh failure that keeps failing should exhaust after MAX_RETRY_ATTEMPTS.
     failure2 = CaptureFailure(
-        capture_source="meta_lead_ads", failure_reason="api_error", raw_payload={"leadgen_id": "LEADGEN4"}, status=FailureStatus.PENDING,
+        capture_source="meta_lead_ads", failure_reason="api_error", raw_payload={"leadgen_id": "LEADGEN4", "form_id": "FORM_DEFAULT"}, status=FailureStatus.PENDING,
         next_retry_at=utc_now() - timedelta(minutes=1), retry_count=4,
     )
     failure2_id = await service._failures.insert(failure2)
@@ -591,7 +597,7 @@ async def test_source_mapping_accepts_insurance_product_only_with_active_categor
     assert r.status_code == 422, r.text
 
 
-async def test_meta_webhook_missing_category_or_product_creates_failure_without_lead(client, mock_db, monkeypatch):
+async def test_meta_webhook_unconfigured_forms_never_use_legacy_global_default(client, mock_db, monkeypatch):
     product_id = await _seed_loan_product(mock_db)
     await _seed_lead_sources_and_capture_sources(mock_db, product_id=product_id)
     await _seed_active_meta_config(mock_db, app_secret="realsecret")
@@ -601,24 +607,20 @@ async def test_meta_webhook_missing_category_or_product_creates_failure_without_
         return {"field_data": [{"name": "full_name", "values": ["Blocked Meta Lead"]}, {"name": "phone_number", "values": [mobile]}]}
 
     monkeypatch.setattr(meta_client, "fetch_lead_fields", _fake_fetch)
-    meta_filter = {"key": "meta_lead_ads"}
-
-    await mock_db["capture_sources"].update_one(meta_filter, {"$set": {"default_product_category": None, "default_product_id": product_id}})
-    body = json.dumps({"entry": [{"changes": [{"value": {"leadgen_id": "MISSING_CATEGORY"}}]}]}).encode()
+    body = json.dumps({"entry": [{"changes": [{"value": {"leadgen_id": "MISSING_CATEGORY", "form_id": "UNCONFIGURED_1"}}]}]}).encode()
     r = await client.post("/api/v1/lead-capture/webhooks/meta", content=body, headers={"X-Hub-Signature-256": _sign(body, "realsecret")})
     assert r.status_code == 200, r.text
 
-    await mock_db["capture_sources"].update_one(meta_filter, {"$set": {"default_product_category": "loan", "default_product_id": None}})
-    body = json.dumps({"entry": [{"changes": [{"value": {"leadgen_id": "MISSING_PRODUCT"}}]}]}).encode()
+    body = json.dumps({"entry": [{"changes": [{"value": {"leadgen_id": "MISSING_PRODUCT", "form_id": "UNCONFIGURED_2"}}]}]}).encode()
     r = await client.post("/api/v1/lead-capture/webhooks/meta", content=body, headers={"X-Hub-Signature-256": _sign(body, "realsecret")})
     assert r.status_code == 200, r.text
 
     assert await mock_db["leads"].count_documents({"mobile": {"$in": ["9876500101", "9876500102"]}}) == 0
     failures = await mock_db["capture_failures"].find(
-        {"capture_source": "meta_lead_ads", "status": "ignored"}
+        {"capture_source": "meta_lead_ads", "status": "needs_routing_configuration"}
     ).to_list(length=10)
     assert len(failures) == 2
-    assert {failure["failure_reason"] for failure in failures} == {"invalid_data"}
+    assert {failure["failure_reason"] for failure in failures} == {"unconfigured_form"}
 
 
 async def test_meta_webhook_duplicate_is_acknowledged_and_recorded(client, mock_db, owner_headers, monkeypatch):
@@ -631,7 +633,7 @@ async def test_meta_webhook_duplicate_is_acknowledged_and_recorded(client, mock_
 
     monkeypatch.setattr(meta_client, "fetch_lead_fields", _fake_fetch)
     for leadgen_id in ("DUPLICATE_ORIGINAL", "DUPLICATE_SECOND"):
-        body = json.dumps({"entry": [{"changes": [{"value": {"leadgen_id": leadgen_id}}]}]}).encode()
+        body = json.dumps({"entry": [{"changes": [{"value": {"leadgen_id": leadgen_id, "form_id": "FORM_DEFAULT"}}]}]}).encode()
         r = await client.post("/api/v1/lead-capture/webhooks/meta", content=body, headers={"X-Hub-Signature-256": _sign(body, "realsecret")})
         assert r.status_code == 200, r.text
 
@@ -652,7 +654,7 @@ async def test_meta_webhook_allows_mobile_from_rejected_lead(client, mock_db, ow
         return {"field_data": [{"name": "full_name", "values": ["Returning Prospect"]}, {"name": "phone_number", "values": ["9876500104"]}]}
 
     monkeypatch.setattr(meta_client, "fetch_lead_fields", _fake_fetch)
-    first_body = json.dumps({"entry": [{"changes": [{"value": {"leadgen_id": "REJECTED_ORIGINAL"}}]}]}).encode()
+    first_body = json.dumps({"entry": [{"changes": [{"value": {"leadgen_id": "REJECTED_ORIGINAL", "form_id": "FORM_DEFAULT"}}]}]}).encode()
     r = await client.post(
         "/api/v1/lead-capture/webhooks/meta",
         content=first_body,
@@ -663,7 +665,7 @@ async def test_meta_webhook_allows_mobile_from_rejected_lead(client, mock_db, ow
     assert original is not None
     await mock_db["leads"].update_one({"_id": original["_id"]}, {"$set": {"stage": "rejected", "rejected_at": utc_now()}})
 
-    second_body = json.dumps({"entry": [{"changes": [{"value": {"leadgen_id": "AFTER_REJECTION"}}]}]}).encode()
+    second_body = json.dumps({"entry": [{"changes": [{"value": {"leadgen_id": "AFTER_REJECTION", "form_id": "FORM_DEFAULT"}}]}]}).encode()
     r = await client.post(
         "/api/v1/lead-capture/webhooks/meta",
         content=second_body,
@@ -683,7 +685,7 @@ async def test_capture_failures_list_and_manual_retry(client, mock_db, owner_hea
     await _seed_lead_sources_and_capture_sources(mock_db, product_id=product_id)
     await _seed_active_meta_config(mock_db)
 
-    failure = CaptureFailure(capture_source="meta_lead_ads", failure_reason="api_error", raw_payload={"leadgen_id": "LEADGEN5"}, status=FailureStatus.PENDING)
+    failure = CaptureFailure(capture_source="meta_lead_ads", failure_reason="api_error", raw_payload={"leadgen_id": "LEADGEN5", "form_id": "FORM_DEFAULT"}, status=FailureStatus.PENDING)
     result = await mock_db["capture_failures"].insert_one(failure.model_dump(by_alias=True, exclude={"id"}))
 
     r = await client.get("/api/v1/lead-capture/failures", headers=owner_headers)

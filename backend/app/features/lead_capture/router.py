@@ -30,6 +30,9 @@ from app.features.lead_capture.schemas import (
     CaptureFailureResponse,
     CaptureSourceResponse,
     ManualCaptureRequest,
+    MetaLeadRoutingResponse,
+    MetaLeadRoutingStatusRequest,
+    MetaLeadRoutingUpsertRequest,
     UpdateCaptureSourceRequest,
     WebsiteCaptureRequest,
     WebsiteCaptureResponse,
@@ -151,6 +154,52 @@ async def update_capture_source(
 ) -> ApiResponse[CaptureSourceResponse]:
     source = await service.update_source(key, payload, actor)
     return ApiResponse[CaptureSourceResponse].ok(mappers.source_to_response(source))
+
+
+# ---------------------------------------------------------------------- staff: Meta form routing
+
+
+@router.get("/lead-capture/meta-routings")
+async def list_meta_routings(
+    service: ServiceDep, _actor: Annotated[User, _perm("sources", "view")],
+) -> ApiResponse[list[MetaLeadRoutingResponse]]:
+    items = await service.list_meta_routings()
+    return ApiResponse[list[MetaLeadRoutingResponse]].ok([mappers.routing_to_response(item) for item in items])
+
+
+@router.post("/lead-capture/meta-routings/sync")
+async def sync_meta_routings(
+    service: ServiceDep, _actor: Annotated[User, _perm("sources", "edit")],
+) -> ApiResponse[list[MetaLeadRoutingResponse]]:
+    items = await service.sync_meta_routings()
+    return ApiResponse[list[MetaLeadRoutingResponse]].ok([mappers.routing_to_response(item) for item in items])
+
+
+@router.post("/lead-capture/meta-routings/{form_id}")
+async def create_meta_routing(
+    form_id: str, payload: MetaLeadRoutingUpsertRequest, service: ServiceDep,
+    actor: Annotated[User, _perm("sources", "edit")],
+) -> ApiResponse[MetaLeadRoutingResponse]:
+    item = await service.create_meta_routing(form_id, payload, actor)
+    return ApiResponse[MetaLeadRoutingResponse].ok(mappers.routing_to_response(item))
+
+
+@router.put("/lead-capture/meta-routings/{form_id}")
+async def upsert_meta_routing(
+    form_id: str, payload: MetaLeadRoutingUpsertRequest, service: ServiceDep,
+    actor: Annotated[User, _perm("sources", "edit")],
+) -> ApiResponse[MetaLeadRoutingResponse]:
+    item = await service.upsert_meta_routing(form_id, payload, actor)
+    return ApiResponse[MetaLeadRoutingResponse].ok(mappers.routing_to_response(item))
+
+
+@router.patch("/lead-capture/meta-routings/{form_id}/status")
+async def set_meta_routing_status(
+    form_id: str, payload: MetaLeadRoutingStatusRequest, service: ServiceDep,
+    actor: Annotated[User, _perm("sources", "edit")],
+) -> ApiResponse[MetaLeadRoutingResponse]:
+    item = await service.set_meta_routing_status(form_id, payload.active, actor)
+    return ApiResponse[MetaLeadRoutingResponse].ok(mappers.routing_to_response(item))
 
 
 # ---------------------------------------------------------------------- staff: capture failures + retry

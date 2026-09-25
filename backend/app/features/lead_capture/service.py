@@ -11,9 +11,10 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 from dataclasses import replace
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -23,6 +24,8 @@ from app.constants.roles import OWNER
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.features.auth.models import User
 from app.features.auth.repository import UserRepository
+from app.features.insurance_management.schemas import CreateManualInsuranceCaseRequest
+from app.features.insurance_management.service import InsuranceCaseService
 from app.features.integrations import mappers as integrations_mappers
 from app.features.integrations import oauth as oauth_client
 from app.features.lead_capture import meta_client
@@ -34,8 +37,15 @@ from app.features.lead_capture.constants import (
     CaptureSourceKey,
     FailureReason,
     FailureStatus,
+    MetaDestination,
+    MetaProductMode,
 )
-from app.features.lead_capture.models import CaptureFailure, CaptureReceipt, CaptureSource
+from app.features.lead_capture.models import (
+    CaptureFailure,
+    CaptureReceipt,
+    CaptureSource,
+    MetaLeadRouting,
+)
 from app.features.lead_capture.parsers import (
     CaptureValidationError,
     ParsedLead,
@@ -46,9 +56,11 @@ from app.features.lead_capture.repository import (
     CaptureFailureRepository,
     CaptureReceiptRepository,
     CaptureSourceRepository,
+    MetaLeadRoutingRepository,
 )
 from app.features.lead_capture.schemas import (
     ManualCaptureRequest,
+    MetaLeadRoutingUpsertRequest,
     UpdateCaptureSourceRequest,
     WebsiteCaptureRequest,
 )
@@ -64,6 +76,7 @@ from app.features.system_settings.repository import (
     LeadSourceRepository,
     LoanProductRepository,
 )
+from app.features.workflow_engine.constants import InsuranceStatus
 from app.security.encryption import decrypt
 from app.shared.audit_log import write_audit_log
 from app.utils.datetime import utc_now
@@ -78,6 +91,7 @@ class LeadCaptureService:
         self._sources = CaptureSourceRepository(db)
         self._failures = CaptureFailureRepository(db)
         self._receipts = CaptureReceiptRepository(db)
+        self._meta_routings = MetaLeadRoutingRepository(db)
         self._users = UserRepository(db)
         self._leads = LeadRepository(db)
         self._activities = LeadActivityRepository(db)
@@ -107,7 +121,7 @@ class LeadCaptureService:
 
     # ================================================================== the shared pipeline
 
-    async def _process_raw_payload(self, capture_source: str, raw_payload: dict[str, Any]) -> Lead:
+    async def _process_raw_payload(self, capture_source: str, raw_payload: dict[str, Any]) -> Any:
         if capture_source == CaptureSourceKey.WEBSITE_FORM:
             parsed = parse_website_payload(raw_payload)
             external_id = None
@@ -119,27 +133,47 @@ class LeadCaptureService:
         if external_id:
             existing = await self._receipts.find_existing(capture_source, external_id)
             if existing is not None:
-                found = await self._leads.find_by_id(existing.lead_id)
+                if existing.destination_module == MetaDestination.INSURANCE_POLICY_LEADS:
+                    record_id = existing.destination_record_id or ""
+                    found = await self._db["application_workflows"].find_one(
+                        {"_id": to_object_id(record_id)}
+                    ) if is_valid_object_id(record_id) else None
+                else:
+                    found = await self._leads.find_by_id(existing.lead_id) if existing.lead_id else None
                 if found is not None:
                     logger.info(
                         "Capture delivery already processed: source=%s external_id=%s lead_id=%s",
-                        capture_source, external_id, found.require_id(),
+                        capture_source, external_id,
+                        str(found["_id"]) if isinstance(found, dict) else found.require_id(),
                     )
                     return found  # already processed — idempotent no-op, not a failure
 
         source = await self._get_source(capture_source)
         actor = await self._system_actor()
-        lead = await self._lead_service.create_lead(
-            CreateLeadRequest(
-                full_name=parsed.full_name, mobile=parsed.mobile, email=parsed.email, source_id=source.lead_source_id,
-                product_category=parsed.product_category, product_id=parsed.product_id, remarks=parsed.remarks,
-            ),
-            actor,
-        )
-        await self._leads.update(lead.require_id(), {"created_by": None})
+        lead: Any
+        if parsed.destination_module == MetaDestination.INSURANCE_POLICY_LEADS:
+            product = await self._insurance_products.find_by_id(parsed.product_id)
+            if product is None or not product.category_id:
+                raise CaptureValidationError(FailureReason.INVALID_PRODUCT, "Configured insurance product is unavailable.")
+            lead = await InsuranceCaseService(self._db).create_manual_case(
+                CreateManualInsuranceCaseRequest(
+                    full_name=parsed.full_name, mobile=parsed.mobile, email=parsed.email,
+                    insurance_category_id=product.category_id, product_id=parsed.product_id,
+                    remarks=parsed.remarks, stage=InsuranceStatus.FRESH_LEAD,
+                ), actor,
+            )
+        else:
+            lead = await self._lead_service.create_lead(
+                CreateLeadRequest(
+                    full_name=parsed.full_name, mobile=parsed.mobile, email=parsed.email, source_id=source.lead_source_id,
+                    product_category=parsed.product_category, product_id=parsed.product_id, remarks=parsed.remarks,
+                ),
+                actor,
+            )
+            await self._leads.update(lead.require_id(), {"created_by": None})
         logger.info(
-            "Capture created CRM lead: source=%s external_id=%s lead_id=%s lead_code=%s",
-            capture_source, external_id, lead.require_id(), lead.lead_code,
+            "Capture created destination record: source=%s external_id=%s record_id=%s destination=%s",
+            capture_source, external_id, lead.require_id(), parsed.destination_module,
         )
 
         activity = LeadActivity(
@@ -152,13 +186,18 @@ class LeadCaptureService:
                 "source_metadata": parsed.source_metadata,
             },
         )
-        await self._activities.insert(activity)
+        if parsed.destination_module == MetaDestination.LEADS:
+            await self._activities.insert(activity)
         await write_audit_log(
             self._db, event_type=AuditEvent.LEAD_CAPTURED, user_id=actor.require_id(), metadata={"lead_id": lead.require_id(), "capture_source": capture_source}
         )
 
         if external_id:
-            await self._receipts.insert(CaptureReceipt(capture_source=capture_source, external_id=external_id, lead_id=lead.require_id()))
+            await self._receipts.insert(CaptureReceipt(
+                capture_source=capture_source, external_id=external_id,
+                lead_id=lead.require_id() if parsed.destination_module == MetaDestination.LEADS else None,
+                destination_module=parsed.destination_module, destination_record_id=lead.require_id(),
+            ))
 
         logger.info(
             "Capture processing completed: source=%s external_id=%s lead_id=%s activity_recorded=true audit_recorded=true receipt_recorded=%s",
@@ -166,6 +205,80 @@ class LeadCaptureService:
         )
 
         return lead
+
+    @staticmethod
+    def _normalize_match(value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()
+
+    async def _validate_routing_product(self, category: str, product_id: str) -> None:
+        if not is_valid_object_id(product_id):
+            raise CaptureValidationError(FailureReason.INVALID_PRODUCT, "Configured product ID is invalid.")
+        if category == ProductCategory.LOAN:
+            loan_product = await self._loan_products.find_by_id(product_id)
+            if loan_product is None:
+                if await self._insurance_products.find_by_id(product_id) is not None:
+                    raise CaptureValidationError(FailureReason.CATEGORY_PRODUCT_MISMATCH, "Configured product belongs to Insurance, not Loan.")
+                raise CaptureValidationError(FailureReason.INVALID_PRODUCT, "Configured Loan product does not exist.")
+            if loan_product.status != MasterDataStatus.ACTIVE:
+                raise CaptureValidationError(FailureReason.INACTIVE_PRODUCT, "Configured Loan product is inactive.")
+            return
+        if category == ProductCategory.INSURANCE:
+            insurance_product = await self._insurance_products.find_by_id(product_id)
+            if insurance_product is None:
+                if await self._loan_products.find_by_id(product_id) is not None:
+                    raise CaptureValidationError(FailureReason.CATEGORY_PRODUCT_MISMATCH, "Configured product belongs to Loan, not Insurance.")
+                raise CaptureValidationError(FailureReason.INVALID_PRODUCT, "Configured Insurance product does not exist.")
+            if insurance_product.status != MasterDataStatus.ACTIVE:
+                raise CaptureValidationError(FailureReason.INACTIVE_PRODUCT, "Configured Insurance product is inactive.")
+            category_doc = await self._insurance_categories.find_by_id(insurance_product.category_id or "") if insurance_product.category_id else None
+            if category_doc is None or category_doc.status != MasterDataStatus.ACTIVE:
+                raise CaptureValidationError(FailureReason.CATEGORY_PRODUCT_MISMATCH, "Insurance product is not in an active category.")
+            return
+        raise CaptureValidationError(FailureReason.INVALID_CATEGORY, "Routing category must be loan or insurance.")
+
+    async def _resolve_meta_routing(self, form_id: str, graph_payload: dict[str, Any]) -> tuple[MetaLeadRouting, str]:
+        routing = await self._meta_routings.find_by_form_id(form_id)
+        answer_values = meta_client.parse_custom_answer_values(graph_payload)
+        questions = list(answer_values)
+        if routing is None:
+            routing_id = await self._meta_routings.insert(MetaLeadRouting(
+                meta_form_id=form_id, form_name=form_id, status="unconfigured", discovered_questions=questions,
+            ))
+            routing = await self._meta_routings.find_by_id(routing_id)
+        elif questions and set(questions) != set(routing.discovered_questions):
+            routing = await self._meta_routings.update(routing.require_id(), {"discovered_questions": questions})
+        assert routing is not None
+        if routing.status != MasterDataStatus.ACTIVE or not routing.category or not routing.product_mode or not routing.destination_module:
+            raise CaptureValidationError(FailureReason.UNCONFIGURED_FORM, f"Meta form {form_id} needs routing configuration.")
+        if routing.category == ProductCategory.LOAN and routing.destination_module != MetaDestination.LEADS:
+            raise CaptureValidationError(FailureReason.INVALID_DESTINATION, "Loan routes must use the Leads destination.")
+        if routing.category == ProductCategory.INSURANCE and routing.destination_module != MetaDestination.INSURANCE_POLICY_LEADS:
+            raise CaptureValidationError(FailureReason.INVALID_DESTINATION, "Insurance routes must use Insurance Policy Leads.")
+
+        if routing.product_mode == MetaProductMode.DEFAULT:
+            product_id = routing.default_product_id or ""
+            if not product_id:
+                raise CaptureValidationError(FailureReason.INVALID_PRODUCT, "Default-product route has no product.")
+        elif routing.product_mode == MetaProductMode.CUSTOMER_ANSWER:
+            configured = routing.product_question_key or routing.product_question_label
+            if not configured:
+                raise CaptureValidationError(FailureReason.QUESTION_NOT_FOUND, "Customer-answer route has no configured question.")
+            wanted = self._normalize_match(configured)
+            matches = [(key, answer) for key, answer in answer_values.items() if self._normalize_match(key) == wanted]
+            if not matches:
+                raise CaptureValidationError(FailureReason.QUESTION_NOT_FOUND, "Configured product question was not present in Meta field_data.")
+            raw_answer = matches[0][1]
+            if raw_answer is None or not raw_answer.strip():
+                raise CaptureValidationError(FailureReason.ANSWER_NOT_FOUND, "Configured product question had no answer.")
+            answer = raw_answer.strip()
+            mappings = {self._normalize_match(key): value for key, value in routing.answer_mappings.items()}
+            product_id = mappings.get(self._normalize_match(answer), "")
+            if not product_id:
+                raise CaptureValidationError(FailureReason.ANSWER_NOT_MAPPED, "Meta product answer has no configured product mapping.")
+        else:
+            raise CaptureValidationError(FailureReason.INVALID_DATA, "Unknown Meta product mode.")
+        await self._validate_routing_product(routing.category, product_id)
+        return routing, product_id
 
     async def _parse_meta_entry(self, entry: dict[str, Any]) -> tuple[ParsedLead, str]:
         leadgen_id = entry.get("leadgen_id")
@@ -181,27 +294,30 @@ class LeadCaptureService:
         if not access_token:
             raise ValidationError("The active Meta configuration has no access_token set.")
 
-        graph_payload = await meta_client.fetch_lead_fields(leadgen_id, access_token=access_token)
+        preserved_fields = entry.get("_retrieved_field_data")
+        graph_payload = (
+            {"field_data": preserved_fields}
+            if isinstance(preserved_fields, list)
+            else await meta_client.fetch_lead_fields(leadgen_id, access_token=access_token)
+        )
+        entry["_retrieved_field_data"] = graph_payload.get("field_data", [])
         fields = meta_client.parse_field_data(graph_payload)
         logger.info(
             "Meta lead fields retrieved: leadgen_id=%s has_name=%s has_mobile=%s has_email=%s",
             leadgen_id, bool(fields.get("full_name")), bool(fields.get("mobile")), bool(fields.get("email")),
         )
-        source = await self._get_source(CaptureSourceKey.META_LEAD_ADS)
-        try:
-            await self._validate_source_mapping(source, {})
-        except ValidationError as exc:
-            raise CaptureValidationError(
-                FailureReason.INVALID_DATA,
-                f"Meta Lead Ads source mapping is invalid: {exc.message}",
-            ) from exc
+        form_id = str(entry.get("form_id") or "").strip()
+        if not form_id:
+            raise CaptureValidationError(FailureReason.UNCONFIGURED_FORM, "Meta webhook entry has no form_id; routing cannot be resolved.")
+        routing, product_id = await self._resolve_meta_routing(form_id, graph_payload)
         logger.info(
-            "Meta source mapping selected: leadgen_id=%s product_category=%s product_id=%s lead_source_id=%s",
-            leadgen_id, source.default_product_category, source.default_product_id, source.lead_source_id,
+            "Meta routing resolved: leadgen_id=%s form_id=%s category=%s product_mode=%s product_id=%s destination=%s",
+            leadgen_id, form_id, routing.category, routing.product_mode, product_id, routing.destination_module,
         )
         parsed = parse_meta_fields(
-            fields, default_product_category=source.default_product_category, default_product_id=source.default_product_id, raw_entry=entry
+            fields, default_product_category=routing.category, default_product_id=product_id, raw_entry=entry
         )
+        parsed = replace(parsed, destination_module=routing.destination_module or MetaDestination.LEADS)
 
         # Resolves the webhook envelope's bare `ad_id` into readable Campaign/Ad Set/Ad
         # names — best-effort (needs `ads_read` + access to the ad's own ad account);
@@ -222,7 +338,18 @@ class LeadCaptureService:
     # ================================================================== failure recording
 
     async def _record_failure(self, capture_source: str, reason: str, raw_payload: dict[str, Any], detail: str | None) -> CaptureFailure:
-        status = FailureStatus.PENDING if reason == FailureReason.API_ERROR else FailureStatus.IGNORED
+        routing_reasons = {
+            FailureReason.UNCONFIGURED_FORM, FailureReason.QUESTION_NOT_FOUND,
+            FailureReason.ANSWER_NOT_FOUND, FailureReason.ANSWER_NOT_MAPPED,
+            FailureReason.INVALID_CATEGORY, FailureReason.INVALID_PRODUCT,
+            FailureReason.INACTIVE_PRODUCT, FailureReason.CATEGORY_PRODUCT_MISMATCH,
+            FailureReason.INVALID_DESTINATION,
+        }
+        status = (
+            FailureStatus.PENDING if reason == FailureReason.API_ERROR
+            else FailureStatus.NEEDS_ROUTING_CONFIGURATION if reason in routing_reasons
+            else FailureStatus.IGNORED
+        )
         next_retry_at = utc_now() + timedelta(minutes=RETRY_BACKOFF_MINUTES) if status == FailureStatus.PENDING else None
         failure = CaptureFailure(capture_source=capture_source, failure_reason=reason, raw_payload=raw_payload, error_detail=detail, status=status, next_retry_at=next_retry_at)
         failure_id = await self._failures.insert(failure)
@@ -240,7 +367,7 @@ class LeadCaptureService:
     async def capture_from_website(self, payload: WebsiteCaptureRequest) -> Lead:
         raw = payload.model_dump(exclude_none=True)
         try:
-            return await self._process_raw_payload(CaptureSourceKey.WEBSITE_FORM, raw)
+            return cast(Lead, await self._process_raw_payload(CaptureSourceKey.WEBSITE_FORM, raw))
         except CaptureValidationError as exc:
             await self._record_failure(CaptureSourceKey.WEBSITE_FORM, exc.reason, raw, exc.detail)
             raise ValidationError(exc.detail) from exc
@@ -432,9 +559,19 @@ class LeadCaptureService:
             lead = await self._process_raw_payload(failure.capture_source, failure.raw_payload)
             await self._failures.update(failure.require_id(), {"status": FailureStatus.RESOLVED, "resolved_lead_id": lead.require_id(), "next_retry_at": None})
             await write_audit_log(self._db, event_type=AuditEvent.CAPTURE_RETRIED, user_id=None, metadata={"failure_id": failure.require_id(), "outcome": "resolved"})
-        except CaptureValidationError:
+        except CaptureValidationError as exc:
             # Turned out to be permanently invalid, not transient — stop retrying.
-            await self._failures.update(failure.require_id(), {"status": FailureStatus.IGNORED, "next_retry_at": None})
+            routing_reasons = {
+                FailureReason.UNCONFIGURED_FORM, FailureReason.QUESTION_NOT_FOUND,
+                FailureReason.ANSWER_NOT_FOUND, FailureReason.ANSWER_NOT_MAPPED,
+                FailureReason.INVALID_CATEGORY, FailureReason.INVALID_PRODUCT,
+                FailureReason.INACTIVE_PRODUCT, FailureReason.CATEGORY_PRODUCT_MISMATCH,
+                FailureReason.INVALID_DESTINATION,
+            }
+            await self._failures.update(failure.require_id(), {
+                "status": FailureStatus.NEEDS_ROUTING_CONFIGURATION if exc.reason in routing_reasons else FailureStatus.IGNORED,
+                "failure_reason": exc.reason, "error_detail": exc.detail, "next_retry_at": None,
+            })
         except ConflictError as exc:
             await self._failures.update(
                 failure.require_id(),
@@ -502,6 +639,110 @@ class LeadCaptureService:
             return
 
         raise ValidationError("Product Category must be loan or insurance.")
+
+    # ================================================================== admin: Meta form routing
+
+    async def list_meta_routings(self) -> list[MetaLeadRouting]:
+        return await self._meta_routings.list_all()
+
+    async def sync_meta_routings(self) -> list[MetaLeadRouting]:
+        config = await self._active_config("meta")
+        if config is None:
+            raise ValidationError("No active Meta integration configuration exists.")
+        decrypted = json.loads(decrypt(config["config_encrypted"])) if config.get("config_encrypted") else {}
+        access_token, page_id = decrypted.get("access_token"), decrypted.get("page_id")
+        if not access_token or not page_id:
+            raise ValidationError("The active Meta integration has no connected Page.")
+        forms = await oauth_client.fetch_lead_forms(page_access_token=access_token, page_id=page_id)
+        for form in forms:
+            form_id, form_name = str(form["id"]), str(form.get("name") or form["id"])
+            existing = await self._meta_routings.find_by_form_id(form_id)
+            if existing is None:
+                await self._meta_routings.insert(MetaLeadRouting(
+                    meta_form_id=form_id, form_name=form_name, status="unconfigured",
+                ))
+            elif existing.form_name != form_name:
+                await self._meta_routings.update(existing.require_id(), {"form_name": form_name})
+        return await self._meta_routings.list_all()
+
+    async def _validate_meta_routing_payload(self, payload: MetaLeadRoutingUpsertRequest) -> None:
+        if payload.category == ProductCategory.LOAN and payload.destination_module != MetaDestination.LEADS:
+            raise ValidationError("Loan routes must use the Leads destination.")
+        if payload.category == ProductCategory.INSURANCE and payload.destination_module != MetaDestination.INSURANCE_POLICY_LEADS:
+            raise ValidationError("Insurance routes must use Insurance Policy Leads.")
+        if payload.product_mode == MetaProductMode.DEFAULT:
+            if not payload.default_product_id:
+                raise ValidationError("Select a default product.")
+            product_ids = [payload.default_product_id]
+        else:
+            if not (payload.product_question_key or payload.product_question_label):
+                raise ValidationError("Select or enter the Meta product question.")
+            if not payload.answer_mappings:
+                raise ValidationError("Add at least one answer-to-product mapping.")
+            normalized_answers = [self._normalize_match(answer) for answer in payload.answer_mappings]
+            if any(not answer for answer in normalized_answers) or len(set(normalized_answers)) != len(normalized_answers):
+                raise ValidationError("Answer mappings must be non-empty and unique after normalization.")
+            product_ids = list(payload.answer_mappings.values())
+        for product_id in set(product_ids):
+            try:
+                await self._validate_routing_product(payload.category, product_id)
+            except CaptureValidationError as exc:
+                raise ValidationError(exc.detail) from exc
+
+    async def upsert_meta_routing(self, form_id: str, payload: MetaLeadRoutingUpsertRequest, actor: User) -> MetaLeadRouting:
+        form_id = form_id.strip()
+        if not form_id:
+            raise ValidationError("Meta Form ID is required.")
+        await self._validate_meta_routing_payload(payload)
+        existing = await self._meta_routings.find_by_form_id(form_id)
+        updates = payload.model_dump(exclude={"active"}, exclude_none=False)
+        form_name = updates.pop("form_name", None) or form_id
+        updates["answer_mappings"] = {key.strip(): value for key, value in payload.answer_mappings.items()}
+        updates["status"] = MasterDataStatus.ACTIVE if payload.active else MasterDataStatus.INACTIVE
+        if existing is None:
+            routing_id = await self._meta_routings.insert(MetaLeadRouting(
+                meta_form_id=form_id, form_name=form_name,
+                created_by=actor.require_id(), **updates,
+            ))
+            updated = await self._meta_routings.find_by_id(routing_id)
+        else:
+            if payload.form_name is not None:
+                updates["form_name"] = form_name
+            updated = await self._meta_routings.update(existing.require_id(), updates, updated_by=actor.require_id())
+        assert updated is not None
+        await write_audit_log(
+            self._db, event_type=AuditEvent.META_ROUTING_CONFIGURED, user_id=actor.require_id(),
+            metadata={"meta_form_id": form_id, "status": updated.status},
+        )
+        return updated
+
+    async def create_meta_routing(self, form_id: str, payload: MetaLeadRoutingUpsertRequest, actor: User) -> MetaLeadRouting:
+        if await self._meta_routings.find_by_form_id(form_id.strip()) is not None:
+            raise ConflictError("A routing configuration already exists for this Meta Form ID.")
+        return await self.upsert_meta_routing(form_id, payload, actor)
+
+    async def set_meta_routing_status(self, form_id: str, active: bool, actor: User) -> MetaLeadRouting:
+        routing = await self._meta_routings.find_by_form_id(form_id)
+        if routing is None:
+            raise NotFoundError("Meta form routing was not found.")
+        if active:
+            if not routing.category or not routing.product_mode or not routing.destination_module:
+                raise ValidationError("Configure Category, Product Mode, and Destination before activation.")
+            payload = MetaLeadRoutingUpsertRequest.model_validate({
+                "form_name": routing.form_name, "category": routing.category,
+                "product_mode": routing.product_mode, "default_product_id": routing.default_product_id,
+                "destination_module": routing.destination_module, "destination_type": routing.destination_type,
+                "product_question_key": routing.product_question_key,
+                "product_question_label": routing.product_question_label,
+                "answer_mappings": routing.answer_mappings, "active": True, "priority": routing.priority,
+            })
+            await self._validate_meta_routing_payload(payload)
+        updated = await self._meta_routings.update(
+            routing.require_id(), {"status": MasterDataStatus.ACTIVE if active else MasterDataStatus.INACTIVE},
+            updated_by=actor.require_id(),
+        )
+        assert updated is not None
+        return updated
 
     async def list_failures(
         self, *, capture_source: str | None, status: str | None, failure_reason: str | None, skip: int, limit: int, sort: list[tuple[str, int]] | None

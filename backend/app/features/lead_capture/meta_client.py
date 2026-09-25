@@ -135,3 +135,19 @@ def parse_field_data(payload: dict[str, Any]) -> dict[str, str]:
         # here rather than widening that contract to `dict[str, Any]` for one field.
         parsed["custom_questions"] = json.dumps(custom_questions)
     return parsed
+
+
+def parse_custom_answer_values(payload: dict[str, Any]) -> dict[str, str | None]:
+    """Return non-contact field keys, retaining questions with no answer value."""
+    answers: dict[str, str | None] = {}
+    for field in payload.get("field_data", []):
+        name = str(field.get("name", "")).strip()
+        values = field.get("values") or []
+        if name and name.lower() not in _KNOWN_FIELD_MAP:
+            answers[name] = str(values[0]) if values else None
+    return answers
+
+
+def parse_custom_answers(payload: dict[str, Any]) -> dict[str, str]:
+    """Return answered Meta custom fields by their stable field key/name."""
+    return {key: value for key, value in parse_custom_answer_values(payload).items() if value is not None}

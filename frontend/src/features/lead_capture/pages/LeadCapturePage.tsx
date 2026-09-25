@@ -61,6 +61,7 @@ export function LeadCapturePage() {
           <option value="resolved">Resolved</option>
           <option value="exhausted">Exhausted</option>
           <option value="ignored">Ignored</option>
+          <option value="needs_routing_configuration">Needs Routing Configuration</option>
         </select>
       </div>
       <div className="bg-card border border-border rounded-card shadow-card overflow-x-auto">
@@ -91,7 +92,7 @@ export function LeadCapturePage() {
                 <td className="px-4 py-3 capitalize">{f.status}</td>
                 <td className="px-4 py-3">{f.retry_count}</td>
                 <td className="px-4 py-3">
-                  {(f.status === "pending" || f.status === "exhausted") && (
+                  {(f.status === "pending" || f.status === "exhausted" || f.status === "needs_routing_configuration") && (
                     <button type="button" onClick={() => run(() => retryCaptureFailure(f.id), "Retry attempted.")} className="text-primary hover:underline text-xs">
                       Retry Now
                     </button>

@@ -78,3 +78,47 @@ class CaptureFailureResponse(BaseModel):
     next_retry_at: datetime | None
     resolved_lead_id: str | None
     created_at: datetime
+
+
+class MetaLeadRoutingUpsertRequest(BaseModel):
+    form_name: str | None = Field(default=None, min_length=1, max_length=300)
+    category: Literal["loan", "insurance"]
+    product_mode: Literal["default", "customer_answer"]
+    default_product_id: str | None = None
+    destination_module: Literal["leads", "insurance_policy_leads"]
+    destination_type: str | None = None
+    product_question_key: str | None = None
+    product_question_label: str | None = None
+    answer_mappings: dict[str, str] = Field(default_factory=dict)
+    active: bool = True
+    priority: int = Field(default=0, ge=0)
+
+    @field_validator("default_product_id", "product_question_key", "product_question_label", "destination_type", mode="before")
+    @classmethod
+    def normalize_optional_text(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
+
+
+class MetaLeadRoutingStatusRequest(BaseModel):
+    active: bool
+
+
+class MetaLeadRoutingResponse(BaseModel):
+    id: str
+    meta_form_id: str
+    form_name: str
+    category: str | None
+    product_mode: str | None
+    default_product_id: str | None
+    destination_module: str | None
+    destination_type: str | None
+    product_question_key: str | None
+    product_question_label: str | None
+    answer_mappings: dict[str, str]
+    discovered_questions: list[str]
+    priority: int
+    status: str
+    created_at: datetime
+    updated_at: datetime

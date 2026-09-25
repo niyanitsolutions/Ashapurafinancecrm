@@ -2,7 +2,12 @@ from datetime import datetime
 from typing import Any
 
 from app.features.lead_capture.constants import FailureStatus
-from app.features.lead_capture.models import CaptureFailure, CaptureReceipt, CaptureSource
+from app.features.lead_capture.models import (
+    CaptureFailure,
+    CaptureReceipt,
+    CaptureSource,
+    MetaLeadRouting,
+)
 from app.shared.base_repository import BaseRepository
 
 
@@ -58,3 +63,15 @@ class CaptureReceiptRepository(BaseRepository[CaptureReceipt]):
 
     async def count_for_source(self, capture_source: str) -> int:
         return await self.count({"capture_source": capture_source})
+
+
+class MetaLeadRoutingRepository(BaseRepository[MetaLeadRouting]):
+    collection_name = "meta_lead_routings"
+    model = MetaLeadRouting
+
+    async def find_by_form_id(self, form_id: str) -> MetaLeadRouting | None:
+        doc = await self.collection.find_one({"meta_form_id": form_id, "is_deleted": False})
+        return self.model.model_validate(doc) if doc else None
+
+    async def list_all(self) -> list[MetaLeadRouting]:
+        return await self.find_many({}, limit=1000, sort=[("form_name", 1), ("meta_form_id", 1)])

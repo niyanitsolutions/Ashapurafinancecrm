@@ -8,3 +8,5 @@ async def ensure_lead_capture_indexes(db: AsyncIOMotorDatabase[Any]) -> None:
     await db["capture_failures"].create_index([("status", 1), ("next_retry_at", 1)])
     await db["capture_failures"].create_index("capture_source")
     await db["capture_receipts"].create_index([("capture_source", 1), ("external_id", 1)], unique=True)
+    await db["meta_lead_routings"].create_index("meta_form_id", unique=True)
+    await db["meta_lead_routings"].create_index([("meta_form_id", 1), ("status", 1), ("is_deleted", 1)])

@@ -40,6 +40,7 @@ class ParsedLead:
     product_id: str
     remarks: str | None
     source_metadata: dict[str, str] = field(default_factory=dict)
+    destination_module: str = "leads"
 
 
 def normalize_mobile(raw: str) -> str:

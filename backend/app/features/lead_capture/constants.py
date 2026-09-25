@@ -25,7 +25,34 @@ class FailureReason:
     MISSING_REQUIRED_FIELDS = "missing_required_fields"
     API_ERROR = "api_error"
 
-    ALL = (DUPLICATE, INVALID_DATA, MISSING_REQUIRED_FIELDS, API_ERROR)
+    UNCONFIGURED_FORM = "unconfigured_form"
+    QUESTION_NOT_FOUND = "question_not_found"
+    ANSWER_NOT_FOUND = "answer_not_found"
+    ANSWER_NOT_MAPPED = "answer_not_mapped"
+    INVALID_CATEGORY = "invalid_category"
+    INVALID_PRODUCT = "invalid_product"
+    INACTIVE_PRODUCT = "inactive_product"
+    CATEGORY_PRODUCT_MISMATCH = "category_product_mismatch"
+    INVALID_DESTINATION = "invalid_destination"
+
+    ALL = (
+        DUPLICATE, INVALID_DATA, MISSING_REQUIRED_FIELDS, API_ERROR,
+        UNCONFIGURED_FORM, QUESTION_NOT_FOUND, ANSWER_NOT_FOUND,
+        ANSWER_NOT_MAPPED, INVALID_CATEGORY, INVALID_PRODUCT,
+        INACTIVE_PRODUCT, CATEGORY_PRODUCT_MISMATCH, INVALID_DESTINATION,
+    )
+
+
+class MetaProductMode:
+    DEFAULT = "default"
+    CUSTOMER_ANSWER = "customer_answer"
+    ALL = (DEFAULT, CUSTOMER_ANSWER)
+
+
+class MetaDestination:
+    LEADS = "leads"
+    INSURANCE_POLICY_LEADS = "insurance_policy_leads"
+    ALL = (LEADS, INSURANCE_POLICY_LEADS)
 
 
 class FailureStatus:
@@ -34,7 +61,9 @@ class FailureStatus:
     EXHAUSTED = "exhausted"  # api_error hit escalation_max_retries with no success
     IGNORED = "ignored"  # duplicate/invalid_data/missing_required_fields — not retryable by nature
 
-    ALL = (PENDING, RESOLVED, EXHAUSTED, IGNORED)
+    NEEDS_ROUTING_CONFIGURATION = "needs_routing_configuration"
+
+    ALL = (PENDING, RESOLVED, EXHAUSTED, IGNORED, NEEDS_ROUTING_CONFIGURATION)
 
 
 # Only a transient/technical failure is worth retrying automatically — duplicate/
@@ -51,6 +80,7 @@ class AuditEvent:
     CAPTURE_FAILED = "capture_failed"
     CAPTURE_RETRIED = "capture_retried"
     SOURCE_REMAPPED = "capture_source_remapped"
+    META_ROUTING_CONFIGURED = "meta_routing_configured"
 
 
 # The one LeadActivity event type this module adds (Module 6A's `LeadActivity.event_type`

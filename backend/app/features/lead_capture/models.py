@@ -54,7 +54,32 @@ class CaptureReceipt(BaseDocument):
 
     capture_source: str
     external_id: str  # e.g. Meta's leadgen_id — unique per (capture_source, external_id)
-    lead_id: str
+    # `lead_id` remains for every historical/general-lead receipt. Insurance Meta
+    # routing writes `destination_record_id` instead, pointing at the Policy Lead case.
+    lead_id: str | None = None
+    destination_module: str = "leads"
+    destination_record_id: str | None = None
+
+
+class MetaLeadRouting(BaseDocument):
+    """One immutable Meta Form ID to one explicit CRM routing rule.
+
+    Nullable configuration fields make synchronized-but-unconfigured forms valid old/
+    new documents. A rule is usable only when `status == active` and validation passes.
+    """
+
+    meta_form_id: str
+    form_name: str
+    category: str | None = None
+    product_mode: str | None = None
+    default_product_id: str | None = None
+    destination_module: str | None = None
+    destination_type: str | None = None
+    product_question_key: str | None = None
+    product_question_label: str | None = None
+    answer_mappings: dict[str, str] = Field(default_factory=dict)
+    discovered_questions: list[str] = Field(default_factory=list)
+    priority: int = 0
 
 
 class WebhookEvent(BaseDocument):

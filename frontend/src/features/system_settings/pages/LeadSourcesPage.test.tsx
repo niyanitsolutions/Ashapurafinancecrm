@@ -4,119 +4,81 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LeadSourcesPage } from "./LeadSourcesPage";
 
 const listLeadSources = vi.fn();
-const listCaptureSources = vi.fn();
-const updateCaptureSource = vi.fn();
-const listLoanProducts = vi.fn();
-const listInsuranceProducts = vi.fn();
-const listInsuranceCategories = vi.fn();
+const listRoutes = vi.fn();
+const saveRoute = vi.fn();
+const syncRoutes = vi.fn();
+const setStatus = vi.fn();
+const listLoans = vi.fn();
+const listInsurance = vi.fn();
+const listCategories = vi.fn();
 
 vi.mock("@/features/lead_capture/api", () => ({
-  listCaptureSources: (...args: unknown[]) => listCaptureSources(...args),
-  updateCaptureSource: (...args: unknown[]) => updateCaptureSource(...args),
+  listMetaLeadRoutings: (...a: unknown[]) => listRoutes(...a),
+  saveMetaLeadRouting: (...a: unknown[]) => saveRoute(...a),
+  syncMetaLeadRoutings: (...a: unknown[]) => syncRoutes(...a),
+  setMetaLeadRoutingStatus: (...a: unknown[]) => setStatus(...a),
 }));
-
 vi.mock("@/features/system_settings/api", () => ({
-  leadSourcesApi: {
-    list: (...args: unknown[]) => listLeadSources(...args),
-    create: vi.fn(),
-    update: vi.fn(),
-    activate: vi.fn(),
-    deactivate: vi.fn(),
-  },
-  loanProductsApi: { list: (...args: unknown[]) => listLoanProducts(...args) },
-  insuranceProductsApi: { list: (...args: unknown[]) => listInsuranceProducts(...args) },
-  insuranceCategoriesApi: { list: (...args: unknown[]) => listInsuranceCategories(...args) },
+  leadSourcesApi: { list: (...a: unknown[]) => listLeadSources(...a), create: vi.fn(), update: vi.fn(), activate: vi.fn(), deactivate: vi.fn() },
+  loanProductsApi: { list: (...a: unknown[]) => listLoans(...a) },
+  insuranceProductsApi: { list: (...a: unknown[]) => listInsurance(...a) },
+  insuranceCategoriesApi: { list: (...a: unknown[]) => listCategories(...a) },
 }));
 
-const metaLeadSource = {
-  id: "lead-source-meta",
-  name: "Meta",
-  description: null,
-  status: "active",
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
+const source = { id: "meta-source", name: "Meta", status: "active", description: null, created_at: "2026-01-01", updated_at: "2026-01-01" };
+const baseRoute = {
+  id: "route-1", meta_form_id: "FORM-1", form_name: "All Loans", category: "loan", product_mode: "customer_answer",
+  default_product_id: null, destination_module: "leads", destination_type: "fresh_leads", product_question_key: "loan_type",
+  product_question_label: null, answer_mappings: { "Personal Loan": "loan-1" }, discovered_questions: ["loan_type"],
+  priority: 0, status: "active", created_at: "2026-01-01", updated_at: "2026-01-01",
 };
 
 beforeEach(() => {
   vi.clearAllMocks();
-  listLeadSources.mockResolvedValue([metaLeadSource]);
-  listCaptureSources.mockResolvedValue([
-    {
-      id: "capture-meta",
-      key: "meta_lead_ads",
-      label: "Meta Lead Ads",
-      lead_source_id: metaLeadSource.id,
-      default_product_category: "loan",
-      default_product_id: "loan-active",
-    },
-  ]);
-  listLoanProducts.mockResolvedValue([
-    { id: "loan-active", name: "Personal Loan", status: "active" },
-    { id: "loan-inactive", name: "Inactive Loan", status: "inactive" },
-  ]);
-  listInsuranceCategories.mockResolvedValue([
-    { id: "category-active", name: "Health", status: "active" },
-    { id: "category-inactive", name: "Retired", status: "inactive" },
-  ]);
-  listInsuranceProducts.mockResolvedValue([
-    { id: "insurance-active", name: "Health Protect", status: "active", category_id: "category-active" },
-    { id: "insurance-inactive", name: "Inactive Policy", status: "inactive", category_id: "category-active" },
-    { id: "insurance-retired-category", name: "Retired Category Policy", status: "active", category_id: "category-inactive" },
-  ]);
-  updateCaptureSource.mockImplementation(async (key: string, payload: Record<string, string>) => ({
-    id: "capture-meta",
-    key,
-    label: "Meta Lead Ads",
-    lead_source_id: metaLeadSource.id,
-    ...payload,
-  }));
+  listLeadSources.mockResolvedValue([source]);
+  listRoutes.mockResolvedValue([baseRoute]);
+  listLoans.mockResolvedValue([{ id: "loan-1", name: "Personal Loan", status: "active" }, { id: "loan-off", name: "Inactive Loan", status: "inactive" }]);
+  listCategories.mockResolvedValue([{ id: "cat-1", name: "Health", status: "active" }]);
+  listInsurance.mockResolvedValue([{ id: "ins-1", name: "Health Plan", status: "active", category_id: "cat-1" }, { id: "ins-off", name: "Retired", status: "inactive", category_id: "cat-1" }]);
+  saveRoute.mockResolvedValue(baseRoute);
+  syncRoutes.mockResolvedValue([baseRoute]);
+  setStatus.mockResolvedValue({ ...baseRoute, status: "inactive" });
 });
 
-describe("LeadSourcesPage Meta product mapping", () => {
-  it("loads persisted mapping, resets product on category change, filters inactive options, and saves IDs", async () => {
-    const user = userEvent.setup();
-    render(<LeadSourcesPage />);
+async function openRouting() {
+  render(<LeadSourcesPage />);
+  await userEvent.setup().click(await screen.findByRole("button", { name: "Edit" }));
+  return userEvent.setup();
+}
 
-    await user.click(await screen.findByRole("button", { name: "Edit" }));
-    const category = await screen.findByRole("combobox", { name: "Meta Product Category" });
-    const product = screen.getByRole("combobox", { name: "Meta Product" });
-
-    await waitFor(() => expect(category).toHaveValue("loan"));
-    expect(product).toHaveValue("loan-active");
-    expect(screen.getByRole("option", { name: "Personal Loan" })).toBeInTheDocument();
+describe("Meta Lead Routing settings", () => {
+  it("loads form routing, preserves immutable ID, filters products, and saves answer mappings", async () => {
+    const user = await openRouting();
+    expect(await screen.findByText("Form ID: FORM-1")).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "Inactive Loan" })).not.toBeInTheDocument();
-
-    await user.selectOptions(category, "insurance");
-    expect(product).toHaveValue("");
-    expect(screen.getByRole("option", { name: "Health Protect" })).toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "Inactive Policy" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "Retired Category Policy" })).not.toBeInTheDocument();
-
-    await user.selectOptions(product, "insurance-active");
-    await user.click(screen.getByRole("button", { name: "Save Meta Mapping" }));
-
-    await waitFor(() => expect(updateCaptureSource).toHaveBeenCalledWith("meta_lead_ads", {
-      default_product_category: "insurance",
-      default_product_id: "insurance-active",
-    }));
-    expect(await screen.findByText("Meta Lead Ads product mapping saved.")).toBeInTheDocument();
+    await user.clear(screen.getByRole("textbox", { name: "Answer 1" }));
+    await user.type(screen.getByRole("textbox", { name: "Answer 1" }), "Business Loan");
+    await user.click(screen.getByRole("button", { name: "Save Routing" }));
+    await waitFor(() => expect(saveRoute).toHaveBeenCalledWith("FORM-1", expect.objectContaining({
+      category: "loan", product_mode: "customer_answer", destination_module: "leads",
+      answer_mappings: { "Business Loan": "loan-1" },
+    })));
   });
 
-  it("warns when the Meta mapping is unconfigured", async () => {
-    listCaptureSources.mockResolvedValue([
-      {
-        id: "capture-meta",
-        key: "meta_lead_ads",
-        label: "Meta Lead Ads",
-        lead_source_id: metaLeadSource.id,
-        default_product_category: null,
-        default_product_id: null,
-      },
-    ]);
-    const user = userEvent.setup();
-    render(<LeadSourcesPage />);
-    await user.click(await screen.findByRole("button", { name: "Edit" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Meta imports are blocked");
-    expect(screen.getByRole("button", { name: "Save Meta Mapping" })).toBeDisabled();
+  it("clears incompatible mappings when category changes and exposes only active insurance products", async () => {
+    const user = await openRouting();
+    await user.selectOptions(await screen.findByRole("combobox", { name: "All Loans Category" }), "insurance");
+    expect(screen.getByDisplayValue("Insurance -> Policy Leads -> Fresh Leads")).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Health Plan" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Retired" })).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Mapped product 1" })).toHaveValue("");
+  });
+
+  it("syncs forms without assigning a default and can deactivate an active route", async () => {
+    const user = await openRouting();
+    await user.click(await screen.findByRole("button", { name: "Sync Forms" }));
+    await waitFor(() => expect(syncRoutes).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Deactivate" }));
+    await waitFor(() => expect(setStatus).toHaveBeenCalledWith("FORM-1", false));
   });
 });
