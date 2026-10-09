@@ -1,4 +1,8 @@
 import { createBrowserRouter, Navigate } from "react-router-dom";
+import { InvoiceListPage } from "@/features/invoices/InvoiceListPage";
+import { InvoiceFormPage } from "@/features/invoices/InvoiceFormPage";
+import { InvoiceViewPage } from "@/features/invoices/InvoiceViewPage";
+import { InvoiceSettingsPage } from "@/features/invoices/InvoiceSettingsPage";
 import { AppShell } from "@/components/layout/AppShell";
 import { HomeRedirect } from "@/app/HomeRedirect";
 import { RequirePermission } from "@/features/access_control/components/RequirePermission";
@@ -240,6 +244,16 @@ export const router = createBrowserRouter([
           { path: "/loan-cases/:caseId", element: <LoanCaseDetailsPage /> },
           { path: "/loan-management/cases/:caseId", element: <LoanCaseDetailsPage /> },
           { path: "/insurance-cases", element: <InsuranceCaseListPage /> },
+          { element: <RequirePermission module="invoices" resource="invoices" action="view" redirectTo="/" />, children: [
+            { path: "/invoices", element: <InvoiceListPage /> },
+            { path: "/invoices/:invoiceId", element: <InvoiceViewPage /> },
+          ] },
+          { element: <RequirePermission module="invoices" resource="invoices" action="create" redirectTo="/invoices" />, children: [
+            { path: "/invoices/new", element: <InvoiceFormPage /> },
+          ] },
+          { element: <RequirePermission module="invoices" resource="invoices" action="edit" redirectTo="/invoices" />, children: [
+            { path: "/invoices/:invoiceId/edit", element: <InvoiceFormPage /> },
+          ] },
           { path: "/insurance-cases/:caseId", element: <InsuranceCaseDetailsPage /> },
           // Tabbed Loan/Insurance Management — same list pages as above, reused verbatim
           // (fixedStatus/reEligible are additive optional props), just addressed under a
@@ -436,6 +450,7 @@ export const router = createBrowserRouter([
                   { path: "/settings/status-masters", element: <StatusMastersPage /> },
                   { path: "/settings/notification-templates", element: <NotificationTemplatesPage /> },
                   { path: "/settings/company", element: <CompanySettingsPage /> },
+                  { path: "/settings/invoices", element: <InvoiceSettingsPage /> },
                   { path: "/settings/product-schemas", element: <ProductSchemasPage /> },
                   { path: "/settings/product-schemas/compare", element: <SchemaComparePage /> },
                   { path: "/settings/product-schemas/:schemaId", element: <SchemaEditorPage /> },

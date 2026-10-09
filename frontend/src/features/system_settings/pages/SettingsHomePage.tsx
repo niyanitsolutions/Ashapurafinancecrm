@@ -19,6 +19,7 @@ interface SettingsSection {
 // Settings — see the UI/UX redesign initiative). API Settings is deliberately omitted:
 // retired in favor of Connections (Integrations), which already covers the same providers.
 const SECTIONS: SettingsSection[] = [
+  { label: "Billing", items: [{ to: "/settings/invoices", icon: "reports", title: "Invoice Settings", description: "Configure GST, bank details, numbering, signature and QR codes." }] },
   {
     label: "Product Configuration",
     items: [

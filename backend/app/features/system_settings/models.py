@@ -13,6 +13,8 @@ near-identical copies of the same logic (see docs/decisions/DECISIONS.md for thi
 module's decisions).
 """
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from app.features.employee.models import Address
@@ -99,6 +101,9 @@ class CompanySettings(BaseDocument):
     calls. See CompanySettingsRepository.get_or_create."""
 
     singleton_key: str = "default"
+    # Owner-managed billing configuration; deliberately excluded from the general
+    # company-settings response. Invoice endpoints expose it only to authorized staff.
+    invoice_config: dict[str, Any] = Field(default_factory=dict)
     company_name: str
     logo_s3_key: str | None = None
     primary_color: str | None = None

@@ -40,6 +40,8 @@ from app.features.insurance_management.router import router as insurance_managem
 from app.features.integrations.indexes import ensure_integrations_indexes
 from app.features.integrations.router import public_router as integrations_public_router
 from app.features.integrations.router import router as integrations_router
+from app.features.invoices.repository import ensure_invoice_indexes
+from app.features.invoices.router import router as invoices_router
 from app.features.lead_capture.indexes import ensure_lead_capture_indexes
 from app.features.lead_capture.router import public_router as lead_capture_public_router
 from app.features.lead_capture.router import router as lead_capture_router
@@ -85,6 +87,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await ensure_geo_fencing_indexes(get_database())
     await ensure_system_settings_indexes(get_database())
     await ensure_dashboard_indexes(get_database())
+    await ensure_invoice_indexes(get_database())
     await ensure_lead_indexes(get_database())
     await ensure_customer_indexes(get_database())
     await ensure_workflow_engine_indexes(get_database())
@@ -126,6 +129,7 @@ def create_app() -> FastAPI:
     app.add_exception_handler(Exception, unhandled_exception_handler)
 
     app.include_router(health_router, prefix=settings.api_v1_prefix)
+    app.include_router(invoices_router, prefix=settings.api_v1_prefix)
     app.include_router(auth_router, prefix=settings.api_v1_prefix)
     app.include_router(owner_router, prefix=settings.api_v1_prefix)
     app.include_router(employee_router, prefix=settings.api_v1_prefix)

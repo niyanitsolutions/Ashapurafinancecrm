@@ -160,3 +160,23 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   const body = await apiRequestRaw<T>(path, init);
   return body.data as T;
 }
+
+// Protected PDFs use the same in-memory bearer token and refresh behavior as JSON APIs.
+export async function apiBlob(path: string, init: RequestInit = {}, retry = false): Promise<Blob> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    headers: { ...(init.body ? { "Content-Type": "application/json" } : {}),
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}), ...init.headers },
+  });
+  if (response.status === 401 && !retry) {
+    if (await refreshAccessToken()) return apiBlob(path, init, true);
+    localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+    accessToken = null;
+    onSessionExpired?.();
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as ApiResponse<never> | null;
+    throw new ApiError(body?.error?.code ?? `http_${response.status}`, body?.error?.message ?? "Unable to generate PDF.");
+  }
+  return response.blob();
+}

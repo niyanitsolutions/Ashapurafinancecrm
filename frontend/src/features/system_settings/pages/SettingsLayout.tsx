@@ -20,6 +20,7 @@ const TABS = [
   { label: "Branches", to: "/settings/branches", matchKey: "settings" },
   { label: "Reminder Rules", to: "/settings/reminder-rules", matchKey: ["settings", "reminder_rules"] },
   { label: "Company Settings", to: "/settings/company", matchKey: "settings" },
+  { label: "Invoice Settings", to: "/settings/invoices", matchKey: "settings" },
 ];
 
 export function SettingsLayout() {

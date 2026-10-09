@@ -20,6 +20,7 @@ export interface MatrixRow {
 // own Permission catalog row — no change to this file's logic or the rendering
 // component. Deliberately doesn't list areas with no backing feature yet.
 export const PERMISSION_MATRIX_ROWS: MatrixRow[] = [
+  { module: "invoices", resource: "invoices", label: "Invoices" },
   { module: "leads", resource: "leads", label: "Leads" },
   { module: "customer", resource: "customers", label: "Customers" },
   { module: "reminders", resource: "tasks", label: "Tasks" },
