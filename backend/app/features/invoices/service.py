@@ -46,6 +46,23 @@ def public(doc: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+def payment_qr(company: dict[str, Any], invoice: dict[str, Any]) -> str:
+    config = InvoiceConfig.model_validate(
+        {key: company[key] for key in InvoiceConfig.model_fields if key in company}
+    )
+    if config.qr_type == "upi":
+        return "upi://pay?" + urlencode(
+            {
+                "pa": config.upi_id,
+                "pn": config.account_holder or company["name"],
+                "am": invoice["grand_total"],
+                "cu": "INR",
+                "tn": invoice["invoice_number"],
+            }
+        )
+    return "Invoice:" + invoice["invoice_number"] if config.qr_type == "identifier" else ""
+
+
 class InvoiceService:
     def __init__(self, db: AsyncIOMotorDatabase[Any], redis: Redis) -> None:
         self.db, self.redis = db, redis
@@ -171,6 +188,21 @@ class InvoiceService:
             **config.model_dump(mode="json"),
         )
 
+    async def draft_company(self, doc: dict[str, Any]) -> dict[str, Any]:
+        latest = await self.snapshot()
+        company = dict(doc["company"])
+        for field in (
+            "signature_s3_key",
+            "show_signature",
+            "signatory",
+            "designation",
+            "qr_type",
+            "upi_id",
+            "account_holder",
+        ):
+            company[field] = latest[field]
+        return company
+
     async def customer_validate(self, payload: InvoiceInput, actor: User) -> None:
         if payload.customer_id:
             if not ObjectId.is_valid(payload.customer_id):
@@ -287,7 +319,7 @@ class InvoiceService:
                 cancellation_reason=payload.reason.strip(),
             )
         if payload.status == "issued":
-            company = current["company"]  # stored snapshot; settings changes never rewrite history
+            company = await self.draft_company(current)
             if not all(
                 [
                     company["name"],
@@ -301,23 +333,7 @@ class InvoiceService:
                 raise ValidationError(
                     "Complete company address, GSTIN and bank details before issuing."
                 )
-            qr = company["qr_type"]
-            updates["qr_value"] = (
-                "upi://pay?"
-                + urlencode(
-                    {
-                        "pa": company["upi_id"],
-                        "pn": company["account_holder"] or company["name"],
-                        "am": current["grand_total"],
-                        "cu": "INR",
-                        "tn": current["invoice_number"],
-                    }
-                )
-                if qr == "upi"
-                else "Invoice:" + current["invoice_number"]
-                if qr == "identifier"
-                else ""
-            )
+            updates["qr_value"] = payment_qr(company, current)
             updates["issued_at"] = utc_now()
             # Even an old logo uploaded through the shared Settings flow might later
             # be replaced at its source key. Issued invoices own immutable copies.

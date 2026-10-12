@@ -548,6 +548,11 @@ async def test_signature_storage_assets_and_historical_replacement(
     assert (
         await client.put("/api/v1/invoice-settings", headers=owner_headers, json=config)
     ).status_code == 200
+    persisted = (
+        await client.get("/api/v1/invoice-settings", headers=owner_headers)
+    ).json()["data"]
+    assert persisted["config"]["signature_s3_key"] == key
+    assert persisted["assets"]["signature"] == "https://example.test/" + key
     images["company/logo/sample.png"] = data
     await mock_db.company_settings.update_one(
         {"singleton_key": "default"},
@@ -712,3 +717,78 @@ async def test_customer_picker_search_applies_before_limit(
             headers=owner_headers,
         )
     ).status_code == 422
+
+
+async def test_draft_pdf_uses_current_payment_settings_without_rewriting_history(
+    client, owner_headers, mock_db, monkeypatch
+):
+    from app.features.invoices import assets, router
+
+    await configure(client, owner_headers)
+    invoice = await create(client, owner_headers)
+    url = "/api/v1/invoices/" + invoice["id"]
+    image = BytesIO()
+    Image.new("RGB", (120, 40), "navy").save(image, format="PNG")
+    data = image.getvalue()
+    monkeypatch.setattr(router, "asset_bytes", lambda key: data)
+    monkeypatch.setattr(assets, "snapshot_image", lambda key, invoice_id: key)
+    from app.features.invoices import service
+
+    monkeypatch.setattr(service, "snapshot_image", lambda key, invoice_id: key)
+    config = (
+        await client.get("/api/v1/invoice-settings", headers=owner_headers)
+    ).json()["data"]["config"]
+    config.update(
+        signature_s3_key="company/invoice-signature/test.png",
+        show_signature=True,
+        qr_type="upi",
+        upi_id="example@bank",
+    )
+    await client.put("/api/v1/invoice-settings", headers=owner_headers, json=config)
+    saved = await mock_db.invoices.find_one({"_id": ObjectId(invoice["id"])})
+    for purpose in ("preview", "download", "print"):
+        response = await client.get(
+            url + "/pdf?purpose=" + purpose, headers=owner_headers
+        )
+        assert response.status_code == 200, response.text
+        pdf = pymupdf.open(stream=response.content, filetype="pdf")
+        assert len(pdf) == 1
+        images = pdf[0].get_images()
+        assert len(images) == 2
+        assert any(img[2:4] == (120, 40) for img in images)
+        assert "27,448.13" in pdf[0].get_text()
+        for item in pdf[0].get_image_info():
+            box = pymupdf.Rect(item["bbox"])
+            assert pdf[0].rect.contains(box)
+    assert await mock_db.invoices.find_one({"_id": ObjectId(invoice["id"])}) == saved
+    config["show_signature"] = False
+    await client.put("/api/v1/invoice-settings", headers=owner_headers, json=config)
+    response = await client.get(url + "/pdf", headers=owner_headers)
+    assert (
+        len(pymupdf.open(stream=response.content, filetype="pdf")[0].get_images()) == 1
+    )
+    config.update(show_signature=True, signature_s3_key=None)
+    await client.put("/api/v1/invoice-settings", headers=owner_headers, json=config)
+    response = await client.get(url + "/pdf", headers=owner_headers)
+    assert (
+        len(pymupdf.open(stream=response.content, filetype="pdf")[0].get_images()) == 1
+    )
+    issued = (
+        await client.post(
+            url + "/status",
+            headers=owner_headers,
+            json={"status": "issued", "version": 1},
+        )
+    ).json()["data"]
+    query = parse_qs(urlparse(issued["qr_value"]).query)
+    assert query["pa"] == ["example@bank"] and query["am"] == [invoice["grand_total"]]
+    assert query["cu"] == ["INR"] and query["tn"] == [invoice["invoice_number"]]
+    config.update(qr_type="none", upi_id="")
+    await client.put("/api/v1/invoice-settings", headers=owner_headers, json=config)
+    response = await client.get(url + "/pdf", headers=owner_headers)
+    assert (
+        len(pymupdf.open(stream=response.content, filetype="pdf")[0].get_images()) == 1
+    )
+    assert (await client.get(url, headers=owner_headers)).json()["data"][
+        "qr_value"
+    ] == issued["qr_value"]

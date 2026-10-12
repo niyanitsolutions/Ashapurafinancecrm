@@ -18,7 +18,7 @@ from app.features.auth.models import User
 from app.features.employee.dependencies import require_owner
 from app.features.invoices.pdf import render_invoice
 from app.features.invoices.schemas import CancelInput, InvoiceConfig, InvoiceInput, StatusInput
-from app.features.invoices.service import InvoiceService
+from app.features.invoices.service import InvoiceService, payment_qr
 from app.services.storage.client import generate_presigned_download_url, get_s3_client
 
 router = APIRouter(tags=["invoices"])
@@ -203,6 +203,12 @@ def asset_bytes(key: str) -> bytes:
 
 
 async def pdf_response(doc, purpose, svc, actor):
+    # Draft payment/signature previews follow current settings without rewriting
+    # stored invoice amounts or the immutable snapshots of issued invoices.
+    if doc["status"] == "draft":
+        company = await svc.draft_company(doc)
+        doc = doc | {"company": company}
+        doc = doc | {"qr_value": payment_qr(company, doc)}
     assets = {}
     try:
         for name, key in [

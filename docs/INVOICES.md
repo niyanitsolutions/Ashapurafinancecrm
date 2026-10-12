@@ -96,6 +96,11 @@ The sample was rendered and visually inspected after alignment/typography correc
 Browser-added timestamps, file title and local print URL in the source are not company
 invoice content and are omitted. Output uses A4 instead of the source's US Letter.
 
+Draft PDFs use the current signature visibility, image, signatory and payment QR
+settings without updating stored invoice totals. Issuance freezes these settings and
+image copies; later settings changes do not alter issued invoices. Enable **Display
+signature on invoices** and save settings to include the uploaded image.
+
 QR defaults to disabled. Issuing generates either an informational invoice identifier
 or a real UPI URI using configured payee details and the stored total. No payment data
 is invented. QR content therefore varies from the reference. The comparison sample
