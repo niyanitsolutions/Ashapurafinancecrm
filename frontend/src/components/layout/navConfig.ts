@@ -76,6 +76,7 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [{ label: "Insurance Management", to: "/insurance-management", icon: "insurance", matchKey: "insurance_cases" }],
   },
   { label: "Finance / Billing", items: [{ label: "Invoices", to: "/invoices", icon: "reports", matchKey: "invoices" }] },
+  { label: null, items: [{ label: "AI Voice Assistant", to: "/voice-assistant", icon: "reports", matchKey: "voice_assistant" }] },
   {
     label: null,
     items: [

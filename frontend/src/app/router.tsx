@@ -1,4 +1,5 @@
 import { createBrowserRouter, Navigate } from "react-router-dom";
+import { VoiceAssistantPage } from "@/features/voice_assistant/VoiceAssistantPage";
 import { InvoiceListPage } from "@/features/invoices/InvoiceListPage";
 import { InvoiceFormPage } from "@/features/invoices/InvoiceFormPage";
 import { InvoiceViewPage } from "@/features/invoices/InvoiceViewPage";
@@ -247,6 +248,10 @@ export const router = createBrowserRouter([
           { element: <RequirePermission module="invoices" resource="invoices" action="view" redirectTo="/" />, children: [
             { path: "/invoices", element: <InvoiceListPage /> },
             { path: "/invoices/:invoiceId", element: <InvoiceViewPage /> },
+          ] },
+          { element: <RequirePermission module="voice_assistant" resource="calls" action="view" redirectTo="/" />, children: [
+            { path: "/voice-assistant", element: <VoiceAssistantPage /> },
+            { path: "/voice-assistant/:section", element: <VoiceAssistantPage /> },
           ] },
           { element: <RequirePermission module="invoices" resource="invoices" action="create" redirectTo="/invoices" />, children: [
             { path: "/invoices/new", element: <InvoiceFormPage /> },

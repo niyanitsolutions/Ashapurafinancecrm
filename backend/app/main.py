@@ -70,6 +70,8 @@ from app.features.support.indexes import ensure_support_indexes
 from app.features.support.router import router as support_router
 from app.features.system_settings.indexes import ensure_system_settings_indexes
 from app.features.system_settings.router import router as system_settings_router
+from app.features.voice_assistant.repository import ensure_voice_indexes
+from app.features.voice_assistant.router import router as voice_assistant_router
 from app.features.workflow_engine.indexes import ensure_workflow_engine_indexes
 from app.logging_config import configure_logging
 from app.middleware.cors import setup_cors
@@ -88,6 +90,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await ensure_system_settings_indexes(get_database())
     await ensure_dashboard_indexes(get_database())
     await ensure_invoice_indexes(get_database())
+    await ensure_voice_indexes(get_database())
     await ensure_lead_indexes(get_database())
     await ensure_customer_indexes(get_database())
     await ensure_workflow_engine_indexes(get_database())
@@ -130,6 +133,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router, prefix=settings.api_v1_prefix)
     app.include_router(invoices_router, prefix=settings.api_v1_prefix)
+    app.include_router(voice_assistant_router, prefix=settings.api_v1_prefix)
     app.include_router(auth_router, prefix=settings.api_v1_prefix)
     app.include_router(owner_router, prefix=settings.api_v1_prefix)
     app.include_router(employee_router, prefix=settings.api_v1_prefix)

@@ -30,6 +30,7 @@ from app.worker.tasks.reminders import (
     check_task_reminders,
     poll_audit_events,
 )
+from app.worker.tasks.voice_assistant import reconcile_mock_voice_calls
 
 
 async def _startup(_ctx: dict[str, Any]) -> None:
@@ -65,6 +66,7 @@ class WorkerSettings:
     # 1-15 minutes specifically so their own trigger-hour precision never matters; what
     # they decide is "due" is instant-based for the same reason.
     cron_jobs: ClassVar[list[Any]] = [
+        cron(reconcile_mock_voice_calls, second=set(range(0, 60, 5)), run_at_startup=True),  # type: ignore[arg-type]
         # arq's own WorkerCoroutine Protocol doesn't structurally match a plain typed
         # async def under mypy --strict (a known friction point between arq's stubs and
         # strict mode) even though these run correctly at runtime — the signatures match
