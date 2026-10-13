@@ -4,6 +4,13 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.features.access_control.models import Permission
 from app.features.dashboard.models import NavItem
+from app.features.voice_assistant.repository import ensure_voice_indexes
+
+
+async def initialize_voice_module(db: AsyncIOMotorDatabase[Any]) -> None:
+    """Register shipped navigation on startup, preserving existing administrative choices."""
+    await ensure_voice_indexes(db)
+    await seed_voice_catalog(db)
 
 
 async def seed_voice_catalog(db: AsyncIOMotorDatabase[Any]) -> None:

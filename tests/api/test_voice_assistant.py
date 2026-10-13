@@ -293,6 +293,24 @@ async def test_catalog_additive_and_no_grants(mock_db):
     assert await mock_db.role_permissions.count_documents({}) == 0
 
 
+async def test_startup_registers_owner_navigation_and_preserves_existing_choices(mock_db):
+    from app.features.dashboard.service import DashboardService
+    from app.features.voice_assistant.catalog import initialize_voice_module
+
+    await initialize_voice_module(mock_db)
+    await initialize_voice_module(mock_db)
+    owner = User(_id=str(ObjectId()), mobile="9000000024", role="owner")
+    nav = await DashboardService(mock_db).get_nav(owner)
+    assert any(item.key == "voice_assistant" and item.route == "/voice-assistant" for item in nav)
+    assert await mock_db.nav_items.count_documents({"key": "voice_assistant"}) == 1
+    assert await mock_db.permissions.count_documents({"module": "voice_assistant"}) == 2
+    assert await mock_db.role_permissions.count_documents({}) == 0
+    assert await mock_db.voice_settings.count_documents({}) == 0
+    await mock_db.nav_items.update_one({"key": "voice_assistant"}, {"$set": {"status": "inactive"}})
+    await initialize_voice_module(mock_db)
+    assert (await mock_db.nav_items.find_one({"key": "voice_assistant"}))["status"] == "inactive"
+
+
 async def test_outgoing_windows_and_monthly_reservation(client, owner_headers, mock_db):
     await ensure_voice_indexes(mock_db)
     await enable(

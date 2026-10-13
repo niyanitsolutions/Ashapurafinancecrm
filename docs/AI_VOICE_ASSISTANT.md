@@ -42,7 +42,8 @@ Backend `app/features/voice_assistant/`:
 - `exotel.py`: selected-provider fail-closed adapter and offline media-session codec.
 - `catalog.py`: additive permission/navigation catalog seeding, without assigning grants.
 
-`app/main.py` registers the router/indexes. `app/worker/tasks/voice_assistant.py`
+`app/main.py` registers the router and initializes indexes, navigation and the
+permission catalog automatically at startup. `app/worker/tasks/voice_assistant.py`
 and `app/worker/worker_settings.py` add the five-second deadline poll. No outbound
 dispatch job is registered.
 
@@ -71,10 +72,30 @@ New collections:
 | `voice_worker_health` | Unique singleton key and last successful worker sweep |
 
 Calls and knowledge extend the project's `BaseDocument`. New data is additive;
-existing records need no transformation. A catalog migration **is required** to
-make the sidebar entry and delegatable grants available. Index creation also runs
-at backend startup. Apply the targeted script below; do not run the full seed
-against production just to add this module.
+existing records need no transformation. Backend startup now ensures the sidebar
+entry and delegatable permission definitions exist, as well as indexes. It never
+assigns grants or overwrites an existing inactive navigation entry. The targeted
+script below can repair deployments made before this startup registration was
+added; do not run the full seed against production just to add this module.
+
+### Missing sidebar after deployment
+
+The sidebar uses the permission-filtered `GET /api/v1/dashboard/nav` response,
+not just frontend route definitions. Earlier versions needed the explicit catalog
+script; copying/building the code alone did not create the database navigation row.
+For an already deployed checkout, run from its `backend` directory:
+
+```bash
+.venv/bin/python ../scripts/voice_catalog.py
+```
+
+Then reload the CRM (sign out/in or hard refresh) and open `/voice-assistant`.
+If the entry is still missing, inspect the authenticated dashboard navigation
+response for `voice_assistant`. A missing key indicates the wrong database,
+an inactive row or a permission restriction; Owner needs no employee grant.
+If the key is present but the sidebar omits it, rebuild the deployed frontend with
+`npm run build` and hard-refresh the browser. Verify the deployed source contains
+the voice entry in `src/components/layout/navConfig.ts`.
 
 Permissions are `voice_assistant:calls` (`view`, `create`, `edit`) and
 `voice_assistant:knowledge` (`view`, `create`, `edit`, `approve`). Owner bypass matches

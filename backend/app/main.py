@@ -70,7 +70,7 @@ from app.features.support.indexes import ensure_support_indexes
 from app.features.support.router import router as support_router
 from app.features.system_settings.indexes import ensure_system_settings_indexes
 from app.features.system_settings.router import router as system_settings_router
-from app.features.voice_assistant.repository import ensure_voice_indexes
+from app.features.voice_assistant.catalog import initialize_voice_module
 from app.features.voice_assistant.router import router as voice_assistant_router
 from app.features.workflow_engine.indexes import ensure_workflow_engine_indexes
 from app.logging_config import configure_logging
@@ -90,7 +90,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await ensure_system_settings_indexes(get_database())
     await ensure_dashboard_indexes(get_database())
     await ensure_invoice_indexes(get_database())
-    await ensure_voice_indexes(get_database())
+    await initialize_voice_module(get_database())
     await ensure_lead_indexes(get_database())
     await ensure_customer_indexes(get_database())
     await ensure_workflow_engine_indexes(get_database())
