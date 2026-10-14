@@ -98,7 +98,13 @@ from app.services.storage.client import (
     get_object_size,
 )
 from app.shared.audit_log import write_audit_log
-from app.utils.datetime import add_calendar_months, ensure_utc, ist_date_to_utc_midnight, to_ist, utc_now
+from app.utils.datetime import (
+    add_calendar_months,
+    ensure_utc,
+    ist_date_to_utc_midnight,
+    to_ist,
+    utc_now,
+)
 from app.utils.id_generator import IdPrefix, generate_id
 
 _NO_ASSIGNMENT_SENTINEL = "___none___"
@@ -948,7 +954,9 @@ class LoanCaseService:
         if not self._is_top_up_eligible(case):
             raise ValidationError("This case is not currently eligible for Top Up.")
 
-        from app.config.redis import get_redis  # deferred: avoid the customer <-> loan_management import cycle
+        from app.config.redis import (
+            get_redis,  # deferred: avoid the customer <-> loan_management import cycle
+        )
         from app.features.customer.service import CustomerService
 
         application = await CustomerService(self._db, get_redis()).create_application_for_customer(

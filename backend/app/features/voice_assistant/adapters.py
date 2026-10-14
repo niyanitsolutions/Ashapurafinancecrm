@@ -58,7 +58,7 @@ SAFETY_POLICY = (
 
 def readiness() -> dict[str, Any]:
     return {
-        "selected_provider": "exotel",
+        "selected_provider": "smartflo",
         "sandbox": "not_configured",
         "telephony": "not_configured",
         "conversation_ai": "not_configured",

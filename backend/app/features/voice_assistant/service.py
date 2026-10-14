@@ -1,6 +1,8 @@
 import hashlib
+import json
 import re
 from datetime import UTC, timedelta
+from time import monotonic
 from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -12,6 +14,7 @@ from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from app.core.exceptions import ConflictError, ForbiddenError, ValidationError
+from app.features.access_control.permission_engine import PermissionEngine
 from app.features.auth.models import User
 from app.features.voice_assistant.adapters import readiness
 from app.features.voice_assistant.conversation import (
@@ -29,6 +32,7 @@ from app.features.voice_assistant.schemas import (
     CallAction,
     ConsoleInput,
     KnowledgeAction,
+    KnowledgeEvaluationInput,
     KnowledgeInput,
     MockCallInput,
     VoiceSettings,
@@ -38,6 +42,26 @@ from app.utils.datetime import utc_now
 
 CALLS = "voice_calls"
 KNOWLEDGE = "voice_knowledge"
+
+
+def knowledge_public(doc: dict[str, Any]) -> dict[str, Any]:
+    """Do not send twenty complete document copies in every library row."""
+    result = public(doc)
+    result.pop("chunks", None)
+    summary_keys = {"version", "title", "language", "published_by", "published_at"}
+    result["revisions"] = [
+        {key: value for key, value in revision.items() if key in summary_keys}
+        for revision in doc.get("revisions", [])
+    ]
+    result["publications"] = [
+        {key: value for key, value in revision.items() if key in summary_keys}
+        for revision in doc.get("publications", [])
+    ]
+    if doc.get("publication"):
+        result["publication"] = {
+            key: value for key, value in doc["publication"].items() if key in summary_keys
+        }
+    return result
 
 
 class VoiceService:
@@ -185,6 +209,49 @@ class VoiceService:
             if heartbeat and now - heartbeat < timedelta(seconds=90)
             else "unknown_or_stale"
         )
+        operational: dict[str, Any] = {
+            "live_telephony": "blocked_unprovisioned",
+            "speech_recognition": "not_approved",
+            "speech_synthesis": "not_approved",
+            "media_latency_ms": None,
+            "queue_depth": None,
+            "live_capture": "blocked",
+            "campaign_dispatch": "not_implemented",
+            "caller_verified_tools": "not_implemented",
+            "local_text_model": "configured_not_verified"
+            if get_conversation_config().local_ai_enabled
+            else "disabled",
+        }
+        engine = PermissionEngine(self.db)
+        if await engine.has_permission(
+            actor, module="voice_assistant", resource="knowledge", action="view"
+        ):
+            operational["knowledge"] = {
+                state: await self.db.voice_knowledge.count_documents(
+                    {"is_deleted": False, "status": state}
+                )
+                for state in ("draft", "review", "published", "archived")
+            }
+        if await engine.has_permission(
+            actor, module="voice_assistant", resource="recordings", action="view"
+        ):
+            record_scope: dict[str, Any] = {"is_deleted": False}
+            if actor.role != "owner":
+                record_scope["call_owner_user_id"] = actor.require_id()
+            operational["recordings"] = {
+                state: await self.db.voice_recordings.count_documents(
+                    {**record_scope, "status": state}
+                )
+                for state in ("pending", "completed", "failed", "deletion_pending", "deleted")
+            }
+            recording_worker = await self.db.voice_worker_health.find_one(
+                {"singleton_key": "recordings"}
+            )
+            last = (recording_worker or {}).get("heartbeat_at")
+            operational["recording_worker"] = (
+                "healthy" if last and now - last < timedelta(minutes=7) else "unknown_or_stale"
+            )
+            operational["recording_cleanup_failures"] = (recording_worker or {}).get("failed")
         return {
             "metrics": metrics,
             "data_mode": "mock_only",
@@ -193,6 +260,7 @@ class VoiceService:
             "worker": worker,
             "worker_heartbeat_at": heartbeat,
             "recent": (await self.list_calls(actor, page_size=8))["items"],
+            "operational": operational,
         }
 
     async def create_mock_call(self, payload: MockCallInput, actor: User) -> dict[str, Any]:
@@ -434,9 +502,38 @@ class VoiceService:
             .to_list(25)
         )
         return {
-            "items": [public(d) for d in docs],
+            "items": [knowledge_public(d) for d in docs],
             "total": await self.db.voice_knowledge.count_documents({"is_deleted": False}),
+            "page": page,
         }
+
+    @staticmethod
+    def publication_snapshot(doc: dict[str, Any], actor_id: str) -> dict[str, Any]:
+        return {
+            **{
+                key: doc.get(key)
+                for key in (
+                    "title",
+                    "content",
+                    "language",
+                    "content_hash",
+                    "chunks",
+                    "effective_on",
+                    "expires_on",
+                    "version",
+                )
+            },
+            "published_by": actor_id,
+            "published_at": utc_now(),
+        }
+
+    @staticmethod
+    def knowledge_fingerprint(doc: dict[str, Any]) -> str:
+        fields = {
+            key: doc.get(key)
+            for key in ("title", "content_hash", "language", "effective_on", "expires_on")
+        }
+        return hashlib.sha256(json.dumps(fields, sort_keys=True).encode()).hexdigest()
 
     def knowledge_fields(self, payload: KnowledgeInput) -> dict[str, Any]:
         normalized = re.sub(r"\s+", " ", payload.content).strip()
@@ -451,7 +548,12 @@ class VoiceService:
         }
 
     async def save_knowledge(
-        self, payload: KnowledgeInput, actor: User, record_id: str | None = None
+        self,
+        payload: KnowledgeInput,
+        actor: User,
+        record_id: str | None = None,
+        *,
+        source: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         fields = self.knowledge_fields(payload)
         duplicate = await self.db.voice_knowledge.find_one(
@@ -477,14 +579,27 @@ class VoiceService:
                     )
                 },
             ]
+            publication = doc.get("publication")
+            if doc["status"] == "published" and not publication:
+                publication = self.publication_snapshot(
+                    doc, doc.get("reviewed_by") or actor.require_id()
+                )
             result = await self.repo.update(
                 KNOWLEDGE,
                 doc,
-                {**fields, "status": "draft", "reviewed_by": None, "revisions": revisions[-20:]},
+                {
+                    **fields,
+                    "status": "draft",
+                    "reviewed_by": None,
+                    "revisions": revisions[-20:],
+                    "publication": publication,
+                },
                 actor.require_id(),
             )
         else:
-            result = KnowledgeArticle(**fields, created_by=actor.require_id()).model_dump(
+            result = KnowledgeArticle(
+                **fields, source=source, created_by=actor.require_id()
+            ).model_dump(
                 by_alias=True,
                 exclude={"id"},
             )
@@ -496,7 +611,7 @@ class VoiceService:
                 ) from exc
             result["_id"] = inserted.inserted_id
         await self.audit(actor, "knowledge_saved", str(result["_id"]))
-        return public(result)
+        return knowledge_public(result)
 
     async def knowledge_action(
         self, record_id: str, payload: KnowledgeAction, actor: User
@@ -505,16 +620,82 @@ class VoiceService:
         if payload.version != doc["version"]:
             raise ConflictError("Knowledge changed. Refresh before retrying.")
         transitions = {"review": ("draft", "review"), "publish": ("review", "published")}
-        updates = {}
+        updates: dict[str, Any] = {}
         if payload.action in transitions:
             origin, target = transitions[payload.action]
             if doc["status"] != origin:
                 raise ConflictError(f"Knowledge must be {origin} first.")
             updates["status"] = target
             if target == "published":
+                if (doc.get("source") or {}).get("kind") == "document":
+                    evaluation = await self.db.voice_knowledge_evaluations.find_one(
+                        {
+                            "article_id": record_id,
+                            "fingerprint": self.knowledge_fingerprint(doc),
+                            "passed": True,
+                            "release_eligible": True,
+                        }
+                    )
+                    if not evaluation:
+                        raise ConflictError(
+                            "Evaluate the current document with required facts before publishing."
+                        )
                 updates["reviewed_by"] = actor.require_id()
+                snapshot = self.publication_snapshot(
+                    {**doc, "version": doc["version"] + 1}, actor.require_id()
+                )
+                history = doc.get("publications", [])
+                previous = doc.get("publication")
+                if previous and not any(item["version"] == previous["version"] for item in history):
+                    history = [*history, previous]
+                updates["publication"] = snapshot
+                updates["publications"] = [*history, snapshot][-20:]
         elif payload.action == "archive":
             updates["status"] = "archived"
+            updates["publication"] = None
+        elif payload.action == "rollback_published":
+            restored: dict[str, Any] | None = next(
+                (
+                    item
+                    for item in doc.get("publications", [])
+                    if item["version"] == payload.target_version
+                ),
+                None,
+            )
+            if not restored:
+                raise ValidationError(
+                    "Select a retained approved publication; draft versions cannot be activated."
+                )
+            if (
+                restored.get("expires_on")
+                and restored["expires_on"]
+                <= utc_now()
+                .astimezone(ZoneInfo((await self.settings()).timezone))
+                .date()
+                .isoformat()
+            ):
+                raise ConflictError(
+                    "That publication is expired; review and publish current content instead."
+                )
+            updates = {
+                "publication": restored,
+                "status": "published",
+                "reviewed_by": actor.require_id(),
+                **{
+                    key: restored[key]
+                    for key in (
+                        "title",
+                        "content",
+                        "language",
+                        "content_hash",
+                        "chunks",
+                        "effective_on",
+                        "expires_on",
+                    )
+                },
+                "rollback_by": actor.require_id(),
+                "rollback_at": utc_now(),
+            }
         else:
             revision = next(
                 (r for r in doc["revisions"] if r["version"] == payload.target_version), None
@@ -523,29 +704,37 @@ class VoiceService:
                 raise ValidationError("That retained revision does not exist.")
             from app.features.voice_assistant.schemas import KnowledgeInput
 
-            return await self.save_knowledge(
+            result = await self.save_knowledge(
                 KnowledgeInput(**{**revision, "version": doc["version"]}), actor, record_id
             )
+            await self.audit(actor, "knowledge_rollback", record_id)
+            return result
         result = await self.repo.update(KNOWLEDGE, doc, updates, actor.require_id())
         await self.audit(actor, f"knowledge_{payload.action}", record_id)
-        return public(result)
+        return knowledge_public(result)
 
     async def retrieve(self, question: str, language: str) -> list[dict[str, Any]]:
         cfg = await self.settings()
         today = utc_now().astimezone(ZoneInfo(cfg.timezone)).date().isoformat()
         query = {
-            "status": "published",
-            "language": language,
             "is_deleted": False,
-            "$and": [
-                {"$or": [{"effective_on": None}, {"effective_on": {"$lte": today}}]},
-                {"$or": [{"expires_on": None}, {"expires_on": {"$gt": today}}]},
-            ],
+            "status": {"$ne": "archived"},
+            "$or": [{"status": "published"}, {"publication": {"$type": "object"}}],
         }
         tokens = set(re.findall(r"\w{2,}", question.casefold()))
         ranked = []
         async for doc in self.db.voice_knowledge.find(query).limit(500):
-            for chunk in doc["chunks"]:
+            released = doc.get("publication") or doc
+            # Published legacy records remain authoritative/readable without a bulk migration.
+            if doc["status"] == "published":
+                released = {**doc, "version": released["version"]}
+            if (
+                released["language"] != language
+                or (released.get("effective_on") and released["effective_on"] > today)
+                or (released.get("expires_on") and released["expires_on"] <= today)
+            ):
+                continue
+            for chunk in released["chunks"]:
                 score = len(tokens & set(re.findall(r"\w{2,}", chunk.casefold())))
                 if score:
                     ranked.append(
@@ -553,14 +742,82 @@ class VoiceService:
                             score,
                             {
                                 "id": str(doc["_id"]),
-                                "title": doc["title"],
-                                "version": doc["version"],
+                                "title": released["title"],
+                                "version": released["version"],
                                 "excerpt": chunk,
                             },
                         )
                     )
         ranked.sort(key=lambda pair: pair[0], reverse=True)
         return [source for _, source in ranked[:5]]
+
+    async def evaluate_knowledge(
+        self, record_id: str, payload: KnowledgeEvaluationInput, actor: User
+    ) -> dict[str, Any]:
+        doc = await self.repo.get(KNOWLEDGE, record_id)
+        if doc["version"] != payload.version:
+            raise ConflictError("Knowledge changed. Refresh before evaluating.")
+        started = monotonic()
+        results = []
+        for case in payload.cases:
+            tokens = set(re.findall(r"\w{2,}", case.question.casefold()))
+            ranked = sorted(
+                (
+                    (len(tokens & set(re.findall(r"\w{2,}", chunk.casefold()))), chunk)
+                    for chunk in doc["chunks"]
+                ),
+                reverse=True,
+            )
+            excerpts = [chunk for score, chunk in ranked[:5] if score]
+            evidence = " ".join(excerpts).casefold()
+            missing = [
+                fact
+                for fact in case.required_facts
+                if re.sub(r"\s+", " ", fact.casefold()).strip() not in evidence
+            ]
+            passed = bool(excerpts) and not missing if case.expect_evidence else not excerpts
+            results.append(
+                {
+                    **case.model_dump(),
+                    "passed": passed,
+                    "missing_facts": missing,
+                    "excerpts": excerpts,
+                }
+            )
+        latest = await self.repo.get(KNOWLEDGE, record_id)
+        if latest["version"] != doc["version"]:
+            raise ConflictError(
+                "Knowledge changed during evaluation. Retry against the new version."
+            )
+        report = {
+            "article_id": record_id,
+            "evaluated_version": doc["version"],
+            "fingerprint": self.knowledge_fingerprint(doc),
+            "kind": "lexical_evidence_only",
+            "passed": all(result["passed"] for result in results),
+            "release_eligible": all(result["passed"] for result in results)
+            and any(case.expect_evidence for case in payload.cases),
+            "cases": results,
+            "latency_ms": round((monotonic() - started) * 1000, 2),
+            "created_at": utc_now(),
+            "created_by": actor.require_id(),
+            "semantic_groundedness": "not_evaluated",
+            "prompt_injection_resistance": "not_evaluated",
+        }
+        result = await self.db.voice_knowledge_evaluations.insert_one(report)
+        report["_id"] = result.inserted_id
+        await self.audit(actor, "knowledge_evaluated", record_id)
+        return public(report)
+
+    async def knowledge_evaluations(self, record_id: str) -> list[dict[str, Any]]:
+        await self.repo.get(KNOWLEDGE, record_id)
+        docs = (
+            await self.db.voice_knowledge_evaluations.find({"article_id": record_id})
+            .sort("created_at", -1)
+            .limit(10)
+            .to_list(10)
+        )
+        return [public(doc) for doc in docs]
 
     async def console(self, payload: ConsoleInput, actor: User) -> dict[str, Any]:
         # Include recent user context for short follow-ups such as "what documents?".

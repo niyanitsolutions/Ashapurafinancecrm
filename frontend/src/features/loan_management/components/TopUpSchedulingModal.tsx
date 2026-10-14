@@ -42,7 +42,9 @@ function addCalendarMonthsToIsoDate(isoDate: string, months: number): string {
 function displayIsoDate(isoDate: string): string {
   // Noon UTC keeps the formatted IST calendar date stable regardless of DST/offset
   // edge cases — see formatISTDate, which converts to Asia/Kolkata before formatting.
-  return formatISTDate(`${isoDate}T12:00:00.000Z`);
+  // Keep this popup's established DD-Mon-YYYY presentation across ICU versions:
+  // Node 22/browser locale data may separate en-IN date parts with spaces.
+  return formatISTDate(`${isoDate}T12:00:00.000Z`).replace(/\s+/g, "-");
 }
 
 export function TopUpSchedulingModal({

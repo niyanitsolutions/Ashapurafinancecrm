@@ -1,7 +1,7 @@
 FROM node:22-slim AS base
 WORKDIR /app
-COPY frontend/package.json ./
-RUN npm install
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
 COPY frontend ./
 
 # --- dev target: Vite dev server with HMR ---

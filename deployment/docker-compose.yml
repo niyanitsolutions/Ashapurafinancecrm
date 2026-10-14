@@ -52,6 +52,7 @@ services:
       - "8000:8000"
     volumes:
       - ../backend/logs:/app/logs
+      - voice_recordings:/var/lib/afs/voice-recordings
     depends_on:
       mongo-init:
         condition: service_completed_successfully
@@ -77,6 +78,7 @@ services:
       REDIS_URL: redis://redis:6379/0
     volumes:
       - ../backend/logs:/app/logs
+      - voice_recordings:/var/lib/afs/voice-recordings
     depends_on:
       mongo-init:
         condition: service_completed_successfully
@@ -110,3 +112,4 @@ services:
 volumes:
   mongo_data:
   redis_data:
+  voice_recordings:

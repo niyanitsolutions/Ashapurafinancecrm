@@ -28,3 +28,12 @@ def encrypt(plaintext: str) -> str:
 
 def decrypt(ciphertext: str) -> str:
     return _fernet().decrypt(ciphertext.encode()).decode()
+
+
+def encrypt_bytes(plaintext: bytes) -> bytes:
+    """Authenticated binary encryption for private artifacts; same managed key."""
+    return _fernet().encrypt(plaintext)
+
+
+def decrypt_bytes(ciphertext: bytes) -> bytes:
+    return _fernet().decrypt(ciphertext)

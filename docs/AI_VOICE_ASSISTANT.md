@@ -1,6 +1,23 @@
 # AI Voice Assistant implementation and operations
 
+Latest continuation evidence, five workstream statuses, test commands, staging
+limits and rollback instructions:
+[AI_VOICE_ASSISTANT_EXECUTION_REPORT.md](AI_VOICE_ASSISTANT_EXECUTION_REPORT.md).
+
+The advanced-platform audit and new training/artifact batch are tracked in
+[AI_VOICE_ASSISTANT_AUDIT.md](AI_VOICE_ASSISTANT_AUDIT.md) and
+[AI_VOICE_ASSISTANT_IMPLEMENTATION_PLAN.md](AI_VOICE_ASSISTANT_IMPLEMENTATION_PLAN.md).
+Historical foundation results below are retained; live telephony and speech remain blocked.
+
 ## Delivery status
+
+The Smartflo upgrade and current verification results are documented in
+[SMARTFLO_VOICE_AUDIT.md](SMARTFLO_VOICE_AUDIT.md). Smartflo is now the selected
+telephony reference. Provider Connections has real encrypted settings, read-only
+diagnostics and quarantined callback observations. Its public audio routes remain
+blocked; the Smartflo codec and dynamic audio orchestration are adapter-tested,
+not a verified live telephone conversation. Exotel code remains an offline legacy
+reference. The historical results and original deployment notes below are retained.
 
 This is a **development foundation**, not the complete production voice assistant in
 the master brief. No real calls, recordings, voice uploads, cloned voices, provider

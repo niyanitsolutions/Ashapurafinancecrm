@@ -86,9 +86,35 @@ class KnowledgeInput(StrictInput):
 
 
 class KnowledgeAction(StrictInput):
-    action: Literal["review", "publish", "archive", "rollback"]
+    action: Literal["review", "publish", "archive", "rollback", "rollback_published"]
     version: int = Field(ge=1)
     target_version: int | None = Field(default=None, ge=1)
+
+
+class EvaluationCase(StrictInput):
+    question: str = Field(min_length=2, max_length=2000)
+    required_facts: list[str] = Field(default_factory=list, max_length=10)
+    expect_evidence: bool = True
+
+    @field_validator("required_facts")
+    @classmethod
+    def bounded_facts(cls, value: list[str]) -> list[str]:
+        if any(not fact.strip() or len(fact) > 200 for fact in value):
+            raise ValueError("Required facts must contain 1 to 200 characters.")
+        return value
+
+    @model_validator(mode="after")
+    def positive_facts(self) -> Self:
+        if self.expect_evidence and not self.required_facts:
+            raise ValueError("An evidence test requires at least one required fact.")
+        if not self.expect_evidence and self.required_facts:
+            raise ValueError("No-evidence tests cannot specify required facts.")
+        return self
+
+
+class KnowledgeEvaluationInput(StrictInput):
+    version: int = Field(ge=1)
+    cases: list[EvaluationCase] = Field(min_length=1, max_length=20)
 
 
 class ConsoleInput(StrictInput):

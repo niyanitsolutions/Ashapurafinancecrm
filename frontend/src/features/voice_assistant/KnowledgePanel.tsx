@@ -6,6 +6,7 @@ import { usePermissions } from "@/features/access_control/usePermissions";
 import { useAuth } from "@/features/auth/useAuth";
 import { getErrorMessage } from "@/shared/api/errors";
 import { articleAction, getKnowledge, saveArticle, testConversation, type Article, type ConsoleResult } from "./api";
+import { ArticleEvaluation, KnowledgeImport } from "./TrainingWorkbench";
 
 export function KnowledgePanel() {
   const { userId } = useAuth(); const { can } = usePermissions(); const client = useQueryClient();
@@ -25,7 +26,8 @@ export function KnowledgePanel() {
   if (!allowed) return <p>You need the voice knowledge View permission.</p>;
   return <div className="space-y-6">
     <ErrorBanner message={error ?? (articles.error ? getErrorMessage(articles.error) : null)} />
-    <p className="text-sm text-text/70">Knowledge supplies reviewed facts. It does not fine-tune a model. This release supports manual articles; document uploads require secure parsing and scanning integration.</p>
+    <p className="text-sm text-text/70">Knowledge supplies reviewed facts. It does not fine-tune a model. Editing a published article preserves its approved release until a revision is explicitly published or archived.</p>
+    {can("voice_assistant:knowledge", "create") && <KnowledgeImport key={userId} />}
     {(editing ? can("voice_assistant:knowledge", "edit") : can("voice_assistant:knowledge", "create")) && <form className="bg-card rounded-xl border p-5 space-y-3" onSubmit={async e => {
       e.preventDefault(); setBusy(true); setError(null);
       try { await saveArticle({ title, content, language, effective_on: effective || null, expires_on: expires || null, version: editing?.version ?? 1 }, editing?.id); setEditing(null); setTitle(""); setContent(""); await client.invalidateQueries({ queryKey: ["voice", userId, "knowledge"] }); }
@@ -40,13 +42,19 @@ export function KnowledgePanel() {
     <section className="space-y-3" aria-label="Knowledge library">
       {articles.isPending && <p role="status">Loading knowledge…</p>}
       {articles.data?.items.length === 0 && <p>No knowledge articles yet.</p>}
-      {articles.data?.items.map(article => <article key={article.id} className="bg-card rounded-xl border p-4"><h3 className="font-semibold">{article.title}</h3><p className="text-sm my-2">{article.status} · v{article.version} · {article.language}</p><details className="my-3"><summary className="cursor-pointer text-primary">Review content and effective dates</summary><p className="my-2 text-sm">Effective: {article.effective_on ?? "immediately"} · Expires: {article.expires_on ?? "not specified"}</p><p className="whitespace-pre-wrap text-sm">{article.content}</p></details><div className="flex gap-2 flex-wrap">
+      {articles.data?.items.map(article => <article key={article.id} className="bg-card rounded-xl border p-4"><h3 className="font-semibold">{article.title}</h3><p className="text-sm my-2">{article.status} · v{article.version} · {article.language}</p>
+        {article.publication && <p className="text-sm">Active approved publication: v{article.publication.version}</p>}
+        {article.source && <p className="text-sm">Imported {article.source.format.toUpperCase()} · Scan: {article.source.scan_status}</p>}
+        <details className="my-3"><summary className="cursor-pointer text-primary">Review content and effective dates</summary><p className="my-2 text-sm">Effective: {article.effective_on ?? "immediately"} · Expires: {article.expires_on ?? "not specified"}</p><p className="whitespace-pre-wrap text-sm">{article.content}</p></details>
+        <ArticleEvaluation key={`${article.id}:${article.version}`} article={article} editable={can("voice_assistant:knowledge", "edit")} />
+        <div className="flex gap-2 flex-wrap">
         {can("voice_assistant:knowledge", "edit") && <Button variant="secondary" disabled={busy} onClick={() => { setEditing(article); setTitle(article.title); setContent(article.content); setLanguage(article.language); setEffective(article.effective_on ?? ""); setExpires(article.expires_on ?? ""); }}>Edit</Button>}
         {can("voice_assistant:knowledge", "approve") && <>
           {article.status === "draft" && <Button disabled={busy} onClick={() => change(article, "review")}>Submit for review</Button>}
           {article.status === "review" && <Button disabled={busy} onClick={() => change(article, "publish")}>Approve and publish</Button>}
           {article.status !== "archived" && <Button variant="secondary" disabled={busy} onClick={() => change(article, "archive")}>Archive</Button>}
           {article.revisions.length > 0 && <Button variant="secondary" disabled={busy} onClick={() => change(article, "rollback", article.revisions.at(-1)?.version)}>Restore previous content to draft</Button>}
+          {article.publications && article.publications.filter(p => p.version !== article.publication?.version).map(p => <Button key={p.version} variant="secondary" disabled={busy} onClick={() => change(article, "rollback_published", p.version)}>Activate approved publication v{p.version}</Button>)}
         </>}
       </div></article>)}
       <div className="flex gap-3"><Button variant="secondary" disabled={page === 1} onClick={() => setPage(p => p - 1)}>Previous</Button><span>Page {page}</span><Button variant="secondary" disabled={page * 25 >= (articles.data?.total ?? 0)} onClick={() => setPage(p => p + 1)}>Next</Button></div>

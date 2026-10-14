@@ -80,7 +80,7 @@ class TopUpPeriod:
     ALL = (THREE_MONTHS, SIX_MONTHS, TWELVE_MONTHS, NO, CUSTOM)
     # Only these three carry a fixed calendar-month offset; NO/CUSTOM compute their
     # eligibility date differently (see schedule_top_up).
-    MONTHS_BY_PERIOD = {THREE_MONTHS: 3, SIX_MONTHS: 6, TWELVE_MONTHS: 12}
+    MONTHS_BY_PERIOD: ClassVar[dict[str, int]] = {THREE_MONTHS: 3, SIX_MONTHS: 6, TWELVE_MONTHS: 12}
 
 
 class ReEligibilityPeriod:

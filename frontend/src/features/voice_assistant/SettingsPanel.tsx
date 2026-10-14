@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/buttons/Button";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
@@ -35,6 +36,7 @@ function SettingsForm({ initial }: { initial: VoiceSettings }) {
     catch (err) { setError(getErrorMessage(err)); } finally { setBusy(false); }
   }}>
     <ErrorBanner message={error} />
+    <Link to="/voice-assistant/providers" className="block text-primary font-semibold">Configure Smartflo provider connections</Link>
     <p className="text-sm text-text/70">These controls apply to the simulator. Saving them cannot activate live calls, recording or voice cloning. Automatic retries and call campaigns are unavailable.</p>
     <label className="block">Mode<select className="block border rounded-lg p-2" value={draft.mode} onChange={e => setDraft({ ...draft, mode: e.target.value as VoiceSettings["mode"] })}><option value="disabled">Disabled</option><option value="mock">Mock simulation</option></select></label>
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{numbers.map(field => <label key={field.key}>{field.label}<input required type="number" min={field.min} max={field.max} className="block w-full border rounded-lg p-2" value={Number(draft[field.key])} onChange={e => setDraft({ ...draft, [field.key]: Number(e.target.value) })} /></label>)}

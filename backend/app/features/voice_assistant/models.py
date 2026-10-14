@@ -56,3 +56,6 @@ class KnowledgeArticle(BaseDocument):
     expires_on: str | None = None
     reviewed_by: str | None = None
     revisions: list[dict[str, Any]] = Field(default_factory=list)
+    source: dict[str, Any] | None = None
+    publication: dict[str, Any] | None = None
+    publications: list[dict[str, Any]] = Field(default_factory=list)

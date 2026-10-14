@@ -10,9 +10,12 @@ Loan Management and Customer Applications can never again show a different assig
 the same underlying case.
 """
 
+from bson import ObjectId
+
 from app.features.customer.constants import FieldType
 from app.features.customer.models import ApplicationFormDefinition, FormFieldDefinition, RequiredDocumentDefinition
 from app.features.leads.models import Lead
+from app.features.recruitment.models import Advisor
 from app.features.system_settings.models import DocumentType, InsuranceProduct, LeadSource, LoanProduct
 from app.features.workflow_engine.constants import CaseType, InsuranceAuditEvent, InsuranceStatus, LoanAuditEvent, LoanStatus
 from app.features.workflow_engine.models import WorkflowDefinition
@@ -342,7 +345,21 @@ async def test_two_applications_same_customer_keep_independent_assignments(clien
 
     r = await client.get("/api/v1/insurance-cases", headers=owner_headers)
     insurance_case = next(c for c in r.json()["data"] if c["application_id"] == app_b)
-    assert insurance_case["assigned_to"] == employee_b["id"]
+    # Insurance workflow assignment is an Advisor; staff assignment remains on the
+    # linked Application. It must never be overwritten with an Employee identifier.
+    assert insurance_case["assigned_to"] is None
+    advisor = Advisor(advisor_code="AFS-ADV-ASSIGNMENT", recruitment_lead_id=str(ObjectId()), full_name="Independent Advisor", mobile="9700000110")
+    advisor_id = str((await mock_db.advisors.insert_one(advisor.model_dump(by_alias=True, exclude={"id"}))).inserted_id)
+    await mock_db.application_workflows.update_one({"_id": ObjectId(insurance_case["id"])}, {"$set": {"assigned_to": advisor_id}})
+    for employee_id in (employee_a["id"], employee_b["id"]):
+        assigned = await client.post(f"/api/v1/applications/{app_b}/assign", json={"employee_id": employee_id}, headers=owner_headers)
+        assert assigned.status_code == 200, assigned.text
+        application = await client.get(f"/api/v1/applications/{app_b}", headers=owner_headers)
+        assert application.json()["data"]["assigned_to"] == employee_id
+        cases = await client.get("/api/v1/insurance-cases", headers=owner_headers)
+        preserved = next(c for c in cases.json()["data"] if c["application_id"] == app_b)
+        assert preserved["assigned_to"] == advisor_id
+        assert preserved["assigned_to_name"] == "Independent Advisor"
     r = await client.get("/api/v1/loan-cases", headers=owner_headers)
     loan_case = next(c for c in r.json()["data"] if c["application_id"] == app_a)
     assert loan_case["assigned_to"] == employee_a["id"]

@@ -65,11 +65,6 @@ async def require_advisor_edit(
 ) -> User:
     engine = PermissionEngine(db)
     resources = ["advisors"]
-    advisor_permission = await PermissionRepository(db).find_by_module_resource(
-        "insurance_management", "advisors"
-    )
-    if advisor_permission is None:
-        resources.append("applications")
     agency_child = await PermissionRepository(db).find_by_module_resource(
         "insurance_management", "recruitment.agency_code"
     )

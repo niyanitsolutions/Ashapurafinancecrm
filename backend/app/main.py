@@ -70,8 +70,12 @@ from app.features.support.indexes import ensure_support_indexes
 from app.features.support.router import router as support_router
 from app.features.system_settings.indexes import ensure_system_settings_indexes
 from app.features.system_settings.router import router as system_settings_router
+from app.features.voice_assistant.campaign_router import router as campaign_router
 from app.features.voice_assistant.catalog import initialize_voice_module
+from app.features.voice_assistant.recording_router import router as recording_router
 from app.features.voice_assistant.router import router as voice_assistant_router
+from app.features.voice_assistant.smartflo_router import router as smartflo_router
+from app.features.voice_assistant.upload_limits import VoiceUploadLimitsMiddleware
 from app.features.workflow_engine.indexes import ensure_workflow_engine_indexes
 from app.logging_config import configure_logging
 from app.middleware.cors import setup_cors
@@ -119,6 +123,7 @@ def create_app() -> FastAPI:
     app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(VoiceUploadLimitsMiddleware, api_prefix=settings.api_v1_prefix)
     # Rewrites request.client from X-Forwarded-For — but ONLY when the immediate TCP
     # peer is in trusted_hosts (Nginx on this same box by default). Without this, every
     # request behind a reverse proxy shows the same proxy IP to rate_limit.py and to
@@ -134,6 +139,9 @@ def create_app() -> FastAPI:
     app.include_router(health_router, prefix=settings.api_v1_prefix)
     app.include_router(invoices_router, prefix=settings.api_v1_prefix)
     app.include_router(voice_assistant_router, prefix=settings.api_v1_prefix)
+    app.include_router(smartflo_router, prefix=settings.api_v1_prefix)
+    app.include_router(recording_router, prefix=settings.api_v1_prefix)
+    app.include_router(campaign_router, prefix=settings.api_v1_prefix)
     app.include_router(auth_router, prefix=settings.api_v1_prefix)
     app.include_router(owner_router, prefix=settings.api_v1_prefix)
     app.include_router(employee_router, prefix=settings.api_v1_prefix)

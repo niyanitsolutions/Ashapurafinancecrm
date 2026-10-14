@@ -56,7 +56,11 @@ from app.features.referral_partner_management.schemas import (
     UpdateReferralLeadRequest,
 )
 from app.features.system_settings.models import InsuranceProduct, LoanProduct
-from app.features.system_settings.repository import InsuranceProductRepository, LeadSourceRepository, LoanProductRepository
+from app.features.system_settings.repository import (
+    InsuranceProductRepository,
+    LeadSourceRepository,
+    LoanProductRepository,
+)
 from app.features.workflow_engine.constants import CaseType, InsuranceStatus, LoanStatus
 from app.features.workflow_engine.repository import ApplicationWorkflowRepository
 from app.shared.audit_log import write_audit_log

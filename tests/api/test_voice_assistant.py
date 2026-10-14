@@ -288,7 +288,8 @@ def test_local_model_url_rejects_external_and_credentials():
 async def test_catalog_additive_and_no_grants(mock_db):
     await seed_voice_catalog(mock_db)
     await seed_voice_catalog(mock_db)
-    assert await mock_db.permissions.count_documents({"module": "voice_assistant"}) == 2
+    assert await mock_db.permissions.count_documents({"module": "voice_assistant"}) == 4
+    assert await mock_db.permissions.count_documents({"module": "voice_assistant", "resource": "recordings"}) == 1
     assert await mock_db.nav_items.count_documents({"key": "voice_assistant"}) == 1
     assert await mock_db.role_permissions.count_documents({}) == 0
 
@@ -303,7 +304,7 @@ async def test_startup_registers_owner_navigation_and_preserves_existing_choices
     nav = await DashboardService(mock_db).get_nav(owner)
     assert any(item.key == "voice_assistant" and item.route == "/voice-assistant" for item in nav)
     assert await mock_db.nav_items.count_documents({"key": "voice_assistant"}) == 1
-    assert await mock_db.permissions.count_documents({"module": "voice_assistant"}) == 2
+    assert await mock_db.permissions.count_documents({"module": "voice_assistant"}) == 4
     assert await mock_db.role_permissions.count_documents({}) == 0
     assert await mock_db.voice_settings.count_documents({}) == 0
     await mock_db.nav_items.update_one({"key": "voice_assistant"}, {"$set": {"status": "inactive"}})

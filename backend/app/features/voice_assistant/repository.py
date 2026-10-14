@@ -67,3 +67,4 @@ async def ensure_voice_indexes(db: AsyncIOMotorDatabase[Any]) -> None:
     )
     await db.voice_settings.create_index("singleton_key", unique=True)
     await db.voice_worker_health.create_index("singleton_key", unique=True)
+    await db.voice_knowledge_evaluations.create_index([("article_id", 1), ("created_at", -1)])

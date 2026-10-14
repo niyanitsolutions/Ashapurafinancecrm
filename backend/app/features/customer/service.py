@@ -10,7 +10,7 @@ single line changed under app/features/auth/).
 
 import secrets
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Any, ClassVar
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from redis.asyncio import Redis
@@ -2054,7 +2054,7 @@ class CustomerService:
     # Engine, Communication History, Reminders/Tasks) — no line changed under any of
     # them, matching the exact pattern this service has used since Module 6B.
 
-    _CASE_NEXT_ACTION: dict[str, str] = {
+    _CASE_NEXT_ACTION: ClassVar[dict[str, str]] = {
         "documents_pending": "Upload the requested documents",
         "credit_evaluation": "Your application is under credit review",
         "offer_acceptance": "Review and accept your loan offer",
