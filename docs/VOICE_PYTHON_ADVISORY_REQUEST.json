@@ -1,0 +1,522 @@
+{
+  "queries": [
+    {
+      "package": {
+        "name": "annotated-doc",
+        "ecosystem": "PyPI"
+      },
+      "version": "0.0.4"
+    },
+    {
+      "package": {
+        "name": "annotated-types",
+        "ecosystem": "PyPI"
+      },
+      "version": "0.8.0"
+    },
+    {
+      "package": {
+        "name": "anyio",
+        "ecosystem": "PyPI"
+      },
+      "version": "4.14.2"
+    },
+    {
+      "package": {
+        "name": "arq",
+        "ecosystem": "PyPI"
+      },
+      "version": "0.28.0"
+    },
+    {
+      "package": {
+        "name": "ast_serialize",
+        "ecosystem": "PyPI"
+      },
+      "version": "0.6.0"
+    },
+    {
+      "package": {
+        "name": "bcrypt",
+        "ecosystem": "PyPI"
+      },
+      "version": "5.0.0"
+    },
+    {
+      "package": {
+        "name": "boto3",
+        "ecosystem": "PyPI"
+      },
+      "version": "1.43.56"
+    },
+    {
+      "package": {
+        "name": "botocore",
+        "ecosystem": "PyPI"
+      },
+      "version": "1.43.56"
+    },
+    {
+      "package": {
+        "name": "certifi",
+        "ecosystem": "PyPI"
+      },
+      "version": "2026.7.22"
+    },
+    {
+      "package": {
+        "name": "cffi",
+        "ecosystem": "PyPI"
+      },
+      "version": "2.1.0"
+    },
+    {
+      "package": {
+        "name": "charset-normalizer",
+        "ecosystem": "PyPI"
+      },
+      "version": "3.5.2"
+    },
+    {
+      "package": {
+        "name": "click",
+        "ecosystem": "PyPI"
+      },
+      "version": "8.4.2"
+    },
+    {
+      "package": {
+        "name": "colorama",
+        "ecosystem": "PyPI"
+      },
+      "version": "0.4.6"
+    },
+    {
+      "package": {
+        "name": "cryptography",
+        "ecosystem": "PyPI"
+      },
+      "version": "49.0.0"
+    },
+    {
+      "package": {
+        "name": "defusedxml",
+        "ecosystem": "PyPI"
+      },
+      "version": "0.7.1"
+    },
+    {
+      "package": {
+        "name": "dnspython",
+        "ecosystem": "PyPI"
+      },
+      "version": "2.8.0"
+    },
+    {
+      "package": {
+        "name": "email-validator",
+        "ecosystem": "PyPI"
+      },
+      "version": "2.3.0"
+    },
+    {
+      "package": {
+        "name": "et_xmlfile",
+        "ecosystem": "PyPI"
+      },
+      "version": "2.0.0"
+    },
+    {
+      "package": {
+        "name": "execnet",
+        "ecosystem": "PyPI"
+      },
+      "version": "2.1.2"
+    },
+    {
+      "package": {
+        "name": "fakeredis",
+        "ecosystem": "PyPI"
+      },
+      "version": "2.37.0"
+    },
+    {
+      "package": {
+        "name": "fastapi",
+        "ecosystem": "PyPI"
+      },
+      "version": "0.140.0"
+    },
+    {
+      "package": {
+        "name": "font-roboto",
+        "ecosystem": "PyPI"
+      },
+      "version": "0.0.1"
+    },
+    {
+      "package": {
+        "name": "h11",
+        "ecosystem": "PyPI"
+      },
+      "version": "0.16.0"
+    },
+    {
+      "package": {
+        "name": "hiredis",
+        "ecosystem": "PyPI"
+      },
+      "version": "3.4.0"
+    },
+    {
+      "package": {
+        "name": "httpcore",
+        "ecosystem": "PyPI"
+      },
+      "version": "1.0.9"
+    },
+    {
+      "package": {
+        "name": "httptools",
+        "ecosystem": "PyPI"
+      },
+      "version": "0.8.0"
+    },
+    {
+      "package": {
+        "name": "httpx",
+        "ecosystem": "PyPI"
+      },
+      "version": "0.28.1"
+    },
+    {
+      "package": {
+        "name": "idna",
+        "ecosystem": "PyPI"
+      },
+      "version": "3.18"
+    },
+    {
+      "package": {
+        "name": "iniconfig",
+        "ecosystem": "PyPI"
+      },
+      "version": "2.3.0"
+    },
+    {
+      "package": {
+        "name": "jmespath",
+        "ecosystem": "PyPI"
+      },
+      "version": "1.1.0"
+    },
+    {
+      "package": {
+        "name": "librt",
+        "ecosystem": "PyPI"
+      },
+      "version": "0.13.0"
+    },
+    {
+      "package": {
+        "name": "mongomock",
+        "ecosystem": "PyPI"
+      },
+      "version": "4.3.0"
+    },
+    {
+      "package": {
+        "name": "mongomock-motor",
+        "ecosystem": "PyPI"
+      },
+      "version": "0.0.36"
+    },
+    {
+      "package": {
+        "name": "motor",
+        "ecosystem": "PyPI"
+      },
+      "version": "3.7.1"
+    },
+    {
+      "package": {
+        "name": "mypy",
+        "ecosystem": "PyPI"
+      },
+      "version": "2.3.0"
+    },
+    {
+      "package": {
+        "name": "mypy_extensions",
+        "ecosystem": "PyPI"
+      },
+      "version": "1.1.0"
+    },
+    {
+      "package": {
+        "name": "openpyxl",
+        "ecosystem": "PyPI"
+      },
+      "version": "3.1.5"
+    },
+    {
+      "package": {
+        "name": "packaging",
+        "ecosystem": "PyPI"
+      },
+      "version": "26.2"
+    },
+    {
+      "package": {
+        "name": "pathspec",
+        "ecosystem": "PyPI"
+      },
+      "version": "1.1.1"
+    },
+    {
+      "package": {
+        "name": "pillow",
+        "ecosystem": "PyPI"
+      },
+      "version": "12.3.0"
+    },
+    {
+      "package": {
+        "name": "pip",
+        "ecosystem": "PyPI"
+      },
+      "version": "23.2.1"
+    },
+    {
+      "package": {
+        "name": "pluggy",
+        "ecosystem": "PyPI"
+      },
+      "version": "1.6.0"
+    },
+    {
+      "package": {
+        "name": "pycparser",
+        "ecosystem": "PyPI"
+      },
+      "version": "3.0"
+    },
+    {
+      "package": {
+        "name": "pydantic",
+        "ecosystem": "PyPI"
+      },
+      "version": "2.13.4"
+    },
+    {
+      "package": {
+        "name": "pydantic-settings",
+        "ecosystem": "PyPI"
+      },
+      "version": "2.14.2"
+    },
+    {
+      "package": {
+        "name": "pydantic_core",
+        "ecosystem": "PyPI"
+      },
+      "version": "2.46.4"
+    },
+    {
+      "package": {
+        "name": "Pygments",
+        "ecosystem": "PyPI"
+      },
+      "version": "2.20.0"
+    },
+    {
+      "package": {
+        "name": "PyJWT",
+        "ecosystem": "PyPI"
+      },
+      "version": "2.13.0"
+    },
+    {
+      "package": {
+        "name": "pymongo",
+        "ecosystem": "PyPI"
+      },
+      "version": "4.17.0"
+    },
+    {
+      "package": {
+        "name": "pymupdf",
+        "ecosystem": "PyPI"
+      },
+      "version": "1.28.2"
+    },
+    {
+      "package": {
+        "name": "pytest",
+        "ecosystem": "PyPI"
+      },
+      "version": "8.4.2"
+    },
+    {
+      "package": {
+        "name": "pytest-asyncio",
+        "ecosystem": "PyPI"
+      },
+      "version": "0.26.0"
+    },
+    {
+      "package": {
+        "name": "pytest-xdist",
+        "ecosystem": "PyPI"
+      },
+      "version": "3.8.0"
+    },
+    {
+      "package": {
+        "name": "python-dateutil",
+        "ecosystem": "PyPI"
+      },
+      "version": "2.9.0.post0"
+    },
+    {
+      "package": {
+        "name": "python-dotenv",
+        "ecosystem": "PyPI"
+      },
+      "version": "1.2.2"
+    },
+    {
+      "package": {
+        "name": "python-multipart",
+        "ecosystem": "PyPI"
+      },
+      "version": "0.0.32"
+    },
+    {
+      "package": {
+        "name": "pytz",
+        "ecosystem": "PyPI"
+      },
+      "version": "2026.2"
+    },
+    {
+      "package": {
+        "name": "PyYAML",
+        "ecosystem": "PyPI"
+      },
+      "version": "6.0.3"
+    },
+    {
+      "package": {
+        "name": "qrcode",
+        "ecosystem": "PyPI"
+      },
+      "version": "8.2"
+    },
+    {
+      "package": {
+        "name": "redis",
+        "ecosystem": "PyPI"
+      },
+      "version": "5.3.1"
+    },
+    {
+      "package": {
+        "name": "reportlab",
+        "ecosystem": "PyPI"
+      },
+      "version": "5.0.1"
+    },
+    {
+      "package": {
+        "name": "ruff",
+        "ecosystem": "PyPI"
+      },
+      "version": "0.16.0"
+    },
+    {
+      "package": {
+        "name": "s3transfer",
+        "ecosystem": "PyPI"
+      },
+      "version": "0.19.2"
+    },
+    {
+      "package": {
+        "name": "sentinels",
+        "ecosystem": "PyPI"
+      },
+      "version": "1.1.1"
+    },
+    {
+      "package": {
+        "name": "six",
+        "ecosystem": "PyPI"
+      },
+      "version": "1.17.0"
+    },
+    {
+      "package": {
+        "name": "sortedcontainers",
+        "ecosystem": "PyPI"
+      },
+      "version": "2.4.0"
+    },
+    {
+      "package": {
+        "name": "starlette",
+        "ecosystem": "PyPI"
+      },
+      "version": "1.3.1"
+    },
+    {
+      "package": {
+        "name": "typing-inspection",
+        "ecosystem": "PyPI"
+      },
+      "version": "0.4.2"
+    },
+    {
+      "package": {
+        "name": "typing_extensions",
+        "ecosystem": "PyPI"
+      },
+      "version": "4.16.0"
+    },
+    {
+      "package": {
+        "name": "tzdata",
+        "ecosystem": "PyPI"
+      },
+      "version": "2026.3"
+    },
+    {
+      "package": {
+        "name": "urllib3",
+        "ecosystem": "PyPI"
+      },
+      "version": "2.7.0"
+    },
+    {
+      "package": {
+        "name": "uvicorn",
+        "ecosystem": "PyPI"
+      },
+      "version": "0.51.0"
+    },
+    {
+      "package": {
+        "name": "watchfiles",
+        "ecosystem": "PyPI"
+      },
+      "version": "1.2.0"
+    },
+    {
+      "package": {
+        "name": "websockets",
+        "ecosystem": "PyPI"
+      },
+      "version": "16.1.1"
+    }
+  ]
+}

@@ -36,6 +36,34 @@ export interface ConsoleResult {
   warnings: string[]; sources: { id: string; title: string; version: number; excerpt: string }[];
 }
 const base = "/voice-assistant";
+export interface NativeConnection {
+  id: string; version: number; name: string; adapter: string; api_origin: string;
+  endpoint_name: string; state: string; credentials_configured: boolean; live_calling: false;
+  last_test: { status: string; checked_at: string; scope: string; calls_placed: number } | null;
+}
+export interface SelfHostedHealth { text_inference: string; model: string | null; configured: boolean; evidence_fresh: boolean; speech_to_text: string; text_to_speech: string; live_calling: false; message: string; last_test: { status: string; latency_ms: number; scope: string; checked_at: string } | null }
+export const getSelfHostedHealth = () => apiRequest<SelfHostedHealth>(`${base}/self-hosted/status`);
+export const testSelfHostedText = () => apiRequest<SelfHostedHealth>(`${base}/self-hosted/tests/text`, { method: "POST" });
+export interface NativeConnectionInput {
+  version: number; name: string; api_origin: string; endpoint_name: string;
+  username?: string; password?: string; clear_credentials?: boolean;
+}
+export interface TelephoneNumberInput {
+  version: number; number: string; label: string; purpose: "inbound" | "outbound" | "bidirectional";
+  connection_id: string | null; authorization_reference: string | null; compliance_reference: string | null;
+  timezone: string; calling_start: string; calling_end: string; inbound_route: "dynamic_ai";
+}
+export interface TelephoneNumber extends TelephoneNumberInput {
+  id: string; state: string; live_calling: false; activation_eligible: boolean;
+  activation_checks: { key: string; passed: boolean; description: string }[];
+}
+export const getNativeConnections = (page: number) => apiRequest<{ items: NativeConnection[]; total: number; origin_allowlist_configured: boolean }>(`${base}/native/connections?page=${page}`);
+export const saveNativeConnection = (payload: NativeConnectionInput, id?: string) => apiRequest<NativeConnection>(`${base}/native/connections${id ? `/${id}` : ""}`, { method: id ? "PUT" : "POST", body: JSON.stringify(payload) });
+export const testNativeConnection = (id: string) => apiRequest<NativeConnection>(`${base}/native/connections/${id}/test`, { method: "POST" });
+export const getNativeConnectionEvents = (id: string) => apiRequest<{ items: { id: string; status: string; checked_at: string; scope: string }[]; total: number }>(`${base}/native/connections/${id}/events`);
+export const getTelephoneNumbers = (page: number) => apiRequest<{ items: TelephoneNumber[]; total: number }>(`${base}/native/numbers?page=${page}`);
+export const saveTelephoneNumber = (payload: TelephoneNumberInput, id?: string) => apiRequest<TelephoneNumber>(`${base}/native/numbers${id ? `/${id}` : ""}`, { method: id ? "PUT" : "POST", body: JSON.stringify(payload) });
+export const telephoneNumberAction = (number: TelephoneNumber, action: string, reason: string) => apiRequest<TelephoneNumber>(`${base}/native/numbers/${number.id}/actions`, { method: "POST", body: JSON.stringify({ version: number.version, action, reason }) });
 export interface Campaign { id: string; version: number; name: string; purpose: string; objective: string; timezone: string; status: string; mode: string; processing_counts: Record<string, number> }
 export interface CampaignPreview { items: { customer_id: string; eligible: boolean; reason: string }[]; calls_placed: number; production_dispatch: string }
 export const getCampaigns = (page: number) => apiRequest<{ items: Campaign[]; total: number }>(`${base}/campaigns?page=${page}`);

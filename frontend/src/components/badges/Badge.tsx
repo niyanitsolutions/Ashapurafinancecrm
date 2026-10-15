@@ -5,9 +5,9 @@ type BadgeTone = "info" | "primary" | "success" | "danger" | "warning" | "neutra
 const TONE_CLASSES: Record<BadgeTone, string> = {
   info: "bg-info/10 text-info",
   primary: "bg-primary/10 text-primary",
-  success: "bg-success/10 text-success",
+  success: "bg-success/10 text-green-800",
   danger: "bg-danger/10 text-danger",
-  warning: "bg-warning/10 text-warning",
+  warning: "bg-warning/10 text-amber-800",
   neutral: "bg-text/10 text-textSecondary",
 };
 

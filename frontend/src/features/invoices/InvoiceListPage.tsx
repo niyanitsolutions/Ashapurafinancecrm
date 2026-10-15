@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Button } from "@/components/buttons/Button";
+import { Button, BUTTON_BASE_CLASSES, BUTTON_SIZE_CLASSES, BUTTON_VARIANT_CLASSES } from "@/components/buttons/Button";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { usePermissions } from "@/features/access_control/usePermissions";
@@ -37,7 +37,7 @@ export function InvoiceListPage() {
       if(action==="cancel") {setCancel(row);setReason("");}
     } catch(e) {setError(getErrorMessage(e));} finally {setBusy(false);}
   }
-  return <SimplePageLayout title="Invoices" subtitle="Finance / Billing" actions={can("invoices:invoices","create") && <Link className="text-primary font-semibold" to="/invoices/new">Create invoice</Link>}>
+  return <SimplePageLayout title="Invoices" subtitle="Finance / Billing" actions={can("invoices:invoices","create") && <Link className={`${BUTTON_BASE_CLASSES} ${BUTTON_SIZE_CLASSES.md} ${BUTTON_VARIANT_CLASSES.primary}`} to="/invoices/new">Create invoice</Link>}>
     <ErrorBanner message={error}/>
     {cancel&&<form className="border rounded-xl bg-card p-4 mb-4" onSubmit={async e=>{e.preventDefault();setBusy(true);try{await setInvoiceStatus(cancel.id,"cancelled",cancel.version,reason);setCancel(null);setRevision(v=>v+1);}catch(err){setError(getErrorMessage(err));}finally{setBusy(false);}}}>
       <label>Cancellation reason for {cancel.invoice_number}<textarea required maxLength={500} className="block border rounded-lg p-2 w-full my-3" value={reason} onChange={e=>setReason(e.target.value)}/></label><Button type="submit" variant="danger" disabled={busy}>Confirm cancellation</Button><Button variant="ghost" onClick={()=>setCancel(null)}>Keep invoice</Button>

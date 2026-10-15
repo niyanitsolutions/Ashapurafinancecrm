@@ -26,7 +26,7 @@ export function SimplePageLayout({
 }) {
   return (
     <div className="min-h-screen bg-background">
-      <header className="bg-card border-b border-border px-6 py-5">
+      <header className="bg-card border-b border-border px-4 py-5 sm:px-6 lg:px-8">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-start gap-3">
             {backTo && (
@@ -42,7 +42,7 @@ export function SimplePageLayout({
           {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
         </div>
       </header>
-      <main className="p-6">{children}</main>
+      <main className="p-4 sm:p-6 lg:px-8">{children}</main>
     </div>
   );
 }

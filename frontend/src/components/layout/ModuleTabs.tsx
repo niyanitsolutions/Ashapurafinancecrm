@@ -51,6 +51,7 @@ export function ModuleTabs({ tabs }: { tabs: ModuleTab[] }) {
           <Link
             key={tab.to}
             to={tab.to}
+            aria-current={active ? "page" : undefined}
             className={`shrink-0 whitespace-nowrap px-4 py-3 text-sm font-medium border-b-2 -mb-px transition-colors ${
               active ? "border-primary text-primary" : "border-transparent text-text/60 hover:text-text"
             }`}

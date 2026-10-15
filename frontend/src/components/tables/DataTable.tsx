@@ -6,7 +6,7 @@ import type { HTMLAttributes, ReactNode, TableHTMLAttributes, TdHTMLAttributes, 
 // swapping tag names, without forcing a rigid columns/rows data-grid API onto pages whose
 // cell content (links, badges, conditional columns) is genuinely bespoke per page.
 export function TableContainer({ children }: { children: ReactNode }) {
-  return <div className="bg-card border border-border rounded-card shadow-card overflow-x-auto">{children}</div>;
+  return <div className="max-w-full bg-card border border-border rounded-[12px] shadow-card overflow-x-auto">{children}</div>;
 }
 
 export function Table({ className = "", ...props }: TableHTMLAttributes<HTMLTableElement>) {
@@ -14,7 +14,7 @@ export function Table({ className = "", ...props }: TableHTMLAttributes<HTMLTabl
 }
 
 export function TableHead({ className = "", ...props }: HTMLAttributes<HTMLTableSectionElement>) {
-  return <thead className={`sticky top-0 z-10 bg-background/95 backdrop-blur-sm ${className}`} {...props} />;
+  return <thead className={`sticky top-0 z-10 bg-background ${className}`} {...props} />;
 }
 
 export function TableHeadRow({ className = "", ...props }: HTMLAttributes<HTMLTableRowElement>) {
@@ -39,5 +39,5 @@ export function TableRow({ className = "", ...props }: HTMLAttributes<HTMLTableR
 }
 
 export function Td({ className = "", ...props }: TdHTMLAttributes<HTMLTableCellElement>) {
-  return <td className={`px-4 py-3.5 ${className}`} {...props} />;
+  return <td className={`px-4 py-3 align-middle ${className}`} {...props} />;
 }

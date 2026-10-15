@@ -5,8 +5,10 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.features.access_control.models import Permission
 from app.features.dashboard.models import NavItem
 from app.features.voice_assistant.campaign_service import ensure_campaign_indexes
+from app.features.voice_assistant.native_service import ensure_native_indexes
 from app.features.voice_assistant.recording_service import ensure_recording_indexes
 from app.features.voice_assistant.repository import ensure_voice_indexes
+from app.features.voice_assistant.self_hosted_health import ensure_ai_health_indexes
 from app.features.voice_assistant.smartflo_service import ensure_smartflo_indexes
 
 
@@ -16,6 +18,8 @@ async def initialize_voice_module(db: AsyncIOMotorDatabase[Any]) -> None:
     await ensure_smartflo_indexes(db)
     await ensure_recording_indexes(db)
     await ensure_campaign_indexes(db)
+    await ensure_native_indexes(db)
+    await ensure_ai_health_indexes(db)
     await seed_voice_catalog(db)
 
 

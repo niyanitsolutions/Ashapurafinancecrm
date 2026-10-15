@@ -4,7 +4,7 @@ import type { HTMLAttributes, ReactNode } from "react";
 // chart, table, and mini-card wraps this instead of hand-rolling `bg-card border ...`.
 export function Card({ className = "", children, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
-    <div className={`bg-card border border-border rounded-xl shadow-card p-6 ${className}`} {...props}>
+    <div className={`min-w-0 bg-card border border-border rounded-[12px] shadow-card p-4 sm:p-5 ${className}`} {...props}>
       {children}
     </div>
   );
@@ -26,8 +26,8 @@ export function CardHeader({
       <div className="flex items-center gap-2.5 min-w-0">
         {icon}
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-text truncate">{title}</h3>
-          {subtitle && <p className="text-2xs text-textSecondary truncate">{subtitle}</p>}
+          <h3 className="text-sm font-semibold text-text break-words">{title}</h3>
+          {subtitle && <p className="text-2xs text-textSecondary break-words">{subtitle}</p>}
         </div>
       </div>
       {action}

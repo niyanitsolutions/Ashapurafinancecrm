@@ -1,5 +1,10 @@
 # AI Voice Assistant implementation and operations
 
+15 October continuation: [self-hosted upgrade evidence](SELF_HOSTED_VOICE_UPGRADE.md),
+[deployment and hardware inspection](SELF_HOSTED_VOICE_OPERATIONS.md), and
+[visual review](CRM_VISUAL_REVIEW.md). Native SIP is the primary direction;
+Smartflo remains optional. Live calling is blocked.
+
 Latest continuation evidence, five workstream statuses, test commands, staging
 limits and rollback instructions:
 [AI_VOICE_ASSISTANT_EXECUTION_REPORT.md](AI_VOICE_ASSISTANT_EXECUTION_REPORT.md).

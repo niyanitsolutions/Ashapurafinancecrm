@@ -4,16 +4,18 @@ Protocol: https://github.com/ollama/ollama/blob/main/docs/api.md
 Never pulls a model, registers a service, or makes a paid/cloud request.
 """
 
+import asyncio
 import json
 from functools import lru_cache
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.features.voice_assistant.adapters import SAFETY_POLICY
+from app.features.voice_assistant.origin_policy import service_origin
 
 
 class ConversationConfig(BaseSettings):
@@ -21,22 +23,28 @@ class ConversationConfig(BaseSettings):
     local_ai_enabled: bool = False
     local_ai_url: str = "http://127.0.0.1:11434"
     local_ai_model: str = ""
+    local_ai_allowed_origins: list[str] = Field(default_factory=list, max_length=20)
 
     @field_validator("local_ai_url")
     @classmethod
-    def local_only(cls, value: str) -> str:
-        parsed = urlparse(value)
+    def valid_origin(cls, value: str) -> str:
+        return service_origin(value)
+
+    @field_validator("local_ai_allowed_origins")
+    @classmethod
+    def allowed_origins(cls, values: list[str]) -> list[str]:
+        return [service_origin(value) for value in values]
+
+    @model_validator(mode="after")
+    def allow_private_server(self) -> "ConversationConfig":
         if (
-            parsed.scheme != "http"
-            or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
-            or parsed.username
-            or parsed.password
-            or parsed.query
-            or parsed.fragment
-            or parsed.path not in {"", "/"}
+            urlparse(self.local_ai_url).hostname not in {"127.0.0.1", "localhost", "::1"}
+            and self.local_ai_url not in self.local_ai_allowed_origins
         ):
-            raise ValueError("The text console accepts a loopback HTTP model endpoint only.")
-        return value.rstrip("/")
+            raise ValueError(
+                "Non-loopback inference requires the server-managed VOICE_LOCAL_AI_ALLOWED_ORIGINS allowlist."
+            )
+        return self
 
 
 @lru_cache
@@ -83,8 +91,16 @@ class LocalConversationAdapter:
             *history,
             {"role": "user", "content": question},
         ]
-        async with httpx.AsyncClient(timeout=45, trust_env=False, follow_redirects=False) as client:
-            result = await client.post(
+        async with (
+            asyncio.timeout(50),
+            httpx.AsyncClient(
+                timeout=45,
+                trust_env=False,
+                follow_redirects=False,
+                headers={"Accept": "application/json", "Accept-Encoding": "identity"},
+            ) as client,
+            client.stream(
+                "POST",
                 f"{self.config.local_ai_url}/api/chat",
                 json={
                     "model": self.config.local_ai_model,
@@ -93,9 +109,21 @@ class LocalConversationAdapter:
                     "format": GeneratedAnswer.model_json_schema(),
                     "options": {"temperature": 0.2, "num_predict": 700},
                 },
-            )
+            ) as result,
+        ):
             result.raise_for_status()
-        answer = GeneratedAnswer.model_validate_json(result.json()["message"]["content"])
+            if (
+                result.headers.get("content-type", "").split(";", 1)[0].strip()
+                != "application/json"
+                or result.headers.get("content-encoding", "identity") != "identity"
+            ):
+                raise ValueError("Inference response must be uncompressed JSON.")
+            body = bytearray()
+            async for part in result.aiter_bytes(chunk_size=8192):
+                body.extend(part)
+                if len(body) > 65536:
+                    raise ValueError("Inference response exceeds the supported limit.")
+        answer = GeneratedAnswer.model_validate_json(json.loads(body)["message"]["content"])
         valid_ids = {source["id"] for source in sources}
         if not set(answer.source_ids) <= valid_ids:
             raise ValueError("Model returned an invalid source reference.")

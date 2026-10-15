@@ -8,7 +8,7 @@ import { getDashboard } from "./api";
 import { CallsPanel } from "./CallsPanel";
 import { KnowledgePanel } from "./KnowledgePanel";
 import { SettingsPanel } from "./SettingsPanel";
-import { ProviderConnectionsPanel } from "./ProviderConnectionsPanel";
+import { ProviderConnectionsScreen } from "./ProviderConnectionsScreen";
 import { RecordingsPanel } from "./RecordingsPanel";
 import { CampaignPanel } from "./CampaignPanel";
 import { ContactPolicyPanel } from "./ContactPolicyPanel";
@@ -44,7 +44,7 @@ export function VoiceAssistantPage() {
     {section === "campaigns" && <CampaignPanel key={userId} />}
     {section === "compliance" && <ContactPolicyPanel key={userId} />}
     {section === "settings" && <SettingsPanel />}
-    {section === "providers" && <ProviderConnectionsPanel />}
+    {section === "providers" && <ProviderConnectionsScreen key={userId} />}
     {["dashboard", "analytics"].includes(section) && data?.operational && <section className="bg-card rounded-xl border p-5 space-y-3"><h2 className="font-semibold">Subsystem readiness and persisted processing counts</h2><p className="text-sm">Unavailable values are unverified; artifact counts do not imply live capture.</p><dl className="grid gap-3 sm:grid-cols-2">{Object.entries(data.operational).map(([key, value]) => <div key={key}><dt className="text-sm capitalize">{key.replaceAll("_", " ")}</dt><dd>{value == null ? "Unavailable" : typeof value === "object" ? Object.entries(value).map(([state, count]) => `${state}: ${count}`).join(" · ") : String(value).replaceAll("_", " ")}</dd></div>)}</dl></section>}
     {unavailable[section] && <div className="bg-card rounded-xl border p-5"><h2 className="font-semibold mb-2">Integration required</h2><p>{unavailable[section]}</p></div>}
     {section === "compliance" && <section className="bg-card rounded-xl border p-5 space-y-3"><h2 className="font-semibold">Activation prerequisites outstanding</h2><p>Selected telephony provider: {data?.provider.selected_provider ?? "loading"} · Sandbox: {data?.provider.sandbox ?? "unknown"}</p>{data?.provider.blockers.map(reason => <p key={reason}>{reason}</p>)}<p>Validated speech languages: none. Provider-hosted server-offline fallback: unverified.</p><p className="text-sm">There is no UI override for backend activation gates. Secrets and legal documents are not collected in ordinary text fields.</p></section>}

@@ -72,8 +72,10 @@ from app.features.system_settings.indexes import ensure_system_settings_indexes
 from app.features.system_settings.router import router as system_settings_router
 from app.features.voice_assistant.campaign_router import router as campaign_router
 from app.features.voice_assistant.catalog import initialize_voice_module
+from app.features.voice_assistant.native_router import router as native_router
 from app.features.voice_assistant.recording_router import router as recording_router
 from app.features.voice_assistant.router import router as voice_assistant_router
+from app.features.voice_assistant.self_hosted_router import router as self_hosted_router
 from app.features.voice_assistant.smartflo_router import router as smartflo_router
 from app.features.voice_assistant.upload_limits import VoiceUploadLimitsMiddleware
 from app.features.workflow_engine.indexes import ensure_workflow_engine_indexes
@@ -139,6 +141,8 @@ def create_app() -> FastAPI:
     app.include_router(health_router, prefix=settings.api_v1_prefix)
     app.include_router(invoices_router, prefix=settings.api_v1_prefix)
     app.include_router(voice_assistant_router, prefix=settings.api_v1_prefix)
+    app.include_router(native_router, prefix=settings.api_v1_prefix)
+    app.include_router(self_hosted_router, prefix=settings.api_v1_prefix)
     app.include_router(smartflo_router, prefix=settings.api_v1_prefix)
     app.include_router(recording_router, prefix=settings.api_v1_prefix)
     app.include_router(campaign_router, prefix=settings.api_v1_prefix)

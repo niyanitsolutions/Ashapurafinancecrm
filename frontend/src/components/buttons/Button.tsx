@@ -17,7 +17,7 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 // Exported so non-<button> elements that need identical styling (e.g. EmptyState's
 // react-router <Link> actions) can compose the same classes without duplicating them.
 export const BUTTON_VARIANT_CLASSES: Record<ButtonVariant, string> = {
-  primary: "bg-gradient-to-r from-primary to-primary-dark text-white font-semibold shadow-card hover-lift",
+  primary: "bg-primary text-text font-semibold border border-primary hover:bg-primary-light",
   secondary: "border border-border bg-card text-text font-medium hover:bg-background",
   danger: "border border-danger/25 bg-card text-danger font-medium hover:bg-danger/5",
   ghost: "text-text/70 font-medium hover:bg-background",
@@ -29,7 +29,7 @@ export const BUTTON_SIZE_CLASSES: Record<ButtonSize, string> = {
 };
 
 export const BUTTON_BASE_CLASSES =
-  "inline-flex items-center justify-center rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0";
+  "inline-flex min-h-10 items-center justify-center rounded-[10px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-dark disabled:opacity-50 disabled:cursor-not-allowed";
 
 export function Button({
   variant = "primary",
@@ -46,6 +46,7 @@ export function Button({
     <button
       type={type}
       disabled={disabled || loading}
+      aria-busy={loading || undefined}
       className={`${BUTTON_BASE_CLASSES} ${BUTTON_VARIANT_CLASSES[variant]} ${BUTTON_SIZE_CLASSES[size]} ${className}`}
       {...rest}
     >

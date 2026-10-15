@@ -2,6 +2,52 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --afs-primary: 255 121 0;
+  --afs-primary-light: 255 153 64;
+  --afs-primary-dark: 173 72 0;
+  --afs-shadow-card: 0 1px 3px rgba(21, 21, 21, 0.04);
+  --afs-shadow-dropdown: 0 8px 24px rgba(21, 21, 21, 0.12);
+  --afs-font-xs: 0.75rem;
+  --afs-font-sm: 0.875rem;
+  --afs-font-base: 0.9375rem;
+}
+
+/* The approved sidebar retains its original palette, typography and shadows.
+   Content tokens must never restyle its active links or AFS identity. */
+.bg-sidebar {
+  --afs-primary: 255 107 0;
+  --afs-primary-light: 255 138 51;
+  --afs-primary-dark: 224 95 0;
+  --afs-shadow-card: 0 8px 30px rgba(15, 23, 42, 0.07);
+  --afs-shadow-dropdown: 0 10px 40px rgba(15, 23, 42, 0.14);
+  --afs-font-xs: 0.875rem;
+  --afs-font-sm: 1rem;
+  --afs-font-base: 1.0625rem;
+}
+
+/* Retain the sidebar's existing shadow-card/color collision appearance. */
+.bg-sidebar .shadow-card { --afs-shadow-card: 0 8px 30px #FFFFFF; }
+
+.crm-content { min-width: 0; }
+.crm-content :is(.text-primary, .hover\:text-primary:hover) { color: #A44300; }
+.crm-content .text-success { color: #166534; }
+.crm-content .text-warning { color: #92400E; }
+.crm-content .bg-primary.text-white { color: #151515; }
+.crm-content :is(input, select, textarea):disabled { background-color: #F3F4F6; }
+.crm-content :is(button, a, input, select, textarea):focus-visible,
+[role="dialog"] :is(button, a, input, select, textarea):focus-visible {
+  outline: 2px solid #A44300;
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crm-content *, [role="dialog"] * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 body {
   @apply bg-background text-text antialiased;
   line-height: 1.55;
@@ -42,7 +88,7 @@ label {
     @apply transition-all duration-200 ease-out;
   }
   .hover-lift:hover {
-    @apply -translate-y-0.5 shadow-cardHover;
+    @apply shadow-cardHover;
   }
 
   .skeleton {

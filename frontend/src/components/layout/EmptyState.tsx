@@ -41,14 +41,14 @@ export function EmptyState({
   };
 
   return (
-    <div className="flex flex-col items-center justify-center text-center py-14 px-6 animate-fade-in">
+    <div className="flex w-full max-w-[calc(100vw-4rem)] lg:max-w-none flex-col items-center justify-center text-center py-10 px-4">
       <div className="w-16 h-16 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mb-4">
         <Icon name={icon} className="h-8 w-8" />
       </div>
       <h3 className="text-lg font-semibold text-text mb-1.5">{title}</h3>
-      {description && <p className="text-sm text-text/50 max-w-sm mb-6">{description}</p>}
+      {description && <p className="text-sm text-textSecondary max-w-sm mb-6">{description}</p>}
       {(primaryAction || secondaryAction) && (
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap justify-center items-center gap-3">
           {primaryAction && renderAction(primaryAction, "primary")}
           {secondaryAction && renderAction(secondaryAction, "secondary")}
         </div>

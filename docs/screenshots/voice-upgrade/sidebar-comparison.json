@@ -1,0 +1,38 @@
+[
+  {
+    "page": "campaigns",
+    "width": 1440,
+    "sidebar_metadata_equal": true,
+    "sidebar_pixels_equal": true,
+    "changed_pixel_bounds": null
+  },
+  {
+    "page": "invoices",
+    "width": 1440,
+    "sidebar_metadata_equal": true,
+    "sidebar_pixels_equal": true,
+    "changed_pixel_bounds": null
+  },
+  {
+    "page": "leads",
+    "width": 1440,
+    "sidebar_metadata_equal": true,
+    "sidebar_pixels_equal": true,
+    "changed_pixel_bounds": null
+  },
+  {
+    "page": "campaigns",
+    "width": 390,
+    "sidebar_metadata_equal": true
+  },
+  {
+    "page": "invoices",
+    "width": 390,
+    "sidebar_metadata_equal": true
+  },
+  {
+    "page": "leads",
+    "width": 390,
+    "sidebar_metadata_equal": true
+  }
+]

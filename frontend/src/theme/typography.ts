@@ -14,9 +14,9 @@ export const fontSize = {
   // "2xs"/"md"/"3xl" added for the Dashboard redesign's KPI/section scale (13/22/36px) —
   // additive only, every existing xs..2xl call site across the app is untouched.
   "2xs": ["0.8125rem", { lineHeight: "1.4" }],
-  xs: ["0.875rem", { lineHeight: "1.45" }],
-  sm: ["1rem", { lineHeight: "1.55" }],
-  base: ["1.0625rem", { lineHeight: "1.6" }],
+  xs: ["var(--afs-font-xs)", { lineHeight: "1.45" }],
+  sm: ["var(--afs-font-sm)", { lineHeight: "1.55" }],
+  base: ["var(--afs-font-base)", { lineHeight: "1.6" }],
   md: ["1.375rem", { lineHeight: "1.3" }],
   lg: ["1.1875rem", { lineHeight: "1.45" }],
   xl: ["1.875rem", { lineHeight: "1.25" }],

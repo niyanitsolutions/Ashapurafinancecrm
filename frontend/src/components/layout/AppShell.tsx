@@ -29,7 +29,7 @@ export function AppShell() {
         isCollapsed={isCollapsed}
         onToggleCollapsed={() => setIsCollapsed((v) => !v)}
       />
-      <div className={`transition-[margin] duration-200 ${isCollapsed ? "lg:ml-[76px]" : "lg:ml-[280px]"}`}>
+      <div className={`crm-content transition-[margin] duration-200 ${isCollapsed ? "lg:ml-[76px]" : "lg:ml-[280px]"}`}>
         <Topbar onMenuClick={() => setIsSidebarOpen(true)} />
         <main>
           <Outlet />

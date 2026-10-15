@@ -846,7 +846,7 @@ class VoiceService:
                         "Text testing does not validate real-time audio or telephone calls.",
                     ],
                 }
-            except (httpx.HTTPError, ValueError, KeyError, TypeError):
+            except (httpx.HTTPError, ValueError, KeyError, TypeError, TimeoutError):
                 # Do not echo provider errors, source text or caller content into ordinary logs.
                 return {
                     "response": None,
