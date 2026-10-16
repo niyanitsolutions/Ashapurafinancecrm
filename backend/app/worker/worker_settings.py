@@ -34,6 +34,7 @@ from app.worker.tasks.voice_assistant import (
     process_voice_campaign_previews,
     reconcile_mock_voice_calls,
     reconcile_voice_recordings,
+    verify_local_voice_speech,
 )
 
 
@@ -70,6 +71,7 @@ class WorkerSettings:
     # 1-15 minutes specifically so their own trigger-hour precision never matters; what
     # they decide is "due" is instant-based for the same reason.
     cron_jobs: ClassVar[list[Any]] = [
+        cron(verify_local_voice_speech, second={5, 20, 35, 50}, run_at_startup=True),
         cron(reconcile_mock_voice_calls, second=set(range(0, 60, 5)), run_at_startup=True),
         cron(reconcile_voice_recordings, minute=set(range(0, 60, 5)), run_at_startup=True),
         cron(process_voice_campaign_previews, second={0, 15, 30, 45}, run_at_startup=True),

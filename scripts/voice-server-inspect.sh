@@ -42,4 +42,12 @@ fi
 section 'Current aggregate workload'
 uptime
 vmstat 1 3 2>/dev/null || true
+section 'Optional native PBX version and media modules (read-only)'
+if command -v asterisk >/dev/null 2>&1; then
+  timeout 5 asterisk -V 2>/dev/null || true
+  timeout 5 asterisk -rx 'module show like chan_websocket' 2>/dev/null || printf 'PBX console unavailable or permission denied; modules unverified.\n'
+  timeout 5 asterisk -rx 'module show like res_ari' 2>/dev/null || true
+else
+  printf 'Asterisk command unavailable; deployed PBX version remains unverified.\n'
+fi
 printf '\nInventory only: no restart, installation, model pull, call, secret read or configuration change performed.\n'

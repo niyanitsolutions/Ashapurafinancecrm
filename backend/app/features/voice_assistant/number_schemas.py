@@ -30,5 +30,5 @@ class TelephoneNumberInput(StrictInput):
 
 class TelephoneNumberAction(StrictInput):
     version: int = Field(ge=1)
-    action: Literal["submit", "review", "activate", "suspend", "disable"]
+    action: Literal["submit", "review", "activate", "suspend", "disable", "reject", "revoke"]
     reason: str = Field(min_length=5, max_length=160)

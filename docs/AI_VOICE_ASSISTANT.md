@@ -1,5 +1,10 @@
 # AI Voice Assistant implementation and operations
 
+16 October continuation: [platform execution report](VOICE_PLATFORM_REPORT_2026_10_16.md)
+and [platform operations](VOICE_PLATFORM_OPERATIONS.md). Adds local speech adapters,
+durable verification jobs and central controls; installed-model and live PBX
+acceptance remain blocked. Earlier reports below are historical evidence.
+
 15 October continuation: [self-hosted upgrade evidence](SELF_HOSTED_VOICE_UPGRADE.md),
 [deployment and hardware inspection](SELF_HOSTED_VOICE_OPERATIONS.md), and
 [visual review](CRM_VISUAL_REVIEW.md). Native SIP is the primary direction;

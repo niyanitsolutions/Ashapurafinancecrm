@@ -1,5 +1,11 @@
 # CRM visual review — 15 October 2026
 
+16 October addition: [central Settings desktop](screenshots/voice-platform-2026-10-16/platform-settings-1440.png)
+and [mobile](screenshots/voice-platform-2026-10-16/platform-settings-390.png) captures
+use synthetic API data. Both have no page errors/document overflow. This is layout
+evidence for the new controls, not model/telephony verification. See the
+[current execution report](VOICE_PLATFORM_REPORT_2026_10_16.md).
+
 Evidence uses actual local frontend routes with explicitly synthetic API fixtures,
 temporary headless Chrome contexts and approved local Playwright. No customer data,
 real backend session or provider was used. Four screens at 1440/390px were checked;

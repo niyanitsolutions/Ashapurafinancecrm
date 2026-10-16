@@ -5,6 +5,13 @@ from app.config.redis import get_redis
 from app.features.voice_assistant.campaign_service import CampaignService
 from app.features.voice_assistant.recording_service import RecordingService
 from app.features.voice_assistant.service import VoiceService
+from app.features.voice_assistant.speech_jobs import SpeechJobs
+
+
+async def verify_local_voice_speech(ctx: dict[str, Any]) -> int:
+    """Explicit Owner-requested speech jobs only; never install, download or call."""
+    db = ctx.get("voice_db")
+    return await SpeechJobs(db if db is not None else get_database()).sweep()
 
 
 async def reconcile_mock_voice_calls(ctx: dict[str, Any]) -> int:

@@ -5,8 +5,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const phase = process.argv[2] ?? "before";
-if (!["before", "after"].includes(phase)) throw new Error("Use before or after.");
-const output = resolve("docs/screenshots/voice-upgrade", phase);
+if (!["before", "after", "platform"].includes(phase)) throw new Error("Use before, after or platform.");
+const output = phase === "platform" ? resolve("docs/screenshots/voice-platform-2026-10-16") : resolve("docs/screenshots/voice-upgrade", phase);
 await mkdir(output, { recursive: true });
 const origin = "http://127.0.0.1:5173";
 const browser = await chromium.launch({ executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true });
@@ -29,6 +29,10 @@ try {
         else if (path.includes("unread-count")) data = { count: 0 };
         else if (path === "/voice-assistant/dashboard") data = { metrics: { total: 0, queued: 0, completed: 0, failed: 0 }, worker: "unverified", recent: [], provider: { selected_provider: "none", blockers: ["No verified telephony or speech service"], sandbox: "not_configured" } };
         else if (path === "/voice-assistant/campaigns") data = { items: [], total: 0, page: 1, production_dispatch: "blocked" };
+        else if (path === "/voice-assistant/settings") data = { version: 1, mode: "disabled", ring_seconds: 10, transfer_seconds: 20, max_duration_seconds: 300, max_concurrent_calls: 2, daily_call_limit: 50, monthly_minute_limit: 500, calls_per_minute: 5, retry_limit: 1, retry_interval_seconds: 3600, queue_timeout_seconds: 120, max_queue_length: 10, ai_fallback: true, timezone: "Asia/Kolkata", calling_start: "09:00", calling_end: "18:00", holidays: [], primary_employee_id: null, conversation_instructions: "Be concise and offer human help.", operational_rules: "Use approved knowledge only.", default_language: "en" };
+        else if (path === "/voice-assistant/platform/speech-profiles") data = { profiles: [], message: "No approved speech profiles. Install pinned engines and models through the reviewed deployment procedure." };
+        else if (/\/voice-assistant\/platform\/(test|production)$/.test(path)) data = { environment: path.split("/").at(-1), version: 1, emergency_stopped: true, inbound: false, outbound: false, processing: false, production_eligible: false, live_implementation_available: false, evidence_token: "a".repeat(64), history: [], components: Object.fromEntries(["telephony", "stt", "tts", "inference", "media", "workers", "recording", "transfer", "smartflo"].map(key => [key, { enabled: false, profile_id: null, testing_supported: !["media", "recording", "transfer"].includes(key) }])), gates: [{ key: "native_control_media", passed: false, remediation: "Deployed PBX version and actual bidirectional media require verification." }, { key: "operator_number_routing", passed: false, remediation: "Approved telecom trunk and authorized number routing are required." }, { key: "speech_pipeline", passed: false, remediation: "Approved models and actual end-to-end audio acceptance required." }] };
+        else if (path.includes("/platform/") && path.endsWith("/speech-tests")) data = { items: [], total: 0 };
         else if (path === "/voice-assistant/self-hosted/status") data = { text_inference: "disabled", model: null, configured: false, evidence_fresh: false, speech_to_text: "not_installed", text_to_speech: "not_installed", live_calling: false, message: "Synthetic browser fixture: no live AI service verified.", last_test: null };
         else if (path.startsWith("/voice-assistant/native")) data = { items: [], total: 0, live_calling: false };
         else if (path === "/invoices") data = { items: [], total: 0, page: 1, total_pages: 1 };
@@ -39,13 +43,15 @@ try {
       if (url.origin === origin) return route.continue();
       return route.abort("blockedbyclient");
     });
-    const cases = [["campaigns", "/voice-assistant/campaigns"], ["invoices", "/invoices"], ["leads", "/leads"]];
+    const cases = phase === "platform" ? [["platform-settings", "/voice-assistant/settings"]] : [["campaigns", "/voice-assistant/campaigns"], ["invoices", "/invoices"], ["leads", "/leads"]];
     if (phase === "after") cases.push(["native-connections", "/voice-assistant/providers"]);
     for (const [name, path] of cases) {
       const page = await context.newPage(); const errors = [];
       page.on("pageerror", error => errors.push(error.message));
-      await page.goto(origin + path, { waitUntil: "networkidle" });
+      await page.goto(origin + path, { waitUntil: phase === "platform" ? "domcontentloaded" : "networkidle", timeout: 60000 });
+      if (phase === "platform") await page.getByRole("heading", { name: "Self-hosted platform controls" }).waitFor({ timeout: 60000 });
       await page.screenshot({ path: resolve(output, `${name}-${width}.png`), fullPage: true });
+      if (phase === "platform") await page.screenshot({ path: resolve(output, `${name}-${width}-viewport.png`) });
       const measurements = await page.evaluate(() => {
         const sidebar = document.querySelector("aside"); const link = sidebar?.querySelector("a[aria-current=page]");
         return { title: document.title, headings: [...document.querySelectorAll("h1,h2")].map(el => el.textContent), overflow: document.documentElement.scrollWidth > innerWidth, sidebarStyles: sidebar ? { boxShadow: getComputedStyle(sidebar).boxShadow, activeShadow: link ? getComputedStyle(link).boxShadow : null, activeFont: link ? getComputedStyle(link).font : null } : null, sidebar: sidebar ? { width: sidebar.getBoundingClientRect().width, color: getComputedStyle(sidebar).backgroundColor, activeColor: link ? getComputedStyle(link).backgroundColor : null, links: [...sidebar.querySelectorAll("a")].map(el => ({ label: el.textContent, href: el.getAttribute("href") })) } : null };

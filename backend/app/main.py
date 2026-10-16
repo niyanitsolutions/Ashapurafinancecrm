@@ -73,6 +73,7 @@ from app.features.system_settings.router import router as system_settings_router
 from app.features.voice_assistant.campaign_router import router as campaign_router
 from app.features.voice_assistant.catalog import initialize_voice_module
 from app.features.voice_assistant.native_router import router as native_router
+from app.features.voice_assistant.platform_router import router as voice_platform_router
 from app.features.voice_assistant.recording_router import router as recording_router
 from app.features.voice_assistant.router import router as voice_assistant_router
 from app.features.voice_assistant.self_hosted_router import router as self_hosted_router
@@ -142,6 +143,7 @@ def create_app() -> FastAPI:
     app.include_router(invoices_router, prefix=settings.api_v1_prefix)
     app.include_router(voice_assistant_router, prefix=settings.api_v1_prefix)
     app.include_router(native_router, prefix=settings.api_v1_prefix)
+    app.include_router(voice_platform_router, prefix=settings.api_v1_prefix)
     app.include_router(self_hosted_router, prefix=settings.api_v1_prefix)
     app.include_router(smartflo_router, prefix=settings.api_v1_prefix)
     app.include_router(recording_router, prefix=settings.api_v1_prefix)

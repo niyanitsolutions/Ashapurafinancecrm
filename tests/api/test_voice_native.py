@@ -43,6 +43,20 @@ async def test_registered_routes_are_owner_only(client, owner_headers, employee_
         assert (await client.get(f"{BASE}/{endpoint}", headers=owner_headers)).status_code == 200
 
 
+async def test_revocation_is_terminal_and_rotation_preserves_it(native_context):
+    svc, actor = native_context
+    connection = await svc.save_connection(connection_input(), actor)
+    number = await svc.save_number(TelephoneNumberInput(number="+919000000901", label="Revocation test", connection_id=connection["id"]), actor)
+    number = await svc.number_action(number["id"], TelephoneNumberAction(version=number["version"], action="revoke", reason="Authorization withdrawn"), actor)
+    await svc.save_connection(connection_input(version=connection["version"]), actor, connection["id"])
+    current = (await svc.numbers(actor))["items"][0]
+    assert current["state"] == "revoked"
+    with pytest.raises(ForbiddenError):
+        await svc.number_action(number["id"], TelephoneNumberAction(version=current["version"], action="review", reason="Cannot bypass revocation"), actor)
+    with pytest.raises(ForbiddenError):
+        await svc.save_number(TelephoneNumberInput(version=current["version"], number=number["number"], label="Attempted restoration"), actor, number["id"])
+
+
 async def test_credentials_encrypted_and_write_only(client, owner_headers, native_context, mock_db):
     response = await client.post(f"{BASE}/connections", headers=owner_headers, json={"name": "Staging PBX", "api_origin": ORIGIN, "endpoint_name": "approved-trunk", "username": "test-only-ari-user", "password": "test-only-ari-password"})
     assert response.status_code == 200, response.text

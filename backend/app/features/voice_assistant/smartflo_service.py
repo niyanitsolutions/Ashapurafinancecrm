@@ -155,6 +155,9 @@ class SmartfloService:
         return await self.status()
 
     async def test_connection(self, actor: User) -> dict[str, Any]:
+        from app.features.voice_assistant.platform_service import require_component_testing
+
+        await require_component_testing(self.db, "smartflo")
         doc = await self.document()
         ciphertext = doc.get("api_token_encrypted")
         if not ciphertext:
@@ -283,6 +286,9 @@ class SmartfloService:
         return {"received": True, "duplicate": duplicate, "processing": "observation_only"}
 
     async def test_webhook(self, actor: User) -> dict[str, Any]:
+        from app.features.voice_assistant.platform_service import require_component_testing
+
+        await require_component_testing(self.db, "smartflo")
         doc = await self.document()
         if not doc.get("callback_token_encrypted"):
             raise ValidationError("Save a separate callback token before testing authentication.")

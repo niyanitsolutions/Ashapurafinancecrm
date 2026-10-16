@@ -12,6 +12,7 @@ from app.features.voice_assistant.access import owner_only
 from app.features.voice_assistant.native_adapter import AsteriskReadOnlyAdapter
 from app.features.voice_assistant.native_config import NativeConnectionInput, get_native_config
 from app.features.voice_assistant.number_schemas import TelephoneNumberAction, TelephoneNumberInput
+from app.features.voice_assistant.platform_service import require_component_testing
 from app.features.voice_assistant.repository import VoiceRepository, public
 from app.security.encryption import decrypt, encrypt
 from app.shared.audit_log import write_audit_log
@@ -138,7 +139,10 @@ class NativeVoiceService:
         # Credential/routing changes cannot preserve activation or previous evidence.
         if old:
             await self.db[NUMBERS].update_many(
-                {"connection_id": record_id, "state": {"$ne": "disabled"}},
+                {
+                    "connection_id": record_id,
+                    "state": {"$nin": ["disabled", "revoked", "rejected", "suspended"]},
+                },
                 {
                     "$set": {"state": "verification_pending", "updated_at": utc_now()},
                     "$inc": {"version": 1},
@@ -149,6 +153,7 @@ class NativeVoiceService:
 
     async def test_connection(self, record_id: str, actor: User) -> dict[str, Any]:
         owner_only(actor)
+        await require_component_testing(self.db, "telephony")
         doc = await self.record(CONNECTIONS, record_id)
         if doc["api_origin"] not in get_native_config().allowed_origins:
             raise ForbiddenError(
@@ -218,6 +223,10 @@ class NativeVoiceService:
     ) -> dict[str, Any]:
         owner_only(actor)
         old = await self.record(NUMBERS, record_id) if record_id else None
+        if old and old["state"] == "revoked":
+            raise ForbiddenError(
+                "Revoked number authorization cannot be restored by editing a draft."
+            )
         if old and (old["version"] != payload.version or old["state"] == "active"):
             raise ConflictError(
                 "Number changed or is active. Refresh and suspend it before editing."
@@ -353,7 +362,16 @@ class NativeVoiceService:
                 "Live activation is blocked until the native control/media runtime and required approvals are verified.",
                 details={"blockers": blockers},
             )
-        target = {"disable": "disabled", "suspend": "suspended"}.get(payload.action)
+        if doc["state"] == "revoked" and payload.action != "revoke":
+            raise ForbiddenError(
+                "Revoked authorization is terminal; obtain a separately reviewed authorization workflow."
+            )
+        target = {
+            "disable": "disabled",
+            "suspend": "suspended",
+            "reject": "rejected",
+            "revoke": "revoked",
+        }.get(payload.action)
         if target is None:
             status = await self.number_status(doc)
             target = (

@@ -820,12 +820,15 @@ class VoiceService:
         return [public(doc) for doc in docs]
 
     async def console(self, payload: ConsoleInput, actor: User) -> dict[str, Any]:
+        from app.features.voice_assistant.platform_service import require_component_testing
+
         # Include recent user context for short follow-ups such as "what documents?".
         context = " ".join(t["content"] for t in payload.history[-4:] if t["role"] == "user")
         sources = await self.retrieve(context + " " + payload.question, payload.language)
         await self.audit(actor, "retrieval_test")
         config = get_conversation_config()
         if config.local_ai_enabled and config.local_ai_model:
+            await require_component_testing(self.db, "inference")
             cfg = await self.settings()
             try:
                 answer = await LocalConversationAdapter(config).respond(
