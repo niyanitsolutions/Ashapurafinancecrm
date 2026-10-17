@@ -13,6 +13,7 @@ from app.features.auth.models import User
 from app.features.employee.dependencies import require_owner
 from app.features.voice_assistant.adapters import readiness
 from app.features.voice_assistant.knowledge_import import MAX_IMPORT_BYTES, extract_document
+from app.features.voice_assistant.policy_studio import PolicyRunInput, PolicyStudio
 from app.features.voice_assistant.repository import public
 from app.features.voice_assistant.schemas import (
     CallAction,
@@ -178,6 +179,16 @@ async def knowledge_action(
 @router.post("/console", dependencies=[rate_limited(10)])
 async def console(payload: ConsoleInput, svc: Service, actor: KnowledgeView) -> ApiResponse[Any]:
     return ApiResponse.ok(await svc.console(payload, actor))
+
+
+@router.post("/console/evaluations", dependencies=[rate_limited(5)])
+async def policy_evaluation(payload: PolicyRunInput, svc: Service, actor: Owner) -> ApiResponse[Any]:
+    return ApiResponse.ok(await PolicyStudio(svc.db).run(payload, actor))
+
+
+@router.get("/console/evaluations")
+async def policy_evaluations(svc: Service, actor: Owner, page: int = Query(1, ge=1)) -> ApiResponse[Any]:
+    return ApiResponse.ok(await PolicyStudio(svc.db).list(actor, page))
 
 
 @router.post("/live/{feature}")

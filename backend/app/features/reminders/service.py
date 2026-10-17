@@ -159,7 +159,9 @@ class RemindersService:
         # ownership check below — an Employee could otherwise rewrite the title/
         # description/due date of any task company-wide, including support-request tasks
         # whose description embeds a customer's verbatim message.
-        await self.get_task(task_id, actor)
+        task = await self.get_task(task_id, actor)
+        if task.voice_callback:
+            raise ValidationError("Use the linked AI callback controls to reschedule or cancel this managed task.")
         updates = payload.model_dump(exclude_unset=True)
         updated = await self._tasks.update(task_id, updates, updated_by=actor.require_id()) if updates else await self._tasks.find_by_id(task_id)
         if updated is None:
@@ -168,7 +170,9 @@ class RemindersService:
         return updated
 
     async def complete_task(self, task_id: str, actor: User) -> Task:
-        await self.get_task(task_id, actor)
+        task = await self.get_task(task_id, actor)
+        if task.voice_callback:
+            raise ValidationError("AI callback completion requires actual call evidence; use callback cancellation instead.")
         updated = await self._tasks.update(task_id, {"status": "completed", "completed_at": utc_now()}, updated_by=actor.require_id())
         if updated is None:
             raise NotFoundError("Task not found.")

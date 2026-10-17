@@ -18,9 +18,11 @@ from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.features.auth.models import User
 from app.features.voice_assistant.access import owner_only
 from app.features.voice_assistant.conversation import (
+    GeneratedAnswer,
     LocalConversationAdapter,
     get_conversation_config,
 )
+from app.features.voice_assistant.intent_policy import POLICY_DIGEST, POLICY_VERSION
 from app.features.voice_assistant.local_pipeline import LocalUtterancePipeline
 from app.features.voice_assistant.platform_schemas import Environment
 from app.features.voice_assistant.platform_service import PlatformService
@@ -53,7 +55,10 @@ def configuration_key(profile_id: str) -> str:
 
 
 def inference_fingerprint() -> str:
-    return hashlib.sha256(get_conversation_config().model_dump_json().encode()).hexdigest()
+    return hashlib.sha256(json.dumps([
+        get_conversation_config().model_dump(mode="json"), POLICY_VERSION, POLICY_DIGEST,
+        GeneratedAnswer.model_json_schema(),
+    ], sort_keys=True).encode()).hexdigest()
 
 
 async def ensure_speech_job_indexes(db: AsyncIOMotorDatabase[Any]) -> None:

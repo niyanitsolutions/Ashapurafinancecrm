@@ -1,5 +1,17 @@
 # AI Voice Assistant implementation and operations
 
+17 October continuation: [12-feature workflow audit](VOICE_INTEGRATION_2026_10_17.md),
+[execution and remaining gates](VOICE_INTEGRATION_EXECUTION_2026_10_17.md),
+[operations/rollback](VOICE_INTEGRATION_OPERATIONS_2026_10_17.md). Adds independent
+typed-intent policy before text/TTS, callback-time clarification, synthetic policy
+regression and separately labelled callback operational counters. Live remains blocked.
+
+Latest 16 October continuation: [workflow audit](VOICE_WORKFLOW_AUDIT.md),
+[callback execution evidence](VOICE_CALLBACK_EXECUTION_REPORT.md) and
+[callback operations/rollback](VOICE_CALLBACK_OPERATIONS.md). Adds durable scoped
+customer-time requests to existing Tasks and Lead/Loan/Insurance detail pages.
+This is bookkeeping and readiness review; live AI call execution remains missing.
+
 16 October continuation: [platform execution report](VOICE_PLATFORM_REPORT_2026_10_16.md)
 and [platform operations](VOICE_PLATFORM_OPERATIONS.md). Adds local speech adapters,
 durable verification jobs and central controls; installed-model and live PBX

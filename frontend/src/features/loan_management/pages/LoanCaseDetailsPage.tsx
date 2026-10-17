@@ -29,6 +29,7 @@ import { LOAN_STATUS_LABELS as STATUS_LABELS } from "@/features/loan_management/
 import { formatISTDate, formatISTDateTime } from "@/shared/dateFormat";
 import { useDocumentCollectionBackContext } from "@/shared/navigationContext";
 import { HOLD_REASONS } from "@/features/workflow_engine/holdReasons";
+import { CallbacksPanel } from "@/features/voice_assistant/CallbacksPanel";
 
 const ADDITIONAL_DOC_STATUS_LABELS: Record<string, string> = { pending: "Pending Review", verified: "Verified", rejected: "Rejected" };
 
@@ -144,6 +145,7 @@ export function LoanCaseDetailsPage() {
     >
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
       <ErrorBanner message={error} />
+      <CallbacksPanel key={loanCase.id} entityType="loan_case" entityId={loanCase.id} />
 
       {loanCase.rejection_reason && (
         <div className="mb-4 rounded border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">

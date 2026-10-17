@@ -1,5 +1,24 @@
 # CRM visual review — 15 October 2026
 
+17 October continuation: [callback preview detail](screenshots/voice-integration-2026-10-17/callback-time-390-detail.png)
+and [policy studio detail](screenshots/voice-integration-2026-10-17/policy-studio-390-detail.png)
+were visually inspected on mobile. Both flows were also captured at 1440px desktop.
+All four synthetic page captures have no page errors/document overflow; built-in
+fixtures are intercepted and never contact real customers/models/providers.
+[Metadata](screenshots/voice-integration-2026-10-17/evidence.json). This is layout
+evidence, not live workflow or model/telecom acceptance. Sidebar source is unchanged.
+
+16 October callback continuation: [desktop](screenshots/voice-callbacks-2026-10-16/lead-callbacks-1440.png)
+and [mobile](screenshots/voice-callbacks-2026-10-16/lead-callbacks-390.png) show the
+new collapsed-by-default detail-page callback manager opened with synthetic data.
+Both have no page errors/document overflow; the mobile form and blocked-state
+actions were visually inspected. [Capture metadata](screenshots/voice-callbacks-2026-10-16/evidence.json).
+This representative Lead capture does not verify all Loan/Insurance browser paths,
+real customer data, keyboard/screen-reader journeys or telecom behavior. Sidebar
+source/navigation remain unchanged; the desktop sidebar comparison is
+[pixel-identical](screenshots/voice-callbacks-2026-10-16/sidebar-comparison.json).
+This continuation adds no new design system.
+
 16 October addition: [central Settings desktop](screenshots/voice-platform-2026-10-16/platform-settings-1440.png)
 and [mobile](screenshots/voice-platform-2026-10-16/platform-settings-390.png) captures
 use synthetic API data. Both have no page errors/document overflow. This is layout

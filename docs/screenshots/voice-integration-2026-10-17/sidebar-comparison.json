@@ -1,0 +1,14 @@
+[
+  {
+    "synthetic": true,
+    "name": "callback-time",
+    "sidebar_pixels_equal": true,
+    "changed_pixel_bounds": null
+  },
+  {
+    "synthetic": true,
+    "name": "policy-studio",
+    "sidebar_pixels_equal": true,
+    "changed_pixel_bounds": null
+  }
+]

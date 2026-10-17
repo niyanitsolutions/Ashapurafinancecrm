@@ -5,6 +5,7 @@ untouched.
 """
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import Field
 
@@ -23,6 +24,8 @@ from app.shared.base_document import BaseDocument
 
 
 class Task(BaseDocument):
+    # Optional automation extension. Ordinary tasks and their workflows are unchanged.
+    voice_callback: dict[str, Any] | None = None
     title: str
     description: str | None = None
     assigned_to: str  # ref: employees (Module 2, read-only)

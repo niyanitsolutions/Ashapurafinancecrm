@@ -1,5 +1,11 @@
 # Self-hosted voice: operator handover
 
+16 October correction: the user's deployment paths are
+`~/Ashapurafinancecrm/backend`, `~/Ashapurafinancecrm/frontend`, venv
+`~/afscrm-venv`, services `afs-crm-backend` / `afs-crm-arq-worker`.
+These supersede the historical PDF examples below; actual host inventory remains
+unverified. See [current callback handover and safe rollback](VOICE_CALLBACK_OPERATIONS.md).
+
 15 October 2026. No server deployment, restart, model installation, telephone call,
 provider registration or production migration was performed. This release adds
 configuration and read-only probes; it does not supply a live PBX/media runtime.

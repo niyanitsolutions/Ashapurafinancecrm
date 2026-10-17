@@ -11,6 +11,7 @@ from typing import Any
 
 from app.features.voice_assistant.adapters import SAFETY_POLICY
 from app.features.voice_assistant.conversation import LocalConversationAdapter
+from app.features.voice_assistant.intent_policy import proposal_policy
 from app.features.voice_assistant.speech_runtime import LocalSpeechRuntime, wav_metadata
 
 
@@ -60,9 +61,14 @@ class LocalUtterancePipeline:
             if not set(source_ids) <= {str(source["id"]) for source in sources}:
                 raise ValueError("Local model referenced unapproved knowledge.")
             generated = time.perf_counter()
+            decision = proposal_policy(answer, sources, transcript)
+            if not decision["response_allowed"]:
+                raise ValueError("Server conversation policy withheld speech; human review required.")
             if authorize and not await authorize():
                 raise ValueError("Local pipeline disabled before synthesis.")
             output = await self.speech.synthesize(tts_profile, text)
+            if authorize and not await authorize():
+                raise ValueError("Local pipeline disabled after synthesis; output withheld.")
             metadata = wav_metadata(output)
             finished = time.perf_counter()
             # No raw transcript/response retained in job evidence.
@@ -78,4 +84,8 @@ class LocalUtterancePipeline:
                 ),
                 "live_telephony_verified": False,
                 "language_quality_verified": False,
+                "policy_version": decision["policy_version"],
+                "policy_digest": decision["policy_digest"],
+                "intent": decision["intent"],
+                "tool_execution_permitted": False,
             }

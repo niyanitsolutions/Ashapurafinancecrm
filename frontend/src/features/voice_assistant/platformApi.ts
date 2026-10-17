@@ -1,7 +1,7 @@
 import { apiBlob, apiRequest } from "@/shared/api/client";
 
 export type VoiceEnvironment = "test" | "production";
-export type VoiceComponent = "telephony" | "stt" | "tts" | "inference" | "media" | "workers" | "recording" | "transfer" | "smartflo";
+export type VoiceComponent = "telephony" | "stt" | "tts" | "inference" | "media" | "workers" | "recording" | "transfer" | "smartflo" | "callbacks";
 export interface PlatformState {
   environment: VoiceEnvironment; version: number; emergency_stopped: boolean;
   inbound: boolean; outbound: boolean; processing: boolean; production_eligible: boolean;

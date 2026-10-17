@@ -16,11 +16,13 @@ from pymongo.errors import DuplicateKeyError
 from app.core.exceptions import ConflictError, ForbiddenError, ValidationError
 from app.features.access_control.permission_engine import PermissionEngine
 from app.features.auth.models import User
+from app.features.auth.repository import UserRepository
 from app.features.voice_assistant.adapters import readiness
 from app.features.voice_assistant.conversation import (
     LocalConversationAdapter,
     get_conversation_config,
 )
+from app.features.voice_assistant.intent_policy import priority_signal, proposal_policy
 from app.features.voice_assistant.models import (
     TERMINAL,
     TRANSITIONS,
@@ -174,7 +176,7 @@ class VoiceService:
         now = utc_now()
         local = now.astimezone(ZoneInfo(cfg.timezone))
         start = local.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
-        query = {**self.scope(actor), "created_at": {"$gte": start}}
+        query = {**self.scope(actor), "provider": "mock", "created_at": {"$gte": start, "$lte": now}}
         metrics: dict[str, int | float] = {
             "incoming": 0,
             "outgoing": 0,
@@ -199,14 +201,17 @@ class VoiceService:
             metrics["successful_transfers"] += doc.get("transfer_outcome") == "confirmed"
             metrics["total_seconds"] += doc.get("duration_seconds", 0)
         metrics["average_seconds"] = round(metrics["total_seconds"] / count, 1) if count else 0
+        metrics["average_answered_seconds"] = (
+            round(metrics["total_seconds"] / metrics["answered"], 1) if metrics["answered"] else 0
+        )
         metrics["active"] = await self.db.voice_calls.count_documents(
-            {**self.scope(actor), "status": {"$nin": list(TERMINAL)}}
+            {**self.scope(actor), "provider": "mock", "status": {"$nin": list(TERMINAL)}}
         )
         health = await self.db.voice_worker_health.find_one({"singleton_key": "default"})
         heartbeat = health.get("heartbeat_at") if health else None
         worker = (
             "healthy"
-            if heartbeat and now - heartbeat < timedelta(seconds=90)
+            if heartbeat and timedelta(0) <= now - heartbeat < timedelta(seconds=30)
             else "unknown_or_stale"
         )
         operational: dict[str, Any] = {
@@ -223,6 +228,25 @@ class VoiceService:
             else "disabled",
         }
         engine = PermissionEngine(self.db)
+        if actor.role == "owner":
+            for environment in ("test", "production"):
+                operational[f"callback_requests_{environment}_created_today"] = {
+                    state: await self.db.tasks.count_documents({
+                        "is_deleted": False, "created_at": {"$gte": start, "$lte": now},
+                        "voice_callback.environment": environment, "voice_callback.state": state,
+                    })
+                    for state in ("awaiting_confirmation", "confirmation_expired", "scheduled", "blocked", "cancelled", "opted_out", "closed_history_limit", "closed_ineligible")
+                }
+                operational[f"overdue_active_callback_requests_{environment}"] = await self.db.tasks.count_documents({
+                    "is_deleted": False, "voice_callback.environment": environment,
+                    "voice_callback.active": True, "due_at": {"$lt": now},
+                })
+            callback_health = await self.db.voice_worker_health.find_one({"singleton_key": "callbacks"})
+            callback_heartbeat = (callback_health or {}).get("heartbeat_at")
+            operational["callback_readiness_worker"] = (
+                "recent_readiness_review_only" if callback_heartbeat and now - callback_heartbeat < timedelta(seconds=90) else "unknown_or_stale"
+            )
+            operational["live_callback_completions"] = None
         if await engine.has_permission(
             actor, module="voice_assistant", resource="knowledge", action="view"
         ):
@@ -254,12 +278,27 @@ class VoiceService:
             operational["recording_cleanup_failures"] = (recording_worker or {}).get("failed")
         return {
             "metrics": metrics,
+            "metric_provenance": {
+                "source": "voice_calls.provider=mock",
+                "timezone": cfg.timezone,
+                "period_start": start,
+                "as_of": now,
+                "cohort": "created_at between period_start and as_of inclusive",
+                "active_cohort": "all creation dates, nonterminal mock sessions",
+                "average_seconds_denominator": count,
+                "average_answered_seconds_denominator": metrics["answered"],
+                "handled_counts": "nonexclusive visits to ai_active and human_active; not business outcomes",
+                "worker_freshness_seconds": 30,
+                "live_delivery": "unknown_not_observed",
+            },
             "data_mode": "mock_only",
             "estimated_cost": None,
             "provider": readiness(),
             "worker": worker,
             "worker_heartbeat_at": heartbeat,
-            "recent": (await self.list_calls(actor, page_size=8))["items"],
+            "recent": [public(doc) for doc in await self.db.voice_calls.find(
+                {**self.scope(actor), "provider": "mock", "created_at": {"$lte": now}}
+            ).sort("created_at", -1).limit(8).to_list(8)],
             "operational": operational,
         }
 
@@ -822,6 +861,20 @@ class VoiceService:
     async def console(self, payload: ConsoleInput, actor: User) -> dict[str, Any]:
         from app.features.voice_assistant.platform_service import require_component_testing
 
+        async def recheck_access() -> None:
+            current_actor = await UserRepository(self.db).find_by_id(actor.require_id())
+            if not current_actor or current_actor.status != "active" or not await PermissionEngine(self.db).has_permission(current_actor, module="voice_assistant", resource="knowledge", action="view"):
+                raise ForbiddenError("Conversation access changed during generation. Refresh and authenticate again.")
+
+        if priority_signal(payload.question):
+            await self.audit(actor, "console_safety_hold")
+            return {
+                "response": None, "sources": [], "language": payload.language,
+                "mode": "safety_hold", "uncertain": True, "escalate": True,
+                "policy": proposal_policy({}, [], payload.question),
+                "warnings": ["Priority contact or human-assistance request. Use the authorized CRM contact-policy or escalation workflow; no action has been executed."],
+            }
+
         # Include recent user context for short follow-ups such as "what documents?".
         context = " ".join(t["content"] for t in payload.history[-4:] if t["role"] == "user")
         sources = await self.retrieve(context + " " + payload.question, payload.language)
@@ -839,8 +892,25 @@ class VoiceService:
                     operational_rules=cfg.operational_rules,
                     language=payload.language,
                 )
+                # Permission revocation and publication/configuration changes during
+                # an awaited model request must not release stale evidence or text.
+                await recheck_access()
+                await require_component_testing(self.db, "inference")
+                latest_sources = await self.retrieve(context + " " + payload.question, payload.language)
+                if (await self.settings()).version != cfg.version or latest_sources != sources or get_conversation_config().model_dump_json() != config.model_dump_json():
+                    return {
+                        "response": None, "sources": [], "language": payload.language,
+                        "mode": "superseded", "uncertain": True, "escalate": True,
+                        "warnings": ["Knowledge or model/settings configuration changed during generation. Discarded this response; retry against the current configuration."],
+                    }
+                decision = proposal_policy(answer, sources, payload.question)
                 return {
                     **answer,
+                    "response": answer["response"] if decision["response_allowed"] else None,
+                    "uncertain": answer.get("uncertain", True) or not decision["response_allowed"],
+                    "escalate": answer.get("escalate", False) or not decision["response_allowed"],
+                    "policy": decision,
+                    "configuration": {"settings_version": cfg.version, "policy_version": decision["policy_version"], "knowledge_publications": [{"id": source["id"], "version": source["version"]} for source in sources], "scope": "text_test_only_not_a_release"},
                     "sources": sources,
                     "language": payload.language,
                     "mode": "local_dynamic_text",
@@ -851,6 +921,8 @@ class VoiceService:
                 }
             except (httpx.HTTPError, ValueError, KeyError, TypeError, TimeoutError):
                 # Do not echo provider errors, source text or caller content into ordinary logs.
+                await recheck_access()
+                sources = await self.retrieve(context + " " + payload.question, payload.language)
                 return {
                     "response": None,
                     "sources": sources,

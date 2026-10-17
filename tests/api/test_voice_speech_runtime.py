@@ -222,21 +222,21 @@ async def test_pipeline_runs_stt_structured_inference_tts_contract(speech_contex
             (directory / "result.txt").write_text("This is a reference test.")
         else:
             calls.append("tts")
-            assert "synthetic check" in (directory / "sample.txt").read_text()
+            assert (directory / "sample.txt").read_text().strip() == "Would you like to speak to a member of staff?"
             (directory / "result.wav").write_bytes(sample_wav(rate=22050))
     monkeypatch.setattr(speech_runtime, "execute", fake_execute)
     original = httpx.AsyncClient
     def model(request):
         calls.append("inference")
         assert request.url.path == "/api/chat"
-        return httpx.Response(200, json={"message": {"content": json.dumps({"response": "This synthetic check offers human assistance.", "source_ids": [], "uncertain": True, "escalate": True})}})
+        return httpx.Response(200, json={"message": {"content": json.dumps({"response": "Would you like to speak to a member of staff?", "source_ids": [], "uncertain": True, "escalate": True, "intent": {"intent": "unclear", "confidence": 1, "proposed_action": "clarify"}})}})
     monkeypatch.setattr(conversation.httpx, "AsyncClient", lambda **kwargs: original(**kwargs, transport=httpx.MockTransport(model)))
     await jobs.submit("test", "", actor, pipeline=True)
     await jobs.sweep()
     result = (await jobs.list("test", actor))["items"][0]
     assert calls == ["stt", "inference", "tts"] and result["status"] == "passed"
     assert not result["evidence"]["live_telephony_verified"] and result["evidence"]["escalation_required"]
-    assert "synthetic check offers" not in str(result)
+    assert "Would you like to speak" not in str(result)
 
 
 async def test_global_worker_lease_prevents_concurrent_execution(speech_context, mock_db):

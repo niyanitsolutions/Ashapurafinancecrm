@@ -1,5 +1,16 @@
 # Voice platform operations — 16 October 2026
 
+17 October update: [current safety/test operations](VOICE_INTEGRATION_OPERATIONS_2026_10_17.md)
+and [12-feature execution/acceptance report](VOICE_INTEGRATION_EXECUTION_2026_10_17.md).
+Policy/schema changes invalidate local inference/pipeline evidence; existing test
+success does not certify live calling. No deployment or activation was performed.
+
+Latest continuation: [callback operations and rollback](VOICE_CALLBACK_OPERATIONS.md).
+The user's current deployment paths are `~/Ashapurafinancecrm/backend`,
+`~/Ashapurafinancecrm/frontend` and `~/afscrm-venv`, with services
+`afs-crm-backend` and `afs-crm-arq-worker`. These supersede historical PDF examples;
+they are user-supplied guidance, not a measured server inventory. No rollout was run.
+
 This extends [the prior handover](SELF_HOSTED_VOICE_OPERATIONS.md). No production
 service, model, PBX resource, routing or telephone call was changed. Read the
 [continuation report](VOICE_PLATFORM_REPORT_2026_10_16.md) for exact acceptance

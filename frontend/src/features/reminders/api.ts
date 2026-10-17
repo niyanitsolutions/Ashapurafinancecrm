@@ -1,6 +1,8 @@
 import { apiRequest, apiRequestRaw, type PaginationMeta } from "@/shared/api/client";
 
 export interface Task {
+  version?: number;
+  voice_callback_status?: string | null;
   id: string;
   title: string;
   description: string | null;

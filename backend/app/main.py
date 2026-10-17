@@ -70,6 +70,7 @@ from app.features.support.indexes import ensure_support_indexes
 from app.features.support.router import router as support_router
 from app.features.system_settings.indexes import ensure_system_settings_indexes
 from app.features.system_settings.router import router as system_settings_router
+from app.features.voice_assistant.callback_router import router as callback_router
 from app.features.voice_assistant.campaign_router import router as campaign_router
 from app.features.voice_assistant.catalog import initialize_voice_module
 from app.features.voice_assistant.native_router import router as native_router
@@ -142,6 +143,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router, prefix=settings.api_v1_prefix)
     app.include_router(invoices_router, prefix=settings.api_v1_prefix)
     app.include_router(voice_assistant_router, prefix=settings.api_v1_prefix)
+    app.include_router(callback_router, prefix=settings.api_v1_prefix)
     app.include_router(native_router, prefix=settings.api_v1_prefix)
     app.include_router(voice_platform_router, prefix=settings.api_v1_prefix)
     app.include_router(self_hosted_router, prefix=settings.api_v1_prefix)

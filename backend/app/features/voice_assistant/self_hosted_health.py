@@ -12,9 +12,11 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.features.auth.models import User
 from app.features.voice_assistant.access import owner_only
 from app.features.voice_assistant.conversation import (
+    GeneratedAnswer,
     LocalConversationAdapter,
     get_conversation_config,
 )
+from app.features.voice_assistant.intent_policy import POLICY_DIGEST, POLICY_VERSION
 from app.features.voice_assistant.platform_service import require_component_testing
 from app.shared.audit_log import write_audit_log
 from app.utils.datetime import utc_now
@@ -28,7 +30,8 @@ async def ensure_ai_health_indexes(db: AsyncIOMotorDatabase[Any]) -> None:
 def fingerprint() -> str:
     config = get_conversation_config()
     return hashlib.sha256(
-        json.dumps([config.local_ai_url, config.local_ai_model, config.local_ai_enabled]).encode()
+        json.dumps([config.local_ai_url, config.local_ai_model, config.local_ai_enabled,
+                    POLICY_VERSION, POLICY_DIGEST, GeneratedAnswer.model_json_schema()], sort_keys=True).encode()
     ).hexdigest()
 
 

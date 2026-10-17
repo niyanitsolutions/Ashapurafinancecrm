@@ -30,6 +30,7 @@ COMPONENTS = (
     "recording",
     "transfer",
     "smartflo",
+    "callbacks",
 )
 POLICY_VERSION = "native-live-v1"
 UNIMPLEMENTED_TEST_COMPONENTS = {"media", "recording", "transfer"}
@@ -78,6 +79,8 @@ class PlatformService:
         )
         result = await self.db.voice_platform_controls.find_one({"environment": environment})
         assert result is not None
+        for key in COMPONENTS:
+            result["components"].setdefault(key, {"enabled": False, "profile_id": None})
         return cast(dict[str, Any], result)
 
     async def readiness(self, doc: dict[str, Any]) -> list[dict[str, Any]]:
@@ -90,6 +93,8 @@ class PlatformService:
             "consent_compliance": "Verified consent, calling windows and approved compliance policy required.",
             "emergency_drain": "Active-call draining or independent human transfer requires implementation and testing.",
             "staging_acceptance": "Real authorized end-to-end and resource/concurrency acceptance required.",
+            "customer_voice_identity": "Approved voice-session identity verification and authoritative customer-only tools require implementation and real testing.",
+            "live_callback_safety": "Durable callback requests do not verify real dispatch, retries, contact reservations or customer opt-out handling on the live call path.",
         }
         gates = [
             {"key": key, "passed": False, "remediation": value}

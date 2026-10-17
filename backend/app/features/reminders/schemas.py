@@ -23,6 +23,8 @@ class UpdateTaskRequest(BaseModel):
 
 
 class TaskResponse(BaseModel):
+    version: int = 1
+    voice_callback_status: str | None = None
     id: str
     title: str
     description: str | None

@@ -7,6 +7,7 @@ import { SelectField } from "@/components/forms/SelectField";
 import { SubmitButton } from "@/components/forms/SubmitButton";
 import { TextareaField } from "@/components/forms/TextareaField";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { CallbacksPanel } from "@/features/voice_assistant/CallbacksPanel";
 import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
 import { usePermissions } from "@/features/access_control/usePermissions";
 import type { ApplicationDocument } from "@/features/customer/api";
@@ -275,6 +276,7 @@ export function InsuranceCaseDetailsPage() {
     <SimplePageLayout title={`${insuranceCase.case_code} — ${STATUS_LABELS[status] ?? status}`} backTo={backTo} backLabel={backLabel}>
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
       <ErrorBanner message={error} />
+      <CallbacksPanel key={insuranceCase.id} entityType="insurance_case" entityId={insuranceCase.id} />
 
       {status === "rejected" && insuranceCase.rejection_reason && (
         <div className="mb-4 rounded border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">

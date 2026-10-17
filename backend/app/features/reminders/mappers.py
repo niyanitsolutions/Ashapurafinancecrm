@@ -4,6 +4,8 @@ from app.features.reminders.schemas import NotificationResponse, ReminderRuleRes
 
 def task_to_response(task: Task, assigned_to_name: str | None) -> TaskResponse:
     return TaskResponse(
+        version=task.version,
+        voice_callback_status=task.voice_callback.get("state") if task.voice_callback else None,
         id=task.require_id(), title=task.title, description=task.description, assigned_to=task.assigned_to,
         assigned_to_name=assigned_to_name, assigned_by=task.assigned_by, due_at=task.due_at, status=task.status,
         completed_at=task.completed_at, owner_escalated=task.owner_escalated, priority=task.priority,

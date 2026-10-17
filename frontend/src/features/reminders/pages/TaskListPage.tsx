@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Modal } from "@/components/overlays/Modal";
 import { Button } from "@/components/buttons/Button";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
@@ -12,6 +12,8 @@ import { getErrorMessage } from "@/features/customer/errors";
 import { AddTaskModal } from "@/features/reminders/components/AddTaskModal";
 import { completeTask, getTask, listTasks, type Task } from "@/features/reminders/api";
 import { formatISTDateTime } from "@/shared/dateFormat";
+import { useAuth } from "@/features/auth/useAuth";
+import { resolveCallbackOwner } from "@/features/voice_assistant/callbackApi";
 
 const PAGE_SIZE = 20;
 
@@ -30,6 +32,10 @@ function PriorityBadge({ priority }: { priority: string }) {
 }
 
 export function TaskListPage() {
+  const { role } = useAuth();
+  const [resolution, setResolution] = useState<Task | null>(null);
+  const [resolutionReason, setResolutionReason] = useState("");
+  const [resolving, setResolving] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const taskId = searchParams.get("task");
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
@@ -89,12 +95,23 @@ export function TaskListPage() {
     >
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
       <ErrorBanner message={error} />
+      {resolution && <Modal open title="Resolve callback" onClose={() => { if (!resolving) setResolution(null); }}>
+        <ErrorBanner message={error} />
+        <p>Cancel this managed request and release its contact slot. Its history is retained. Schedule a replacement from an accessible CRM record and obtain confirmation.</p>
+        <label>Resolution reason<input className="block border rounded p-2 w-full" value={resolutionReason} minLength={5} maxLength={160} onChange={e => setResolutionReason(e.target.value)} /></label>
+        <Button disabled={resolving || resolutionReason.trim().length < 5 || !resolution.version} onClick={async () => {
+          setResolving(true); setError(null);
+          try { await resolveCallbackOwner(resolution.id, resolution.version!, resolutionReason); setResolution(null); setMessage("Callback cancelled; history retained."); load(); }
+          catch (err) { setError(getErrorMessage(err)); }
+          finally { setResolving(false); }
+        }}>Cancel callback request</Button>
+      </Modal>}
       {selectedTask && <Modal open title={selectedTask.title} onClose={() => { setSelectedTask(null); setSearchParams((params) => { params.delete("task"); return params; }); }}>
         <div className="space-y-3 text-sm">
           <p className="whitespace-pre-wrap">{selectedTask.description}</p>
           <p>Assigned to: {selectedTask.assigned_to_name ?? "—"}</p>
           <p>Due: {formatISTDateTime(selectedTask.due_at)}</p>
-          <p>Status: {selectedTask.status}</p>
+          <p>Status: {selectedTask.voice_callback_status ? `AI callback: ${selectedTask.voice_callback_status.replaceAll("_", " ")}` : selectedTask.status}</p>
         </div>
       </Modal>}
 
@@ -150,6 +167,7 @@ export function TaskListPage() {
                 items.map((task) => (
                   <TableRow key={task.id}>
                     <Td>
+                      {role === "owner" && task.status === "pending" && task.voice_callback_status && task.version && <button className="text-primary underline text-xs mr-3" onClick={() => { setResolution(task); setResolutionReason(""); }}>Resolve callback</button>}
                       {task.title}
                       {task.owner_escalated && <span className="ml-2 text-xs text-danger">(escalated)</span>}
                     </Td>
@@ -158,9 +176,10 @@ export function TaskListPage() {
                     </Td>
                     <Td>{task.assigned_to_name || "—"}</Td>
                     <Td>{formatISTDateTime(task.due_at)}</Td>
-                    <Td className="capitalize">{task.status}</Td>
+                    <Td className="capitalize">{task.voice_callback_status ? `Callback: ${task.voice_callback_status.replaceAll("_", " ")}` : task.status}</Td>
                     <Td>
-                      {task.status === "pending" && (
+                      {task.voice_callback_status && task.related_entity_id && ["lead", "loan_case", "insurance_case"].includes(task.related_entity_type ?? "") && <Link className="text-primary underline text-xs" to={`${task.related_entity_type === "lead" ? "/leads" : task.related_entity_type === "loan_case" ? "/loan-management/cases" : "/insurance-cases"}/${task.related_entity_id}`}>Manage callback</Link>}
+                      {task.status === "pending" && !task.voice_callback_status && (
                         <button type="button" onClick={() => handleComplete(task.id)} className="text-primary hover:underline text-xs">
                           Mark Complete
                         </button>

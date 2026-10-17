@@ -14,7 +14,10 @@ fi
 section 'Memory and swap'
 free -h
 section 'Filesystem capacity'
-df -h / /opt/afs-crm /var/lib 2>/dev/null || true
+# Current user-supplied repository path; an optional argument supports a verified
+# different working directory without assuming that historical /opt examples exist.
+voice_crm_root="${1:-${HOME}/Ashapurafinancecrm}"
+df -h / "$voice_crm_root" /var/lib 2>/dev/null || true
 section 'GPU and VRAM'
 if command -v nvidia-smi >/dev/null 2>&1; then
   timeout 10 nvidia-smi --query-gpu=name,memory.total,memory.free,driver_version --format=csv,noheader

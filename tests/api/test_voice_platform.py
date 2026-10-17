@@ -368,6 +368,14 @@ async def test_real_artifact_encrypted_playback_range_transcript_delete(
     assert (
         recognized["summary"] is None and "not_independently_verified" in recognized["provenance"]
     )
+    first_ciphertext = stored["transcript_ciphertext"]
+    correction = {**transcript, "version": saved.json()["data"]["version"], "segments": [{**transcript["segments"][0], "text": "Corrected synthetic recognition."}]}
+    saved = await client.put(f"{BASE}/recordings/{record['id']}/transcript", headers=owner_headers, json=correction)
+    assert saved.status_code == 200, saved.text
+    corrected = await mock_db.voice_recordings.find_one({"_id": ObjectId(record["id"])})
+    assert corrected["transcript_revisions"][0]["ciphertext"] == first_ciphertext
+    assert "My EMI" not in str(corrected["transcript_revisions"])
+    assert "transcript_revisions" not in str((await client.get(f"{BASE}/recordings", headers=owner_headers)).json())
     stale = await client.delete(
         f"{BASE}/recordings/{record['id']}?version={record['version']}", headers=owner_headers
     )
@@ -380,6 +388,7 @@ async def test_real_artifact_encrypted_playback_range_transcript_delete(
     assert (await client.get(audio_url, headers=owner_headers)).status_code == 403
     tombstone = await mock_db.voice_recordings.find_one({"_id": ObjectId(record["id"])})
     assert tombstone["status"] == "deleted" and "transcript_ciphertext" not in tombstone
+    assert "transcript_revisions" not in tombstone
     assert (
         await mock_db.audit_logs.count_documents(
             {"event_type": "voice_assistant.recording_playback"}
@@ -697,6 +706,9 @@ async def test_dynamic_core_uses_negotiated_pcm_without_smartflo_transport():
     from app.features.voice_assistant.dynamic_audio import DynamicAudioConversation
     from app.features.voice_assistant.media_contracts import AudioFormat
 
+    async def authorize():
+        return True  # Synthetic host session for this offline codec contract.
+
     class Codec:
         stopped = False
         audio_format = AudioFormat(encoding="pcm_s16le", sample_rate=16000)
@@ -707,7 +719,8 @@ async def test_dynamic_core_uses_negotiated_pcm_without_smartflo_transport():
     class Model:
         async def respond(self, **_kwargs):
             return {
-                "response": "Test dynamic response",
+                "response": "Approved evidence for isolated test.",
+                "intent": {"intent": "product_information", "confidence": 0.95, "proposed_action": "answer_public_knowledge"},
                 "source_ids": ["approved"],
                 "uncertain": False,
             }
@@ -736,6 +749,7 @@ async def test_dynamic_core_uses_negotiated_pcm_without_smartflo_transport():
         send=send,
         instructions="Test behavior",
         operational_rules="Test policy",
+        authorize=authorize,
     )
     await engine.question("A changing natural question")
     await engine.drain()

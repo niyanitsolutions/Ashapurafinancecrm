@@ -32,6 +32,7 @@ export interface Article {
   publications?: { version: number; title: string; published_at: string }[];
 }
 export interface ConsoleResult {
+  policy?: { policy_version: string; intent: string; confidence: number | null; next_action: string; reason: string; response_allowed: boolean; execution_allowed: false; customer_verified: false };
   response: string | null; mode: string; language: string; uncertain: boolean; escalate?: boolean;
   warnings: string[]; sources: { id: string; title: string; version: number; excerpt: string }[];
 }
@@ -135,3 +136,6 @@ export const saveSmartfloConnection = (payload: {
 }) => apiRequest<SmartfloConnection>(`${smartflo}/connection`, { method: "PUT", body: JSON.stringify(payload) });
 export const testSmartflo = (kind: "connection" | "webhook" | "audio") => apiRequest<{ status: string; message: string }>(`${smartflo}/tests/${kind}`, { method: "POST" });
 export const getSmartfloEvents = (page: number) => apiRequest<{ items: SmartfloEvent[]; total: number }>(`${smartflo}/events?page=${page}`);
+export interface PolicyReport { id: string; suite_version: string; policy_version: string; created_at: string; passed: boolean; kind: string; activation_eligible: false; cases: { name: string; passed: boolean; rejected: boolean; expected_response_allowed: boolean; actual: { response_allowed?: boolean; next_action?: string; reason?: string } }[] }
+export const policyReports = (page: number) => apiRequest<{ items: PolicyReport[]; total: number; suite_version: string }>(`/voice-assistant/console/evaluations?page=${page}`);
+export const runPolicyReport = (suite_version: string, idempotency_key: string) => apiRequest<PolicyReport>("/voice-assistant/console/evaluations", { method: "POST", body: JSON.stringify({ suite_version, idempotency_key }) });

@@ -272,6 +272,18 @@ class RecordingService:
             raise ValidationError("Transcript timestamps exceed the verified audio duration.")
         # One atomic derivative in the recording avoids transcript+parent split commits.
         content = payload.model_dump(exclude={"version"})
+        revisions = list(doc.get("transcript_revisions", []))
+        if doc.get("transcript_ciphertext"):
+            revisions.append({
+                "version": doc["version"],
+                "ciphertext": doc["transcript_ciphertext"],
+                "imported_at": doc.get("transcript_imported_at"),
+                "imported_by": doc.get("transcript_imported_by"),
+                "provenance": "operator_supplied_recognition_not_independently_verified",
+            })
+        # Fail rather than silently trim evidence or exceed Mongo's document limit.
+        if len(revisions) > 100 or sum(len(item["ciphertext"]) for item in revisions) > 4_000_000:
+            raise ConflictError("Transcript revision retention limit reached; operator archival review required.")
         result = await self.repo.update(
             "voice_recordings",
             doc,
@@ -280,6 +292,7 @@ class RecordingService:
                 "transcript_ciphertext": encrypt(json.dumps(content)),
                 "transcript_imported_by": actor.require_id(),
                 "transcript_imported_at": utc_now(),
+                "transcript_revisions": revisions,
             },
             actor.require_id(),
         )
@@ -373,6 +386,7 @@ class RecordingService:
                 },
                 "$unset": {
                     "transcript_ciphertext": "",
+                    "transcript_revisions": "",
                     "consent_reference": "",
                     "sha256": "",
                     "request_fingerprint": "",

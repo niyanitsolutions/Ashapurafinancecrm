@@ -1,0 +1,340 @@
+[
+  {
+    "phase": "integration",
+    "name": "callback-time",
+    "width": 1440,
+    "synthetic": true,
+    "errors": [],
+    "title": "AFS Financial CRM",
+    "headings": [
+      "Good evening, Preview 👋",
+      "Synthetic preview lead (AFS-LEAD-PREVIEW)",
+      "AI callbacks"
+    ],
+    "overflow": false,
+    "sidebarStyles": {
+      "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.14) 0px 10px 40px 0px",
+      "activeShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 8px 30px 0px",
+      "activeFont": "500 16px / 24.8px Inter, system-ui, sans-serif"
+    },
+    "sidebar": {
+      "width": 280,
+      "color": "rgb(17, 17, 17)",
+      "activeColor": "rgb(255, 107, 0)",
+      "links": [
+        {
+          "label": "Dashboard",
+          "href": "/"
+        },
+        {
+          "label": "Leads",
+          "href": "/leads"
+        },
+        {
+          "label": "Loan Management",
+          "href": "/loan-management"
+        },
+        {
+          "label": "Insurance Management",
+          "href": "/insurance-management"
+        },
+        {
+          "label": "Invoices",
+          "href": "/invoices"
+        },
+        {
+          "label": "AI Voice Assistant",
+          "href": "/voice-assistant"
+        },
+        {
+          "label": "Referral Partners",
+          "href": "/referral-partners"
+        },
+        {
+          "label": "Reports & Analytics",
+          "href": "/reports"
+        },
+        {
+          "label": "Customer Messages",
+          "href": "/conversations"
+        },
+        {
+          "label": "Support Tickets",
+          "href": "/support-tickets"
+        },
+        {
+          "label": "Connections",
+          "href": "/integrations"
+        },
+        {
+          "label": "Administration",
+          "href": "/employees"
+        },
+        {
+          "label": "Settings",
+          "href": "/settings"
+        },
+        {
+          "label": "Owner Management",
+          "href": "/owner-accounts"
+        }
+      ]
+    },
+    "overflowNodes": []
+  },
+  {
+    "phase": "integration",
+    "name": "policy-studio",
+    "width": 1440,
+    "synthetic": true,
+    "errors": [],
+    "title": "AFS Financial CRM",
+    "headings": [
+      "Good evening, Preview 👋",
+      "AI Voice Assistant",
+      "Import knowledge document",
+      "New knowledge article",
+      "Synthetic policy regression",
+      "Conversation and retrieval test console"
+    ],
+    "overflow": false,
+    "sidebarStyles": {
+      "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.14) 0px 10px 40px 0px",
+      "activeShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 8px 30px 0px",
+      "activeFont": "500 16px / 24.8px Inter, system-ui, sans-serif"
+    },
+    "sidebar": {
+      "width": 280,
+      "color": "rgb(17, 17, 17)",
+      "activeColor": "rgb(255, 107, 0)",
+      "links": [
+        {
+          "label": "Dashboard",
+          "href": "/"
+        },
+        {
+          "label": "Leads",
+          "href": "/leads"
+        },
+        {
+          "label": "Loan Management",
+          "href": "/loan-management"
+        },
+        {
+          "label": "Insurance Management",
+          "href": "/insurance-management"
+        },
+        {
+          "label": "Invoices",
+          "href": "/invoices"
+        },
+        {
+          "label": "AI Voice Assistant",
+          "href": "/voice-assistant"
+        },
+        {
+          "label": "Referral Partners",
+          "href": "/referral-partners"
+        },
+        {
+          "label": "Reports & Analytics",
+          "href": "/reports"
+        },
+        {
+          "label": "Customer Messages",
+          "href": "/conversations"
+        },
+        {
+          "label": "Support Tickets",
+          "href": "/support-tickets"
+        },
+        {
+          "label": "Connections",
+          "href": "/integrations"
+        },
+        {
+          "label": "Administration",
+          "href": "/employees"
+        },
+        {
+          "label": "Settings",
+          "href": "/settings"
+        },
+        {
+          "label": "Owner Management",
+          "href": "/owner-accounts"
+        }
+      ]
+    },
+    "overflowNodes": []
+  },
+  {
+    "phase": "integration",
+    "name": "callback-time",
+    "width": 390,
+    "synthetic": true,
+    "errors": [],
+    "title": "AFS Financial CRM",
+    "headings": [
+      "Good evening, Preview 👋",
+      "Synthetic preview lead (AFS-LEAD-PREVIEW)",
+      "AI callbacks"
+    ],
+    "overflow": false,
+    "sidebarStyles": {
+      "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.14) 0px 10px 40px 0px",
+      "activeShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 8px 30px 0px",
+      "activeFont": "500 16px / 24.8px Inter, system-ui, sans-serif"
+    },
+    "sidebar": {
+      "width": 280,
+      "color": "rgb(17, 17, 17)",
+      "activeColor": "rgb(255, 107, 0)",
+      "links": [
+        {
+          "label": "Dashboard",
+          "href": "/"
+        },
+        {
+          "label": "Leads",
+          "href": "/leads"
+        },
+        {
+          "label": "Loan Management",
+          "href": "/loan-management"
+        },
+        {
+          "label": "Insurance Management",
+          "href": "/insurance-management"
+        },
+        {
+          "label": "Invoices",
+          "href": "/invoices"
+        },
+        {
+          "label": "AI Voice Assistant",
+          "href": "/voice-assistant"
+        },
+        {
+          "label": "Referral Partners",
+          "href": "/referral-partners"
+        },
+        {
+          "label": "Reports & Analytics",
+          "href": "/reports"
+        },
+        {
+          "label": "Customer Messages",
+          "href": "/conversations"
+        },
+        {
+          "label": "Support Tickets",
+          "href": "/support-tickets"
+        },
+        {
+          "label": "Connections",
+          "href": "/integrations"
+        },
+        {
+          "label": "Administration",
+          "href": "/employees"
+        },
+        {
+          "label": "Settings",
+          "href": "/settings"
+        },
+        {
+          "label": "Owner Management",
+          "href": "/owner-accounts"
+        }
+      ]
+    },
+    "overflowNodes": []
+  },
+  {
+    "phase": "integration",
+    "name": "policy-studio",
+    "width": 390,
+    "synthetic": true,
+    "errors": [],
+    "title": "AFS Financial CRM",
+    "headings": [
+      "Good evening, Preview 👋",
+      "AI Voice Assistant",
+      "Import knowledge document",
+      "New knowledge article",
+      "Synthetic policy regression",
+      "Conversation and retrieval test console"
+    ],
+    "overflow": false,
+    "sidebarStyles": {
+      "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.14) 0px 10px 40px 0px",
+      "activeShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 8px 30px 0px",
+      "activeFont": "500 16px / 24.8px Inter, system-ui, sans-serif"
+    },
+    "sidebar": {
+      "width": 280,
+      "color": "rgb(17, 17, 17)",
+      "activeColor": "rgb(255, 107, 0)",
+      "links": [
+        {
+          "label": "Dashboard",
+          "href": "/"
+        },
+        {
+          "label": "Leads",
+          "href": "/leads"
+        },
+        {
+          "label": "Loan Management",
+          "href": "/loan-management"
+        },
+        {
+          "label": "Insurance Management",
+          "href": "/insurance-management"
+        },
+        {
+          "label": "Invoices",
+          "href": "/invoices"
+        },
+        {
+          "label": "AI Voice Assistant",
+          "href": "/voice-assistant"
+        },
+        {
+          "label": "Referral Partners",
+          "href": "/referral-partners"
+        },
+        {
+          "label": "Reports & Analytics",
+          "href": "/reports"
+        },
+        {
+          "label": "Customer Messages",
+          "href": "/conversations"
+        },
+        {
+          "label": "Support Tickets",
+          "href": "/support-tickets"
+        },
+        {
+          "label": "Connections",
+          "href": "/integrations"
+        },
+        {
+          "label": "Administration",
+          "href": "/employees"
+        },
+        {
+          "label": "Settings",
+          "href": "/settings"
+        },
+        {
+          "label": "Owner Management",
+          "href": "/owner-accounts"
+        }
+      ]
+    },
+    "overflowNodes": []
+  }
+]

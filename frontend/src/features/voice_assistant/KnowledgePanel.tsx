@@ -7,6 +7,7 @@ import { useAuth } from "@/features/auth/useAuth";
 import { getErrorMessage } from "@/shared/api/errors";
 import { articleAction, getKnowledge, saveArticle, testConversation, type Article, type ConsoleResult } from "./api";
 import { ArticleEvaluation, KnowledgeImport } from "./TrainingWorkbench";
+import { PolicyStudio } from "./PolicyStudio";
 
 export function KnowledgePanel() {
   const { userId } = useAuth(); const { can } = usePermissions(); const client = useQueryClient();
@@ -59,6 +60,7 @@ export function KnowledgePanel() {
       </div></article>)}
       <div className="flex gap-3"><Button variant="secondary" disabled={page === 1} onClick={() => setPage(p => p - 1)}>Previous</Button><span>Page {page}</span><Button variant="secondary" disabled={page * 25 >= (articles.data?.total ?? 0)} onClick={() => setPage(p => p + 1)}>Next</Button></div>
     </section>
+    <PolicyStudio />
     <form className="bg-card rounded-xl border p-5 space-y-3" onSubmit={async e => {
       e.preventDefault(); setBusy(true); setError(null);
       try { const answer = await testConversation(question, language, history.slice(-10)); setResult(answer); if (answer.response) setHistory(old => [...old, { role: "user", content: question }, { role: "assistant", content: answer.response!.slice(0, 2000) }].slice(-10)); }
@@ -66,6 +68,7 @@ export function KnowledgePanel() {
     }}><h2 className="font-semibold">Conversation and retrieval test console</h2><p className="text-sm text-text/70">Dynamic text responses require an administrator-configured local model. Language codes here describe text; no speech languages have been validated.</p>
       <label className="block">Natural-language question<textarea required minLength={2} maxLength={2000} className="block border rounded-lg p-2 w-full" value={question} onChange={e => setQuestion(e.target.value)} /></label><Button type="submit" loading={busy}>Test question</Button><Button variant="ghost" onClick={() => { setHistory([]); setResult(null); }}>Reset conversation</Button>
       {history.length > 0 && <p className="text-sm">{history.length / 2} conversation turns retained in this browser view.</p>}
+      {result?.policy && <div role="status" className="text-sm border rounded-lg p-3"><p>Intent: {result.policy.intent.replaceAll("_", " ")} · Confidence: {result.policy.confidence ?? "Unavailable"}</p><p>Proposed next action: {result.policy.next_action.replaceAll("_", " ")} · {result.policy.reason.replaceAll("_", " ")}</p><p>Backend actions disabled · Caller unverified · Policy {result.policy.policy_version}</p></div>}
       {result && <div aria-live="polite" className="space-y-3"><p>{result.mode} · {result.language} · {result.uncertain ? "Review required" : "Generated response"}{result.escalate ? " · Human escalation suggested" : ""}</p>{result.response && <p className="whitespace-pre-wrap">{result.response}</p>}{result.warnings.map(w => <p className="text-sm text-text/70" key={w}>{w}</p>)}{result.sources.map((source, i) => <blockquote className="border-l-2 border-primary pl-3" key={`${source.id}-${i}`}><strong>{source.title} · v{source.version}</strong><p className="text-sm">{source.excerpt}</p></blockquote>)}{!result.sources.length && <p>No relevant current published source found.</p>}</div>}
     </form>
   </div>;

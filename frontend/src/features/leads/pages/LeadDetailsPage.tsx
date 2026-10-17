@@ -12,6 +12,7 @@ import { MessagesPanel } from "@/features/communication/components/MessagesPanel
 import { SendMessageModal } from "@/features/communication/components/SendMessageModal";
 import { GenerateLinkModal } from "@/features/leads/components/GenerateLinkModal";
 import { AddTaskModal } from "@/features/reminders/components/AddTaskModal";
+import { CallbacksPanel } from "@/features/voice_assistant/CallbacksPanel";
 import {
   addNote,
   assignLead,
@@ -234,6 +235,7 @@ export function LeadDetailsPage() {
     >
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
       <ErrorBanner message={error} />
+      <CallbacksPanel key={lead.id} entityType="lead" entityId={lead.id} />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2 bg-card border border-border rounded-card shadow-card p-6 space-y-4">

@@ -295,6 +295,9 @@ def test_live_websocket_rejected():
 async def test_dynamic_voice_context_and_interruption():
     from app.features.voice_assistant.dynamic_audio import DynamicAudioConversation
 
+    async def authorize():
+        return True  # Synthetic host session; no telephone identity is asserted.
+
     captured = []
     sent = []
     started = asyncio.Event()
@@ -304,7 +307,8 @@ async def test_dynamic_voice_context_and_interruption():
         async def respond(self, **kwargs):
             captured.append(kwargs)
             return {
-                "response": f"Generated clarification for: {kwargs['question']}",
+                "response": kwargs["sources"][0]["excerpt"],
+                "intent": {"intent": "product_information", "confidence": 0.95, "proposed_action": "answer_public_knowledge"},
                 "source_ids": ["approved"],
                 "uncertain": False,
             }
@@ -330,6 +334,7 @@ async def test_dynamic_voice_context_and_interruption():
         send=send,
         instructions="Be helpful.",
         operational_rules="No guarantees.",
+        authorize=authorize,
     )
     await engine.question("An unusual question about my situation")
     await asyncio.wait_for(started.wait(), 1)

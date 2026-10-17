@@ -9,7 +9,7 @@ import { useAuth } from "@/features/auth/useAuth";
 import { getErrorMessage } from "@/shared/api/errors";
 import { emergencyVoiceStop, getPlatform, getSpeechJobs, getSpeechProfiles, getSpeechTestAudio, setActivation, startPipelineTest, startSpeechTest, updateComponent, type PlatformState, type VoiceComponent, type VoiceEnvironment } from "./platformApi";
 
-const labels: Record<VoiceComponent, string> = { telephony: "Native PBX", stt: "Speech recognition", tts: "Speech synthesis", inference: "Local AI inference", media: "Voice media", workers: "Voice verification workers", recording: "Recording", transfer: "Human transfer", smartflo: "Optional Smartflo" };
+const labels: Record<VoiceComponent, string> = { telephony: "Native PBX", stt: "Speech recognition", tts: "Speech synthesis", inference: "Local AI inference", media: "Voice media", workers: "Voice verification workers", recording: "Recording", transfer: "Human transfer", smartflo: "Optional Smartflo", callbacks: "Callback automation" };
 
 export function PlatformControlsPanel() {
   const { userId, role } = useAuth(); const owner = role === "owner";
@@ -50,7 +50,7 @@ export function PlatformControlsPanel() {
     {data && <>
       <p role="status">Inbound: {data.inbound ? "Enabled" : "Disabled"} · Outbound: {data.outbound ? "Enabled" : "Disabled"} · Processing: {data.processing ? "Enabled" : "Disabled"} · Emergency stop: {data.emergency_stopped ? "Set" : "Clear"}</p>
       <div className="grid gap-4 lg:grid-cols-2">{(Object.keys(labels) as VoiceComponent[]).map(key => {
-        const current = data.components[key];
+        const current = data.components[key] ?? { enabled: false, profile_id: null, testing_supported: true };
         const options = profiles.data?.profiles.filter(profile => profile.kind === key) ?? [];
         return <section key={key} className="border rounded-xl bg-card p-4 space-y-3" aria-label={labels[key]}>
           <h3 className="font-semibold">{labels[key]}</h3>

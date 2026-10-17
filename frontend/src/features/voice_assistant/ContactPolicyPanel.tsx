@@ -8,7 +8,7 @@ import { getContactPolicies, saveContactConsent, saveContactSuppression } from "
 export function ContactPolicyPanel() {
   const { role, userId } = useAuth(); const cache = useQueryClient();
   const [inputId, setInputId] = useState(""); const [customerId, setCustomerId] = useState("");
-  const [purpose, setPurpose] = useState("service_callback"); const [reference, setReference] = useState("");
+  const [purpose, setPurpose] = useState("callback"); const [reference, setReference] = useState("");
   const [expiry, setExpiry] = useState(""); const [reason, setReason] = useState("");
   const key = ["voice", userId, "contact-policies", customerId];
   const query = useQuery({ queryKey: key, queryFn: () => getContactPolicies(customerId), enabled: role === "owner" && !!customerId });
@@ -29,6 +29,7 @@ export function ContactPolicyPanel() {
     <form onSubmit={e => { e.preventDefault(); setCustomerId(inputId); }}><label>Existing CRM customer ID<input className="block border rounded p-2 w-full" required pattern="[a-f0-9]{24}" value={inputId} onChange={e => setInputId(e.target.value)} /></label><button>Load policies</button></form>
     {query.data && <><div>{query.data.consents.map(item => <p key={item.id}>{item.purpose}: {item.action}, version {item.version}, {item.verification}</p>)}{query.data.suppressions.map(item => <p key={item.id}>{item.scope}: {item.suppressed ? "suppressed" : "not suppressed"}, version {item.version}</p>)}</div>
       <label>Purpose identifier<input className="block border rounded p-2 w-full" value={purpose} onChange={e => setPurpose(e.target.value)} /></label>
+      <p className="text-xs text-text/60">Managed callbacks require the exact purpose callback. Historical service_callback attestations require review and a new callback attestation; they are not converted automatically.</p>
       <label>Evidence reference<input className="block border rounded p-2 w-full" value={reference} maxLength={150} onChange={e => setReference(e.target.value)} /></label>
       <label>Consent expiry (ISO timestamp with offset)<input className="block border rounded p-2 w-full" placeholder="2026-12-01T18:00:00+05:30" value={expiry} onChange={e => setExpiry(e.target.value)} /></label>
       <div className="flex gap-3"><button disabled={mutation.isPending || reference.length < 5} onClick={() => mutation.mutate("grant")}>Record consent attestation</button><button disabled={mutation.isPending || reference.length < 5} onClick={() => mutation.mutate("withdraw")}>Withdraw consent</button></div>

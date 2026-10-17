@@ -6,7 +6,16 @@ from app.features.voice_assistant.schemas import StrictInput
 
 Environment = Literal["test", "production"]
 Component = Literal[
-    "telephony", "stt", "tts", "inference", "media", "workers", "recording", "transfer", "smartflo"
+    "telephony",
+    "stt",
+    "tts",
+    "inference",
+    "media",
+    "workers",
+    "recording",
+    "transfer",
+    "smartflo",
+    "callbacks",
 ]
 
 
