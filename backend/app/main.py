@@ -27,8 +27,10 @@ from app.features.communication.router import router as communication_router
 from app.features.customer.indexes import ensure_customer_indexes
 from app.features.customer.public_router import router as customer_public_router
 from app.features.customer.router import router as customer_router
+from app.features.daily_operations.catalog import (
+    install_catalog as install_daily_operations_catalog,
+)
 from app.features.daily_operations.router import router as daily_operations_router
-from app.features.daily_operations.service import ensure_daily_operations_indexes
 from app.features.daily_operations.upload_limits import DailyUploadLimitsMiddleware
 from app.features.dashboard.indexes import ensure_dashboard_indexes
 from app.features.dashboard.router import router as dashboard_router
@@ -100,7 +102,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await ensure_geo_fencing_indexes(get_database())
     await ensure_system_settings_indexes(get_database())
     await ensure_dashboard_indexes(get_database())
-    await ensure_daily_operations_indexes(get_database())
+    # Catalog entries are code-backed definitions, not grants or business data.
+    # Installing them here prevents a normal release from silently hiding the module
+    # when an environment has not separately run the manual seed/migration script.
+    await install_daily_operations_catalog(get_database())
     await ensure_invoice_indexes(get_database())
     await initialize_voice_module(get_database())
     await ensure_lead_indexes(get_database())

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/buttons/Button";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
@@ -13,6 +13,9 @@ import { useAuth } from "@/features/auth/useAuth";
 import { usePermissions } from "@/features/access_control/usePermissions";
 import { areas, base, businessTime, download, followStatuses, getRecord, issueStatuses, listRecords, text, type Area, type Row } from "./api";
 import { RecordForm } from "./RecordForm";
+import { permittedDailyUpdateTabs } from "./navigation";
+
+const FILTER_KEYS = ["sort", "search", "status", "date_from", "date_to", "employee", "bank", "loan_type", "overdue", "old_days"];
 
 const columns: Record<Area, [string, string][]> = {
   "follow-ups": [["date", "DATE"], ["loan_type", "LOAN TYPE"], ["bank", "BANK / NBFCs"], ["customer_name", "CX NAME"], ["customer_number", "CX NUMBER"], ["status", "TODAY CASE STATUS"], ["remarks_date", "REMARKS DATE"], ["due_date", "FOLLOW PENDING"], ["next_action", "NEXT ACTION"], ["employee_name", "EMPLOYEE NAME"]],
@@ -23,13 +26,17 @@ const columns: Record<Area, [string, string][]> = {
 
 export function DailyOperationsPage({ area }: { area: Area }) {
   const { userId } = useAuth(); const { can, isOwner, loading } = usePermissions(); const client = useQueryClient();
-  const [filters, setFilters] = useState<Record<string, string>>({ sort: "-date" }); const [page, setPage] = useState(1);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const filters: Record<string, string> = { sort: "-date", ...Object.fromEntries(FILTER_KEYS.filter(key => searchParams.has(key)).map(key => [key, searchParams.get(key)!])) };
+  const requestedPage = Number(searchParams.get("page") ?? "1");
+  const page = Number.isInteger(requestedPage) && requestedPage > 0 && requestedPage <= 100000 ? requestedPage : 1;
+  const setPage = (value: number) => { const next = new URLSearchParams(searchParams); next.set("page", String(value)); setSearchParams(next); };
   const [editing, setEditing] = useState<Row | null | undefined>(undefined);
   const [history, setHistory] = useState<Row | null>(null); const [error, setError] = useState<string | null>(null); const [success, setSuccess] = useState(false);
   const allowed = can(`daily_operations:${area}`, "view");
   const params = new URLSearchParams({ ...Object.fromEntries(Object.entries(filters).filter(([, value]) => value)), page: String(page), page_size: "20" });
   const query = useQuery({ queryKey: ["daily-operations", userId, area, params.toString()], queryFn: () => listRecords(area, params.toString()), enabled: !loading && allowed });
-  const filter = (key: string, value: string) => { setFilters(old => ({ ...old, [key]: value })); setPage(1); };
+  const filter = (key: string, value: string) => { const next = new URLSearchParams(searchParams); if (value) next.set(key, value); else next.delete(key); next.delete("page"); setSearchParams(next, { replace: true }); };
   const filterField = (key: string, label: string, type = "text") => <FormField label={label} type={type} value={filters[key] ?? ""} onChange={e => filter(key, e.target.value)} />;
   async function inspect(row: Row, edit: boolean) {
     try { const full = area === "sessions" ? row : await getRecord(area, row.id); if (edit) setEditing(full); else setHistory(full); }
@@ -37,7 +44,7 @@ export function DailyOperationsPage({ area }: { area: Area }) {
   }
   async function exportFile(format: "csv" | "xlsx") { try { await download(`${base}/${area}/export?${params}&format=${format}`, `${area}.${format}`); } catch (err) { setError(err instanceof Error ? err.message : "Export failed."); } }
   return <SimplePageLayout title={areas[area]} subtitle={area === "sessions" ? "Authentication session families, displayed in Asia/Kolkata. Missing logout remains unknown. These are not payroll hours. Date filters use the original login date." : "Persisted CRM operations. Dates use Asia/Kolkata. Loan stages and financial amounts are managed in Loan Management."} actions={<>
-    <Link className="text-primary underline" to="/daily-operations/transfers">Import & Export Centre</Link>
+    {permittedDailyUpdateTabs(can).some(tab => !tab.area) && <Link className="text-primary underline" to="/daily-operations/transfers">Import & Export Centre</Link>}
     {can(`daily_operations:${area}`, "export") && <><Button variant="secondary" onClick={() => void exportFile("csv")}>Export CSV</Button><Button variant="secondary" onClick={() => void exportFile("xlsx")}>Export XLSX</Button></>}
     {["follow-ups", "issues"].includes(area) && can(`daily_operations:${area}`, "create") && <Button onClick={() => setEditing(null)}>Create record</Button>}
   </>}>

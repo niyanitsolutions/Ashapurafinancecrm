@@ -30,7 +30,7 @@ export interface ModuleTab {
 // visual language already hand-rolled in CommunicationPage/EmployeeDetailsPage
 // (border-b-2, primary accent) and the same nav-key visibility check Sidebar
 // uses, so a tab never exposes a page the user isn't permitted to see.
-export function ModuleTabs({ tabs }: { tabs: ModuleTab[] }) {
+export function ModuleTabs({ tabs, ariaLabel }: { tabs: ModuleTab[]; ariaLabel?: string }) {
   const location = useLocation();
   const availableKeys = useNavKeys();
 
@@ -44,7 +44,7 @@ export function ModuleTabs({ tabs }: { tabs: ModuleTab[] }) {
   };
 
   return (
-    <nav className="flex gap-1 overflow-x-auto border-b border-border bg-card px-4 lg:px-6">
+    <nav aria-label={ariaLabel} className="flex gap-1 overflow-x-auto border-b border-border bg-card px-4 lg:px-6">
       {visibleTabs.map((tab) => {
         const active = isActive(tab);
         return (

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { Button } from "@/components/buttons/Button";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
@@ -11,7 +12,10 @@ import { areas, base, download, downloadBlob, type Area, type ImportResult, type
 
 export function TransferCentre() {
   const { can } = usePermissions();
-  const [area, setArea] = useState<Area>("follow-ups"); const [file, setFile] = useState<File | null>(null);
+  const availableAreas = Object.entries(areas).filter(([key]) => can(`daily_operations:${key}`, "view") && (can(`daily_operations:${key}`, "import") || can(`daily_operations:${key}`, "export")));
+  const [selectedArea, setArea] = useState<Area>("follow-ups");
+  const area = (availableAreas.some(([key]) => key === selectedArea) ? selectedArea : availableAreas[0]?.[0] ?? selectedArea) as Area;
+  const [file, setFile] = useState<File | null>(null);
   const [allowUpdates, setAllowUpdates] = useState(false);
   const [mapping, setMapping] = useState("{}"); const [preview, setPreview] = useState<Preview | null>(null); const [result, setResult] = useState<ImportResult | null>(null);
   const [error, setError] = useState<string | null>(null); const [busy, setBusy] = useState(false); const [confirmed, setConfirmed] = useState(false);
@@ -31,7 +35,8 @@ export function TransferCentre() {
   return <SimplePageLayout title="Import & Export Centre" subtitle="Bounded CSV/XLSX transfers: 5 MB, 500 rows. Previews expire after 30 minutes. No external messages are sent.">
     <ErrorBanner message={error} />
     <div className="max-w-3xl space-y-4">
-      <SelectField label="Destination work area" value={area} options={Object.entries(areas).map(([value, label]) => ({ value, label }))} onChange={e => { setArea(e.target.value as Area); setFile(null); reset(); }} />
+      <SelectField label="Destination work area" value={area} options={availableAreas.map(([value, label]) => ({ value, label }))} onChange={e => { setArea(e.target.value as Area); setFile(null); reset(); }} />
+      {can(`daily_operations:${area}`, "export") && <Link className="text-primary underline" to={`/daily-operations/${area}`}>Open {areas[area]} to filter and export records</Link>}
       <p>Use real CRM IDs and dates as YYYY-MM-DD. The template defines accepted columns. Follow-up statuses: FOLLOW UP PENDING, NEXT FOLLOW UP, DISBURSE, REJECTED WITH REASON. Open follow-ups need NEXT ACTION and FOLLOW PENDING. Rejected cases need a reason. DISBURSE requires a verified linked disbursement.</p>
       <p>Issue imports create OPEN issues; priorities: low, medium, high, urgent. Assignments require Assign permission. Loan Progress imports add next-action follow-ups to existing linked cases; edit stages, amounts and disbursements in Loan Management. Session imports only apply audited Owner corrections to existing session families; timestamps require timezone offsets and VERSION must match the current correction (0 for the first).</p>
       <p>Imports default to creating records. Follow-up and issue updates require RECORD ID, VERSION, explicit update opt-in and Edit permission. Each row commits independently with its history; errors do not roll back successful rows. Retrying the same file and mapping under the same account skips previously committed rows. Export from each work area after applying its filters (maximum 500 records).</p>

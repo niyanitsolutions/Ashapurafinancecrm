@@ -1,0 +1,41 @@
+{
+  "fixtures": "Synthetic local API responses; no production data or persistence verification",
+  "checks": [
+    {
+      "role": "owner",
+      "width": 1440,
+      "tabs": 5,
+      "activeStyles": "PASS",
+      "refreshAndQuery": "PASS",
+      "keyboardAndSidebar": "PASS",
+      "overflow": {
+        "scroll": 1160,
+        "width": 1160,
+        "mode": "auto"
+      },
+      "pageErrors": []
+    },
+    {
+      "role": "owner",
+      "width": 390,
+      "tabs": 5,
+      "activeStyles": "PASS",
+      "refreshAndQuery": "PASS",
+      "keyboardAndSidebar": "PASS",
+      "overflow": {
+        "scroll": 899,
+        "width": 390,
+        "mode": "auto"
+      },
+      "pageErrors": []
+    },
+    {
+      "role": "employee",
+      "permittedTabs": [
+        "issues"
+      ],
+      "unauthorizedProgressMount": "BLOCKED",
+      "unauthorizedProgressRequests": 0
+    }
+  ]
+}

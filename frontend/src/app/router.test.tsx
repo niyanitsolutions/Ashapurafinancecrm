@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { router } from "./router";
+import { DailyUpdateLayout } from "@/features/daily_operations/DailyUpdateLayout";
+import { DailyOperationsPage } from "@/features/daily_operations/DailyOperationsPage";
+import { TransferCentre } from "@/features/daily_operations/TransferCentre";
 
 // Locks in the Loan/Insurance Management tab-navigation fix directly against the real
 // route config (not just the pattern proven in CaseListPage.test.tsx): every sibling
@@ -34,6 +37,15 @@ function findRoute(children: RouteLike[] | undefined, path: string): RouteLike |
 }
 
 describe("router — Loan/Insurance Management tab routes stay keyed", () => {
+  it("nests all existing Daily Update URLs under one shared layout with the original functional pages", () => {
+    const daily = findRouteByPath(router.routes as RouteLike[], "/daily-operations");
+    expect((daily?.element as { type: unknown }).type).toBe(DailyUpdateLayout);
+    for (const path of ["follow-ups", "progress", "sessions", "issues", "transfers"]) {
+      const child = findRoute(daily?.children, path);
+      expect(child).toBeTruthy();
+      expect((child?.element as { type: unknown }).type).toBe(path === "transfers" ? TransferCentre : DailyOperationsPage);
+    }
+  });
   it("every /loan-management tab route's element has a distinct, non-empty key", () => {
     const loanManagement = findRouteByPath(router.routes as RouteLike[], "/loan-management");
     expect(loanManagement).toBeTruthy();

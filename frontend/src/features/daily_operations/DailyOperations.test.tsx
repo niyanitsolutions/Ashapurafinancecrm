@@ -19,8 +19,10 @@ function mount(component: React.ReactNode) {
 beforeEach(() => { vi.clearAllMocks(); mocks.can.mockReturnValue(true); mocks.list.mockResolvedValue({ items: [], total: 0 }); });
 
 describe("daily operations", () => {
-  it("adds five navigation entries and preserves CRM sections", () => {
-    expect(NAV_SECTIONS.find(section => section.label === "DAILY OPERATIONS")?.items).toHaveLength(5);
+  it("adds one Daily Update navigation entry and preserves CRM sections", () => {
+    const daily = NAV_SECTIONS.flatMap(section => section.items).filter(item => item.to.startsWith("/daily-operations"));
+    expect(daily).toHaveLength(1);
+    expect(daily[0].label).toBe("Daily Update");
     expect(NAV_SECTIONS.flatMap(section => section.items).some(item => item.label === "Leads")).toBe(true);
   });
   it("renders empty state and sends search and date filters", async () => {

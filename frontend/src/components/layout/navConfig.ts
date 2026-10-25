@@ -49,16 +49,6 @@ export interface NavSection {
 
 export const NAV_SECTIONS: NavSection[] = [
   {
-    label: "DAILY OPERATIONS",
-    items: [
-      { label: "Daily Follow-up Data", to: "/daily-operations/follow-ups", icon: "leads", matchKey: "daily_follow-ups" },
-      { label: "Loan Progress Tracking", to: "/daily-operations/progress", icon: "loan", matchKey: "daily_progress" },
-      { label: "Employee Login & Logout", to: "/daily-operations/sessions", icon: "employees", matchKey: "daily_sessions" },
-      { label: "Inquiry or Issue", to: "/daily-operations/issues", icon: "alert-triangle", matchKey: "daily_issues" },
-      { label: "Import & Export Centre", to: "/daily-operations/transfers", icon: "reports", matchKey: ["daily_follow-ups", "daily_progress", "daily_sessions", "daily_issues"] },
-    ],
-  },
-  {
     label: null,
     items: [{ label: "Dashboard", to: "/", icon: "dashboard", matchKey: "dashboard" }],
   },
@@ -84,6 +74,13 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     label: null,
     items: [{ label: "Insurance Management", to: "/insurance-management", icon: "insurance", matchKey: "insurance_cases" }],
+  },
+  {
+    label: null,
+    items: [{
+      label: "Daily Update", to: "/daily-operations", icon: "reports",
+      matchKey: ["daily_follow-ups", "daily_progress", "daily_sessions", "daily_issues"],
+    }],
   },
   { label: "Finance / Billing", items: [{ label: "Invoices", to: "/invoices", icon: "reports", matchKey: "invoices" }] },
   { label: null, items: [{ label: "AI Voice Assistant", to: "/voice-assistant", icon: "reports", matchKey: "voice_assistant" }] },

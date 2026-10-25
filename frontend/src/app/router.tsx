@@ -1,6 +1,7 @@
 import { createBrowserRouter, Navigate } from "react-router-dom";
 import { DailyOperationsPage } from "@/features/daily_operations/DailyOperationsPage";
 import { TransferCentre } from "@/features/daily_operations/TransferCentre";
+import { DailyUpdateLayout } from "@/features/daily_operations/DailyUpdateLayout";
 import { VoiceAssistantPage } from "@/features/voice_assistant/VoiceAssistantPage";
 import { InvoiceListPage } from "@/features/invoices/InvoiceListPage";
 import { InvoiceFormPage } from "@/features/invoices/InvoiceFormPage";
@@ -359,11 +360,17 @@ export const router = createBrowserRouter([
           // Module 6D — Tasks permission-gated server-side (require_permission
           // "reminders"/"tasks"), Notifications self-service (require_staff only, no
           // permission needed — each user reads only their own inbox).
-          { path: "/daily-operations/follow-ups", element: <DailyOperationsPage key="daily-follow-ups" area="follow-ups" /> },
-          { path: "/daily-operations/progress", element: <DailyOperationsPage key="daily-progress" area="progress" /> },
-          { path: "/daily-operations/sessions", element: <DailyOperationsPage key="daily-sessions" area="sessions" /> },
-          { path: "/daily-operations/issues", element: <DailyOperationsPage key="daily-issues" area="issues" /> },
-          { path: "/daily-operations/transfers", element: <TransferCentre /> },
+          {
+            path: "/daily-operations",
+            element: <DailyUpdateLayout />,
+            children: [
+              { path: "follow-ups", element: <DailyOperationsPage key="daily-follow-ups" area="follow-ups" /> },
+              { path: "progress", element: <DailyOperationsPage key="daily-progress" area="progress" /> },
+              { path: "sessions", element: <DailyOperationsPage key="daily-sessions" area="sessions" /> },
+              { path: "issues", element: <DailyOperationsPage key="daily-issues" area="issues" /> },
+              { path: "transfers", element: <TransferCentre /> },
+            ],
+          },
           { path: "/tasks", element: <TaskListPage /> },
           { path: "/notifications", element: <NotificationListPage /> },
           // Reminder Rules automates Tasks — permission-gated (reminder_rules), reachable
