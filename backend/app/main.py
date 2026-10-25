@@ -27,6 +27,9 @@ from app.features.communication.router import router as communication_router
 from app.features.customer.indexes import ensure_customer_indexes
 from app.features.customer.public_router import router as customer_public_router
 from app.features.customer.router import router as customer_router
+from app.features.daily_operations.router import router as daily_operations_router
+from app.features.daily_operations.service import ensure_daily_operations_indexes
+from app.features.daily_operations.upload_limits import DailyUploadLimitsMiddleware
 from app.features.dashboard.indexes import ensure_dashboard_indexes
 from app.features.dashboard.router import router as dashboard_router
 from app.features.employee.indexes import ensure_employee_indexes
@@ -97,6 +100,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await ensure_geo_fencing_indexes(get_database())
     await ensure_system_settings_indexes(get_database())
     await ensure_dashboard_indexes(get_database())
+    await ensure_daily_operations_indexes(get_database())
     await ensure_invoice_indexes(get_database())
     await initialize_voice_module(get_database())
     await ensure_lead_indexes(get_database())
@@ -128,6 +132,7 @@ def create_app() -> FastAPI:
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(VoiceUploadLimitsMiddleware, api_prefix=settings.api_v1_prefix)
+    app.add_middleware(DailyUploadLimitsMiddleware, api_prefix=settings.api_v1_prefix)
     # Rewrites request.client from X-Forwarded-For — but ONLY when the immediate TCP
     # peer is in trusted_hosts (Nginx on this same box by default). Without this, every
     # request behind a reverse proxy shows the same proxy IP to rate_limit.py and to
@@ -158,6 +163,7 @@ def create_app() -> FastAPI:
     app.include_router(geo_fencing_router, prefix=settings.api_v1_prefix)
     app.include_router(system_settings_router, prefix=settings.api_v1_prefix)
     app.include_router(dashboard_router, prefix=settings.api_v1_prefix)
+    app.include_router(daily_operations_router, prefix=settings.api_v1_prefix)
     app.include_router(bulk_import_router, prefix=settings.api_v1_prefix)
     app.include_router(leads_router, prefix=settings.api_v1_prefix)
     app.include_router(customer_public_router, prefix=settings.api_v1_prefix)

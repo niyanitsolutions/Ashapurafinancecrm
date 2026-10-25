@@ -54,6 +54,8 @@ class ReminderTargetType:
 
 
 class NotificationType:
+    DAILY_FOLLOW_UP_DUE = "daily_follow_up_due"
+    OPERATIONAL_ISSUE_ASSIGNED = "operational_issue_assigned"
     LEAD_ASSIGNED = "lead_assigned"
     DOCUMENT_UPLOADED = "document_uploaded"
     TASK_ASSIGNED = "task_assigned"
@@ -72,6 +74,7 @@ class NotificationType:
     DOCUMENT_REJECTED = "document_rejected"
 
     ALL = (
+        DAILY_FOLLOW_UP_DUE, OPERATIONAL_ISSUE_ASSIGNED,
         LEAD_ASSIGNED, DOCUMENT_UPLOADED, TASK_ASSIGNED, TASK_DUE, TASK_ESCALATION, TASK_OWNER_ESCALATION,
         REMINDER_TRIGGERED, SUPPORT_REQUEST_RAISED, DOCUMENT_REJECTED,
     )
@@ -101,6 +104,8 @@ class NotificationCategory:
 # creation (RemindersService.create_notification), never chosen by the caller, so a
 # type can never drift to a different category on different calls.
 CATEGORY_BY_NOTIFICATION_TYPE: dict[str, str] = {
+    NotificationType.DAILY_FOLLOW_UP_DUE: NotificationCategory.REMINDER,
+    NotificationType.OPERATIONAL_ISSUE_ASSIGNED: NotificationCategory.ASSIGNMENT,
     NotificationType.LEAD_ASSIGNED: NotificationCategory.ASSIGNMENT,
     NotificationType.TASK_ASSIGNED: NotificationCategory.ASSIGNMENT,
     NotificationType.DOCUMENT_UPLOADED: NotificationCategory.DOCUMENT,

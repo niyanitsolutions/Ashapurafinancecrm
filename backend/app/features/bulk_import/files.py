@@ -65,8 +65,17 @@ def cell_text(value: object) -> str:
 
 
 def parse_file(
-    content: bytes, filename: str, content_type: str | None, kind: str
+    content: bytes,
+    filename: str,
+    content_type: str | None,
+    kind: str,
+    *,
+    model: type[BaseModel] | None = None,
+    columns: dict[str, str] | None = None,
+    column_mapping: dict[str, str] | None = None,
 ) -> list[tuple[int, dict[str, str]]]:
+    schema = model or MODELS[kind]
+    permitted = columns or fields(kind)
     extension = PurePath(filename).suffix.lower()
     if extension not in {".csv", ".xlsx"}:
         raise ValidationError(
@@ -128,7 +137,7 @@ def parse_file(
                     if element.tag.endswith("}c"):
                         column, number = coordinate_from_string(element.attrib.get("r", ""))
                         if number > MAX_ROWS + 1 or column_index_from_string(column) > len(
-                            fields(kind)
+                            permitted
                         ):
                             raise ValidationError(
                                 "The first worksheet exceeds the supported 500 records or sample columns."
@@ -140,10 +149,14 @@ def parse_file(
                 for row in sheet.iter_rows()
             )
         header = next(rows, None)
-        if header is None or len(header) > len(fields(kind)):
+        if header is None or len(header) > len(permitted):
             raise ValueError("header")
-        mapping = {label.casefold(): key for key, label in fields(kind).items()}
-        mapping.update({key.casefold(): key for key in fields(kind)})
+        mapping = {label.casefold(): key for key, label in permitted.items()}
+        mapping.update({key.casefold(): key for key in permitted})
+        for source, target in (column_mapping or {}).items():
+            if target not in permitted:
+                raise ValidationError("Column mapping contains an unsupported destination.")
+            mapping[source.strip().casefold()] = target
         keys = [mapping.get(cell_text(value).strip().casefold()) for value in header]
         if not keys or None in keys or len(set(keys)) != len(keys):
             raise ValidationError(
@@ -152,13 +165,13 @@ def parse_file(
         keys = [key for key in keys if key is not None]
         required = {
             key
-            for key, field in MODELS[kind].model_fields.items()
+            for key, field in schema.model_fields.items()
             if field.is_required() and key not in EXCLUDED
         }
         if not required.issubset(keys):
             raise ValidationError(
                 "Missing required columns: "
-                + ", ".join(fields(kind)[key] for key in sorted(required - set(keys)))
+                + ", ".join(permitted[key] for key in sorted(required - set(keys)))
             )
         result = []
         for number, row in enumerate(rows, 2):

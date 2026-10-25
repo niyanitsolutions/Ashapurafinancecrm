@@ -12,6 +12,8 @@ export function notificationDestination(n: Pick<AppNotification, "entity_type" |
     return fallback;
   }
   const routes: Record<string, string> = {
+    daily_follow_up: "/daily-operations/follow-ups",
+    operational_issue: "/daily-operations/issues",
     lead: `/leads/${id}`, insurance_case: `/insurance-cases/${id}`, loan_case: `/loan-cases/${id}`,
     application: `/applications/${id}`, customer: `/customers/${id}`,
     support_ticket: `/support-tickets?ticket=${id}`,

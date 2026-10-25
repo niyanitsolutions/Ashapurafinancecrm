@@ -1179,6 +1179,8 @@ async def seed_support_and_messaging_nav_items() -> None:
 
 
 async def main() -> None:
+    from app.features.daily_operations.catalog import install_catalog
+    await install_catalog(get_database())
     from app.features.voice_assistant.catalog import seed_voice_catalog
     await seed_voice_catalog(get_database())
     await seed_counters()
