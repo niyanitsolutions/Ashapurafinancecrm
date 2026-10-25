@@ -1,0 +1,141 @@
+{
+  "fixtures": "Synthetic local API responses; real UI interactions, not production persistence evidence",
+  "checks": [
+    {
+      "role": "owner",
+      "width": 1440,
+      "defaultTabs": 5,
+      "nameDropdownAndManualEntry": "PASS",
+      "manualFollowUpAndProgressAddEdit": "PASS",
+      "ownerOnlyDelete": "PASS",
+      "sessionProtection": "PASS",
+      "pageErrors": [],
+      "writes": [
+        {
+          "method": "POST",
+          "area": "follow-ups"
+        },
+        {
+          "method": "PATCH",
+          "area": "follow-ups"
+        },
+        {
+          "method": "DELETE",
+          "area": "follow-ups"
+        },
+        {
+          "method": "POST",
+          "area": "progress"
+        },
+        {
+          "method": "PATCH",
+          "area": "progress"
+        },
+        {
+          "method": "DELETE",
+          "area": "progress"
+        }
+      ]
+    },
+    {
+      "role": "owner",
+      "width": 390,
+      "defaultTabs": 5,
+      "nameDropdownAndManualEntry": "PASS",
+      "manualFollowUpAndProgressAddEdit": "PASS",
+      "ownerOnlyDelete": "PASS",
+      "sessionProtection": "PASS",
+      "pageErrors": [],
+      "writes": [
+        {
+          "method": "POST",
+          "area": "follow-ups"
+        },
+        {
+          "method": "PATCH",
+          "area": "follow-ups"
+        },
+        {
+          "method": "DELETE",
+          "area": "follow-ups"
+        },
+        {
+          "method": "POST",
+          "area": "progress"
+        },
+        {
+          "method": "PATCH",
+          "area": "progress"
+        },
+        {
+          "method": "DELETE",
+          "area": "progress"
+        }
+      ]
+    },
+    {
+      "role": "employee",
+      "width": 1440,
+      "defaultTabs": 5,
+      "nameDropdownAndManualEntry": "PASS",
+      "manualFollowUpAndProgressAddEdit": "PASS",
+      "ownerOnlyDelete": "PASS",
+      "sessionProtection": "PASS",
+      "pageErrors": [],
+      "writes": [
+        {
+          "method": "POST",
+          "area": "follow-ups"
+        },
+        {
+          "method": "PATCH",
+          "area": "follow-ups"
+        },
+        {
+          "method": "POST",
+          "area": "progress"
+        },
+        {
+          "method": "PATCH",
+          "area": "progress"
+        },
+        {
+          "method": "POST",
+          "area": "issues"
+        }
+      ]
+    },
+    {
+      "role": "employee",
+      "width": 390,
+      "defaultTabs": 5,
+      "nameDropdownAndManualEntry": "PASS",
+      "manualFollowUpAndProgressAddEdit": "PASS",
+      "ownerOnlyDelete": "PASS",
+      "sessionProtection": "PASS",
+      "pageErrors": [],
+      "writes": [
+        {
+          "method": "POST",
+          "area": "follow-ups"
+        },
+        {
+          "method": "PATCH",
+          "area": "follow-ups"
+        },
+        {
+          "method": "POST",
+          "area": "progress"
+        },
+        {
+          "method": "PATCH",
+          "area": "progress"
+        },
+        {
+          "method": "POST",
+          "area": "issues"
+        }
+      ]
+    }
+  ]
+}

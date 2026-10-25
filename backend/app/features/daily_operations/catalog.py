@@ -15,14 +15,13 @@ AREAS = {
 
 
 async def install_catalog(db: AsyncIOMotorDatabase[Any]) -> None:
-    """Additive catalog only: never grant employees new permissions implicitly."""
+    """Register definitions; default own-record access is enforced by PermissionEngine."""
     await ensure_daily_operations_indexes(db)
     for order, (resource, label) in enumerate(AREAS.items(), 70):
         actions = ["view", "create", "edit", "import", "export"]
-        if resource == "progress":
-            actions = ["view", "import", "export"]
-        elif resource == "sessions":
+        if resource == "sessions":
             actions = ["view", "edit", "import", "export"]
+        actions += ["delete"]
         if resource == "issues":
             actions += ["assign", "approve"]
         permission = Permission(
@@ -32,6 +31,10 @@ async def install_catalog(db: AsyncIOMotorDatabase[Any]) -> None:
             {"module": "daily_operations", "resource": resource},
             {"$setOnInsert": permission.model_dump(exclude={"id"})},
             upsert=True,
+        )
+        await db.permissions.update_one(
+            {"module": "daily_operations", "resource": resource},
+            {"$addToSet": {"actions": {"$each": actions}}},
         )
         item = NavItem(
             key=f"daily_{resource}",

@@ -1,7 +1,18 @@
+import re
 from datetime import date as CalendarDate
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+def phone_number(value: str) -> str:
+    if not value:
+        return value
+    normalized = re.sub(r"[\s()+-]", "", value)
+    if not normalized.isdigit() or not 7 <= len(normalized) <= 15:
+        raise ValueError("Enter a valid customer phone number.")
+    return normalized
+
 
 FollowStatus = Literal["FOLLOW UP PENDING", "NEXT FOLLOW UP", "DISBURSE", "REJECTED WITH REASON"]
 
@@ -10,8 +21,13 @@ class FollowUpInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     date: CalendarDate
-    lead_id: str = Field(min_length=24, max_length=24, pattern=r"^[a-fA-F0-9]+$")
+    lead_id: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{24}$")
     case_id: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{24}$")
+    customer_name: str = Field(default="", max_length=200)
+    customer_number: str = Field(default="", max_length=30)
+    loan_type: str = Field(default="", max_length=200)
+    employee_name: str = Field(default="", max_length=200)
+    assigned_to: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{24}$")
     bank: str = Field(min_length=1, max_length=200)
     status: FollowStatus = "FOLLOW UP PENDING"
     remarks: str = Field(default="", max_length=4000)
@@ -19,6 +35,7 @@ class FollowUpInput(BaseModel):
     next_action: str = Field(default="", max_length=1000)
     due_date: CalendarDate | None = None
     rejection_reason: str = Field(default="", max_length=2000)
+    _phone = field_validator("customer_number")(phone_number)
 
     @model_validator(mode="after")
     def validate_status(self) -> Self:
@@ -36,6 +53,12 @@ class FollowUpInput(BaseModel):
             raise ValueError("DISBURSE requires a linked loan case.")
         if self.status in {"DISBURSE", "REJECTED WITH REASON"} and self.due_date:
             raise ValueError("Resolved follow-ups cannot have a pending due date.")
+        if (
+            not self.lead_id
+            and not self.case_id
+            and (not self.customer_name or not self.customer_number)
+        ):
+            raise ValueError("Enter the customer name and number, or choose an existing customer.")
         return self
 
 
@@ -50,6 +73,7 @@ class IssueInput(BaseModel):
     inquiry: str = Field(min_length=1, max_length=4000)
     priority: Literal["low", "medium", "high", "urgent"] = "medium"
     assigned_to: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{24}$")
+    employee_name: str = Field(default="", max_length=200)
     status: Literal["OPEN", "IN PROGRESS", "RESOLVED", "REOPENED"] = "OPEN"
     resolution_notes: str = Field(default="", max_length=4000)
 
@@ -74,3 +98,48 @@ class ProgressActionInput(BaseModel):
     date: CalendarDate
     next_action: str = Field(min_length=1, max_length=1000)
     due_date: CalendarDate
+
+
+class ProgressInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    date: CalendarDate
+    customer_name: str = Field(default="", max_length=200)
+    customer_number: str = Field(default="", max_length=30)
+    loan_type: str = Field(default="", max_length=200)
+    bank: str = Field(default="", max_length=200)
+    status: str = Field(default="Application login", min_length=1, max_length=200)
+    next_action: str = Field(default="", max_length=1000)
+    due_date: CalendarDate | None = None
+    remarks: str = Field(default="", max_length=4000)
+    employee_name: str = Field(default="", max_length=200)
+    assigned_to: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{24}$")
+    case_id: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{24}$")
+    login_date: CalendarDate | None = None
+    approved_amount: float | None = Field(default=None, ge=0, multiple_of=0.01, allow_inf_nan=False)
+    disbursed_amount: float | None = Field(
+        default=None, ge=0, multiple_of=0.01, allow_inf_nan=False
+    )
+    disbursed_at: CalendarDate | None = None
+    _phone = field_validator("customer_number")(phone_number)
+
+    @model_validator(mode="after")
+    def validate_entry(self) -> Self:
+        if not self.case_id and (
+            not self.customer_name or not self.customer_number or not self.bank
+        ):
+            raise ValueError("Customer name, number and bank are required.")
+        if self.due_date and self.due_date < self.date:
+            raise ValueError("Next follow-up cannot be before DATE.")
+        if self.disbursed_amount is not None and not self.disbursed_at:
+            raise ValueError("Enter a disbursement date with the recorded amount.")
+        return self
+
+
+class ProgressUpdate(ProgressInput):
+    version: int = Field(ge=0)
+
+
+class DeleteRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    version: int = Field(ge=0)
+    reason: str = Field(default="Removed from Daily Update", min_length=3, max_length=1000)

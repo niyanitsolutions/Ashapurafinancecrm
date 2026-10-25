@@ -151,7 +151,7 @@ async def test_permission_denial_and_issue_scope(
     await install_catalog(mock_db)
     employee = await _create_employee(client, owner_headers, master_data)
     headers = await _login(client, "9511111111", "InitialPass1!")
-    assert (await client.get(f"{BASE}/issues", headers=headers)).status_code == 403
+    assert (await client.get(f"{BASE}/issues", headers=headers)).status_code == 200
     assert (await client.get(f"{BASE}/issues")).status_code == 401
     await grant(mock_db, employee, "issues", ["view", "create", "edit"])
     payload = {"date": "2026-10-25", "inquiry": "Test operational question"}
@@ -173,10 +173,15 @@ async def test_permission_denial_and_issue_scope(
         },
         headers=headers,
     )
-    assert response.status_code == 403
+    assert response.status_code == 200
     response = await client.patch(
         f"{BASE}/issues/{own['id']}",
-        json={**payload, "assigned_to": employee["id"], "version": 1},
+        json={
+            **payload,
+            "status": "REOPENED",
+            "assigned_to": str(ObjectId()),
+            "version": 2,
+        },
         headers=headers,
     )
     assert response.status_code == 403

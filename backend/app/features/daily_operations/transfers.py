@@ -15,7 +15,12 @@ from pydantic import ValidationError as SchemaError
 from app.core.exceptions import AppError, ConflictError, NotFoundError, ValidationError
 from app.features.auth.models import User
 from app.features.bulk_import.files import parse_file
-from app.features.daily_operations.schemas import FollowUpInput, IssueInput, ProgressActionInput
+from app.features.daily_operations.schemas import (
+    FollowUpInput,
+    IssueInput,
+    ProgressActionInput,
+    ProgressInput,
+)
 from app.features.daily_operations.service import DailyOperationsService
 from app.features.daily_operations.views import SessionCorrection, correct_session
 from app.features.loan_management.service import LoanCaseService
@@ -83,6 +88,17 @@ class IssueRow(IssueInput):
         return self
 
 
+class ProgressRow(ProgressInput):
+    record_id: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{24}$")
+    version: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def update_requires_version(self) -> "ProgressRow":
+        if (self.record_id is None) != (self.version is None):
+            raise ValueError("Updates require both RECORD ID and VERSION.")
+        return self
+
+
 READ_ONLY = {"loan_type", "customer_name", "customer_number", "employee_name"}
 FOLLOW_COLUMNS.update(
     loan_type="LOAN TYPE",
@@ -93,20 +109,62 @@ FOLLOW_COLUMNS.update(
     version="VERSION",
 )
 ISSUE_COLUMNS.update(record_id="RECORD ID", version="VERSION")
+ISSUE_COLUMNS.update(employee_name="EMPLOYEE NAME")
+PROGRESS_COLUMNS.update(
+    customer_name="CX NAME",
+    customer_number="CX NUMBER",
+    loan_type="LOAN TYPE",
+    bank="APPLIED BANK OR NBFC",
+    status="TODAY CASE STAGE",
+    employee_name="EMPLOYEE NAME",
+    remarks="REMARKS",
+    login_date="DATE OF LOGIN",
+    approved_amount="APPROVED LOAN AMT",
+    disbursed_amount="LOAN AMOUNT",
+    disbursed_at="DATE OF DISBURSE",
+    record_id="RECORD ID",
+    version="VERSION",
+)
 
 
 MODELS: dict[str, type[BaseModel]] = {
     "follow-ups": FollowUpRow,
     "issues": IssueRow,
-    "progress": ProgressActionInput,
+    "progress": ProgressRow,
     "sessions": CorrectionRow,
 }
 
 
 def row_key(actor: User, kind: str, values: dict[str, Any]) -> str:
+    values = dict(values)
+    if values.get("assigned_to") is None:
+        values.pop("assigned_to", None)  # Preserve fingerprints from pre-manual-entry imports.
+    if kind == "issues" and not values.get("employee_name"):
+        values.pop("employee_name", None)
     return hashlib.sha256(
         json.dumps([actor.require_id(), kind, values], sort_keys=True, default=str).encode()
     ).hexdigest()
+
+
+async def legacy_progress_row(
+    service: DailyOperationsService, actor: User, kind: str, values: dict[str, Any]
+) -> bool:
+    # Old progress templates wrote follow-up actions rather than progress annotations.
+    # Keep their durable fingerprints effective across this UI/data-model upgrade.
+    keys = {"case_id", "date", "next_action", "due_date"}
+    if (
+        kind != "progress"
+        or not values.get("case_id")
+        or not {key for key, value in values.items() if value != ""}.issubset(keys)
+    ):
+        return False
+    legacy = ProgressActionInput.model_validate({key: values[key] for key in keys if key in values})
+    key = row_key(actor, kind, legacy.model_dump(mode="json"))
+    return bool(
+        await service.db.daily_follow_ups.find_one(
+            {"$or": [{"import_key": key}, {"history.import_key": key}]}, {"_id": 1}
+        )
+    )
 
 
 COLUMNS = {
@@ -200,7 +258,7 @@ async def validate_row(
         {key: value for key, value in values.items() if value != ""}
     )
     old = None
-    if isinstance(model, (FollowUpRow, IssueRow)):
+    if isinstance(model, (FollowUpRow, IssueRow, ProgressRow)):
         if model.record_id:
             if not allow_updates:
                 raise ValidationError(
@@ -217,24 +275,18 @@ async def validate_row(
             await service.authorize(actor, kind, "create")
     if isinstance(model, FollowUpInput):
         derived = await service.validate_follow_up(model, actor)
-        if isinstance(model, FollowUpRow):
+        if isinstance(model, FollowUpRow) and (model.lead_id or model.case_id):
             for field in READ_ONLY - {"employee_name"}:
                 if getattr(model, field) and getattr(model, field) != derived[field]:
                     raise ValidationError(
                         f"{FOLLOW_COLUMNS[field]} is read-only and must match the linked CRM record."
                     )
-            if model.employee_name:
-                employee = await service.db.employees.find_one(
-                    {"_id": ObjectId(derived["assigned_to"]), "is_deleted": False},
-                    {"display_name": 1},
-                )
-                expected = employee["display_name"] if employee else "Owner"
-                if model.employee_name != expected:
-                    raise ValidationError(
-                        "EMPLOYEE NAME is read-only and must match the assigned lead owner."
-                    )
     elif isinstance(model, IssueInput):
         await service.validate_issue(model, actor, old)
+    elif isinstance(model, ProgressInput):
+        from app.features.daily_operations.entries import progress_data
+
+        await progress_data(service, actor, model)
     elif isinstance(model, ProgressActionInput):
         await service.authorize(actor, "follow-ups", "create")
         await service.validate_follow_up(await progress_payload(service, actor, model), actor)
@@ -330,14 +382,15 @@ async def preview(
         try:
             model = await validate_row(service, kind, actor, values, allow_updates)
             key = row_key(actor, kind, model.model_dump(mode="json"))
-            collection = service.db[
-                "operational_issues" if kind == "issues" else "daily_follow_ups"
-            ]
+            from app.features.daily_operations.service import COLLECTIONS
+
+            collection = service.db[COLLECTIONS.get(kind, "daily_follow_ups")]
             duplicate = key in seen or bool(
                 await collection.find_one(
                     {"$or": [{"import_key": key}, {"history.import_key": key}]}, {"_id": 1}
                 )
             )
+            duplicate = duplicate or await legacy_progress_row(service, actor, kind, values)
             if kind == "sessions":
                 duplicate = duplicate or bool(
                     await service.db.session_corrections.find_one(
@@ -395,7 +448,10 @@ async def commit(service: DailyOperationsService, actor: User, batch_id: str) ->
                 service, kind, actor, row["values"], batch.get("allow_updates", False)
             )
             key = row_key(actor, kind, model.model_dump(mode="json"))
-            destination = "follow-ups" if kind == "progress" else kind
+            if await legacy_progress_row(service, actor, kind, row["values"]):
+                summary["skipped"] += 1
+                continue
+            destination = kind
             if kind == "sessions":
                 assert isinstance(model, CorrectionRow)
                 # CAS version plus a durable marker IN the correction document makes a
@@ -419,10 +475,10 @@ async def commit(service: DailyOperationsService, actor: User, batch_id: str) ->
             else:
                 if isinstance(model, ProgressActionInput):
                     model = await progress_payload(service, actor, model)
-                assert isinstance(model, (FollowUpInput, IssueInput))
-                collection = service.db[
-                    "daily_follow_ups" if destination == "follow-ups" else "operational_issues"
-                ]
+                assert isinstance(model, (FollowUpInput, IssueInput, ProgressInput))
+                from app.features.daily_operations.service import COLLECTIONS
+
+                collection = service.db[COLLECTIONS[destination]]
                 if await collection.find_one(
                     {"$or": [{"import_key": key}, {"history.import_key": key}]}, {"_id": 1}
                 ):
@@ -430,13 +486,25 @@ async def commit(service: DailyOperationsService, actor: User, batch_id: str) ->
                     continue
                 try:
                     record_id = (
-                        model.record_id if isinstance(model, (FollowUpRow, IssueRow)) else None
+                        model.record_id
+                        if isinstance(model, (FollowUpRow, IssueRow, ProgressRow))
+                        else None
                     )
-                    version = model.version if isinstance(model, (FollowUpRow, IssueRow)) else None
-                    schema = IssueInput if destination == "issues" else FollowUpInput
-                    payload = schema.model_validate(
-                        model.model_dump(exclude={"record_id", "version"} | READ_ONLY)
+                    version = (
+                        model.version
+                        if isinstance(model, (FollowUpRow, IssueRow, ProgressRow))
+                        else None
                     )
+                    schemas: dict[str, type[FollowUpInput | IssueInput | ProgressInput]] = {
+                        "issues": IssueInput,
+                        "follow-ups": FollowUpInput,
+                        "progress": ProgressInput,
+                    }
+                    schema = schemas[destination]
+                    values_to_save = model.model_dump(exclude={"record_id", "version"})
+                    if isinstance(model, ProgressRow) and "status" not in model.model_fields_set:
+                        values_to_save.pop("status", None)
+                    payload = schema.model_validate(values_to_save)
                     await service.save(
                         destination, payload, actor, record_id, version, import_key=key
                     )

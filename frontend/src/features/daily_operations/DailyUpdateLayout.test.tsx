@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   owner: true, loading: false,
   keys: new Set(["dashboard", "leads", "loan_cases", "insurance_cases", "daily_follow-ups", "daily_progress", "daily_sessions", "daily_issues"]),
   can: vi.fn((_resource: string, _action: string) => true),
-  list: vi.fn(),
+  list: vi.fn(), getLookups: vi.fn(),
 }));
 vi.mock("@/features/access_control/usePermissions", () => ({
   usePermissions: () => ({ can: mocks.can, isOwner: mocks.owner, loading: mocks.loading }),
@@ -22,7 +22,7 @@ vi.mock("@/features/auth/useAuth", () => ({ useAuth: () => ({ role: mocks.owner 
 vi.mock("@/features/auth/useProfile", () => ({ useProfile: () => ({ data: { name: "Synthetic User", mobile: "" } }) }));
 vi.mock("@/features/owner/useOwnOwnerAccount", () => ({ useOwnOwnerAccount: () => ({ data: null }) }));
 vi.mock("@/components/layout/useNavKeys", () => ({ useNavKeys: () => mocks.keys }));
-vi.mock("./api", async importOriginal => ({ ...await importOriginal<typeof import("./api")>(), listRecords: mocks.list }));
+vi.mock("./api", async importOriginal => ({ ...await importOriginal<typeof import("./api")>(), listRecords: mocks.list, getLookups: mocks.getLookups }));
 
 function mount(path: string) {
   return render(
@@ -46,7 +46,7 @@ beforeEach(() => {
   vi.clearAllMocks(); mocks.owner = true; mocks.loading = false;
   mocks.can.mockImplementation(() => true);
   mocks.keys = new Set(["dashboard", "leads", "loan_cases", "insurance_cases", "daily_follow-ups", "daily_progress", "daily_sessions", "daily_issues"]);
-  mocks.list.mockResolvedValue({ items: [], total: 0 });
+  mocks.list.mockResolvedValue({ items: [], total: 0 }); mocks.getLookups.mockResolvedValue({ self_id: "synthetic-user", employees: [], leads: [], cases: [] });
 });
 
 describe("Daily Update navigation", () => {
@@ -86,7 +86,7 @@ describe("Daily Update navigation", () => {
 
   it("switches functional pages with keyboard navigation without fetching inactive work areas", async () => {
     const user = userEvent.setup(); mount("/daily-operations/follow-ups");
-    await screen.findByText("No records match these filters."); mocks.list.mockClear();
+    await screen.findByText(/No records match these filters/); mocks.list.mockClear();
     const bar = screen.getByRole("navigation", { name: "Daily Update tabs" });
     const target = within(bar).getByRole("link", { name: "Inquiry or Issue" });
     target.focus(); await user.keyboard("{Enter}");
@@ -104,7 +104,7 @@ describe("Daily Update navigation", () => {
     const bar = screen.getByRole("navigation", { name: "Daily Update tabs" });
     expect(within(bar).getAllByRole("link")).toHaveLength(1);
     expect(screen.queryByRole("link", { name: "Import & Export Centre" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Create record" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Add record/ })).not.toBeInTheDocument();
   });
 
   it.each(["follow-ups", "progress", "sessions", "transfers"])("rejects an employee's unauthorized direct /%s route before mounting its page", path => {

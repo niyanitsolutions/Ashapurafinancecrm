@@ -40,6 +40,7 @@ async def deliver_notifications(db: AsyncIOMotorDatabase[Any]) -> dict[str, int]
                 {
                     "assigned_to": 1,
                     "lead_oid": 1,
+                    "case_oid": 1,
                     "due_date": 1,
                     "notified_due_date": 1,
                     "notified_employee": 1,
@@ -53,16 +54,23 @@ async def deliver_notifications(db: AsyncIOMotorDatabase[Any]) -> dict[str, int]
         )
         for doc in documents:
             employee_id = doc.get("assigned_to")
-            if kind == "follow-ups":
+            if kind == "follow-ups" and doc.get("case_oid"):
+                case = await db.application_workflows.find_one(
+                    {"_id": doc["case_oid"], "case_type": "loan", "is_deleted": False},
+                    {"assigned_to": 1},
+                )
+                employee_id = case.get("assigned_to") if case else None
+            elif kind == "follow-ups" and doc.get("lead_oid"):
                 lead = await db.leads.find_one(
                     {"_id": doc["lead_oid"], "is_deleted": False}, {"assigned_to": 1}
                 )
                 employee_id = lead.get("assigned_to") if lead else None
-                if (
-                    doc.get("notified_due_date") == doc["due_date"]
-                    and doc.get("notified_employee") == employee_id
-                ):
-                    continue
+            if (
+                kind == "follow-ups"
+                and doc.get("notified_due_date") == doc["due_date"]
+                and doc.get("notified_employee") == employee_id
+            ):
+                continue
             employee = (
                 await db.employees.find_one(
                     {"_id": ObjectId(employee_id), "is_deleted": False, "status": "active"}
@@ -83,10 +91,6 @@ async def deliver_notifications(db: AsyncIOMotorDatabase[Any]) -> dict[str, int]
             allowed = actor is not None and await engine.has_permission(
                 actor, module="daily_operations", resource=kind, action="view"
             )
-            if allowed and actor is not None and kind == "follow-ups":
-                allowed = await engine.has_permission(
-                    actor, module="leads", resource="leads", action="view"
-                )
             if not allowed:
                 counts["skipped"] += 1
                 continue

@@ -1,86 +1,133 @@
 import { useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/buttons/Button";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
 import { SelectField } from "@/components/forms/SelectField";
+import { TextareaField } from "@/components/forms/TextareaField";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { Modal } from "@/components/overlays/Modal";
+import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
 import { Pagination } from "@/components/tables/Pagination";
 import { Table, TableBody, TableContainer, TableHead, TableHeadRow, TableRow, Th, Td } from "@/components/tables/DataTable";
 import { useAuth } from "@/features/auth/useAuth";
 import { usePermissions } from "@/features/access_control/usePermissions";
-import { areas, base, businessTime, download, followStatuses, getRecord, issueStatuses, listRecords, text, type Area, type Row } from "./api";
+import { apiRequest } from "@/shared/api/client";
+import { formatISTDate, todayISTDateString } from "@/shared/dateFormat";
+import { areas, base, businessTime, deleteRecord, download, followStatuses, getLookups, getRecord, issueStatuses, listRecords, text, type Area, type Row } from "./api";
 import { RecordForm } from "./RecordForm";
-import { permittedDailyUpdateTabs } from "./navigation";
+import { EmployeeNameField } from "./EmployeeNameField";
 
-const FILTER_KEYS = ["sort", "search", "status", "date_from", "date_to", "employee", "bank", "loan_type", "overdue", "old_days"];
-
+const FILTER_KEYS = ["sort", "search", "status", "date_from", "date_to", "employee_name", "bank", "loan_type", "overdue", "old_days"];
 const columns: Record<Area, [string, string][]> = {
-  "follow-ups": [["date", "DATE"], ["loan_type", "LOAN TYPE"], ["bank", "BANK / NBFCs"], ["customer_name", "CX NAME"], ["customer_number", "CX NUMBER"], ["status", "TODAY CASE STATUS"], ["remarks_date", "REMARKS DATE"], ["due_date", "FOLLOW PENDING"], ["next_action", "NEXT ACTION"], ["employee_name", "EMPLOYEE NAME"]],
-  progress: [["date", "DATE"], ["bank", "APPLIED BANK OR NBFC"], ["lead_id", "LEAD ID"], ["customer_name", "CX NAME"], ["customer_number", "CX NUMBER"], ["status", "TODAY CASE STAGE"], ["next_action", "WHAT'S NEXT FOLLOW-UP TMROW"], ["due_date", "FOLLOW PENDING"], ["age_days", "OLD CASES UNDER PROGRESS (days)"], ["login_date", "DATE OF LOGIN"], ["approved_amount", "APPROVED LOAN AMT"], ["updated_at", "UPDATE DATE"], ["disbursed_at", "DATE OF DISBURSE"], ["disbursed_amount", "LOAN AMOUNT"]],
-  sessions: [["date", "DATE"], ["employee_name", "EMPLOYEE NAME"], ["login_at", "LOGIN TIME"], ["logout_at", "LOGOUT TIME"], ["recorded_seconds", "RECORDED SECONDS"], ["status", "SESSION STATUS"], ["corrected", "CORRECTED"]],
-  issues: [["date", "DATE"], ["employee_name", "EMPLOYEE NAME"], ["inquiry", "INQUIRY OR ISSUE"], ["id", "Issue ID"], ["assigned_to", "Assigned To"], ["priority", "Priority"], ["status", "Status"], ["resolution_notes", "Resolution Notes"], ["resolved_at", "Resolved Date"]],
+  "follow-ups": [["date", "DATE"], ["loan_type", "LOAN TYPE"], ["bank", "BANK / NBFCs"], ["customer_name", "CX NAME"], ["customer_number", "CX NUMBER"], ["remarks", "TODAY CASE STATUS"], ["remarks_date", "REMARKS DATE"], ["status", "FOLLOW PENDING"], ["due_date", "NEXT FOLLOW-UP"], ["employee_name", "EMPLOYEE NAME"]],
+  progress: [["date", "DATE"], ["customer_name", "CX NAME"], ["customer_number", "CX NUMBER"], ["bank", "BANK / NBFC"], ["status", "TODAY CASE STAGE"], ["next_action", "WHAT'S NEXT?"], ["due_date", "NEXT FOLLOW-UP"], ["approved_amount", "APPROVED AMOUNT"], ["employee_name", "EMPLOYEE NAME"]],
+  sessions: [["date", "DATE"], ["employee_name", "EMPLOYEE NAME"], ["login_at", "LOGIN TIME"], ["logout_at", "LOGOUT TIME"], ["recorded_seconds", "DURATION"], ["status", "STATUS"]],
+  issues: [["date", "DATE"], ["employee_name", "EMPLOYEE NAME"], ["inquiry", "INQUIRY OR ISSUE"], ["assigned_to_name", "ASSIGNED TO"], ["priority", "PRIORITY"], ["status", "STATUS"], ["resolution_notes", "RESOLUTION NOTES"]],
 };
+const pretty = (value: unknown) => text(value).replaceAll("_", " ").replace(/\b\w/g, letter => letter.toUpperCase());
+const money = (value: unknown) => value == null ? "—" : Number(value).toLocaleString("en-IN", { style: "currency", currency: "INR" });
 
 export function DailyOperationsPage({ area }: { area: Area }) {
-  const { userId } = useAuth(); const { can, isOwner, loading } = usePermissions(); const client = useQueryClient();
+  const { userId } = useAuth();
+  const { can, isOwner, loading } = usePermissions();
+  const client = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const filters: Record<string, string> = { sort: "-date", ...Object.fromEntries(FILTER_KEYS.filter(key => searchParams.has(key)).map(key => [key, searchParams.get(key)!])) };
   const requestedPage = Number(searchParams.get("page") ?? "1");
   const page = Number.isInteger(requestedPage) && requestedPage > 0 && requestedPage <= 100000 ? requestedPage : 1;
-  const setPage = (value: number) => { const next = new URLSearchParams(searchParams); next.set("page", String(value)); setSearchParams(next); };
-  const [editing, setEditing] = useState<Row | null | undefined>(undefined);
-  const [history, setHistory] = useState<Row | null>(null); const [error, setError] = useState<string | null>(null); const [success, setSuccess] = useState(false);
   const allowed = can(`daily_operations:${area}`, "view");
   const params = new URLSearchParams({ ...Object.fromEntries(Object.entries(filters).filter(([, value]) => value)), page: String(page), page_size: "20" });
   const query = useQuery({ queryKey: ["daily-operations", userId, area, params.toString()], queryFn: () => listRecords(area, params.toString()), enabled: !loading && allowed });
-  const filter = (key: string, value: string) => { const next = new URLSearchParams(searchParams); if (value) next.set(key, value); else next.delete(key); next.delete("page"); setSearchParams(next, { replace: true }); };
-  const filterField = (key: string, label: string, type = "text") => <FormField label={label} type={type} value={filters[key] ?? ""} onChange={e => filter(key, e.target.value)} />;
-  async function inspect(row: Row, edit: boolean) {
-    try { const full = area === "sessions" ? row : await getRecord(area, row.id); if (edit) setEditing(full); else setHistory(full); }
-    catch (err) { setError(err instanceof Error ? err.message : "Unable to open record."); }
+  const lookup = useQuery({ queryKey: ["daily-lookups", userId, ""], queryFn: () => getLookups(), enabled: !loading && allowed });
+  const [editing, setEditing] = useState<Row | null | undefined>(undefined);
+  const [history, setHistory] = useState<Row | null>(null);
+  const [removing, setRemoving] = useState<Row | null>(null);
+  const [requesting, setRequesting] = useState<Row | null>(null);
+  const [requestReason, setRequestReason] = useState("");
+  const [extraColumns, setExtraColumns] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState("");
+  function filter(key: string, value: string) {
+    const next = new URLSearchParams(searchParams);
+    if (value) next.set(key, value); else next.delete(key);
+    next.delete("page"); setSearchParams(next, { replace: true });
   }
-  async function exportFile(format: "csv" | "xlsx") { try { await download(`${base}/${area}/export?${params}&format=${format}`, `${area}.${format}`); } catch (err) { setError(err instanceof Error ? err.message : "Export failed."); } }
-  return <SimplePageLayout title={areas[area]} subtitle={area === "sessions" ? "Authentication session families, displayed in Asia/Kolkata. Missing logout remains unknown. These are not payroll hours. Date filters use the original login date." : "Persisted CRM operations. Dates use Asia/Kolkata. Loan stages and financial amounts are managed in Loan Management."} actions={<>
-    {permittedDailyUpdateTabs(can).some(tab => !tab.area) && <Link className="text-primary underline" to="/daily-operations/transfers">Import & Export Centre</Link>}
-    {can(`daily_operations:${area}`, "export") && <><Button variant="secondary" onClick={() => void exportFile("csv")}>Export CSV</Button><Button variant="secondary" onClick={() => void exportFile("xlsx")}>Export XLSX</Button></>}
-    {["follow-ups", "issues"].includes(area) && can(`daily_operations:${area}`, "create") && <Button onClick={() => setEditing(null)}>Create record</Button>}
+  const filterField = (key: string, label: string, type = "text") => <FormField label={label} type={type} value={filters[key] ?? ""} onChange={event => filter(key, event.target.value)} />;
+  const refresh = () => { void client.invalidateQueries({ queryKey: ["daily-operations"] }); };
+  async function inspect(row: Row, edit: boolean) {
+    setError(null);
+    try {
+      const full = area === "sessions" ? row : await getRecord(area, row.id);
+      if (edit) setEditing(full); else setHistory(full);
+    } catch (err) { setError(err instanceof Error ? err.message : "Unable to open this row."); }
+  }
+  async function exportFile(format: "csv" | "xlsx") {
+    try { await download(`${base}/${area}/export?${params}&format=${format}`, `${area}.${format}`); }
+    catch (err) { setError(err instanceof Error ? err.message : "Export failed."); }
+  }
+  const visibleColumns = [...columns[area], ...(area === "progress" && extraColumns ? [["login_date", "DATE OF LOGIN"], ["age_days", "AGE (DAYS)"], ["disbursed_at", "DATE OF DISBURSE"], ["disbursed_amount", "DISBURSED AMOUNT"], ["updated_at", "UPDATE DATE"]] : [])];
+  function cell(key: string, value: unknown) {
+    if (key === "approved_amount" || key === "disbursed_amount") return money(value);
+    if (key === "recorded_seconds") return value == null ? "Open session" : `${Math.floor(Number(value) / 3600)}h ${Math.floor(Number(value) % 3600 / 60)}m`;
+    if (["login_at", "logout_at", "updated_at"].includes(key)) return businessTime(value);
+    if (["date", "remarks_date", "due_date", "login_date", "disbursed_at"].includes(key)) return value ? formatISTDate(String(value)) : "—";
+    if (key === "status" || key === "priority") return pretty(value);
+    return text(value);
+  }
+  return <SimplePageLayout title={areas[area]} subtitle={area === "sessions" ? "Login and logout are recorded automatically. Request a correction if something is missing." : "Add a row, update it as work progresses, and keep your daily notes together."} actions={<>
+    {can(`daily_operations:${area}`, "export") && <details className="relative"><summary className="cursor-pointer rounded-lg border border-border bg-card px-4 py-2.5 text-sm">Export</summary><div className="absolute right-0 z-10 mt-1 grid rounded-lg border border-border bg-card shadow-card p-1"><Button variant="ghost" onClick={() => void exportFile("xlsx")}>Excel</Button><Button variant="ghost" onClick={() => void exportFile("csv")}>CSV</Button></div></details>}
+    {area !== "sessions" && can(`daily_operations:${area}`, "create") && <Button onClick={() => { setNotice(""); setEditing(null); }}>+ Add record</Button>}
   </>}>
     {!loading && !allowed ? <p role="alert">You do not have permission to view this work area.</p> : <>
       <ErrorBanner message={error ?? (query.error instanceof Error ? query.error.message : null)} />
-      {success && <p role="status" className="mb-4">Record saved.</p>}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-4">
-        {area !== "sessions" && filterField("search", area === "progress" ? "Search case code" : "Search")}
-        {filterField("date_from", "From date", "date")}{filterField("date_to", "To date", "date")}{filterField("employee", "Employee CRM ID")}
-        {["follow-ups", "progress"].includes(area) && <>{filterField("bank", "Bank / NBFC")}{filterField("loan_type", "Loan type")}</>}
-        {["follow-ups", "issues"].includes(area) && <SelectField label="Status" placeholder="All statuses" value={filters.status ?? ""} options={(area === "issues" ? issueStatuses : followStatuses).map(value => ({ value, label: value }))} onChange={e => filter("status", e.target.value)} />}
-        {area === "progress" && <>{filterField("status", "Canonical case stage")}{filterField("old_days", "Old cases: minimum age (days)", "number")}</>}
-        {area === "follow-ups" && <SelectField label="Overdue" value={filters.overdue ?? ""} options={[{ value: "", label: "All follow-ups" }, { value: "true", label: "Overdue only" }]} onChange={e => filter("overdue", e.target.value)} />}
-        {area !== "sessions" && <SelectField label="Sort" value={filters.sort} options={(area === "progress" ? [["-updated_at", "Latest update"], ["created_at", "Oldest login"], ["current_status", "Stage"]] : [["-date", "Newest date"], ["date", "Oldest date"], ["status", "Status"]]).map(([value, label]) => ({ value, label }))} onChange={e => filter("sort", e.target.value)} />}
+      {notice && <p role="status" className="mb-3 rounded-lg bg-primary/5 p-3 text-sm">{notice}</p>}
+      <div className="flex flex-wrap items-start gap-x-4 mb-2">
+        {area !== "sessions" && <div className="min-w-52 flex-1">{filterField("search", "Search")}</div>}
+        <div className="min-w-48 flex-1"><EmployeeNameField label="Employee name" value={filters.employee_name ?? ""} options={lookup.data?.employees ?? []} onChange={name => filter("employee_name", name)} /></div>
+        <details className="min-w-48 self-start mt-7"><summary className="cursor-pointer rounded-lg border border-border bg-card px-4 py-2.5 text-sm">More filters</summary><div className="mt-3 grid sm:grid-cols-2 lg:grid-cols-3 gap-x-4 rounded-lg border border-border bg-card p-4">
+          {filterField("date_from", "From date", "date")}{filterField("date_to", "To date", "date")}
+          {area === "progress" ? filterField("status", "Case stage") : area !== "sessions" && <SelectField label="Status" placeholder="All statuses" value={filters.status ?? ""} options={(area === "issues" ? issueStatuses : followStatuses).map(value => ({ value, label: pretty(value) }))} onChange={event => filter("status", event.target.value)} />}
+          {["follow-ups", "progress"].includes(area) && <>{filterField("bank", "Bank / NBFC")}{filterField("loan_type", "Loan type")}</>}
+          {area === "follow-ups" && <SelectField label="Due" value={filters.overdue ?? ""} options={[{ value: "", label: "All follow-ups" }, { value: "true", label: "Overdue only" }]} onChange={event => filter("overdue", event.target.value)} />}
+          {area !== "sessions" && <SelectField label="Sort" value={filters.sort} options={(area === "progress" ? [["-date", "Latest update"], ["created_at", "Oldest first"]] : [["-date", "Newest date"], ["date", "Oldest date"], ["status", "Status"]]).map(([value, label]) => ({ value, label }))} onChange={event => filter("sort", event.target.value)} />}
+          <Button variant="ghost" onClick={() => setSearchParams({})}>Clear filters</Button>
+        </div></details>
       </div>
-      {query.data?.statuses && <p className="mb-4 text-sm" role="status">{Object.entries(query.data.statuses).map(([status, count]) => `${status}: ${count}`).join(" · ")}</p>}
-      {query.data?.metrics && <p className="mb-4 text-sm">Approved offer amounts: {query.data.metrics.approved_amount.toLocaleString("en-IN", { style: "currency", currency: "INR" })} · Verified disbursed amounts: {query.data.metrics.disbursed_amount.toLocaleString("en-IN", { style: "currency", currency: "INR" })}. Totals cover the filtered cases, across all pages.</p>}
-      {area === "follow-ups" && query.data?.breakdowns && <details className="mb-4"><summary className="cursor-pointer text-sm">Operational breakdowns (top 100 groups)</summary><p className="text-sm my-2">Counts represent follow-up records. Multiple attempts for one lead count separately.</p><div className="grid sm:grid-cols-3 gap-4">{Object.entries(query.data.breakdowns).map(([key, entries]) => <div key={key}><h2 className="font-medium">{({ by_employee: "By employee ID", by_bank: "By bank / NBFC", by_loan_type: "By loan type" })[key]}</h2><ul>{entries.map(entry => <li key={entry.label}>{entry.label}: {entry.count}</li>)}</ul></div>)}</div></details>}
-      {query.isLoading ? <p role="status">Loading records…</p> : query.isError ? <Button variant="secondary" onClick={() => void query.refetch()}>Retry</Button> : !query.data?.items.length ? <p>No records match these filters.</p> : <>
-        <TableContainer><Table><TableHead><TableHeadRow>{columns[area].map(([key, label]) => <Th key={key}>{label}</Th>)}<Th>Actions</Th></TableHeadRow></TableHead><TableBody>{query.data.items.map(row => <TableRow key={row.id}>
-          {columns[area].map(([key]) => <Td key={key}>{["login_at", "logout_at", "updated_at", "resolved_at", "disbursed_at", "login_date"].includes(key) ? businessTime(row[key]) : text(row[key])}</Td>)}
-          <Td><div className="flex gap-2">
-            {area === "progress" ? <Link className="text-primary underline" to={`/loan-management/cases/${row.id}`}>Open loan & history</Link> : <>
+      {area === "progress" && <label className="mb-3 flex gap-2 text-sm text-textSecondary"><input type="checkbox" checked={extraColumns} onChange={event => setExtraColumns(event.target.checked)} />Show login and disbursement details</label>}
+      {query.isLoading || loading ? <p role="status">Loading records…</p> : query.isError ? <Button variant="secondary" onClick={() => void query.refetch()}>Retry</Button> : <>
+        <TableContainer><Table aria-label={`${areas[area]} records`}><TableHead><TableHeadRow>{visibleColumns.map(([key, label]) => <Th key={key}>{label}</Th>)}<Th className="sticky right-0 bg-card">Actions</Th></TableHeadRow></TableHead><TableBody>
+          {!query.data?.items.length ? <TableRow><Td colSpan={visibleColumns.length + 1}><div className="py-8 text-center text-textSecondary">No records match these filters.{area !== "sessions" && " Use Add record to enter your first row."}</div></Td></TableRow> : query.data.items.map(row => <TableRow key={row.id}>
+            {visibleColumns.map(([key]) => <Td key={key} className="py-2.5 max-w-xs"><span className={key === "status" ? "inline-block rounded-md bg-primary/5 px-2 py-1 text-xs font-medium" : ""}>{cell(key, row[key])}</span>{area === "progress" && key === "customer_name" && row.source === "manual" && <span className="block text-xs text-textSecondary">Daily entry</span>}</Td>)}
+            <Td className="sticky right-0 bg-card py-2"><div className="flex items-center gap-1">
+              {(area === "sessions" ? isOwner : can(`daily_operations:${area}`, "edit")) && <Button variant="ghost" size="sm" onClick={() => void inspect(row, true)}>Edit</Button>}
               {area !== "sessions" && <Button variant="ghost" size="sm" onClick={() => void inspect(row, false)}>History</Button>}
-              {can(`daily_operations:${area}`, "edit") && (area !== "sessions" || isOwner) && <Button variant="secondary" size="sm" onClick={() => void inspect(row, true)}>{area === "sessions" ? "Correct" : "Edit"}</Button>}
-            </>}
-          </div></Td>
-        </TableRow>)}</TableBody></Table></TableContainer>
-        <Pagination page={page} pageSize={20} totalItems={query.data.total} totalPages={Math.ceil(query.data.total / 20)} onPageChange={setPage} />
+              {area === "sessions" && !isOwner && <Button variant="ghost" size="sm" onClick={() => { setRequesting(row); setRequestReason(""); }}>Request correction</Button>}
+              {isOwner && <Button variant="danger" size="sm" onClick={() => setRemoving(row)}>Delete</Button>}
+            </div></Td>
+          </TableRow>)}
+        </TableBody></Table></TableContainer>
+        {!!query.data?.items.length && <Pagination page={page} pageSize={20} totalItems={query.data.total} totalPages={Math.ceil(query.data.total / 20)} onPageChange={value => { const next = new URLSearchParams(searchParams); next.set("page", String(value)); setSearchParams(next); }} />}
       </>}
+      {query.data?.metrics && <details className="mt-4 text-sm"><summary className="cursor-pointer text-textSecondary">Official loan totals</summary><p className="mt-2">Approved offers: {money(query.data.metrics.approved_amount)} · Verified disbursed: {money(query.data.metrics.disbursed_amount)}. Manual daily entries do not change these totals.</p></details>}
     </>}
-    <Modal open={editing !== undefined} title={editing ? "Edit record" : "Create record"} onClose={() => setEditing(undefined)} size="lg">
-      {editing !== undefined && <RecordForm key={editing?.id ?? "new"} area={area} record={editing ?? undefined} onCancel={() => setEditing(undefined)} onSaved={() => { setEditing(undefined); setSuccess(true); void client.invalidateQueries({ queryKey: ["daily-operations"] }); }} />}
+    <Modal open={editing !== undefined} title={editing ? "Edit record" : "Add record"} onClose={() => setEditing(undefined)} size="lg">
+      {editing !== undefined && <RecordForm key={editing?.id ?? "new"} area={area} record={editing ?? undefined} onCancel={() => setEditing(undefined)} onSaved={() => { setEditing(undefined); setNotice("Record saved."); refresh(); }} />}
     </Modal>
-    <Modal open={!!history} title="Activity history" onClose={() => setHistory(null)} size="lg">
-      {history && <><p className="mb-3">Lead: {text(history.lead_code ?? history.lead_id)} · Owner: {text(history.assigned_to)}</p><ol className="space-y-4">{(history.history as { at: string; actor_id: string; before: unknown; after: unknown }[] ?? []).map((event, index) => <li key={index} className="border-b border-border pb-3"><p>{businessTime(event.at)} · Actor {event.actor_id}</p><pre className="whitespace-pre-wrap break-words text-xs mt-2">{JSON.stringify({ before: event.before, after: event.after }, null, 2)}</pre></li>)}</ol></>}
+    <Modal open={!!history} title="Record history" onClose={() => setHistory(null)} size="lg">
+      <ol className="space-y-4">{(history?.history as { at: string; before?: Record<string, unknown>; after?: Record<string, unknown> }[] ?? []).map((event, index) => <li key={index} className="border-b border-border pb-3"><p className="text-sm font-medium">{businessTime(event.at)}</p><dl className="mt-2 text-sm">{Object.entries(event.after ?? {}).filter(([key, value]) => !["lead_id", "case_id", "assigned_to", "source"].includes(key) && value !== event.before?.[key]).map(([key, value]) => <div key={key} className="grid grid-cols-2 gap-3"><dt className="text-textSecondary">{pretty(key)}</dt><dd className="break-words">{event.before ? `${text(event.before[key])} → ` : ""}{cell(key, value)}</dd></div>)}</dl></li>)}</ol>
+    </Modal>
+    <ConfirmDialog open={!!removing} title="Delete this daily record?" message="This removes the row from Daily Update and keeps its history. Linked loans and original sign-in records are retained." confirmLabel="Delete record" confirmVariant="danger" onClose={() => setRemoving(null)} onConfirm={async () => {
+      if (!removing) return;
+      try { await deleteRecord(area, removing); setRemoving(null); setNotice("Record deleted from Daily Update."); refresh(); }
+      catch (err) { setRemoving(null); setError(err instanceof Error ? err.message : "Unable to delete this record."); }
+    }} />
+    <Modal open={!!requesting} title="Request a login/logout correction" onClose={() => setRequesting(null)}>
+      <form onSubmit={async event => { event.preventDefault(); try { await apiRequest(`${base}/issues`, { method: "POST", body: JSON.stringify({ date: todayISTDateString(), inquiry: `Login/logout correction for ${businessTime(requesting?.login_at)}: ${requestReason}` }) }); setRequesting(null); setNotice("Correction request saved. The Owner can review it in Inquiry or Issue."); } catch (err) { setError(err instanceof Error ? err.message : "Unable to save the request."); } }}>
+        <TextareaField label="What needs correcting?" rows={3} required minLength={5} value={requestReason} onChange={event => setRequestReason(event.target.value)} />
+        <Button type="submit">Send request</Button>
+      </form>
     </Modal>
   </SimplePageLayout>;
 }

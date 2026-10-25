@@ -8,14 +8,13 @@ from pymongo import ReturnDocument
 
 from app.constants.roles import OWNER
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
-from app.features.access_control.permission_engine import PermissionEngine
 from app.features.auth.models import User
 from app.features.daily_operations.service import DailyOperationsService, calendar_values
 from app.features.workflow_engine.constants import LoanStatus
 from app.utils.datetime import ensure_utc, ist_date_to_utc_midnight, to_ist, utc_now
 
 
-async def progress(
+async def _crm_progress(
     service: DailyOperationsService,
     actor: User,
     *,
@@ -24,6 +23,7 @@ async def progress(
     search: str = "",
     status: str = "",
     employee: str = "",
+    employee_name: str = "",
     bank: str = "",
     loan_type: str = "",
     date_from: date | None = None,
@@ -32,10 +32,6 @@ async def progress(
     sort: str = "-updated_at",
 ) -> dict[str, Any]:
     await service.authorize(actor, "progress")
-    if not await PermissionEngine(service.db).has_permission(
-        actor, module="loan_management", resource="applications", action="view"
-    ):
-        raise ForbiddenError("Loan visibility permission is required.")
     query: dict[str, Any] = {"is_deleted": False, "case_type": "loan"}
     if actor.role != OWNER:
         query.update(
@@ -43,6 +39,26 @@ async def progress(
         )
     if employee:
         query["$and"] = [{"assigned_to": employee}]
+    if employee_name:
+        matching = (
+            await service.db.employees.find(
+                {
+                    "display_name": {"$regex": re.escape(employee_name), "$options": "i"},
+                    "is_deleted": False,
+                },
+                {"_id": 1},
+            )
+            .limit(100)
+            .to_list(100)
+        )
+        query.setdefault("$and", []).append(
+            {
+                "$or": [
+                    {"assigned_to": {"$in": [str(e["_id"]) for e in matching]}},
+                    {"daily.employee_name": {"$regex": re.escape(employee_name), "$options": "i"}},
+                ]
+            }
+        )
     for key, value in (
         ("current_status", status),
         ("loan_details.bank_nbfc_name", bank),
@@ -55,11 +71,11 @@ async def progress(
     if date_from or date_to:
         from datetime import timedelta
 
-        query["created_at"] = {}
+        query["daily_date"] = {}
         if date_from:
-            query["created_at"]["$gte"] = ist_date_to_utc_midnight(date_from)
+            query["daily_date"]["$gte"] = ist_date_to_utc_midnight(date_from)
         if date_to:
-            query["created_at"]["$lt"] = ist_date_to_utc_midnight(date_to + timedelta(days=1))
+            query["daily_date"]["$lt"] = ist_date_to_utc_midnight(date_to + timedelta(days=1))
     if old_days:
         from datetime import timedelta
 
@@ -78,6 +94,24 @@ async def progress(
     report = (
         await collection.aggregate(
             [
+                {"$match": {"is_deleted": False, "case_type": "loan"}},
+                {
+                    "$lookup": {
+                        "from": "daily_progress_entries",
+                        "localField": "_id",
+                        "foreignField": "_id",
+                        "as": "daily",
+                    }
+                },
+                {"$unwind": {"path": "$daily", "preserveNullAndEmptyArrays": True}},
+                {"$match": {"daily.is_deleted": {"$ne": True}}},
+                {"$project": {"daily.history": 0}},
+                {
+                    "$set": {
+                        "updated_at": {"$ifNull": ["$daily.updated_at", "$updated_at"]},
+                        "daily_date": {"$ifNull": ["$daily.date", "$created_at"]},
+                    }
+                },
                 {"$match": query},
                 {
                     "$facet": {
@@ -161,20 +195,28 @@ async def progress(
         application = applications.get(case["application_id"], {})
         customer = customers.get(application.get("customer_id", ""), {})
         details = case.get("loan_details") or {}
+        daily = calendar_values(case.get("daily") or {})
         items.append(
             {
                 "id": str(case["_id"]),
                 "case_code": case.get("case_code", ""),
                 "application_id": case["application_id"],
                 "lead_id": application.get("lead_id"),
-                "date": to_ist(case["created_at"]).date().isoformat(),
+                "date": daily.get("date") or to_ist(case["created_at"]).date().isoformat(),
+                "created_at": case["created_at"],
+                "case_id": str(case["_id"]),
+                "source": "crm",
+                "version": daily.get("version", 0),
+                "employee_name": daily.get("employee_name", ""),
                 "customer_name": customer.get("full_name", ""),
                 "customer_number": customer.get("mobile", ""),
                 "bank": details.get("bank_nbfc_name") or details.get("preferred_bank_name"),
                 "loan_type": details.get("loan_type"),
                 "assigned_to": case.get("assigned_to"),
-                "status": case["current_status"],
-                "login_date": application.get("created_at"),
+                "canonical_status": case["current_status"],
+                "status": daily.get("status") or case["current_status"],
+                "remarks": daily.get("remarks", ""),
+                "login_date": daily.get("login_date") or application.get("created_at"),
                 "updated_at": case["updated_at"],
                 "approved_amount": details.get("offered_amount"),
                 "disbursed_amount": details.get("disbursed_amount")
@@ -183,10 +225,12 @@ async def progress(
                 "disbursed_at": details.get("disbursed_at")
                 if case["current_status"] == "disbursed"
                 else None,
-                "due_date": calendar_values(plans.get(str(case["_id"]), {})).get(
+                "due_date": daily.get("due_date")
+                or calendar_values(plans.get(str(case["_id"]), {})).get(
                     "due_date", case.get("next_follow_up_date")
                 ),
-                "next_action": plans.get(str(case["_id"]), {}).get("next_action"),
+                "next_action": daily.get("next_action")
+                or plans.get(str(case["_id"]), {}).get("next_action"),
                 "age_days": max(0, (utc_now() - ensure_utc(case["created_at"])).days),
             }
         )
@@ -195,6 +239,62 @@ async def progress(
         "total": total,
         "metrics": metrics,
         "statuses": {s["_id"]: s["count"] for s in report["statuses"]},
+    }
+
+
+async def progress(service: DailyOperationsService, actor: User, **criteria: Any) -> dict[str, Any]:
+    """Merge two bounded sources, following the existing document-collection list pattern."""
+    page = criteria.pop("page", 1)
+    size = criteria.pop("page_size", 20)
+    take = page * size
+    if take > 2000:
+        raise ValidationError("Narrow the date range to browse more than 2,000 progress records.")
+    crm = await _crm_progress(service, actor, page=1, page_size=take, **criteria)
+    manual_criteria = {key: value for key, value in criteria.items() if key != "old_days"}
+    manual_criteria["sort"] = manual_criteria.get("sort", "-updated_at").replace(
+        "current_status", "status"
+    )
+    manual = await service.list_records(
+        "progress", actor, page=1, page_size=take, **manual_criteria
+    )
+    items = [*crm["items"], *manual["items"]]
+    field = criteria.get("sort", "-updated_at").lstrip("-")
+    if field == "current_status":
+        field = "status"
+
+    def order(row: dict[str, Any]) -> str:
+        value = row.get(field)
+        return value.isoformat() if isinstance(value, datetime) else str(value or "")
+
+    items.sort(
+        key=lambda row: (order(row), row["id"]),
+        reverse=criteria.get("sort", "-updated_at").startswith("-"),
+    )
+    ids = [
+        ObjectId(row["assigned_to"])
+        for row in items
+        if row.get("assigned_to") and ObjectId.is_valid(row["assigned_to"])
+    ]
+    names = {
+        str(e["_id"]): e["display_name"]
+        for e in await service.db.employees.find(
+            {"_id": {"$in": ids}, "is_deleted": False}, {"display_name": 1}
+        )
+        .limit(2000)
+        .to_list(2000)
+    }
+    for row in items:
+        row["employee_name"] = (
+            row.get("employee_name") if row.get("source") != "crm" else ""
+        ) or names.get(
+            row.get("assigned_to"),
+            "Owner" if actor.role == OWNER and row.get("assigned_to") == actor.require_id() else "",
+        )
+    return {
+        "items": items[(page - 1) * size : page * size],
+        "total": crm["total"] + manual["total"],
+        "metrics": crm["metrics"],
+        "statuses": crm["statuses"],
     }
 
 
@@ -259,6 +359,7 @@ async def sessions(
     page: int = 1,
     page_size: int = 20,
     employee: str = "",
+    employee_name: str = "",
     date_from: date | None = None,
     date_to: date | None = None,
 ) -> dict[str, Any]:
@@ -288,7 +389,24 @@ async def sessions(
         },
         {"$unwind": "$employee"},
         {"$match": {"employee.is_deleted": False}},
+        {
+            "$lookup": {
+                "from": "daily_session_visibility",
+                "localField": "_id",
+                "foreignField": "_id",
+                "as": "daily_visibility",
+            }
+        },
+        {"$match": {"daily_visibility.is_deleted": {"$ne": True}}},
     ]
+    if employee_name:
+        pipeline.append(
+            {
+                "$match": {
+                    "employee.display_name": {"$regex": re.escape(employee_name), "$options": "i"}
+                }
+            }
+        )
     if employee:
         if not ObjectId.is_valid(employee):
             raise ValidationError("Employee must be a CRM ID.")

@@ -11,13 +11,16 @@ from app.constants.roles import EMPLOYEE, OWNER
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from app.features.access_control.permission_engine import PermissionEngine
 from app.features.auth.models import User
-from app.features.daily_operations.schemas import FollowUpInput, IssueInput
+from app.features.daily_operations.schemas import FollowUpInput, IssueInput, ProgressInput
 from app.features.leads.service import LeadService
-from app.features.loan_management.service import LoanCaseService
 from app.shared.base_document import BaseDocument
 from app.utils.datetime import ist_date_to_utc_midnight, to_ist, utc_now
 
-COLLECTIONS = {"follow-ups": "daily_follow_ups", "issues": "operational_issues"}
+COLLECTIONS = {
+    "follow-ups": "daily_follow_ups",
+    "issues": "operational_issues",
+    "progress": "daily_progress_entries",
+}
 OPEN_STATUSES = ["FOLLOW UP PENDING", "NEXT FOLLOW UP"]
 
 
@@ -30,7 +33,7 @@ def calendar_values(values: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def stored_values(payload: FollowUpInput | IssueInput) -> dict[str, Any]:
+def stored_values(payload: FollowUpInput | IssueInput | ProgressInput) -> dict[str, Any]:
     return {
         key: ist_date_to_utc_midnight(value)
         if isinstance(value, date) and not isinstance(value, datetime)
@@ -51,7 +54,7 @@ def public(doc: dict[str, Any]) -> dict[str, Any]:
             for event in doc["history"]
         ]
     return {
-        **{k: v for k, v in doc.items() if k not in {"_id", "import_key", "lead_oid"}},
+        **{k: v for k, v in doc.items() if k not in {"_id", "import_key", "lead_oid", "case_oid"}},
         "id": str(doc["_id"]),
     }
 
@@ -90,40 +93,54 @@ class DailyOperationsService:
 
     async def validate_follow_up(self, payload: FollowUpInput, actor: User) -> dict[str, Any]:
         await self.authorize(actor, "follow-ups")
-        if not await PermissionEngine(self.db).has_permission(
-            actor, module="leads", resource="leads", action="view"
-        ):
-            raise ForbiddenError("Lead visibility permission is required.")
+        from app.features.daily_operations.entries import assignee, case_row
+
+        if payload.case_id:
+            from math import isfinite
+
+            linked = await case_row(self, actor, payload.case_id)
+            application = await self.db.applications.find_one(
+                {"_id": ObjectId(linked["application_id"]), "is_deleted": False}
+            )
+            if payload.lead_id and (
+                not application or application.get("lead_id") != payload.lead_id
+            ):
+                raise ValidationError("Loan case and lead do not belong to the same application.")
+            if payload.status == "DISBURSE" and (
+                linked["canonical_status"] != "disbursed"
+                or linked["disbursed_amount"] is None
+                or not isfinite(linked["disbursed_amount"])
+                or linked["disbursed_amount"] < 0
+                or linked["disbursed_at"] is None
+                or not linked["disbursed_reference"]
+            ):
+                raise ValidationError(
+                    "Choose a loan with a verified disbursement before marking DISBURSE."
+                )
+            data = stored_values(payload)
+            data.update(
+                {
+                    key: linked[key]
+                    for key in ("customer_name", "customer_number", "loan_type", "bank")
+                }
+            )
+            data.update(await assignee(self, actor, linked.get("assigned_to"), ""))
+            data["source"] = "crm"
+            return data
+        if not payload.lead_id:
+            data = stored_values(payload)
+            data.update(await assignee(self, actor, payload.assigned_to, payload.employee_name))
+            data["source"] = "manual"
+            return data
         lead = await LeadService(self.db).get_lead_scoped(payload.lead_id, actor)
         if lead.product_category != "loan":
             raise ValidationError("Daily loan follow-ups require a loan lead.")
         if not lead.assigned_to:
             raise ValidationError("Assign the lead in Leads before scheduling a follow-up.")
-        case = None
-        if payload.case_id:
-            if not await PermissionEngine(self.db).has_permission(
-                actor, module="loan_management", resource="applications", action="view"
-            ):
-                raise ForbiddenError("Loan visibility permission is required.")
-            case = await LoanCaseService(self.db).get_case(payload.case_id, actor)
-            application = await self.db.applications.find_one(
-                {"_id": ObjectId(case.application_id), "is_deleted": False}
-            )
-            if not application or application.get("lead_id") != payload.lead_id:
-                raise ValidationError("Loan case and lead do not belong to the same application.")
-        if payload.status == "DISBURSE":
-            details = case.loan_details if case else None
-            if (
-                not case
-                or case.current_status != "disbursed"
-                or not details
-                or details.disbursed_amount is None
-                or details.disbursed_amount < 0
-                or details.disbursed_at is None
-                or not details.disbursed_reference
-            ):
-                raise ValidationError("Record a verified disbursement in Loan Management first.")
         product = await self.db.loan_products.find_one({"_id": ObjectId(lead.product_id)})
+        assigned_employee = await self.db.employees.find_one(
+            {"_id": ObjectId(lead.assigned_to), "is_deleted": False}, {"display_name": 1}
+        )
         return {
             **stored_values(payload),
             "assigned_to": lead.assigned_to,
@@ -131,6 +148,7 @@ class DailyOperationsService:
             "customer_number": lead.mobile,
             "loan_type": product.get("name", "") if product else "",
             "lead_code": lead.lead_code,
+            "employee_name": assigned_employee["display_name"] if assigned_employee else "Owner",
         }
 
     async def validate_issue(
@@ -147,7 +165,19 @@ class DailyOperationsService:
             }
             if payload.status not in transitions[old["status"]]:
                 raise ValidationError("Unsupported issue status transition.")
-        if payload.assigned_to != (old or {}).get("assigned_to"):
+        own_id = await self.employee_id(actor)
+        if "assigned_to" not in payload.model_fields_set or (
+            actor.role != OWNER and payload.assigned_to is None and old
+        ):
+            payload = payload.model_copy(
+                update={
+                    "assigned_to": (old or {}).get("assigned_to")
+                    or (own_id if actor.role != OWNER else None)
+                }
+            )
+        if payload.assigned_to != (old or {}).get("assigned_to") and not (
+            payload.assigned_to == own_id and not (old or {}).get("assigned_to")
+        ):
             await self.authorize(actor, "issues", "assign")
         if payload.assigned_to:
             employee = await self.db.employees.find_one(
@@ -159,6 +189,7 @@ class DailyOperationsService:
             await self.authorize(actor, "issues", "approve")
         return {
             **stored_values(payload),
+            "assigned_to": payload.assigned_to or (own_id if actor.role != OWNER else None),
             "resolved_at": (old or {}).get("resolved_at") or utc_now()
             if payload.status == "RESOLVED"
             else None,
@@ -166,6 +197,10 @@ class DailyOperationsService:
 
     async def get(self, kind: str, record_id: str, actor: User) -> dict[str, Any]:
         await self.authorize(actor, kind)
+        if kind == "progress":
+            from app.features.daily_operations.entries import get_progress
+
+            return await get_progress(self, actor, record_id)
         if not ObjectId.is_valid(record_id):
             raise NotFoundError("Record not found.")
         query = await self.scope(actor, kind)
@@ -178,7 +213,14 @@ class DailyOperationsService:
         if not doc:
             raise NotFoundError("Record not found.")
         if kind == "follow-ups":
-            await self.validate_follow_up(
+            if (
+                not doc.get("lead_id")
+                and not doc.get("case_id")
+                and actor.role != OWNER
+                and doc.get("assigned_to") != await self.employee_id(actor)
+            ):
+                raise ForbiddenError("This daily entry is not assigned to you.")
+            current = await self.validate_follow_up(
                 FollowUpInput.model_validate(
                     {
                         k: value
@@ -188,18 +230,36 @@ class DailyOperationsService:
                 ),
                 actor,
             )
+            if doc.get("lead_id") or doc.get("case_id"):
+                doc = {
+                    **doc,
+                    **{
+                        key: current[key]
+                        for key in (
+                            "assigned_to",
+                            "employee_name",
+                            "customer_name",
+                            "customer_number",
+                            "loan_type",
+                        )
+                    },
+                }
         return doc
 
     async def save(
         self,
         kind: str,
-        payload: FollowUpInput | IssueInput,
+        payload: FollowUpInput | IssueInput | ProgressInput,
         actor: User,
         record_id: str | None = None,
         version: int | None = None,
         import_key: str | None = None,
     ) -> dict[str, Any]:
         await self.authorize(actor, kind, "edit" if record_id else "create")
+        if isinstance(payload, ProgressInput):
+            from app.features.daily_operations.entries import save_progress
+
+            return await save_progress(self, actor, payload, record_id, version, import_key)
         old = await self.get(kind, record_id, actor) if record_id else None
         if (
             old
@@ -231,6 +291,8 @@ class DailyOperationsService:
                     "History limit reached; ask an administrator to archive this case."
                 )
             updates = {**data, "updated_by": actor.require_id(), "updated_at": now}
+            if kind == "follow-ups" and data.get("case_id"):
+                updates["case_oid"] = ObjectId(data["case_id"])
             if kind == "issues" and old.get("assigned_to") != data.get("assigned_to"):
                 updates["assignment_notification_pending"] = (
                     str(ObjectId()) if data.get("assigned_to") else None
@@ -253,8 +315,10 @@ class DailyOperationsService:
             "history": [event],
             "import_key": import_key or str(ObjectId()),
         }
-        if kind == "follow-ups":
+        if kind == "follow-ups" and data.get("lead_id"):
             doc["lead_oid"] = ObjectId(data["lead_id"])
+        if kind == "follow-ups" and data.get("case_id"):
+            doc["case_oid"] = ObjectId(data["case_id"])
         if kind == "issues":
             doc["employee_id"] = await self.employee_id(actor)
             doc["assignment_notification_pending"] = (
@@ -275,6 +339,7 @@ class DailyOperationsService:
         search: str = "",
         status: str = "",
         employee: str = "",
+        employee_name: str = "",
         bank: str = "",
         loan_type: str = "",
         date_from: date | None = None,
@@ -286,10 +351,32 @@ class DailyOperationsService:
     ) -> dict[str, Any]:
         await self.authorize(actor, kind)
         query = await self.scope(actor, kind)
+        if kind == "progress":
+            query["case_id"] = None  # Linked annotations are already merged with CRM cases.
         if date_from and date_to and date_from > date_to:
             raise ValidationError("Start date must be before end date.")
         if employee:
             query["$and"] = [{"assigned_to": employee}]
+        if employee_name:
+            matching = (
+                await self.db.employees.find(
+                    {
+                        "display_name": {"$regex": re.escape(employee_name), "$options": "i"},
+                        "is_deleted": False,
+                    },
+                    {"_id": 1},
+                )
+                .limit(100)
+                .to_list(100)
+            )
+            query.setdefault("$and", []).append(
+                {
+                    "$or": [
+                        {"assigned_to": {"$in": [str(e["_id"]) for e in matching]}},
+                        {"employee_name": {"$regex": re.escape(employee_name), "$options": "i"}},
+                    ]
+                }
+            )
         for key, value in (("status", status), ("bank", bank), ("loan_type", loan_type)):
             if value:
                 query[key] = value
@@ -311,16 +398,60 @@ class DailyOperationsService:
                 {
                     "$or": [
                         {key: {"$regex": pattern, "$options": "i"}}
-                        for key in ("customer_name", "lead_code", "bank", "inquiry", "next_action")
+                        for key in (
+                            "customer_name",
+                            "customer_number",
+                            "lead_code",
+                            "bank",
+                            "inquiry",
+                            "next_action",
+                        )
                     ]
                 }
             )
         field = sort.lstrip("-")
-        if field not in {"date", "status", "updated_at", "due_date", "bank", "priority"}:
+        if field not in {
+            "date",
+            "created_at",
+            "status",
+            "updated_at",
+            "due_date",
+            "bank",
+            "priority",
+        }:
             raise ValidationError("Unsupported sort column.")
         pipeline: list[dict[str, Any]] = [{"$project": {"history": 0}}]
         if kind == "follow-ups":
             await self.authorize_lead_view(actor)
+            if actor.role != OWNER:
+                # Old linked rows predate case_oid. Fail closed on their case ownership;
+                # new rows use the live indexed case lookup below, including reassignment.
+                case_ids = (
+                    await self.db.application_workflows.find(
+                        {
+                            "case_type": "loan",
+                            "is_deleted": False,
+                            "assigned_to": await self.employee_id(actor),
+                            "moved_to_loan_management_at": {"$ne": None},
+                        },
+                        {"_id": 1},
+                    )
+                    .limit(2001)
+                    .to_list(2001)
+                )
+                if len(case_ids) > 2000:
+                    raise ValidationError(
+                        "Ask the Owner to archive older cases before browsing more than 2,000 assigned loans."
+                    )
+                query.setdefault("$and", []).append(
+                    {
+                        "$or": [
+                            {"case_id": None},
+                            {"case_oid": {"$exists": True}},
+                            {"case_id": {"$in": [str(c["_id"]) for c in case_ids]}},
+                        ]
+                    }
+                )
             pipeline.append(
                 {
                     "$match": {
@@ -334,19 +465,42 @@ class DailyOperationsService:
                 [
                     {
                         "$lookup": {
+                            "from": "application_workflows",
+                            "localField": "case_oid",
+                            "foreignField": "_id",
+                            "as": "linked_case",
+                        }
+                    },
+                    {"$unwind": {"path": "$linked_case", "preserveNullAndEmptyArrays": True}},
+                    {
+                        "$match": {
+                            "$or": [
+                                {"case_oid": {"$exists": False}},
+                                {"linked_case.is_deleted": False},
+                            ]
+                        }
+                    },
+                    {
+                        "$lookup": {
                             "from": "leads",
                             "localField": "lead_oid",
                             "foreignField": "_id",
                             "as": "lead",
                         }
                     },
-                    {"$unwind": "$lead"},
-                    {"$match": {"lead.is_deleted": False}},
+                    {"$unwind": {"path": "$lead", "preserveNullAndEmptyArrays": True}},
+                    {"$match": {"$or": [{"lead_id": None}, {"lead.is_deleted": False}]}},
                     {
                         "$set": {
-                            "assigned_to": "$lead.assigned_to",
-                            "customer_name": "$lead.full_name",
-                            "customer_number": "$lead.mobile",
+                            "assigned_to": {
+                                "$cond": [
+                                    {"$ne": [{"$ifNull": ["$case_oid", None]}, None]},
+                                    "$linked_case.assigned_to",
+                                    {"$ifNull": ["$lead.assigned_to", "$assigned_to"]},
+                                ]
+                            },
+                            "customer_name": {"$ifNull": ["$lead.full_name", "$customer_name"]},
+                            "customer_number": {"$ifNull": ["$lead.mobile", "$customer_number"]},
                         }
                     },
                 ]
@@ -360,7 +514,15 @@ class DailyOperationsService:
                             {"$sort": {field: -1 if sort.startswith("-") else 1, "_id": 1}},
                             {"$skip": (page - 1) * page_size},
                             {"$limit": page_size},
-                            {"$project": {"history": 0, "lead": 0, "lead_oid": 0}},
+                            {
+                                "$project": {
+                                    "history": 0,
+                                    "lead": 0,
+                                    "lead_oid": 0,
+                                    "case_oid": 0,
+                                    "linked_case": 0,
+                                }
+                            },
                         ],
                         "total": [{"$count": "value"}],
                         "statuses": [{"$group": {"_id": "$status", "count": {"$sum": 1}}}],
@@ -402,13 +564,23 @@ class DailyOperationsService:
             ).to_list(page_size * 2)
         }
         for item in result["items"]:
-            item["employee_name"] = employees.get(
+            item["employee_name"] = (
+                item.get("employee_name")
+                if not item.get("case_id") and not item.get("lead_id")
+                else ""
+            ) or employees.get(
                 item.get("employee_id") if kind == "issues" else item.get("assigned_to"),
                 "Owner"
                 if (item.get("employee_id") if kind == "issues" else item.get("assigned_to"))
                 == actor.require_id()
                 and actor.role == OWNER
                 else "",
+            )
+            item["assigned_to_name"] = employees.get(
+                item.get("assigned_to"),
+                "Owner"
+                if item.get("assigned_to") == actor.require_id() and actor.role == OWNER
+                else "Unassigned",
             )
         return {
             "items": [public(item) for item in result["items"]],
@@ -424,15 +596,15 @@ class DailyOperationsService:
         }
 
     async def authorize_lead_view(self, actor: User) -> None:
-        if not await PermissionEngine(self.db).has_permission(
-            actor, module="leads", resource="leads", action="view"
-        ):
-            raise ForbiddenError("Lead visibility permission is required.")
+        await self.authorize(actor, "follow-ups")
 
 
 async def ensure_daily_operations_indexes(db: AsyncIOMotorDatabase[Any]) -> None:
     for name in COLLECTIONS.values():
-        await db[name].create_index("import_key", unique=True)
+        if name == "daily_progress_entries":
+            await db[name].create_index("import_key", unique=True, sparse=True)
+        else:
+            await db[name].create_index("import_key", unique=True)
         await db[name].create_index([("is_deleted", 1), ("assigned_to", 1), ("date", -1)])
         await db[name].create_index([("is_deleted", 1), ("status", 1), ("due_date", 1)])
     await db.daily_follow_ups.create_index("lead_oid")

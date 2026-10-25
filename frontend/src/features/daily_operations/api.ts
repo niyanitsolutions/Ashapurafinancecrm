@@ -6,6 +6,15 @@ export const areas: Record<Area, string> = {
   sessions: "Employee Login & Logout", issues: "Inquiry or Issue",
 };
 export interface Row { id: string; version?: number; [key: string]: unknown }
+export interface DailyLookups {
+  self_id: string;
+  self_name?: string;
+  employees: { id: string; name: string }[];
+  leads: { id: string; name: string; number: string; code: string }[];
+  cases: { id: string; name: string; number: string; code: string; bank: string; status?: string }[];
+}
+export const getLookups = (search = "") => apiRequest<DailyLookups>(`/daily-operations/lookups?search=${encodeURIComponent(search)}`);
+export const deleteRecord = (area: Area, row: Row) => apiRequest(`/daily-operations/${area}/${row.id}`, { method: "DELETE", body: JSON.stringify({ version: row.version ?? 0 }) });
 export interface List { items: Row[]; total: number; statuses?: Record<string, number>; metrics?: { approved_amount: number; disbursed_amount: number }; breakdowns?: Record<string, { label: string; count: number }[]> }
 export interface RowError { column: string; message: string }
 export interface Preview { id: string; policy: string; rows: { row: number; values: Record<string, string>; errors: RowError[]; duplicate?: boolean }[] }

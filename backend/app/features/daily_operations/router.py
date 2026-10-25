@@ -13,12 +13,15 @@ from app.core.response import ApiResponse
 from app.features.auth.dependencies import get_current_active_user
 from app.features.auth.models import User
 from app.features.bulk_import.files import MAX_BYTES
-from app.features.daily_operations import transfers, views
+from app.features.daily_operations import entries, transfers, views
 from app.features.daily_operations.schemas import (
+    DeleteRecord,
     FollowUpInput,
     FollowUpUpdate,
     IssueInput,
     IssueUpdate,
+    ProgressInput,
+    ProgressUpdate,
 )
 from app.features.daily_operations.service import DailyOperationsService, public
 from app.shared.audit_log import write_audit_log
@@ -35,6 +38,7 @@ class Filters(BaseModel):
     search: str = ""
     status: str = ""
     employee: str = ""
+    employee_name: str = ""
     bank: str = ""
     loan_type: str = ""
     date_from: date | None = None
@@ -50,6 +54,7 @@ def filters(
     search: Annotated[str, Query(max_length=200)] = "",
     status: Annotated[str, Query(max_length=100)] = "",
     employee: Annotated[str, Query(max_length=24)] = "",
+    employee_name: Annotated[str, Query(max_length=200)] = "",
     bank: Annotated[str, Query(max_length=200)] = "",
     loan_type: Annotated[str, Query(max_length=200)] = "",
     date_from: date | None = None,
@@ -72,7 +77,7 @@ async def list_area(
             **{
                 k: v
                 for k, v in values.items()
-                if k in {"page", "page_size", "employee", "date_from", "date_to"}
+                if k in {"page", "page_size", "employee", "employee_name", "date_from", "date_to"}
             },
         )
     if kind == "progress":
@@ -82,6 +87,48 @@ async def list_area(
         return await views.progress(service, actor, **values)
     values.pop("old_days")
     return await service.list_records(kind, actor, **values)
+
+
+@router.get("/lookups")
+async def lookups(
+    actor: Actor, db: Db, search: Annotated[str, Query(max_length=200)] = ""
+) -> ApiResponse[dict[str, Any]]:
+    return ApiResponse[dict[str, Any]].ok(
+        await entries.lookups(DailyOperationsService(db), actor, search)
+    )
+
+
+@router.post("/progress")
+async def create_progress(
+    payload: ProgressInput, actor: Actor, db: Db
+) -> ApiResponse[dict[str, Any]]:
+    return ApiResponse[dict[str, Any]].ok(
+        await entries.save_progress(DailyOperationsService(db), actor, payload)
+    )
+
+
+@router.patch("/progress/{record_id}")
+async def update_progress(
+    record_id: str, payload: ProgressUpdate, actor: Actor, db: Db
+) -> ApiResponse[dict[str, Any]]:
+    return ApiResponse[dict[str, Any]].ok(
+        await entries.save_progress(
+            DailyOperationsService(db),
+            actor,
+            ProgressInput.model_validate(payload.model_dump(exclude={"version"})),
+            record_id,
+            payload.version,
+        )
+    )
+
+
+@router.delete("/{area}/{record_id}")
+async def delete_record(
+    area: transfers.Kind, record_id: str, payload: DeleteRecord, actor: Actor, db: Db
+) -> ApiResponse[dict[str, Any]]:
+    return ApiResponse[dict[str, Any]].ok(
+        await entries.remove(DailyOperationsService(db), actor, area, record_id, payload)
+    )
 
 
 @router.get("/transfers/{kind}/template")
@@ -178,11 +225,11 @@ async def export(
             "loan_type": "LOAN TYPE",
             "customer_name": "CX NAME",
             "customer_number": "CX NUMBER",
-            "assigned_to": "EMPLOYEE ID",
+            "employee_name": "EMPLOYEE NAME",
         },
         "issues": {
             "id": "Issue ID",
-            "employee_id": "EMPLOYEE ID",
+            "employee_name": "EMPLOYEE NAME",
             "created_by": "Created By",
             "updated_by": "Updated By",
             "created_at": "Created At",
@@ -201,7 +248,8 @@ async def export(
             "age_days": "OLD CASES UNDER PROGRESS",
             "disbursed_at": "DATE OF DISBURSE",
             "disbursed_amount": "LOAN AMOUNT",
-            "assigned_to": "EMPLOYEE ID",
+            "employee_name": "EMPLOYEE NAME",
+            "source": "RECORD TYPE",
         },
         "sessions": {
             "date": "DATE",
@@ -252,6 +300,13 @@ async def progress(
         values["sort"] = "-updated_at"
     return ApiResponse[dict[str, Any]].ok(
         await views.progress(DailyOperationsService(db), actor, **values)
+    )
+
+
+@router.get("/progress/{record_id}")
+async def get_progress(record_id: str, actor: Actor, db: Db) -> ApiResponse[dict[str, Any]]:
+    return ApiResponse[dict[str, Any]].ok(
+        public(await entries.get_progress(DailyOperationsService(db), actor, record_id))
     )
 
 

@@ -48,21 +48,25 @@ async def test_normal_startup_recovers_missing_navigation_without_employee_grant
     assert await mock_db.role_permissions.count_documents({}) == 0
 
 
-async def test_employee_navigation_uses_existing_grants_only(
+async def test_employee_navigation_is_available_by_default(
     client, mock_db, owner_headers, master_data
 ):
     await install_catalog(mock_db)
     employee = await _create_employee(client, owner_headers, master_data)
     headers = await _login(client, "9511111111", "InitialPass1!")
     response = await client.get("/api/v1/dashboard/nav", headers=headers)
-    assert not any(item["key"].startswith("daily_") for item in response.json()["data"])
-    await grant(mock_db, employee, "issues", ["view"])
-    response = await client.get("/api/v1/dashboard/nav", headers=headers)
-    assert [
+    assert {
         item["key"]
         for item in response.json()["data"]
         if item["key"].startswith("daily_")
-    ] == ["daily_issues"]
+    } == {f"daily_{area}" for area in AREAS}
+    await grant(mock_db, employee, "issues", ["view"])
+    response = await client.get("/api/v1/dashboard/nav", headers=headers)
+    assert {
+        item["key"]
+        for item in response.json()["data"]
+        if item["key"].startswith("daily_")
+    } == {f"daily_{area}" for area in AREAS}
 
 
 @pytest.mark.parametrize("area", ["follow-ups", "progress", "sessions", "issues"])
@@ -78,7 +82,7 @@ async def test_owner_can_read_all_work_areas_and_exports(
 
 
 @pytest.mark.parametrize("area", ["follow-ups", "progress", "sessions", "issues"])
-async def test_employee_cannot_bypass_navigation_with_api_or_transfers(
+async def test_employee_can_read_own_empty_views_but_uploads_are_still_validated(
     client, mock_db, owner_headers, master_data, area
 ):
     await install_catalog(mock_db)
@@ -88,10 +92,10 @@ async def test_employee_cannot_bypass_navigation_with_api_or_transfers(
         response = await client.get(
             f"/api/v1/daily-operations/{area}{suffix}", headers=headers
         )
-        assert response.status_code == 403, response.text
+        assert response.status_code == 200, response.text
     response = await client.post(
         f"/api/v1/daily-operations/transfers/{area}/preview",
         headers=headers,
-        files={"file": ("unauthorized.csv", b"DATE\r\n2026-10-25\r\n", "text/csv")},
+        files={"file": ("invalid.csv", b"\x00", "text/csv")},
     )
-    assert response.status_code == 403, response.text
+    assert response.status_code == (403 if area == "sessions" else 422), response.text

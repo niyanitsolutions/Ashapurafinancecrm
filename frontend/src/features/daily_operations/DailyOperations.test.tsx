@@ -7,16 +7,16 @@ import { RecordForm } from "./RecordForm";
 import { TransferCentre } from "./TransferCentre";
 import { NAV_SECTIONS } from "@/components/layout/navConfig";
 
-const mocks = vi.hoisted(() => ({ list: vi.fn(), save: vi.fn(), request: vi.fn(), can: vi.fn(() => true) }));
+const mocks = vi.hoisted(() => ({ list: vi.fn(), save: vi.fn(), getLookups: vi.fn(), request: vi.fn(), can: vi.fn(() => true) }));
 vi.mock("@/features/auth/useAuth", () => ({ useAuth: () => ({ userId: "isolated-test-user" }) }));
 vi.mock("@/features/access_control/usePermissions", () => ({ usePermissions: () => ({ can: mocks.can, isOwner: true, loading: false }) }));
 vi.mock("@/shared/api/client", async importOriginal => ({ ...await importOriginal<typeof import("@/shared/api/client")>(), apiRequest: mocks.request }));
-vi.mock("./api", async importOriginal => ({ ...await importOriginal<typeof import("./api")>(), listRecords: mocks.list, saveRecord: mocks.save }));
+vi.mock("./api", async importOriginal => ({ ...await importOriginal<typeof import("./api")>(), listRecords: mocks.list, saveRecord: mocks.save, getLookups: mocks.getLookups }));
 
 function mount(component: React.ReactNode) {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter>{component}</MemoryRouter></QueryClientProvider>);
 }
-beforeEach(() => { vi.clearAllMocks(); mocks.can.mockReturnValue(true); mocks.list.mockResolvedValue({ items: [], total: 0 }); });
+beforeEach(() => { vi.clearAllMocks(); mocks.can.mockReturnValue(true); mocks.list.mockResolvedValue({ items: [], total: 0 }); mocks.getLookups.mockResolvedValue({ self_id: "synthetic-user", employees: [], leads: [], cases: [] }); });
 
 describe("daily operations", () => {
   it("adds one Daily Update navigation entry and preserves CRM sections", () => {
@@ -27,7 +27,7 @@ describe("daily operations", () => {
   });
   it("renders empty state and sends search and date filters", async () => {
     mount(<DailyOperationsPage area="follow-ups" />);
-    expect(await screen.findByText("No records match these filters.")).toBeInTheDocument();
+    expect(await screen.findByText(/No records match these filters/)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Search"), { target: { value: "document" } });
     fireEvent.change(screen.getByLabelText("From date"), { target: { value: "2026-10-01" } });
     await waitFor(() => expect(mocks.list).toHaveBeenLastCalledWith("follow-ups", expect.stringContaining("date_from=2026-10-01")));
@@ -44,19 +44,19 @@ describe("daily operations", () => {
   });
   it("requires rejection reasons and due dates in status-dependent forms", () => {
     mount(<RecordForm area="follow-ups" onSaved={vi.fn()} onCancel={vi.fn()} />);
-    expect(screen.getByLabelText("FOLLOW PENDING")).toBeRequired();
-    fireEvent.change(screen.getByLabelText("TODAY CASE STATUS"), { target: { value: "REJECTED WITH REASON" } });
+    expect(screen.getByLabelText("Next follow-up date")).toBeRequired();
+    fireEvent.change(screen.getByLabelText("Follow-up status"), { target: { value: "REJECTED WITH REASON" } });
     expect(screen.getByLabelText("Rejection reason")).toBeRequired();
-    expect(screen.queryByLabelText("FOLLOW PENDING")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Next follow-up date")).not.toBeInTheDocument();
   });
   it("shows issue resolution validation and handles save errors", async () => {
     mocks.save.mockRejectedValue(new Error("Concurrent update"));
-    mount(<RecordForm area="issues" onSaved={vi.fn()} onCancel={vi.fn()} />);
-    fireEvent.change(screen.getByLabelText("INQUIRY OR ISSUE"), { target: { value: "Internal test" } });
+    mount(<RecordForm area="issues" record={{ id: "synthetic-record", version: 1, status: "OPEN", priority: "medium" }} onSaved={vi.fn()} onCancel={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("Inquiry or issue"), { target: { value: "Internal test" } });
     fireEvent.change(screen.getByLabelText("Status"), { target: { value: "RESOLVED" } });
-    expect(screen.getByLabelText("Resolution Notes")).toBeRequired();
-    fireEvent.change(screen.getByLabelText("Resolution Notes"), { target: { value: "Resolved in test" } });
-    fireEvent.submit(screen.getByRole("button", { name: "Save" }).closest("form")!);
+    expect(screen.getByLabelText("Resolution notes")).toBeRequired();
+    fireEvent.change(screen.getByLabelText("Resolution notes"), { target: { value: "Resolved in test" } });
+    fireEvent.submit(screen.getByRole("button", { name: "Save changes" }).closest("form")!);
     expect(await screen.findByRole("alert")).toHaveTextContent("Concurrent update");
   });
   it("previews row errors and requires confirmation before committing", async () => {
@@ -66,7 +66,7 @@ describe("daily operations", () => {
     fireEvent.click(screen.getByRole("button", { name: "Validate & preview" }));
     expect(await screen.findByText("FOLLOW PENDING: Required")).toBeInTheDocument();
     const confirm = screen.getByRole("button", { name: "Confirm import" }); expect(confirm).toBeDisabled();
-    fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed the preview/ })); expect(confirm).toBeEnabled(); fireEvent.click(confirm);
+    fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed these rows/ })); expect(confirm).toBeEnabled(); fireEvent.click(confirm);
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Inserted: 1"));
   });
 });

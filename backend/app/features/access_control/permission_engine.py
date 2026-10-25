@@ -60,6 +60,16 @@ class PermissionEngine:
             return False
         employee_id = employee.require_id()
 
+        if module == "daily_operations":
+            from app.features.daily_operations.defaults import EMPLOYEE_ACTIONS
+
+            if employee.status != "active":
+                return False
+            if action == "delete" or (resource == "sessions" and action in {"edit", "import"}):
+                return False  # Owner-only, regardless of employee role grants.
+            if employee.status == "active" and action in EMPLOYEE_ACTIONS.get(resource, ()):
+                return True  # Explicit default-access policy; services still scope every record.
+
         permission = await self._permissions.find_by_module_resource(module, resource)
         if permission is None or action not in permission.actions:
             return False
