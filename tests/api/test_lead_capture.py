@@ -645,7 +645,7 @@ async def test_meta_webhook_duplicate_is_acknowledged_and_recorded(client, mock_
     assert await mock_db["capture_receipts"].count_documents({"external_id": "DUPLICATE_SECOND"}) == 0
 
 
-async def test_meta_webhook_allows_mobile_from_rejected_lead(client, mock_db, owner_headers, monkeypatch):
+async def test_meta_webhook_blocks_mobile_from_rejected_lead(client, mock_db, owner_headers, monkeypatch):
     product_id = await _seed_loan_product(mock_db)
     await _seed_lead_sources_and_capture_sources(mock_db, product_id=product_id)
     await _seed_active_meta_config(mock_db, app_secret="realsecret")
@@ -674,10 +674,11 @@ async def test_meta_webhook_allows_mobile_from_rejected_lead(client, mock_db, ow
     assert r.status_code == 200, r.text
 
     leads = await mock_db["leads"].find({"mobile": "9876500104"}).to_list(length=10)
-    assert len(leads) == 2
-    newest = next(lead for lead in leads if lead["_id"] != original["_id"])
-    assert newest["duplicate_of_lead_ids"] == [str(original["_id"])]
-    assert await mock_db["capture_receipts"].count_documents({"external_id": "AFTER_REJECTION"}) == 1
+    assert len(leads) == 1
+    assert leads[0]["_id"] == original["_id"]
+    failure = await mock_db.capture_failures.find_one({"raw_payload.leadgen_id": "AFTER_REJECTION"})
+    assert failure["failure_reason"] == "duplicate" and failure["status"] == "ignored"
+    assert await mock_db.capture_receipts.count_documents({"external_id": "AFTER_REJECTION"}) == 0
 
 
 async def test_capture_failures_list_and_manual_retry(client, mock_db, owner_headers, monkeypatch):

@@ -360,15 +360,19 @@ async def test_sessions_group_rotations_and_preserve_original_correction(
                 "logout_at": now - timedelta(hours=1)
                 if status == "logged_out"
                 else None,
+                "last_activity_at": now - timedelta(hours=1),
                 "updated_at": now,
                 "status": status,
                 "is_deleted": False,
             }
         )
+    from app.features.auth.session_lifecycle import ensure_summary
+
+    await ensure_summary(mock_db, user_id, now - timedelta(hours=2))
     response = await client.get(f"{BASE}/sessions", headers=owner_headers)
     assert response.status_code == 200, response.text
     row = next(
-        item for item in response.json()["data"]["items"] if item["id"] == family
+        session for item in response.json()["data"]["items"] for session in item["sessions"] if session["id"] == family
     )
     assert row["recorded_seconds"] == 3600
     correction = {
@@ -390,9 +394,9 @@ async def test_sessions_group_rotations_and_preserve_original_correction(
     ).status_code == 409
     response = await client.get(f"{BASE}/sessions", headers=owner_headers)
     row = next(
-        item for item in response.json()["data"]["items"] if item["id"] == family
+        session for item in response.json()["data"]["items"] for session in item["sessions"] if session["id"] == family
     )
-    assert row["corrected"] and row["recorded_seconds"] == 7200
+    assert row["end_reason"] == "administrative_correction" and row["recorded_seconds"] == 7200
     assert (
         await mock_db.sessions.count_documents(
             {"family_id": family, "login_at": now - timedelta(hours=2)}

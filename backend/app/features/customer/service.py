@@ -599,7 +599,15 @@ class CustomerService:
             converted_from_lead_id=converted_from_lead_id,
             created_by=actor.require_id(),
         )
-        customer_id = await self._customers.insert(customer)
+        from pymongo.errors import DuplicateKeyError
+
+        try:
+            customer_id = await self._customers.insert(customer)
+        except DuplicateKeyError:
+            existing = await self._customers.find_by_user_id(actor.require_id())
+            if existing is not None:
+                return existing
+            raise ConflictError("A customer already exists with this mobile number.") from None
         event = AuditEvent.LEAD_CONVERTED if converted_from_lead_id else AuditEvent.CUSTOMER_REGISTERED
         await write_audit_log(self._db, event_type=event, user_id=actor.require_id(), metadata={"customer_id": customer_id})
         await self._link_existing_leads_to_customer(actor.mobile, customer_id, actor.require_id())
@@ -768,6 +776,9 @@ class CustomerService:
         Deliberately does NOT run `submit_application`'s required-document gate — a manual
         lead starts with no documents; the Policy Login transition still enforces
         verification later."""
+        from app.shared.customer_identity import normalize_mobile, normalized_name
+
+        mobile = normalize_mobile(mobile)
         form_def, existing_user = await self.validate_manual_insurance_customer(product_id, mobile)
         rollback_user_id: str | None = None
         rollback_customer_id: str | None = None
@@ -779,6 +790,8 @@ class CustomerService:
                     existing_user, converted_from_lead_id=None,
                 )
                 rollback_customer_id = customer.require_id()
+            if normalized_name(customer.full_name) != normalized_name(full_name):
+                raise ConflictError("This mobile belongs to a different customer name. Review the identity before creating an application.")
             customer_user = existing_user
         else:
             new_user = User(
@@ -786,7 +799,12 @@ class CustomerService:
                 password_hash=hash_password(secrets.token_urlsafe(18)),
                 is_mobile_verified=False, must_change_password=True, created_by=actor.require_id(),
             )
-            user_id = await self._users.insert(new_user)
+            from pymongo.errors import DuplicateKeyError
+
+            try:
+                user_id = await self._users.insert(new_user)
+            except DuplicateKeyError:
+                raise ConflictError("This mobile was registered by another request. Reload the existing customer before creating an application.") from None
             fetched_user = await self._users.find_by_id(user_id)
             if fetched_user is None:
                 raise NotFoundError("Newly created account could not be read back.")

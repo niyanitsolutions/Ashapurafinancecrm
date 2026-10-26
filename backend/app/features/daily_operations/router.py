@@ -261,6 +261,10 @@ async def export(
     }
     columns = {**transfers.COLUMNS[kind], **extra[kind]}
     items = result["items"]
+    if kind == "sessions":
+        columns = {"date": "DATE", "employee_name": "EMPLOYEE NAME", "id": "DAILY SUMMARY ID",
+                   "login_at": "LOGIN TIME", "logout_at": "LOGOUT TIME",
+                   "recorded_seconds": "RECORDED SECONDS", "status": "STATUS"}
     content = await run_in_threadpool(
         transfers.spreadsheet,
         list(columns.values()),

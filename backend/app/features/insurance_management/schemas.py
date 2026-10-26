@@ -6,6 +6,7 @@ from pydantic import BaseModel, EmailStr, Field, field_validator, model_validato
 from app.features.customer.schemas import ApplicationDocumentResponse
 from app.features.insurance_management.constants import InsuranceHoldReason
 from app.features.workflow_engine.constants import InsuranceStatus, ReEligibilityPeriod
+from app.shared.customer_identity import normalize_mobile
 
 # Stages an Insurance case can be created in directly from the manual "Add Insurance
 # Lead" form. Policy Login / Policy Issued are deliberately excluded — a brand-new lead
@@ -282,6 +283,8 @@ class _ReEligibilityFields(BaseModel):
 
 
 class CreateManualInsuranceCaseRequest(_ReEligibilityFields):
+    _phone = field_validator("mobile", mode="before")(normalize_mobile)
+
     full_name: str = Field(min_length=1, max_length=200)
     mobile: str = Field(pattern=r"^[6-9]\d{9}$")
     email: EmailStr | None = None

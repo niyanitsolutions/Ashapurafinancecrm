@@ -8,6 +8,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 def phone_number(value: str) -> str:
     if not value:
         return value
+    from app.shared.customer_identity import normalize_mobile
+
+    try:
+        return normalize_mobile(value)
+    except ValueError:
+        pass
     normalized = re.sub(r"[\s()+-]", "", value)
     if not normalized.isdigit() or not 7 <= len(normalized) <= 15:
         raise ValueError("Enter a valid customer phone number.")

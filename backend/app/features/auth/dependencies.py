@@ -21,9 +21,20 @@ def get_auth_service(
 
 
 def get_request_context(request: Request) -> RequestContext:
+    from uuid import UUID
+
+    from app.core.exceptions import ValidationError
+
+    key = request.headers.get("Idempotency-Key")
+    if key:
+        try:
+            key = str(UUID(key))
+        except ValueError:
+            raise ValidationError("Idempotency-Key must be a UUID.") from None
     return RequestContext(
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
+        login_request_key=key,
     )
 
 

@@ -73,7 +73,7 @@ class WorkerSettings:
     # 1-15 minutes specifically so their own trigger-hour precision never matters; what
     # they decide is "due" is instant-based for the same reason.
     cron_jobs: ClassVar[list[Any]] = [
-        cron(check_daily_operations_notifications, minute=set(range(0, 60, 15)), run_at_startup=True),  # type: ignore[arg-type]
+        cron(check_daily_operations_notifications, minute=set(range(60)), run_at_startup=True),  # type: ignore[arg-type]
         cron(review_voice_callbacks, second={10, 40}, run_at_startup=True),
         cron(verify_local_voice_speech, second={5, 20, 35, 50}, run_at_startup=True),
         cron(reconcile_mock_voice_calls, second=set(range(0, 60, 5)), run_at_startup=True),

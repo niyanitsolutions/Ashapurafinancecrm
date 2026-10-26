@@ -26,6 +26,12 @@ const columns: Record<Area, [string, string][]> = {
   sessions: [["date", "DATE"], ["employee_name", "EMPLOYEE NAME"], ["login_at", "LOGIN TIME"], ["logout_at", "LOGOUT TIME"], ["recorded_seconds", "DURATION"], ["status", "STATUS"]],
   issues: [["date", "DATE"], ["employee_name", "EMPLOYEE NAME"], ["inquiry", "INQUIRY OR ISSUE"], ["assigned_to_name", "ASSIGNED TO"], ["priority", "PRIORITY"], ["status", "STATUS"], ["resolution_notes", "RESOLUTION NOTES"]],
 };
+const followRowColors: Record<string, string> = {
+  "FOLLOW UP PENDING": "!bg-red-50 text-red-950 hover:!bg-red-100 focus-within:!bg-red-100",
+  "NEXT FOLLOW UP": "!bg-blue-50 text-blue-950 hover:!bg-blue-100 focus-within:!bg-blue-100",
+  "DISBURSE": "!bg-green-50 text-green-950 hover:!bg-green-100 focus-within:!bg-green-100",
+  "REJECTED WITH REASON": "!bg-yellow-50 text-yellow-950 hover:!bg-yellow-100 focus-within:!bg-yellow-100",
+};
 const pretty = (value: unknown) => text(value).replaceAll("_", " ").replace(/\b\w/g, letter => letter.toUpperCase());
 const money = (value: unknown) => value == null ? "—" : Number(value).toLocaleString("en-IN", { style: "currency", currency: "INR" });
 
@@ -39,7 +45,7 @@ export function DailyOperationsPage({ area }: { area: Area }) {
   const page = Number.isInteger(requestedPage) && requestedPage > 0 && requestedPage <= 100000 ? requestedPage : 1;
   const allowed = can(`daily_operations:${area}`, "view");
   const params = new URLSearchParams({ ...Object.fromEntries(Object.entries(filters).filter(([, value]) => value)), page: String(page), page_size: "20" });
-  const query = useQuery({ queryKey: ["daily-operations", userId, area, params.toString()], queryFn: () => listRecords(area, params.toString()), enabled: !loading && allowed });
+  const query = useQuery({ queryKey: ["daily-operations", userId, area, params.toString()], queryFn: () => listRecords(area, params.toString()), enabled: !loading && allowed, refetchInterval: area === "sessions" || area === "follow-ups" ? 30000 : false });
   const lookup = useQuery({ queryKey: ["daily-lookups", userId, ""], queryFn: () => getLookups(), enabled: !loading && allowed });
   const [editing, setEditing] = useState<Row | null | undefined>(undefined);
   const [history, setHistory] = useState<Row | null>(null);
@@ -73,6 +79,7 @@ export function DailyOperationsPage({ area }: { area: Area }) {
     if (key === "recorded_seconds") return value == null ? "Open session" : `${Math.floor(Number(value) / 3600)}h ${Math.floor(Number(value) % 3600 / 60)}m`;
     if (["login_at", "logout_at", "updated_at"].includes(key)) return businessTime(value);
     if (["date", "remarks_date", "due_date", "login_date", "disbursed_at"].includes(key)) return value ? formatISTDate(String(value)) : "—";
+    if (key === "status" && area === "follow-ups") return text(value);
     if (key === "status" || key === "priority") return pretty(value);
     return text(value);
   }
@@ -98,13 +105,13 @@ export function DailyOperationsPage({ area }: { area: Area }) {
       {area === "progress" && <label className="mb-3 flex gap-2 text-sm text-textSecondary"><input type="checkbox" checked={extraColumns} onChange={event => setExtraColumns(event.target.checked)} />Show login and disbursement details</label>}
       {query.isLoading || loading ? <p role="status">Loading records…</p> : query.isError ? <Button variant="secondary" onClick={() => void query.refetch()}>Retry</Button> : <>
         <TableContainer><Table aria-label={`${areas[area]} records`}><TableHead><TableHeadRow>{visibleColumns.map(([key, label]) => <Th key={key}>{label}</Th>)}<Th className="sticky right-0 bg-card">Actions</Th></TableHeadRow></TableHead><TableBody>
-          {!query.data?.items.length ? <TableRow><Td colSpan={visibleColumns.length + 1}><div className="py-8 text-center text-textSecondary">No records match these filters.{area !== "sessions" && " Use Add record to enter your first row."}</div></Td></TableRow> : query.data.items.map(row => <TableRow key={row.id}>
+          {!query.data?.items.length ? <TableRow><Td colSpan={visibleColumns.length + 1}><div className="py-8 text-center text-textSecondary">No records match these filters.{area !== "sessions" && " Use Add record to enter your first row."}</div></Td></TableRow> : query.data.items.map(row => <TableRow key={row.id} className={area === "follow-ups" ? followRowColors[text(row.status)] : ""}>
             {visibleColumns.map(([key]) => <Td key={key} className="py-2.5 max-w-xs"><span className={key === "status" ? "inline-block rounded-md bg-primary/5 px-2 py-1 text-xs font-medium" : ""}>{cell(key, row[key])}</span>{area === "progress" && key === "customer_name" && row.source === "manual" && <span className="block text-xs text-textSecondary">Daily entry</span>}</Td>)}
-            <Td className="sticky right-0 bg-card py-2"><div className="flex items-center gap-1">
-              {(area === "sessions" ? isOwner : can(`daily_operations:${area}`, "edit")) && <Button variant="ghost" size="sm" onClick={() => void inspect(row, true)}>Edit</Button>}
-              {area !== "sessions" && <Button variant="ghost" size="sm" onClick={() => void inspect(row, false)}>History</Button>}
+            <Td className={`sticky right-0 py-2 ${area === "follow-ups" ? "bg-inherit" : "bg-card"}`}><div className="flex items-center gap-1">
+              {(area !== "sessions" && can(`daily_operations:${area}`, "edit")) && <Button variant="ghost" size="sm" onClick={() => void inspect(row, true)}>Edit</Button>}
+              <Button variant="ghost" size="sm" onClick={() => void inspect(row, false)}>{area === "sessions" ? "Session history" : "History"}</Button>
               {area === "sessions" && !isOwner && <Button variant="ghost" size="sm" onClick={() => { setRequesting(row); setRequestReason(""); }}>Request correction</Button>}
-              {isOwner && <Button variant="danger" size="sm" onClick={() => setRemoving(row)}>Delete</Button>}
+              {isOwner && area !== "sessions" && <Button variant="danger" size="sm" onClick={() => setRemoving(row)}>Delete</Button>}
             </div></Td>
           </TableRow>)}
         </TableBody></Table></TableContainer>
@@ -116,6 +123,11 @@ export function DailyOperationsPage({ area }: { area: Area }) {
       {editing !== undefined && <RecordForm key={editing?.id ?? "new"} area={area} record={editing ?? undefined} onCancel={() => setEditing(undefined)} onSaved={() => { setEditing(undefined); setNotice("Record saved."); refresh(); }} />}
     </Modal>
     <Modal open={!!history} title="Record history" onClose={() => setHistory(null)} size="lg">
+      {area === "sessions" && <div className="space-y-3">{((history?.sessions ?? []) as Row[]).map(session => <div key={session.id} className="rounded-lg border border-border p-3 text-sm">
+        <p>{businessTime(session.login_at)} ? {businessTime(session.logout_at)}</p>
+        <p>{cell("recorded_seconds", session.recorded_seconds)} ? {pretty(session.status)} ? {pretty(session.end_reason)}</p>
+        {isOwner && can("daily_operations:sessions", "edit") && <Button variant="ghost" size="sm" onClick={() => { setEditing(session); setHistory(null); }}>Correct session</Button>}
+      </div>)}</div>}
       <ol className="space-y-4">{(history?.history as { at: string; before?: Record<string, unknown>; after?: Record<string, unknown> }[] ?? []).map((event, index) => <li key={index} className="border-b border-border pb-3"><p className="text-sm font-medium">{businessTime(event.at)}</p><dl className="mt-2 text-sm">{Object.entries(event.after ?? {}).filter(([key, value]) => !["lead_id", "case_id", "assigned_to", "source"].includes(key) && value !== event.before?.[key]).map(([key, value]) => <div key={key} className="grid grid-cols-2 gap-3"><dt className="text-textSecondary">{pretty(key)}</dt><dd className="break-words">{event.before ? `${text(event.before[key])} → ` : ""}{cell(key, value)}</dd></div>)}</dl></li>)}</ol>
     </Modal>
     <ConfirmDialog open={!!removing} title="Delete this daily record?" message="This removes the row from Daily Update and keeps its history. Linked loans and original sign-in records are retained." confirmLabel="Delete record" confirmVariant="danger" onClose={() => setRemoving(null)} onConfirm={async () => {

@@ -149,28 +149,38 @@ class LeadService:
         await self._validate_source(payload.source_id)
         await self._validate_product(payload.product_category, payload.product_id)
 
-        # Duplicate-lead prevention (production bug fix): `mobile` is already normalized
-        # by CreateLeadRequest's own strict pattern (`^[6-9]\d{9}$`, no separators/
-        # whitespace possible) before this method ever runs — that IS the normalization
-        # step; no separate transform is needed on an already-schema-validated value.
-        # Company-wide, unscoped lookup (matches the existing `find_by_mobile` docstring
-        # precedent below) — a genuine duplicate must be caught regardless of who owns
-        # the existing lead. Only an ACTIVE (non-rejected) duplicate blocks creation — a
-        # previously rejected lead for this mobile doesn't prevent a fresh inquiry later;
-        # that pipeline already concluded. See `LeadRepository`'s new partial unique
-        # index (`rejected_at=None`) for the matching database-level safety net against
-        # a race between two simultaneous creates for the same mobile.
+        from app.shared.customer_identity import normalized_name
+
         duplicates = await self._leads.find_by_mobile(payload.mobile)
-        active_duplicate = next((d for d in duplicates if d.stage != LeadStage.REJECTED), None)
-        if active_duplicate is not None:
+        if duplicates:
+            visible = await self.check_duplicate(payload.mobile, actor)
+            details = None
+            if visible:
+                match = visible[0]
+                details = {
+                    "existing_lead_id": match.require_id(),
+                    "existing_lead_code": match.lead_code,
+                    "existing_record_url": f"/leads/{match.require_id()}",
+                    "identity_conflict": normalized_name(match.full_name)
+                    != normalized_name(payload.full_name),
+                }
             raise ConflictError(
-                f"A lead already exists with this mobile number ({active_duplicate.lead_code}).",
-                details={"existing_lead_id": active_duplicate.require_id(), "existing_lead_code": active_duplicate.lead_code},
+                "A lead already exists with this mobile number. Review the existing identity before creating an application.",
+                details=details,
             )
-        # Only rejected leads can remain here — kept as the existing non-blocking
-        # "possible duplicate" flag (spec: duplicate detection flags a rejected-mobile
-        # match, never blocks it).
-        duplicate_ids = [d.require_id() for d in duplicates]
+        customer = await self._db.customers.find_one(
+            {"mobile": payload.mobile, "is_deleted": False}, {"_id": 1}
+        )
+        if customer:
+            raise ConflictError(
+                "An existing customer uses this mobile number. Create an application for the existing customer."
+            )
+        name_query: dict[str, Any] = {"identity_name": normalized_name(payload.full_name), "is_deleted": False}
+        if actor.role != OWNER:
+            employee = await self._employees.find_by_user_id(actor.require_id())
+            own_id = employee.require_id() if employee else NO_MATCH_SENTINEL
+            name_query["$or"] = [{"assigned_to": own_id}, {"assigned_to": None, "created_by": actor.require_id()}]
+        duplicate_ids = [str(candidate["_id"]) async for candidate in self._db.leads.find(name_query, {"_id": 1}).limit(20)]
 
         if payload.assigned_to:
             assignee_id = await self._resolve_assignee(payload.assigned_to, actor)
@@ -190,7 +200,10 @@ class LeadService:
 
         lead_code = await generate_id(self._db, IdPrefix.LEAD)
         next_follow_up = ist_date_to_utc_midnight(payload.next_follow_up_date) if payload.next_follow_up_date else None
+        from app.shared.customer_identity import normalized_name
+
         lead = Lead(
+            identity_name=normalized_name(payload.full_name),
             lead_code=lead_code,
             full_name=payload.full_name,
             mobile=payload.mobile,
@@ -208,7 +221,12 @@ class LeadService:
             product_form_data=payload.product_form_data,
             created_by=actor.require_id(),
         )
-        lead_id = await self._leads.insert(lead)
+        from pymongo.errors import DuplicateKeyError
+
+        try:
+            lead_id = await self._leads.insert(lead)
+        except DuplicateKeyError:
+            raise ConflictError("A lead already exists with this mobile number. Reload before continuing.") from None
 
         await self._log_activity(lead_id, LeadActivityType.CREATED, actor, {"lead_code": lead_code})
         if duplicate_ids:
@@ -680,8 +698,20 @@ class LeadService:
         if payload.next_follow_up_date is not None:
             updates["next_follow_up_date"] = ist_date_to_utc_midnight(payload.next_follow_up_date)
 
+        if "full_name" in updates:
+            from app.shared.customer_identity import normalized_name
+
+            updates["identity_name"] = normalized_name(updates["full_name"])
+        if ("mobile" in updates and updates["mobile"] != lead.mobile
+                and await self._leads.find_by_mobile(updates["mobile"], exclude_id=lead_id)):
+            raise ConflictError("A lead already exists with this mobile number.")
         if updates:
-            updated = await self._leads.update(lead_id, updates, updated_by=actor.require_id())
+            from pymongo.errors import DuplicateKeyError
+
+            try:
+                updated = await self._leads.update(lead_id, updates, updated_by=actor.require_id())
+            except DuplicateKeyError:
+                raise ConflictError("A lead already exists with this mobile number.") from None
             await self._log_activity(lead_id, LeadActivityType.UPDATED, actor, {"fields": list(updates.keys())})
             lead = updated or lead
 

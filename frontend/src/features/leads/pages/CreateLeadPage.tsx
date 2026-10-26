@@ -59,7 +59,7 @@ export function CreateLeadPage() {
   // Set only when the backend actually BLOCKED creation (an active, non-rejected
   // duplicate already exists) — distinct from `duplicateWarning` above, which is a
   // non-blocking heads-up shown on blur for a mobile that only matches a REJECTED lead.
-  const [duplicateBlocked, setDuplicateBlocked] = useState<{ leadId: string; leadCode: string } | null>(null);
+  const [duplicateBlocked, setDuplicateBlocked] = useState<{ leadId: string; leadCode: string; identityConflict?: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -126,9 +126,9 @@ export function CreateLeadPage() {
       // (non-rejected) lead already exists for this mobile — surfaced distinctly, with
       // a direct link to the existing lead, rather than the generic error banner alone.
       if (err instanceof ApiError && err.code === "conflict") {
-        const details = err.details as { existing_lead_id?: string; existing_lead_code?: string } | undefined;
+        const details = err.details as { existing_lead_id?: string; existing_lead_code?: string; identity_conflict?: boolean } | undefined;
         if (details?.existing_lead_id) {
-          setDuplicateBlocked({ leadId: details.existing_lead_id, leadCode: details.existing_lead_code ?? "" });
+          setDuplicateBlocked({ leadId: details.existing_lead_id, leadCode: details.existing_lead_code ?? "", identityConflict: details.identity_conflict });
         } else {
           setError(getErrorMessage(err));
         }
@@ -151,6 +151,7 @@ export function CreateLeadPage() {
         <div className="mb-4 rounded border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
           Duplicate lead: a lead already exists with this mobile number
           {duplicateBlocked.leadCode ? ` (${duplicateBlocked.leadCode})` : ""}.{" "}
+          {duplicateBlocked.identityConflict && <span>The customer names differ. Review the identity before proceeding. </span>}
           <Link to={`/leads/${duplicateBlocked.leadId}`} className="font-semibold underline">
             Open existing lead
           </Link>

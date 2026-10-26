@@ -82,6 +82,7 @@ export function resetPassword(otpVerifiedToken: string, newPassword: string) {
 export function login(mobile: string, password: string, coordinates?: { latitude: number; longitude: number } | null) {
   return apiRequest<LoginResponse>("/auth/login", {
     method: "POST",
+    headers: { "Idempotency-Key": crypto.randomUUID() },
     body: JSON.stringify({ mobile, password, latitude: coordinates?.latitude, longitude: coordinates?.longitude }),
   });
 }

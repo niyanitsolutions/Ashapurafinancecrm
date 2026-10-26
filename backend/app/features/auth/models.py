@@ -64,3 +64,6 @@ class Session(BaseDocument):
     login_at: datetime  # when the family began — carried forward through every rotation
     logout_at: datetime | None = None
     last_activity_at: datetime
+
+    end_reason: str | None = None
+    attendance_day_id: str | None = None

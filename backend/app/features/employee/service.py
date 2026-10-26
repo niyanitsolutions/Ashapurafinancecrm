@@ -377,7 +377,7 @@ class EmployeeService:
         employee = await self._get_or_404(employee_id)
         active_sessions = await self._sessions.find_many({"user_id": employee.user_id, "status": SESSION_STATUS_ACTIVE}, limit=1000)
         for session in active_sessions:
-            await self._sessions.update(session.require_id(), {"status": SESSION_STATUS_REVOKED, "logout_at": utc_now()})
+            await self._sessions.update(session.require_id(), {"status": SESSION_STATUS_REVOKED, "logout_at": utc_now(), "end_reason": "administrative_revocation"})
         await write_audit_log(
             self._db, event_type=AuditEvent.EMPLOYEE_FORCE_LOGOUT, user_id=owner.require_id(),
             metadata={"employee_id": employee_id, "sessions_revoked": len(active_sessions)},

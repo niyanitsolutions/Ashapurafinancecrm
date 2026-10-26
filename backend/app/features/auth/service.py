@@ -2,6 +2,7 @@
 described in docs/AUTHENTICATION.md lives here.
 """
 
+import hashlib
 import json
 import logging
 import secrets
@@ -13,7 +14,7 @@ from redis.asyncio import Redis
 
 from app.config.security import get_security_policy
 from app.config.settings import get_settings
-from app.core.exceptions import ForbiddenError, NotFoundError
+from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.features.auth import lockout_service, otp_service
 from app.features.auth.constants import (
     INVITABLE_ROLES,
@@ -48,7 +49,7 @@ from app.features.geo_fencing.constants import GeoActivity
 from app.features.geo_fencing.enforcement import enforce_geo_fence
 from app.features.integrations.constants import IntegrationType
 from app.features.owner.repository import OwnerProfileRepository
-from app.security.encryption import decrypt
+from app.security.encryption import decrypt, encrypt
 from app.security.hashing import hash_value
 from app.security.jwt import (
     TokenError,
@@ -69,6 +70,7 @@ from app.utils.user_agent import parse_user_agent
 class RequestContext:
     ip_address: str | None
     user_agent: str | None
+    login_request_key: str | None = None
 
 
 _USED_TICKET_KEY_PREFIX = "used_otp_ticket"
@@ -232,7 +234,7 @@ class AuthService:
     async def _revoke_all_sessions(self, user_id: str) -> None:
         sessions = await self._sessions.find_many({"user_id": user_id, "status": SESSION_STATUS_ACTIVE}, limit=200)
         for session in sessions:
-            await self._sessions.update(session.require_id(), {"status": SESSION_STATUS_LOGGED_OUT, "logout_at": utc_now()})
+            await self._sessions.update(session.require_id(), {"status": SESSION_STATUS_LOGGED_OUT, "logout_at": utc_now(), "end_reason": "session_revoked"})
 
     async def reset_password(self, *, otp_verified_token: str, new_password: str) -> None:
         """The one endpoint behind both "complete my first-time signup" (SIGNUP-purpose
@@ -289,7 +291,9 @@ class AuthService:
 
         return await self.issue_session(user=user, ctx=ctx, login_method=LoginMethod.PASSWORD)
 
-    async def issue_session(self, *, user: User, ctx: RequestContext, login_method: str) -> LoginResponse:
+    async def issue_session(
+        self, *, user: User, ctx: RequestContext, login_method: str
+    ) -> LoginResponse:
         """Mints an access/refresh token pair + `Session` row for an already-trusted
         `user` — the same mechanics `login()` uses after password verification,
         extracted so a caller that has established trust some other way (e.g. Owner
@@ -298,43 +302,20 @@ class AuthService:
         `Session` row so the two are always distinguishable in
         Session/audit-log history."""
         user_id = user.require_id()
+        request_key = (
+            hashlib.sha256(f"{user_id}:{ctx.login_request_key}".encode()).hexdigest()
+            if ctx.login_request_key
+            else None
+        )
+        if request_key:
+            existing = await self._db.sessions.find_one({"login_request_key": request_key})
+            if existing:
+                return await self._replay_login(existing)
         family_id = secrets.token_urlsafe(16)
         token_id = secrets.token_urlsafe(16)
-        access_token = create_access_token(user_id, claims={"role": user.role})
+        access_token = create_access_token(user_id, claims={"role": user.role, "sid": family_id})
         refresh_token = create_refresh_token(user_id, claims={"jti": token_id})
-
-        ua = parse_user_agent(ctx.user_agent)
-        location = await self._lookup_geo(ctx.ip_address)
-        now = utc_now()
-        session_id = await self._sessions.insert(
-            Session(
-                user_id=user_id,
-                family_id=family_id,
-                token_id=token_id,
-                refresh_token_hash=hash_value(refresh_token),
-                login_method=login_method,
-                device=ua.device,
-                browser=ua.browser,
-                operating_system=ua.operating_system,
-                ip_address=ctx.ip_address,
-                city=location.city if location else None,
-                country=location.country if location else None,
-                login_at=now,
-                last_activity_at=now,
-                status=SESSION_STATUS_ACTIVE,
-            )
-        )
-        await write_audit_log(
-            self._db,
-            event_type=AuditEvent.LOGIN,
-            user_id=user_id,
-            mobile=user.mobile,
-            ip_address=ctx.ip_address,
-            user_agent=ctx.user_agent,
-            metadata={"session_id": session_id, "login_method": login_method},
-        )
-
-        return LoginResponse(
+        response = LoginResponse(
             access_token=access_token,
             refresh_token=refresh_token,
             expires_in=self._access_token_ttl_seconds(),
@@ -342,11 +323,104 @@ class AuthService:
             user_id=user_id,
             must_change_password=user.must_change_password,
         )
+        ua = parse_user_agent(ctx.user_agent)
+        location = await self._lookup_geo(ctx.ip_address)
+        now = utc_now()
+        from pymongo.errors import DuplicateKeyError
+
+        from app.features.auth.session_lifecycle import ensure_summary
+
+        day_id = await ensure_summary(self._db, user_id, now)
+        session = Session(
+            user_id=user_id,
+            attendance_day_id=day_id,
+            family_id=family_id,
+            token_id=token_id,
+            refresh_token_hash=hash_value(refresh_token),
+            login_method=login_method,
+            device=ua.device,
+            browser=ua.browser,
+            operating_system=ua.operating_system,
+            ip_address=ctx.ip_address,
+            city=location.city if location else None,
+            country=location.country if location else None,
+            login_at=now,
+            last_activity_at=now,
+            status=SESSION_STATUS_ACTIVE,
+        )
+        document = session.model_dump(by_alias=True, exclude={"id"})
+        if request_key:
+            # Only encrypted receipts are stored. Password/geofence validation has already run.
+            document.update(
+                login_request_key=request_key,
+                login_response_encrypted=encrypt(response.model_dump_json()),
+            )
+        try:
+            inserted = await self._db.sessions.insert_one(document)
+        except DuplicateKeyError:
+            existing = await self._db.sessions.find_one({"login_request_key": request_key})
+            if not existing:
+                raise ConflictError("Login changed. Please retry with a new request key.") from None
+            return await self._replay_login(existing)
+        await write_audit_log(
+            self._db,
+            event_type=AuditEvent.LOGIN,
+            user_id=user_id,
+            mobile=user.mobile,
+            ip_address=ctx.ip_address,
+            user_agent=ctx.user_agent,
+            metadata={"session_id": str(inserted.inserted_id), "login_method": login_method},
+        )
+        return response
+
+    async def _replay_login(self, existing: dict[str, Any]) -> LoginResponse:
+        from datetime import timedelta
+
+        from app.features.auth.session_lifecycle import validate_family
+        from app.utils.datetime import ensure_utc
+
+        if existing["status"] != SESSION_STATUS_ACTIVE or utc_now() - ensure_utc(
+            existing["login_at"]
+        ) > timedelta(minutes=2):
+            raise ConflictError("This login request has already completed. Start a new login.")
+        await validate_family(self._db, existing["user_id"], existing["family_id"])
+        return LoginResponse.model_validate_json(decrypt(existing["login_response_encrypted"]))
 
     async def logout(self, *, user_id: str, refresh_token: str, reason: str = "manual") -> None:
         session = await self._session_from_refresh_token(refresh_token)
         if session is not None and session.user_id == user_id:
-            await self._sessions.update(session.require_id(), {"status": SESSION_STATUS_LOGGED_OUT, "logout_at": utc_now()})
+            from app.features.auth.session_lifecycle import IDLE_TIMEOUT
+            from app.utils.datetime import ensure_utc
+
+            current = await self._db.sessions.find_one(
+                {
+                    "family_id": session.family_id,
+                    "user_id": user_id,
+                    "status": SESSION_STATUS_ACTIVE,
+                }
+            )
+            if not current:
+                return
+            last_activity = ensure_utc(current["last_activity_at"])
+            if reason == "idle_timeout" and utc_now() < last_activity + IDLE_TIMEOUT:
+                return  # A stale tab cannot time out another active tab in this family.
+            end = min(utc_now(), last_activity + IDLE_TIMEOUT)
+            close_query: dict[str, Any] = {"family_id": session.family_id, "user_id": user_id, "status": SESSION_STATUS_ACTIVE}
+            if reason == "idle_timeout":
+                close_query["last_activity_at"] = current["last_activity_at"]
+            await self._db.sessions.update_many(
+                close_query,
+                {
+                    "$set": {
+                        "status": SESSION_STATUS_LOGGED_OUT,
+                        "logout_at": end,
+                        "end_reason": "inactivity_timeout"
+                        if reason == "idle_timeout"
+                        else "manual_logout",
+                        "updated_at": utc_now(),
+                    }
+                },
+            )
         event_type = AuditEvent.AUTO_LOGOUT if reason == "idle_timeout" else AuditEvent.LOGOUT
         await write_audit_log(self._db, event_type=event_type, user_id=user_id)
 
@@ -364,7 +438,7 @@ class AuthService:
         if session is None or session.user_id != user_id:
             raise NotFoundError("Session not found.")
         if session.status == SESSION_STATUS_ACTIVE:
-            await self._sessions.update(session.require_id(), {"status": SESSION_STATUS_LOGGED_OUT, "logout_at": utc_now()})
+            await self._sessions.update(session.require_id(), {"status": SESSION_STATUS_LOGGED_OUT, "logout_at": utc_now(), "end_reason": "session_revoked"})
         await write_audit_log(
             self._db, event_type=AuditEvent.LOGOUT, user_id=user_id, metadata={"session_id": session_id, "revoked_via": "sessions_page"}
         )
@@ -379,7 +453,7 @@ class AuthService:
         for session in sessions:
             if current_session is not None and session.require_id() == current_session.require_id():
                 continue
-            await self._sessions.update(session.require_id(), {"status": SESSION_STATUS_LOGGED_OUT, "logout_at": utc_now()})
+            await self._sessions.update(session.require_id(), {"status": SESSION_STATUS_LOGGED_OUT, "logout_at": utc_now(), "end_reason": "session_revoked"})
             revoked_count += 1
         await write_audit_log(
             self._db, event_type=AuditEvent.LOGOUT, user_id=user_id, metadata={"logout_all_other_devices": True, "count": revoked_count}
@@ -421,12 +495,26 @@ class AuthService:
         if user is None or user.status != ACCOUNT_STATUS_ACTIVE:
             raise InvalidRefreshTokenError("Account no longer active.")
 
+        from app.features.auth.session_lifecycle import validate_family
+
+        await validate_family(self._db, session.user_id, session.family_id)
         user_id = user.require_id()
         new_token_id = secrets.token_urlsafe(16)
-        access_token = create_access_token(user_id, claims={"role": user.role})
+        access_token = create_access_token(user_id, claims={"role": user.role, "sid": session.family_id})
         new_refresh_token = create_refresh_token(user_id, claims={"jti": new_token_id})
 
-        await self._sessions.update(session.require_id(), {"status": SESSION_STATUS_ROTATED})
+        from pymongo import ReturnDocument
+
+        from app.features.auth.session_lifecycle import IDLE_TIMEOUT
+
+        claimed = await self._db.sessions.find_one_and_update(
+            {"token_id": session.token_id, "status": SESSION_STATUS_ACTIVE,
+             "last_activity_at": {"$gt": utc_now() - IDLE_TIMEOUT}},
+            {"$set": {"status": SESSION_STATUS_ROTATED, "updated_at": utc_now()}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if not claimed:
+            raise InvalidRefreshTokenError("Refresh token already consumed.")
 
         ua = parse_user_agent(ctx.user_agent)
         location = await self._lookup_geo(ctx.ip_address)
@@ -434,6 +522,7 @@ class AuthService:
             Session(
                 user_id=user_id,
                 family_id=session.family_id,
+                attendance_day_id=session.attendance_day_id,
                 token_id=new_token_id,
                 refresh_token_hash=hash_value(new_refresh_token),
                 login_method=session.login_method,
@@ -444,10 +533,11 @@ class AuthService:
                 city=location.city if location else None,
                 country=location.country if location else None,
                 login_at=session.login_at,
-                last_activity_at=utc_now(),
+                last_activity_at=claimed["last_activity_at"],
                 status=SESSION_STATUS_ACTIVE,
             )
         )
+        await validate_family(self._db, user_id, session.family_id)
         await write_audit_log(self._db, event_type=AuditEvent.REFRESH_TOKEN, user_id=user_id)
 
         return TokenPairResponse(

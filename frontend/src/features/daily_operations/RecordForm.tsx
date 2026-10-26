@@ -101,10 +101,14 @@ export function RecordForm({ area, record, onSaved, onCancel }: {
     finally { setSaving(false); }
   }
 
-  const linkOptions = area === "progress" || values.status === "DISBURSE" ? lookup.data?.cases ?? [] : lookup.data?.leads ?? [];
+  const linkOptions = area === "progress" || values.status === "DISBURSE" ? lookup.data?.cases ?? [] : [
+    ...(lookup.data?.leads ?? []), ...(area === "follow-ups" ? (lookup.data?.cases ?? []).map(option => ({ ...option, id: `case:${option.id}` })) : []),
+  ];
   function linkRecord(id: string) {
     const selected = linkOptions.find(option => option.id === id);
-    setValues(old => ({ ...old, lead_id: area === "follow-ups" && values.status !== "DISBURSE" ? id : "", case_id: area === "progress" || values.status === "DISBURSE" ? id : "",
+    const isCase = id.startsWith("case:") || area === "progress" || values.status === "DISBURSE";
+    const canonicalId = id.replace(/^case:/, "");
+    setValues(old => ({ ...old, lead_id: area === "follow-ups" && !isCase ? canonicalId : "", case_id: isCase ? canonicalId : "",
       customer_name: selected?.name ?? old.customer_name ?? "", customer_number: selected?.number ?? old.customer_number ?? "",
       bank: selected && "bank" in selected ? String(selected.bank) : old.bank ?? "" }));
   }
@@ -158,7 +162,7 @@ export function RecordForm({ area, record, onSaved, onCancel }: {
         {area === "progress" && <p className="text-xs text-textSecondary mb-3">Daily entries do not approve or disburse a loan. Official amounts are managed in Loan Management.</p>}
         {area !== "issues" && !record && <>
           <FormField label="Find an existing CRM record (optional)" value={linkSearch} placeholder="Search customer name or case code" onChange={event => setLinkSearch(event.target.value)} />
-          <SelectField label="Link existing CRM record" placeholder="Manual entry — no CRM link" value={values.case_id || values.lead_id || ""}
+          <SelectField label="Link existing CRM record" placeholder="Manual entry — no CRM link" value={values.case_id && area === "follow-ups" && values.status !== "DISBURSE" ? `case:${values.case_id}` : values.case_id || values.lead_id || ""}
             options={linkOptions.map(option => ({ value: option.id, label: [option.name, "bank" in option ? option.bank : "", option.code].filter(Boolean).join(" · ") }))}
             onChange={event => linkRecord(event.target.value)} />
         </>}

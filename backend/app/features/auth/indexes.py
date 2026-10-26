@@ -27,3 +27,21 @@ async def ensure_auth_indexes(db: AsyncIOMotorDatabase[Any]) -> None:
     await db["audit_logs"].create_index("user_id")
     await db["audit_logs"].create_index("mobile")
     await db["audit_logs"].create_index("created_at")
+
+    await ensure_attendance_indexes(db)
+
+
+async def ensure_attendance_indexes(db: AsyncIOMotorDatabase[Any]) -> None:
+    await db.sessions.create_index([("status", 1), ("last_activity_at", 1)])
+    await db.sessions.create_index([("user_id", 1), ("login_at", 1)])
+    await db.attendance_days.create_index([("user_id", 1), ("date", 1)], unique=True)
+
+    await db.sessions.create_index(
+        "login_request_key",
+        unique=True,
+        partialFilterExpression={"login_request_key": {"$type": "string"}},
+    )
+
+    await db.sessions.create_index("login_at")
+
+    await db.session_corrections.create_index([("user_id", 1), ("login_at", 1), ("logout_at", 1)])

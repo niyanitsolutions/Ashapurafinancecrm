@@ -42,7 +42,11 @@ def stored_values(payload: FollowUpInput | IssueInput | ProgressInput) -> dict[s
     }
 
 
-def public(doc: dict[str, Any]) -> dict[str, Any]:
+def public(doc: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
+    from app.features.daily_operations.follow_status import effective_status
+
+    if "due_date" in doc and "customer_number" in doc:
+        doc = {**doc, "status": effective_status(doc["status"], doc.get("due_date"), now or utc_now())}
     doc = calendar_values(doc)
     if "history" in doc:
         doc["history"] = [
@@ -128,6 +132,33 @@ class DailyOperationsService:
             data["source"] = "crm"
             return data
         if not payload.lead_id:
+            from app.shared.customer_identity import normalize_mobile, normalized_name
+
+            try:
+                mobile = normalize_mobile(payload.customer_number)
+            except ValueError:
+                mobile = payload.customer_number  # Preserve manual international numbers.
+            matches = (
+                await LeadService(self.db).check_duplicate(mobile, actor)
+                if mobile.isdigit() and len(mobile) == 10 and mobile[0] in "6789"
+                else []
+            )
+            if matches:
+                matching = matches[0]
+                if normalized_name(matching.full_name) != normalized_name(payload.customer_name):
+                    raise ValidationError(
+                        "This mobile belongs to a different customer name. Review the linked lead before continuing."
+                    )
+                return await self.validate_follow_up(
+                    payload.model_copy(update={"lead_id": matching.require_id()}), actor
+                )
+            customer = await self.db.customers.find_one(
+                {"mobile": mobile, "is_deleted": False}, {"_id": 1}
+            )
+            if customer:
+                raise ValidationError(
+                    "Use Link existing CRM record to choose the existing customer's loan. This daily entry does not create a new customer."
+                )
             data = stored_values(payload)
             data.update(await assignee(self, actor, payload.assigned_to, payload.employee_name))
             data["source"] = "manual"
@@ -277,7 +308,12 @@ class DailyOperationsService:
         else:
             data = await self.validate_issue(payload, actor, old)
         now = utc_now()
+        if isinstance(payload, FollowUpInput):
+            from app.features.daily_operations.follow_status import effective_status
+
+            data["status"] = effective_status(data["status"], data.get("due_date"), now)
         event = {
+            "source": "manual",
             "actor_id": actor.require_id(),
             "at": now,
             "before": {k: old.get(k) for k in data} if old else None,
@@ -350,6 +386,7 @@ class DailyOperationsService:
         sort: str = "-date",
     ) -> dict[str, Any]:
         await self.authorize(actor, kind)
+        now = utc_now()
         query = await self.scope(actor, kind)
         if kind == "progress":
             query["case_id"] = None  # Linked annotations are already merged with CRM cases.
@@ -422,6 +459,9 @@ class DailyOperationsService:
             raise ValidationError("Unsupported sort column.")
         pipeline: list[dict[str, Any]] = [{"$project": {"history": 0}}]
         if kind == "follow-ups":
+            from app.features.daily_operations.follow_status import status_stage
+
+            pipeline.append(status_stage(now))
             await self.authorize_lead_view(actor)
             if actor.role != OWNER:
                 # Old linked rows predate case_oid. Fail closed on their case ownership;
@@ -583,7 +623,7 @@ class DailyOperationsService:
                 else "Unassigned",
             )
         return {
-            "items": [public(item) for item in result["items"]],
+            "items": [public(item, now) for item in result["items"]],
             "total": result["total"][0]["value"] if result["total"] else 0,
             "statuses": {item["_id"]: item["count"] for item in result["statuses"]},
             "breakdowns": {

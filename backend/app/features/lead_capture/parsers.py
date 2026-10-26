@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.features.lead_capture.constants import FailureReason
+from app.shared.customer_identity import normalize_mobile as canonical_mobile
 
 _MOBILE_PATTERN = re.compile(r"^[6-9]\d{9}$")
 
@@ -44,10 +45,11 @@ class ParsedLead:
 
 
 def normalize_mobile(raw: str) -> str:
-    digits = "".join(ch for ch in raw if ch.isdigit())
-    if len(digits) == 12 and digits.startswith("91"):
-        digits = digits[2:]
-    return digits
+    try:
+        return canonical_mobile(raw)
+    except ValueError:
+        raise CaptureValidationError(FailureReason.INVALID_DATA, "Enter a valid Indian mobile number.") from None
+
 
 
 def extract_source_metadata(payload: dict[str, Any]) -> dict[str, str]:

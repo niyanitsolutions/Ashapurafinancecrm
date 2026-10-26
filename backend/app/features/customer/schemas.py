@@ -1,11 +1,12 @@
 from datetime import date, datetime
 from typing import Any
 
-from pydantic import AliasChoices, BaseModel, EmailStr, Field
+from pydantic import AliasChoices, BaseModel, EmailStr, Field, field_validator
 
 from app.features.customer.constants import ConditionOperator, FieldFormat, FieldType, OptionsSource
 from app.features.employee.schemas import AddressSchema
 from app.security.password import PasswordStr
+from app.shared.customer_identity import normalize_mobile
 
 # ---------------------------------------------------------------------- onboarding (public)
 # Authentication/registration itself always happens through Auth's own, single flow
@@ -17,6 +18,8 @@ from app.security.password import PasswordStr
 
 
 class DirectRegisterRequest(BaseModel):
+    _phone = field_validator("mobile", mode="before")(normalize_mobile)
+
     mobile: str = Field(pattern=r"^[6-9]\d{9}$")
 
 
@@ -26,6 +29,8 @@ class CompleteDirectRegistrationRequest(BaseModel):
     `otp_verified_token` (from `POST /auth/verify-otp`, after `start_direct_registration`
     sends the code) proves phone ownership; a real password is always required on top of
     that, never in place of it."""
+
+    _phone = field_validator("mobile", mode="before")(normalize_mobile)
 
     full_name: str = Field(min_length=3)
     email: EmailStr

@@ -1888,9 +1888,8 @@ async def test_duplicate_active_mobile_blocked_on_create(client, mock_db, owner_
     assert error["details"]["existing_lead_code"] == first["lead_code"]
 
 
-async def test_duplicate_mobile_allowed_when_existing_lead_is_rejected(client, mock_db, owner_headers, master_data):
-    """A mobile number may legitimately recur if the only existing lead using it was
-    already rejected — creating a fresh lead for that same customer must still work."""
+async def test_duplicate_mobile_blocked_when_existing_lead_is_rejected(client, mock_db, owner_headers, master_data):
+    """Strict identity policy also blocks rejected leads; applications reuse the identity."""
     lmd = await _lead_master_data(mock_db)
     employee = await _create_employee(client, owner_headers, master_data, mobile="9788880064", email="dupreject1@example.com")
     first = await _create_lead(client, owner_headers, lmd, mobile="9611170008", assigned_to=employee["id"])
@@ -1898,11 +1897,9 @@ async def test_duplicate_mobile_allowed_when_existing_lead_is_rejected(client, m
     assert r.status_code == 200, r.text
 
     r = await client.post("/api/v1/leads", json=_lead_payload(lmd, mobile="9611170008"), headers=owner_headers)
-    assert r.status_code == 200, r.text
-    second = r.json()["data"]
-    assert second["mobile"] == "9611170008"
-    assert second["is_potential_duplicate"] is True
-    assert second["duplicate_of_lead_ids"] == [first["id"]]
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["details"]["existing_lead_id"] == first["id"]
+    assert await mock_db.leads.count_documents({"mobile": "9611170008"}) == 1
 
 
 async def test_follow_up_sorting_past_today_future_no_date(client, mock_db, owner_headers):

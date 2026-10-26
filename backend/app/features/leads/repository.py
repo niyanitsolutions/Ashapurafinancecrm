@@ -28,7 +28,9 @@ class LeadRepository(BaseRepository[Lead]):
     model = Lead
 
     async def find_by_mobile(self, mobile: str, *, exclude_id: str | None = None) -> list[Lead]:
-        query: dict[str, Any] = {"mobile": mobile, "is_deleted": False}
+        from app.shared.customer_identity import normalize_mobile
+
+        query: dict[str, Any] = {"mobile": normalize_mobile(mobile), "is_deleted": False}
         if exclude_id:
             from app.utils.helpers import to_object_id
 

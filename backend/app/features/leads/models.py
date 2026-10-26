@@ -42,6 +42,7 @@ class LeadFinancialAssessment(BaseModel):
 class Lead(BaseDocument):
     lead_code: str  # AFS-LEAD-000001, auto-generated
 
+    identity_name: str = ""
     full_name: str
     mobile: str
     email: str | None = None

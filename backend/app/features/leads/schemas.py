@@ -1,14 +1,17 @@
 from datetime import date, datetime
 from typing import Any
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from app.features.leads.constants import LeadStage, ProductCategory
 from app.features.leads.models import LeadFinancialAssessment
 from app.security.password import PasswordStr
+from app.shared.customer_identity import normalize_mobile
 
 
 class CreateLeadRequest(BaseModel):
+    _normalize_mobile = field_validator("mobile", mode="before")(normalize_mobile)
+
     full_name: str
     mobile: str = Field(pattern=r"^[6-9]\d{9}$")
     email: EmailStr | None = None
@@ -39,6 +42,11 @@ class CreateLeadRequest(BaseModel):
 
 
 class UpdateLeadRequest(BaseModel):
+    @field_validator("mobile", mode="before")
+    @classmethod
+    def normalize_phone(cls, value: Any) -> Any:
+        return normalize_mobile(value) if value is not None else value
+
     full_name: str | None = None
     mobile: str | None = Field(default=None, pattern=r"^[6-9]\d{9}$")
     email: EmailStr | None = None

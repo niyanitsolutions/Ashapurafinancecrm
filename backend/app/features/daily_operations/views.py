@@ -329,7 +329,7 @@ async def correct_session(
         {"user_id": session["user_id"], "is_deleted": False}
     ):
         raise NotFoundError("Employee session not found.")
-    data = payload.model_dump(exclude={"version"})
+    data = {**payload.model_dump(exclude={"version"}), "user_id": session["user_id"]}
     event = {**data, "actor_id": actor.require_id(), "at": utc_now(), "import_key": import_key}
     collection = service.db.session_corrections
     if payload.version == 0:
@@ -349,121 +349,24 @@ async def correct_session(
         )
         if not result:
             raise ConflictError("Correction changed or its history limit was reached; reload.")
+    from datetime import timedelta
+
+    from app.features.auth.session_lifecycle import ensure_summary
+
+    day = to_ist(payload.login_at).date()
+    while day <= to_ist(payload.logout_at).date():
+        await ensure_summary(service.db, session["user_id"], ist_date_to_utc_midnight(day))
+        day += timedelta(days=1)
     return {"family_id": family_id, "version": payload.version + 1}
 
 
 async def sessions(
-    service: DailyOperationsService,
-    actor: User,
-    *,
-    page: int = 1,
-    page_size: int = 20,
-    employee: str = "",
-    employee_name: str = "",
-    date_from: date | None = None,
+    service: DailyOperationsService, actor: User, *, page: int = 1, page_size: int = 20,
+    employee: str = "", employee_name: str = "", date_from: date | None = None,
     date_to: date | None = None,
 ) -> dict[str, Any]:
-    await service.authorize(actor, "sessions")
-    query: dict[str, Any] = {"is_deleted": False}
-    if actor.role != OWNER:
-        query["user_id"] = actor.require_id()
-    pipeline: list[dict[str, Any]] = [
-        {"$match": query},
-        {"$sort": {"updated_at": 1, "_id": 1}},
-        {
-            "$group": {
-                "_id": "$family_id",
-                "user_id": {"$first": "$user_id"},
-                "login_at": {"$min": "$login_at"},
-                "logout_at": {"$max": "$logout_at"},
-                "status": {"$last": "$status"},
-            }
-        },
-        {
-            "$lookup": {
-                "from": "employees",
-                "localField": "user_id",
-                "foreignField": "user_id",
-                "as": "employee",
-            }
-        },
-        {"$unwind": "$employee"},
-        {"$match": {"employee.is_deleted": False}},
-        {
-            "$lookup": {
-                "from": "daily_session_visibility",
-                "localField": "_id",
-                "foreignField": "_id",
-                "as": "daily_visibility",
-            }
-        },
-        {"$match": {"daily_visibility.is_deleted": {"$ne": True}}},
-    ]
-    if employee_name:
-        pipeline.append(
-            {
-                "$match": {
-                    "employee.display_name": {"$regex": re.escape(employee_name), "$options": "i"}
-                }
-            }
-        )
-    if employee:
-        if not ObjectId.is_valid(employee):
-            raise ValidationError("Employee must be a CRM ID.")
-        pipeline.append({"$match": {"employee._id": ObjectId(employee)}})
-    if date_from and date_to and date_from > date_to:
-        raise ValidationError("Start date must be before end date.")
-    if date_from or date_to:
-        from datetime import timedelta
+    from app.features.daily_operations.attendance import daily_sessions
 
-        dates: dict[str, Any] = {}
-        if date_from:
-            dates["$gte"] = ist_date_to_utc_midnight(date_from)
-        if date_to:
-            dates["$lt"] = ist_date_to_utc_midnight(date_to + timedelta(days=1))
-        pipeline.append({"$match": {"login_at": dates}})
-    pipeline.append(
-        {
-            "$facet": {
-                "items": [
-                    {"$sort": {"login_at": -1, "_id": 1}},
-                    {"$skip": (page - 1) * page_size},
-                    {"$limit": page_size},
-                ],
-                "total": [{"$count": "value"}],
-            }
-        }
-    )
-    result = (await service.db.sessions.aggregate(pipeline).to_list(1))[0]
-    corrections = {
-        c["_id"]: c
-        for c in await service.db.session_corrections.find(
-            {"_id": {"$in": [s["_id"] for s in result["items"]]}}
-        ).to_list(page_size)
-    }
-    items = []
-    for session in result["items"]:
-        correction = corrections.get(session["_id"], {})
-        login = correction.get("login_at", session["login_at"])
-        logout = correction.get("logout_at", session.get("logout_at"))
-        items.append(
-            {
-                "id": session["_id"],
-                "employee_name": session["employee"]["display_name"],
-                "employee_id": str(session["employee"]["_id"]),
-                "date": to_ist(login).date().isoformat(),
-                "login_at": login,
-                "logout_at": logout,
-                "status": session["status"],
-                "recorded_seconds": max(
-                    0, int((ensure_utc(logout) - ensure_utc(login)).total_seconds())
-                )
-                if logout
-                else None,
-                "corrected": bool(correction),
-                "correction_version": correction.get("version", 0),
-                "original_login_at": session["login_at"],
-                "original_logout_at": session.get("logout_at"),
-            }
-        )
-    return {"items": items, "total": result["total"][0]["value"] if result["total"] else 0}
+    return await daily_sessions(service, actor, page=page, page_size=page_size,
+                                employee=employee, employee_name=employee_name,
+                                date_from=date_from, date_to=date_to)

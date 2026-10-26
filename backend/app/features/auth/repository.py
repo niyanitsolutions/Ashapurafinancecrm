@@ -29,7 +29,10 @@ class SessionRepository(BaseRepository[Session]):
         """Kills every row in a rotation family — the response to detecting a stale
         refresh token being reused (see docs/decisions/DECISIONS.md #013).
         """
+        if await self.collection.find_one({"family_id": family_id, "is_deleted": False,
+                                            "status": {"$in": ["logged_out", SESSION_STATUS_REVOKED]}}, {"_id": 1}):
+            return  # Preserve an already-completed session's end time and reason.
         await self.collection.update_many(
-            {"family_id": family_id, "is_deleted": False},
-            {"$set": {"status": SESSION_STATUS_REVOKED, "updated_at": utc_now()}, "$inc": {"version": 1}},
+            {"family_id": family_id, "is_deleted": False, "status": {"$in": ["active", "rotated"]}},
+            {"$set": {"status": SESSION_STATUS_REVOKED, "logout_at": utc_now(), "end_reason": "session_revoked", "updated_at": utc_now()}, "$inc": {"version": 1}},
         )

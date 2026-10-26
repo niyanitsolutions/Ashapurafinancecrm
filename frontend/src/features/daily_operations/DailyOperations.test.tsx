@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,6 +19,24 @@ function mount(component: React.ReactNode) {
 beforeEach(() => { vi.clearAllMocks(); mocks.can.mockReturnValue(true); mocks.list.mockResolvedValue({ items: [], total: 0 }); mocks.getLookups.mockResolvedValue({ self_id: "synthetic-user", employees: [], leads: [], cases: [] }); });
 
 describe("daily operations", () => {
+  it.each([
+    ["FOLLOW UP PENDING", "!bg-red-50"], ["NEXT FOLLOW UP", "!bg-blue-50"],
+    ["DISBURSE", "!bg-green-50"], ["REJECTED WITH REASON", "!bg-yellow-50"],
+  ])("colors the whole %s row and retains its label", async (status, color) => {
+    mocks.list.mockResolvedValue({ items: [{ id: "row", status, customer_name: "Synthetic Customer" }], total: 1 });
+    mount(<DailyOperationsPage area="follow-ups" />);
+    const row = (await screen.findByText("Synthetic Customer")).closest("tr")!;
+    expect(row).toHaveClass(color);
+    expect(within(row).getByText(status)).toBeInTheDocument();
+  });
+  it("opens separate session history from a daily summary", async () => {
+    mocks.list.mockResolvedValue({ items: [{ id: "user:2026-10-26", recorded_seconds: 9000, status: "active", sessions: [{ id: "family1", recorded_seconds: 3600, status: "logged_out", end_reason: "manual_logout" }] }], total: 1 });
+    mount(<DailyOperationsPage area="sessions" />);
+    expect(await screen.findByText("2h 30m")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Session history" }));
+    expect(await screen.findByText(/Manual Logout/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Correct session" })).toBeInTheDocument();
+  });
   it("adds one Daily Update navigation entry and preserves CRM sections", () => {
     const daily = NAV_SECTIONS.flatMap(section => section.items).filter(item => item.to.startsWith("/daily-operations"));
     expect(daily).toHaveLength(1);

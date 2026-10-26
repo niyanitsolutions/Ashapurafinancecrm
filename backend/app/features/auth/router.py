@@ -143,3 +143,9 @@ def _session_summary(session: Session) -> SessionSummary:
         last_activity_at=session.last_activity_at,
         status=session.status,
     )
+
+
+@router.post("/activity")
+async def activity(current_user: CurrentUserDep) -> ApiResponse[dict[str, bool]]:
+    """Called on visible user interaction; polling/refresh never extends idle time."""
+    return ApiResponse[dict[str, bool]].ok({"active": True})
