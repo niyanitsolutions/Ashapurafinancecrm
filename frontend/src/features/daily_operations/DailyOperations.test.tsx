@@ -7,21 +7,21 @@ import { RecordForm } from "./RecordForm";
 import { TransferCentre } from "./TransferCentre";
 import { NAV_SECTIONS } from "@/components/layout/navConfig";
 
-const mocks = vi.hoisted(() => ({ list: vi.fn(), save: vi.fn(), getLookups: vi.fn(), request: vi.fn(), can: vi.fn(() => true) }));
+const mocks = vi.hoisted(() => ({ list: vi.fn(), save: vi.fn(), getLookups: vi.fn(), request: vi.fn(), download: vi.fn().mockResolvedValue(undefined), can: vi.fn(() => true) }));
 vi.mock("@/features/auth/useAuth", () => ({ useAuth: () => ({ userId: "isolated-test-user" }) }));
 vi.mock("@/features/access_control/usePermissions", () => ({ usePermissions: () => ({ can: mocks.can, isOwner: true, loading: false }) }));
 vi.mock("@/shared/api/client", async importOriginal => ({ ...await importOriginal<typeof import("@/shared/api/client")>(), apiRequest: mocks.request }));
-vi.mock("./api", async importOriginal => ({ ...await importOriginal<typeof import("./api")>(), listRecords: mocks.list, saveRecord: mocks.save, getLookups: mocks.getLookups }));
+vi.mock("./api", async importOriginal => ({ ...await importOriginal<typeof import("./api")>(), listRecords: mocks.list, saveRecord: mocks.save, getLookups: mocks.getLookups, download: mocks.download }));
 
-function mount(component: React.ReactNode) {
-  return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter>{component}</MemoryRouter></QueryClientProvider>);
+function mount(component: React.ReactNode, initialEntries = ["/"]) {
+  return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={initialEntries}>{component}</MemoryRouter></QueryClientProvider>);
 }
 beforeEach(() => { vi.clearAllMocks(); mocks.can.mockReturnValue(true); mocks.list.mockResolvedValue({ items: [], total: 0 }); mocks.getLookups.mockResolvedValue({ self_id: "synthetic-user", employees: [], leads: [], cases: [] }); });
 
 describe("daily operations", () => {
   it.each([
-    ["FOLLOW UP PENDING", "!bg-red-50"], ["NEXT FOLLOW UP", "!bg-blue-50"],
-    ["DISBURSE", "!bg-green-50"], ["REJECTED WITH REASON", "!bg-yellow-50"],
+    ["FOLLOW UP PENDING", "!bg-red-300"], ["NEXT FOLLOW UP", "!bg-blue-300"],
+    ["DISBURSE", "!bg-green-300"], ["REJECTED WITH REASON", "!bg-yellow-300"],
   ])("colors the whole %s row and retains its label", async (status, color) => {
     mocks.list.mockResolvedValue({ items: [{ id: "row", status, customer_name: "Synthetic Customer" }], total: 1 });
     mount(<DailyOperationsPage area="follow-ups" />);
@@ -36,6 +36,33 @@ describe("daily operations", () => {
     fireEvent.click(screen.getByRole("button", { name: "Session history" }));
     expect(await screen.findByText(/Manual Logout/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Correct session" })).toBeInTheDocument();
+  });
+  it("uses the server business month as the visible default", async () => {
+    mocks.list.mockResolvedValue({ items: [], total: 0, month: "2026-10", business_timezone: "Asia/Kolkata" });
+    mount(<DailyOperationsPage area="sessions" />);
+    await waitFor(() => expect(screen.getByLabelText("Month")).toHaveValue("2026-10"));
+    expect(screen.getByLabelText("Employee name")).toBeInTheDocument();
+    expect(screen.getByText("More filters")).toBeInTheDocument();
+  });
+  it("restores the URL month and preserves employee filtering while resetting pagination", async () => {
+    mount(<DailyOperationsPage area="sessions" />, ["/?month=2026-10&employee_name=Synthetic&page=3"]);
+    await waitFor(() => expect(mocks.list).toHaveBeenCalledWith("sessions", expect.stringContaining("page=3")));
+    expect(screen.getByLabelText("Month")).toHaveValue("2026-10");
+    fireEvent.change(screen.getByLabelText("Month"), { target: { value: "2026-09" } });
+    await waitFor(() => {
+      const query = new URLSearchParams(mocks.list.mock.lastCall![1]);
+      expect(query.get("month")).toBe("2026-09");
+      expect(query.get("employee_name")).toBe("Synthetic");
+      expect(query.get("page")).toBe("1");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "CSV" }));
+    await waitFor(() => expect(mocks.download).toHaveBeenCalledWith(expect.stringContaining("month=2026-09"), "sessions.csv"));
+  });
+  it("does not add a Month control or forward attendance month to other tabs", async () => {
+    mount(<DailyOperationsPage area="follow-ups" />, ["/?month=2026-09"]);
+    await screen.findByText(/No records match/);
+    expect(screen.queryByLabelText("Month")).not.toBeInTheDocument();
+    expect(new URLSearchParams(mocks.list.mock.lastCall![1]).has("month")).toBe(false);
   });
   it("adds one Daily Update navigation entry and preserves CRM sections", () => {
     const daily = NAV_SECTIONS.flatMap(section => section.items).filter(item => item.to.startsWith("/daily-operations"));

@@ -1,0 +1,93 @@
+{
+  "kind": "synthetic-api-browser-evidence",
+  "evidence": [
+    {
+      "role": "owner",
+      "width": 1440,
+      "result": "PASS",
+      "checks": [
+        "four cell colors",
+        "text and action contrast >= 4.5",
+        "keyboard focus",
+        "status poll update",
+        "day segment history",
+        "server month default",
+        "URL reload",
+        "employee filter",
+        "filtered export",
+        "responsive page"
+      ],
+      "overflow": {
+        "pageWidth": 1440,
+        "viewport": 1440,
+        "tableWidth": 1094
+      }
+    },
+    {
+      "role": "owner",
+      "width": 390,
+      "result": "PASS",
+      "checks": [
+        "four cell colors",
+        "text and action contrast >= 4.5",
+        "keyboard focus",
+        "status poll update",
+        "day segment history",
+        "server month default",
+        "URL reload",
+        "employee filter",
+        "filtered export",
+        "responsive page"
+      ],
+      "overflow": {
+        "pageWidth": 390,
+        "viewport": 390,
+        "tableWidth": 699
+      }
+    },
+    {
+      "role": "employee",
+      "width": 1440,
+      "result": "PASS",
+      "checks": [
+        "four cell colors",
+        "text and action contrast >= 4.5",
+        "keyboard focus",
+        "status poll update",
+        "day segment history",
+        "server month default",
+        "URL reload",
+        "employee filter",
+        "filtered export",
+        "responsive page"
+      ],
+      "overflow": {
+        "pageWidth": 1440,
+        "viewport": 1440,
+        "tableWidth": 1094
+      }
+    },
+    {
+      "role": "employee",
+      "width": 390,
+      "result": "PASS",
+      "checks": [
+        "four cell colors",
+        "text and action contrast >= 4.5",
+        "keyboard focus",
+        "status poll update",
+        "day segment history",
+        "server month default",
+        "URL reload",
+        "employee filter",
+        "filtered export",
+        "responsive page"
+      ],
+      "overflow": {
+        "pageWidth": 390,
+        "viewport": 390,
+        "tableWidth": 796
+      }
+    }
+  ]
+}

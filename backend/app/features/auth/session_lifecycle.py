@@ -23,14 +23,29 @@ async def ensure_summary(db: AsyncIOMotorDatabase[Any], user_id: str, now: datet
                 "$setOnInsert": {
                     "user_id": user_id,
                     "date": day,
-                    "created_at": now,
+                    "created_at": utc_now(),
                 }
             },
             upsert=True,
         )
     except DuplicateKeyError:
-        pass  # Another request inserted the same deterministic employee/date key.
+        existing = await db.attendance_days.find_one({"user_id": user_id, "date": day}, {"_id": 1})
+        if existing:
+            return str(existing["_id"])
+        raise
     return key
+
+
+async def ensure_summary_range(
+    db: AsyncIOMotorDatabase[Any], user_id: str, login: datetime, finish: datetime
+) -> None:
+    from app.features.daily_operations.calendar import day_segments
+
+    if ensure_utc(login) == ensure_utc(finish):
+        await ensure_summary(db, user_id, login)
+        return
+    for _, start, _ in day_segments(login, finish):
+        await ensure_summary(db, user_id, start)
 
 
 async def expire_sessions(db: AsyncIOMotorDatabase[Any], limit: int = 500) -> int:
@@ -48,6 +63,7 @@ async def expire_sessions(db: AsyncIOMotorDatabase[Any], limit: int = 500) -> in
         .limit(limit)
     ):
         end = ensure_utc(doc["last_activity_at"]) + IDLE_TIMEOUT
+        await ensure_summary_range(db, doc["user_id"], doc["last_activity_at"], end)
         result = await db.sessions.update_one(
             {"_id": doc["_id"], "status": "active", "last_activity_at": doc["last_activity_at"]},
             {
@@ -70,8 +86,6 @@ async def expire_sessions(db: AsyncIOMotorDatabase[Any], limit: int = 500) -> in
                 },
             },
         )
-        if result.modified_count:
-            await ensure_summary(db, doc["user_id"], end - timedelta(microseconds=1))
         count += result.modified_count
     async for receipt in db.sessions.find(
         {
@@ -124,7 +138,13 @@ async def validate_family(
         async for stale in db.sessions.find(
             {"user_id": user_id, "family_id": family_id, "status": "active", "is_deleted": False}
         ):
-            result = await db.sessions.update_one(
+            await ensure_summary_range(
+                db,
+                user_id,
+                stale["last_activity_at"],
+                ensure_utc(stale["last_activity_at"]) + IDLE_TIMEOUT,
+            )
+            await db.sessions.update_one(
                 {
                     "_id": stale["_id"],
                     "status": "active",
@@ -149,14 +169,6 @@ async def validate_family(
                     },
                 },
             )
-            if result.modified_count:
-                await ensure_summary(
-                    db,
-                    user_id,
-                    ensure_utc(stale["last_activity_at"])
-                    + IDLE_TIMEOUT
-                    - timedelta(microseconds=1),
-                )
         raise UnauthorizedError("Session expired or revoked. Please login again.")
     await ensure_summary(db, user_id, now)
     return dict(doc)

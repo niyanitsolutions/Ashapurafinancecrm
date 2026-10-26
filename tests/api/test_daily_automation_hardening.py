@@ -374,7 +374,7 @@ async def test_correction_moved_to_another_business_day_remains_visible(
         ),
     )
     day = to_ist(NOW - timedelta(days=1)).date()
-    result = await attendance.daily_sessions(service, actor, date_from=day, date_to=day)
+    result = await attendance.daily_sessions(service, actor, date_from=day, date_to=day, month=day.isoformat()[:7])
     assert result["total"] == 1
     assert result["items"][0]["recorded_seconds"] == 3600
     assert (
@@ -466,5 +466,5 @@ async def test_cross_midnight_time_is_clipped_to_each_day(mock_db, monkeypatch):
     assert result["total"] == 2
     current, previous = result["items"]
     assert current["recorded_seconds"] == previous["recorded_seconds"] == 300
-    assert current["status"] == "active" and previous["status"] == "logged_out"
+    assert current["status"] == "active" and previous["status"] == "day_completed"
     assert current["logout_at"] is None and previous["logout_at"] is None

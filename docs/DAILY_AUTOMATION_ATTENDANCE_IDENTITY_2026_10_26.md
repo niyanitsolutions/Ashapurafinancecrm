@@ -1,5 +1,7 @@
 # Daily follow-up, attendance and identity hardening ? 26 October 2026
 
+> Calendar-day summary login semantics, brighter colors and monthly filtering are superseded by [the targeted calendar release correction](DAILY_CALENDAR_RELEASE_FIX_2026_10_26.md). Original session starts remain in history.
+
 ## Executive summary and verdict
 
 IMPLEMENTATION COMPLETE ? READY FOR OWNER RELEASE REVIEW.

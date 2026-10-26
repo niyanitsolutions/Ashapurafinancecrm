@@ -46,6 +46,7 @@ class Filters(BaseModel):
     overdue: bool = False
     sort: str = "-date"
     old_days: int = 0
+    month: str | None = None
 
 
 def filters(
@@ -62,6 +63,7 @@ def filters(
     overdue: bool = False,
     sort: Annotated[str, Query(max_length=30)] = "-date",
     old_days: Annotated[int, Query(ge=0, le=36500)] = 0,
+    month: Annotated[str | None, Query(pattern=r"^[0-9]{4}-(0[1-9]|1[0-2])$")] = None,
 ) -> Filters:
     return Filters(**locals())
 
@@ -77,9 +79,10 @@ async def list_area(
             **{
                 k: v
                 for k, v in values.items()
-                if k in {"page", "page_size", "employee", "employee_name", "date_from", "date_to"}
+                if k in {"page", "page_size", "employee", "employee_name", "date_from", "date_to", "month"}
             },
         )
+    values.pop("month")
     if kind == "progress":
         values.pop("overdue")
         if values["sort"] == "-date":
@@ -299,7 +302,7 @@ async def progress(
     db: Db,
     criteria: Annotated[Filters, Depends(filters)],
 ) -> ApiResponse[dict[str, Any]]:
-    values = criteria.model_dump(exclude={"overdue"})
+    values = criteria.model_dump(exclude={"overdue", "month"})
     if values["sort"] == "-date":
         values["sort"] = "-updated_at"
     return ApiResponse[dict[str, Any]].ok(

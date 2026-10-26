@@ -35,6 +35,7 @@ async def ensure_attendance_indexes(db: AsyncIOMotorDatabase[Any]) -> None:
     await db.sessions.create_index([("status", 1), ("last_activity_at", 1)])
     await db.sessions.create_index([("user_id", 1), ("login_at", 1)])
     await db.attendance_days.create_index([("user_id", 1), ("date", 1)], unique=True)
+    await db.attendance_days.create_index([("date", -1), ("user_id", 1)])
 
     await db.sessions.create_index(
         "login_request_key",

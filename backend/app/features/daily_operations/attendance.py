@@ -6,15 +6,17 @@ from typing import Any
 
 from bson import ObjectId
 
+from app.config.settings import get_settings
 from app.constants.roles import OWNER
 from app.core.exceptions import ValidationError
 from app.features.auth.models import User
 from app.features.auth.session_lifecycle import IDLE_TIMEOUT
+from app.features.daily_operations.calendar import month_bounds
 from app.features.daily_operations.service import DailyOperationsService
 from app.utils.datetime import ensure_utc, ist_date_to_utc_midnight, utc_now
 
 
-def union_seconds(intervals: list[tuple[datetime, datetime]]) -> int:
+def union_seconds(intervals: list[tuple[datetime, datetime]]) -> float:
     """Count employee active time once, even with overlapping devices."""
     merged: list[tuple[datetime, datetime]] = []
     for start, end in sorted(
@@ -27,7 +29,33 @@ def union_seconds(intervals: list[tuple[datetime, datetime]]) -> int:
             merged[-1] = (merged[-1][0], max(end, merged[-1][1]))
         else:
             merged.append((start, end))
-    return int(sum((end - start).total_seconds() for start, end in merged))
+    elapsed = sum((end - start for start, end in merged), timedelta()).total_seconds()
+    return int(elapsed) if elapsed.is_integer() else elapsed
+
+
+def session_window(
+    family: dict[str, Any], correction: dict[str, Any], now: datetime
+) -> tuple[datetime, datetime, datetime | None, bool]:
+    """Shared eligible interval; corrections never mutate authentication history."""
+    login = ensure_utc(correction.get("login_at", family["login_at"]))
+    deadline = ensure_utc(family.get("last_activity_at") or family["login_at"]) + IDLE_TIMEOUT
+    active = (
+        family["status"] == "active"
+        and not family["has_ended"]
+        and deadline > now
+        and not correction
+    )
+    logout = correction.get("logout_at", family.get("logout_at"))
+    finish = ensure_utc(logout) if logout else min(now, deadline)
+    if (
+        family.get("end_reason") in {"session_revoked", "administrative_revocation"}
+        and not correction
+    ):
+        finish = min(finish, deadline)
+        logout = finish
+    if not active and not logout and family["status"] == "active":
+        logout = deadline
+    return login, finish, logout, bool(active)
 
 
 async def daily_sessions(
@@ -40,17 +68,22 @@ async def daily_sessions(
     employee_name: str = "",
     date_from: date | None = None,
     date_to: date | None = None,
+    month: str | None = None,
 ) -> dict[str, Any]:
     await service.authorize(actor, "sessions")
     if date_from and date_to and date_from > date_to:
         raise ValidationError("Start date must be before end date.")
-    query: dict[str, Any] = {}
+    now = utc_now()
+    selected_month, month_start, next_month = month_bounds(month, now)
+    metadata = {"month": selected_month, "business_timezone": get_settings().timezone, "as_of": now}
+    query: dict[str, Any] = {
+        "date": {"$gte": month_start.isoformat(), "$lt": next_month.isoformat()}
+    }
     if actor.role != OWNER:
         query["user_id"] = actor.require_id()
     if date_from or date_to:
-        query["date"] = {}
         if date_from:
-            query["date"]["$gte"] = date_from.isoformat()
+            query["date"]["$gte"] = max(month_start, date_from).isoformat()
         if date_to:
             query["date"]["$lte"] = date_to.isoformat()
     pipeline: list[dict[str, Any]] = [
@@ -93,8 +126,11 @@ async def daily_sessions(
     result = (await service.db.attendance_days.aggregate(pipeline).to_list(1))[0]
     days = result["items"]
     if not days:
-        return {"items": [], "total": result["total"][0]["value"] if result["total"] else 0}
-    now = utc_now()
+        return {
+            **metadata,
+            "items": [],
+            "total": result["total"][0]["value"] if result["total"] else 0,
+        }
     # Fetch all families for this page in one bounded query, never one query per employee.
     bounds = []
     for day in days:
@@ -183,37 +219,33 @@ async def daily_sessions(
             if family["user_id"] != day["user_id"]:
                 continue
             correction = corrections.get(family["_id"], {})
-            login = ensure_utc(correction.get("login_at", family["login_at"]))
-            deadline = (
-                ensure_utc(family.get("last_activity_at") or family["login_at"]) + IDLE_TIMEOUT
-            )
-            active = (
-                family["status"] == "active"
-                and not family["has_ended"]
-                and deadline > now
-                and not correction
-            )
-            logout = correction.get("logout_at", family.get("logout_at"))
-            finish = ensure_utc(logout) if logout else min(now, deadline)
+            login, finish, logout, active = session_window(family, correction, now)
             if (
-                family.get("end_reason") in {"session_revoked", "administrative_revocation"}
-                and not correction
+                finish < login
+                or login >= end
+                or finish < start
+                or (finish == start and login < start)
             ):
-                finish = min(finish, deadline)
-                logout = finish
-            if not active and not logout and family["status"] == "active":
-                logout = deadline
-            if finish <= start or login >= end:
                 continue
-            intervals.append((max(login, start), min(finish, end)))
+            segment_start, segment_end = max(login, start), min(finish, end)
+            intervals.append((segment_start, segment_end))
+            segment_status = (
+                "active"
+                if active and start <= now < end
+                else "day_boundary"
+                if finish >= end
+                else "finalized"
+            )
             history.append(
                 {
                     "id": family["_id"],
                     "login_at": login,
+                    "segment_start_at": segment_start,
+                    "segment_end_at": segment_end,
+                    "segment_status": segment_status,
+                    "continues_from_previous_day": login < start,
                     "logout_at": logout,
-                    "recorded_seconds": max(
-                        0, int((min(finish, end) - max(login, start)).total_seconds())
-                    ),
+                    "recorded_seconds": union_seconds([(segment_start, segment_end)]),
                     "status": "active" if active else "logged_out",
                     "end_reason": "administrative_correction"
                     if correction
@@ -252,7 +284,7 @@ async def daily_sessions(
                 "date": day["date"],
                 "employee_id": str(day["employee"]["_id"]),
                 "employee_name": day["employee"]["display_name"],
-                "login_at": min(h["login_at"] for h in history),
+                "login_at": min(h["segment_start_at"] for h in history),
                 "logout_at": max(
                     (
                         h["logout_at"]
@@ -263,10 +295,22 @@ async def daily_sessions(
                 ),
                 "status": "active"
                 if start <= now < end and any(h["status"] == "active" for h in history)
+                else "day_completed"
+                if any(h["segment_status"] == "day_boundary" for h in history)
+                else "timed_out"
+                if max(history, key=lambda h: h["segment_end_at"])["end_reason"]
+                == "inactivity_timeout"
                 else "logged_out",
+                "continues_from_previous_day": any(
+                    h["continues_from_previous_day"] for h in history
+                ),
                 "recorded_seconds": union_seconds(intervals),
                 "sessions": history,
                 "as_of": now,
             }
         )
-    return {"items": items, "total": result["total"][0]["value"] if result["total"] else 0}
+    return {
+        **metadata,
+        "items": items,
+        "total": result["total"][0]["value"] if result["total"] else 0,
+    }

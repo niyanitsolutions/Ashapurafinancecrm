@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/buttons/Button";
@@ -19,7 +19,7 @@ import { areas, base, businessTime, deleteRecord, download, followStatuses, getL
 import { RecordForm } from "./RecordForm";
 import { EmployeeNameField } from "./EmployeeNameField";
 
-const FILTER_KEYS = ["sort", "search", "status", "date_from", "date_to", "employee_name", "bank", "loan_type", "overdue", "old_days"];
+const FILTER_KEYS = ["month", "sort", "search", "status", "date_from", "date_to", "employee_name", "bank", "loan_type", "overdue", "old_days"];
 const columns: Record<Area, [string, string][]> = {
   "follow-ups": [["date", "DATE"], ["loan_type", "LOAN TYPE"], ["bank", "BANK / NBFCs"], ["customer_name", "CX NAME"], ["customer_number", "CX NUMBER"], ["remarks", "TODAY CASE STATUS"], ["remarks_date", "REMARKS DATE"], ["status", "FOLLOW PENDING"], ["due_date", "NEXT FOLLOW-UP"], ["employee_name", "EMPLOYEE NAME"]],
   progress: [["date", "DATE"], ["customer_name", "CX NAME"], ["customer_number", "CX NUMBER"], ["bank", "BANK / NBFC"], ["status", "TODAY CASE STAGE"], ["next_action", "WHAT'S NEXT?"], ["due_date", "NEXT FOLLOW-UP"], ["approved_amount", "APPROVED AMOUNT"], ["employee_name", "EMPLOYEE NAME"]],
@@ -27,10 +27,10 @@ const columns: Record<Area, [string, string][]> = {
   issues: [["date", "DATE"], ["employee_name", "EMPLOYEE NAME"], ["inquiry", "INQUIRY OR ISSUE"], ["assigned_to_name", "ASSIGNED TO"], ["priority", "PRIORITY"], ["status", "STATUS"], ["resolution_notes", "RESOLUTION NOTES"]],
 };
 const followRowColors: Record<string, string> = {
-  "FOLLOW UP PENDING": "!bg-red-50 text-red-950 hover:!bg-red-100 focus-within:!bg-red-100",
-  "NEXT FOLLOW UP": "!bg-blue-50 text-blue-950 hover:!bg-blue-100 focus-within:!bg-blue-100",
-  "DISBURSE": "!bg-green-50 text-green-950 hover:!bg-green-100 focus-within:!bg-green-100",
-  "REJECTED WITH REASON": "!bg-yellow-50 text-yellow-950 hover:!bg-yellow-100 focus-within:!bg-yellow-100",
+  "FOLLOW UP PENDING": "!bg-red-300 text-red-950 hover:!bg-red-400 focus-within:!bg-red-400 [&>td]:bg-inherit",
+  "NEXT FOLLOW UP": "!bg-blue-300 text-blue-950 hover:!bg-blue-400 focus-within:!bg-blue-400 [&>td]:bg-inherit",
+  "DISBURSE": "!bg-green-300 text-green-950 hover:!bg-green-400 focus-within:!bg-green-400 [&>td]:bg-inherit",
+  "REJECTED WITH REASON": "!bg-yellow-300 text-yellow-950 hover:!bg-yellow-400 focus-within:!bg-yellow-400 [&>td]:bg-inherit",
 };
 const pretty = (value: unknown) => text(value).replaceAll("_", " ").replace(/\b\w/g, letter => letter.toUpperCase());
 const money = (value: unknown) => value == null ? "—" : Number(value).toLocaleString("en-IN", { style: "currency", currency: "INR" });
@@ -40,7 +40,10 @@ export function DailyOperationsPage({ area }: { area: Area }) {
   const { can, isOwner, loading } = usePermissions();
   const client = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
-  const filters: Record<string, string> = { sort: "-date", ...Object.fromEntries(FILTER_KEYS.filter(key => searchParams.has(key)).map(key => [key, searchParams.get(key)!])) };
+  // Keep consecutive filter interactions together while router transitions commit.
+  const pendingParams = useRef(searchParams);
+  useEffect(() => { pendingParams.current = searchParams; }, [searchParams]);
+  const filters: Record<string, string> = { sort: "-date", ...Object.fromEntries(FILTER_KEYS.filter(key => area === "sessions" || key !== "month").filter(key => searchParams.has(key)).map(key => [key, searchParams.get(key)!])) };
   const requestedPage = Number(searchParams.get("page") ?? "1");
   const page = Number.isInteger(requestedPage) && requestedPage > 0 && requestedPage <= 100000 ? requestedPage : 1;
   const allowed = can(`daily_operations:${area}`, "view");
@@ -56,9 +59,9 @@ export function DailyOperationsPage({ area }: { area: Area }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   function filter(key: string, value: string) {
-    const next = new URLSearchParams(searchParams);
+    const next = new URLSearchParams(pendingParams.current);
     if (value) next.set(key, value); else next.delete(key);
-    next.delete("page"); setSearchParams(next, { replace: true });
+    next.delete("page"); pendingParams.current = next; setSearchParams(next, { replace: true });
   }
   const filterField = (key: string, label: string, type = "text") => <FormField label={label} type={type} value={filters[key] ?? ""} onChange={event => filter(key, event.target.value)} />;
   const refresh = () => { void client.invalidateQueries({ queryKey: ["daily-operations"] }); };
@@ -91,6 +94,7 @@ export function DailyOperationsPage({ area }: { area: Area }) {
       <ErrorBanner message={error ?? (query.error instanceof Error ? query.error.message : null)} />
       {notice && <p role="status" className="mb-3 rounded-lg bg-primary/5 p-3 text-sm">{notice}</p>}
       <div className="flex flex-wrap items-start gap-x-4 mb-2">
+        {area === "sessions" && <div className="min-w-48 flex-1"><FormField label="Month" type="month" required value={filters.month ?? query.data?.month ?? ""} onChange={event => filter("month", event.target.value)} /></div>}
         {area !== "sessions" && <div className="min-w-52 flex-1">{filterField("search", "Search")}</div>}
         <div className="min-w-48 flex-1"><EmployeeNameField label="Employee name" value={filters.employee_name ?? ""} options={lookup.data?.employees ?? []} onChange={name => filter("employee_name", name)} /></div>
         <details className="min-w-48 self-start mt-7"><summary className="cursor-pointer rounded-lg border border-border bg-card px-4 py-2.5 text-sm">More filters</summary><div className="mt-3 grid sm:grid-cols-2 lg:grid-cols-3 gap-x-4 rounded-lg border border-border bg-card p-4">
@@ -99,7 +103,7 @@ export function DailyOperationsPage({ area }: { area: Area }) {
           {["follow-ups", "progress"].includes(area) && <>{filterField("bank", "Bank / NBFC")}{filterField("loan_type", "Loan type")}</>}
           {area === "follow-ups" && <SelectField label="Due" value={filters.overdue ?? ""} options={[{ value: "", label: "All follow-ups" }, { value: "true", label: "Overdue only" }]} onChange={event => filter("overdue", event.target.value)} />}
           {area !== "sessions" && <SelectField label="Sort" value={filters.sort} options={(area === "progress" ? [["-date", "Latest update"], ["created_at", "Oldest first"]] : [["-date", "Newest date"], ["date", "Oldest date"], ["status", "Status"]]).map(([value, label]) => ({ value, label }))} onChange={event => filter("sort", event.target.value)} />}
-          <Button variant="ghost" onClick={() => setSearchParams({})}>Clear filters</Button>
+          <Button variant="ghost" onClick={() => { pendingParams.current = new URLSearchParams(); setSearchParams({}); }}>Clear filters</Button>
         </div></details>
       </div>
       {area === "progress" && <label className="mb-3 flex gap-2 text-sm text-textSecondary"><input type="checkbox" checked={extraColumns} onChange={event => setExtraColumns(event.target.checked)} />Show login and disbursement details</label>}
@@ -108,15 +112,16 @@ export function DailyOperationsPage({ area }: { area: Area }) {
           {!query.data?.items.length ? <TableRow><Td colSpan={visibleColumns.length + 1}><div className="py-8 text-center text-textSecondary">No records match these filters.{area !== "sessions" && " Use Add record to enter your first row."}</div></Td></TableRow> : query.data.items.map(row => <TableRow key={row.id} className={area === "follow-ups" ? followRowColors[text(row.status)] : ""}>
             {visibleColumns.map(([key]) => <Td key={key} className="py-2.5 max-w-xs"><span className={key === "status" ? "inline-block rounded-md bg-primary/5 px-2 py-1 text-xs font-medium" : ""}>{cell(key, row[key])}</span>{area === "progress" && key === "customer_name" && row.source === "manual" && <span className="block text-xs text-textSecondary">Daily entry</span>}</Td>)}
             <Td className={`sticky right-0 py-2 ${area === "follow-ups" ? "bg-inherit" : "bg-card"}`}><div className="flex items-center gap-1">
-              {(area !== "sessions" && can(`daily_operations:${area}`, "edit")) && <Button variant="ghost" size="sm" onClick={() => void inspect(row, true)}>Edit</Button>}
-              <Button variant="ghost" size="sm" onClick={() => void inspect(row, false)}>{area === "sessions" ? "Session history" : "History"}</Button>
+              {(area !== "sessions" && can(`daily_operations:${area}`, "edit")) && <Button variant="ghost" size="sm" className={area === "follow-ups" ? "!text-inherit focus-visible:!outline-black" : ""} onClick={() => void inspect(row, true)}>Edit</Button>}
+              <Button variant="ghost" size="sm" className={area === "follow-ups" ? "!text-inherit focus-visible:!outline-black" : ""} onClick={() => void inspect(row, false)}>{area === "sessions" ? "Session history" : "History"}</Button>
               {area === "sessions" && !isOwner && <Button variant="ghost" size="sm" onClick={() => { setRequesting(row); setRequestReason(""); }}>Request correction</Button>}
-              {isOwner && area !== "sessions" && <Button variant="danger" size="sm" onClick={() => setRemoving(row)}>Delete</Button>}
+              {isOwner && area !== "sessions" && <Button variant="danger" size="sm" className={area === "follow-ups" ? "hover:!bg-white focus-visible:!outline-black" : ""} onClick={() => setRemoving(row)}>Delete</Button>}
             </div></Td>
           </TableRow>)}
         </TableBody></Table></TableContainer>
-        {!!query.data?.items.length && <Pagination page={page} pageSize={20} totalItems={query.data.total} totalPages={Math.ceil(query.data.total / 20)} onPageChange={value => { const next = new URLSearchParams(searchParams); next.set("page", String(value)); setSearchParams(next); }} />}
+        {!!query.data?.items.length && <Pagination page={page} pageSize={20} totalItems={query.data.total} totalPages={Math.ceil(query.data.total / 20)} onPageChange={value => { const next = new URLSearchParams(pendingParams.current); next.set("page", String(value)); pendingParams.current = next; setSearchParams(next); }} />}
       </>}
+      {area === "sessions" && <p className="mt-3 text-xs text-textSecondary">Eligible session time includes the existing inactivity allowance and is not verified productive work. Times use {query.data?.business_timezone ?? "the business timezone"}.</p>}
       {query.data?.metrics && <details className="mt-4 text-sm"><summary className="cursor-pointer text-textSecondary">Official loan totals</summary><p className="mt-2">Approved offers: {money(query.data.metrics.approved_amount)} · Verified disbursed: {money(query.data.metrics.disbursed_amount)}. Manual daily entries do not change these totals.</p></details>}
     </>}
     <Modal open={editing !== undefined} title={editing ? "Edit record" : "Add record"} onClose={() => setEditing(undefined)} size="lg">
@@ -124,7 +129,8 @@ export function DailyOperationsPage({ area }: { area: Area }) {
     </Modal>
     <Modal open={!!history} title="Record history" onClose={() => setHistory(null)} size="lg">
       {area === "sessions" && <div className="space-y-3">{((history?.sessions ?? []) as Row[]).map(session => <div key={session.id} className="rounded-lg border border-border p-3 text-sm">
-        <p>{businessTime(session.login_at)} ? {businessTime(session.logout_at)}</p>
+        <p>Daily segment: {businessTime(session.segment_start_at ?? session.login_at)} &rarr; {businessTime(session.segment_end_at ?? session.logout_at)}{session.segment_status === "day_boundary" && " (day boundary)"}</p>
+        <p>Actual login: {businessTime(session.login_at)} ? Actual logout: {businessTime(session.logout_at)}</p>
         <p>{cell("recorded_seconds", session.recorded_seconds)} ? {pretty(session.status)} ? {pretty(session.end_reason)}</p>
         {isOwner && can("daily_operations:sessions", "edit") && <Button variant="ghost" size="sm" onClick={() => { setEditing(session); setHistory(null); }}>Correct session</Button>}
       </div>)}</div>}

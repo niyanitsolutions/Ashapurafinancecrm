@@ -15,7 +15,7 @@ export interface DailyLookups {
 }
 export const getLookups = (search = "") => apiRequest<DailyLookups>(`/daily-operations/lookups?search=${encodeURIComponent(search)}`);
 export const deleteRecord = (area: Area, row: Row) => apiRequest(`/daily-operations/${area}/${row.id}`, { method: "DELETE", body: JSON.stringify({ version: row.version ?? 0 }) });
-export interface List { items: Row[]; total: number; statuses?: Record<string, number>; metrics?: { approved_amount: number; disbursed_amount: number }; breakdowns?: Record<string, { label: string; count: number }[]> }
+export interface List { month?: string; business_timezone?: string; as_of?: string; items: Row[]; total: number; statuses?: Record<string, number>; metrics?: { approved_amount: number; disbursed_amount: number }; breakdowns?: Record<string, { label: string; count: number }[]> }
 export interface RowError { column: string; message: string }
 export interface Preview { id: string; policy: string; rows: { row: number; values: Record<string, string>; errors: RowError[]; duplicate?: boolean }[] }
 export interface ImportResult { inserted: number; updated: number; skipped: number; rejected: number; errors: { row: number; errors: RowError[] }[] }

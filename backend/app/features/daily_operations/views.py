@@ -349,24 +349,19 @@ async def correct_session(
         )
         if not result:
             raise ConflictError("Correction changed or its history limit was reached; reload.")
-    from datetime import timedelta
+    from app.features.auth.session_lifecycle import ensure_summary_range
 
-    from app.features.auth.session_lifecycle import ensure_summary
-
-    day = to_ist(payload.login_at).date()
-    while day <= to_ist(payload.logout_at).date():
-        await ensure_summary(service.db, session["user_id"], ist_date_to_utc_midnight(day))
-        day += timedelta(days=1)
+    await ensure_summary_range(service.db, session["user_id"], payload.login_at, payload.logout_at)
     return {"family_id": family_id, "version": payload.version + 1}
 
 
 async def sessions(
     service: DailyOperationsService, actor: User, *, page: int = 1, page_size: int = 20,
     employee: str = "", employee_name: str = "", date_from: date | None = None,
-    date_to: date | None = None,
+    date_to: date | None = None, month: str | None = None,
 ) -> dict[str, Any]:
     from app.features.daily_operations.attendance import daily_sessions
 
     return await daily_sessions(service, actor, page=page, page_size=page_size,
                                 employee=employee, employee_name=employee_name,
-                                date_from=date_from, date_to=date_to)
+                                date_from=date_from, date_to=date_to, month=month)
