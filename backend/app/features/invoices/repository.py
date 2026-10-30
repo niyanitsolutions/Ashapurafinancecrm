@@ -17,6 +17,16 @@ async def ensure_invoice_indexes(db: AsyncIOMotorDatabase[Any]) -> None:
     await db.invoices.create_index("invoice_number", unique=True)
     await db.invoices.create_index([("customer_id", 1), ("invoice_date", -1)])
     await db.invoices.create_index([("created_by", 1), ("created_at", -1)])
+    await db.invoices.create_index(
+        "request_key",
+        unique=True,
+        partialFilterExpression={"request_key": {"$type": "string"}},
+    )
+    await db.invoices.create_index(
+        "replacement_for",
+        unique=True,
+        partialFilterExpression={"replacement_for": {"$type": "string"}},
+    )
     # Catalog integration only: no grants, customer records or business seed data.
     permission = Permission(
         module="invoices", resource="invoices", label="Invoices", actions=["view", "create", "edit"]

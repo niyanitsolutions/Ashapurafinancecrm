@@ -166,6 +166,9 @@ def render_invoice(invoice: dict, assets: dict[str, bytes] | None = None) -> byt
         p("Valid till : " + date.fromisoformat(invoice["due_date"]).strftime("%d-%b-%Y"), right),
         p("GSTIN : " + company["gstin"], right),
     ]
+    if invoice.get("source_invoice_number"):
+        label = "Replacement for " if invoice.get("replacement_for") else "Duplicated from "
+        details.append(p(label + invoice["source_invoice_number"], right))
     if invoice.get("place_of_supply"):
         details.append(p("Place of supply : " + invoice["place_of_supply"], right))
     if invoice.get("status") in ("draft", "cancelled"):

@@ -1,6 +1,8 @@
 from datetime import datetime
 from typing import Any, Literal
 
+from pydantic import Field
+
 from app.features.invoices.schemas import BillingCustomer
 from app.shared.base_document import BaseDocument
 
@@ -9,7 +11,7 @@ class Invoice(BaseDocument):
     """Stored, calculated invoice with the CRM's standard lifecycle/audit fields.
 
     Monetary values are canonical decimal strings in BSON, never binary floats.
-    No delete operation is exposed, including through the CRM Bin catalog.
+    Draft deletion is soft-only; invoice numbers remain reserved.
     """
 
     invoice_number: str
@@ -38,3 +40,9 @@ class Invoice(BaseDocument):
     cancelled_by: str | None = None
     cancelled_at: datetime | None = None
     cancellation_reason: str | None = None
+
+    replacement_for: str | None = None
+    source_invoice_number: str | None = None
+    correction_reason: str | None = None
+    request_key: str | None = None
+    history: list[dict[str, Any]] = Field(default_factory=list)

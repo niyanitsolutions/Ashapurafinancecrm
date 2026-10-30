@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "./api";
+import { ApiError } from "@/shared/api/client";
 import { InvoiceListPage } from "./InvoiceListPage";
 import { InvoiceFormPage } from "./InvoiceFormPage";
 import { InvoiceViewPage } from "./InvoiceViewPage";
@@ -10,7 +11,7 @@ import { InvoiceSettingsPage } from "./InvoiceSettingsPage";
 
 const permissions=vi.hoisted(()=>({create:true,edit:true}));
 vi.mock("@/features/access_control/usePermissions",()=>({usePermissions:()=>({can:(_key: string,action: string)=>action==="view"||permissions[action as "create"|"edit"]})}));
-vi.mock("./api",async original=>({...await original<typeof import("./api")>(),listInvoices:vi.fn(),getDefaults:vi.fn(),getCustomers:vi.fn(),saveInvoice:vi.fn(),previewPdf:vi.fn(),getInvoice:vi.fn(),invoicePdf:vi.fn(),setInvoiceStatus:vi.fn(),duplicateInvoice:vi.fn(),getSettings:vi.fn(),saveSettings:vi.fn(),uploadSignature:vi.fn(),downloadPdf:vi.fn()}));
+vi.mock("./api",async original=>({...await original<typeof import("./api")>(),listInvoices:vi.fn(),getDefaults:vi.fn(),getCustomers:vi.fn(),saveInvoice:vi.fn(),previewPdf:vi.fn(),getInvoice:vi.fn(),invoicePdf:vi.fn(),setInvoiceStatus:vi.fn(),duplicateInvoice:vi.fn(),getSettings:vi.fn(),saveSettings:vi.fn(),uploadSignature:vi.fn(),downloadPdf:vi.fn(),deleteInvoice:vi.fn(),replacementInvoice:vi.fn(),invoiceHistory:vi.fn()}));
 const fixture={id:"i1",invoice_number:"INV-000001",customer_id:null,customer:{name:"Acme",address:"Street",city:"Pune",state:"Maharashtra",pincode:"411030",country:"India",gstin:"",phone:"",email:""},invoice_date:"2026-10-04",due_date:"2026-10-04",place_of_supply:"",terms:"",tax_type:"IGST" as const,version:1,status:"draft" as const,items:[{description:"Consultancy",hsn:"9971",quantity:"3",unit:"nos.s",rate:"7753.71",gst_rate:"18"}],subtotal:"23261.13",gst_total:"4187.00",grand_total:"27448.13",amount_in_words:"Words",created_by_name:"Owner",created_at:"2026-10-04T00:00:00Z"};
 beforeEach(()=>{
   vi.clearAllMocks();permissions.create=true;permissions.edit=true;
@@ -68,5 +69,42 @@ describe("invoice screens",()=>{
     await user.selectOptions(screen.getByLabelText("QR type"),"upi");await user.click(screen.getByRole("button",{name:"Save invoice settings"}));expect(api.saveSettings).not.toHaveBeenCalled();
     await user.type(screen.getByLabelText("UPI ID"),"example@bank");await user.click(screen.getByRole("button",{name:"Save invoice settings"}));
     expect(await screen.findByRole("status")).toHaveTextContent("Invoice settings saved");expect(api.saveSettings).toHaveBeenCalledWith(expect.objectContaining({bank_name:"Bank",qr_type:"upi",upi_id:"example@bank"}));
+  });
+});
+
+
+describe("invoice workflows",()=>{
+  it("requires confirmation and preserves errors when deletion fails",async()=>{
+    vi.mocked(api.deleteInvoice).mockRejectedValue(new ApiError("conflict", "Invoice changed. Reload before saving."));
+    show(<InvoiceListPage/>);const user=userEvent.setup();await screen.findByText("INV-000001");
+    await user.selectOptions(screen.getByLabelText("Actions for INV-000001"),"delete");
+    expect(api.deleteInvoice).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button",{name:"Delete Invoice"}));
+    expect(await screen.findByText("Invoice changed. Reload before saving.")).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+  it("offers revision alternatives without creating a duplicate official number",async()=>{
+    show(<InvoiceListPage/>);const user=userEvent.setup();await screen.findByText("INV-000001");
+    await user.selectOptions(screen.getByLabelText("Actions for INV-000001"),"duplicate");
+    await user.click(screen.getByRole("button",{name:"Create Revision of Existing Invoice"}));
+    expect(screen.getByRole("status")).toHaveTextContent("Internal revisions are not supported");
+    expect(api.duplicateInvoice).not.toHaveBeenCalled();
+  });
+  it("requires a reason for a replacement and keeps the original visible",async()=>{
+    vi.mocked(api.getInvoice).mockResolvedValue({...fixture,status:"issued"});
+    vi.mocked(api.replacementInvoice).mockRejectedValue(new ApiError("conflict", "Please retry"));
+    show(<InvoiceViewPage/>,"/invoices/i1");const user=userEvent.setup();await screen.findByTitle("Invoice PDF");
+    await user.click(screen.getByRole("button",{name:"Create Correction / Replacement"}));
+    expect(screen.getByRole("button",{name:"Create Replacement Invoice"})).toBeDisabled();
+    await user.type(screen.getByLabelText("Correction reason"),"Correct amount");
+    await user.click(screen.getByRole("button",{name:"Create Replacement Invoice"}));
+    await waitFor(()=>expect(api.replacementInvoice).toHaveBeenCalledWith("i1","Correct amount",expect.any(String)));
+    expect(await screen.findByText("Please retry")).toBeInTheDocument();
+  });
+  it("hides destructive and copying actions for settled invoices",async()=>{
+    vi.mocked(api.listInvoices).mockResolvedValue({items:[{...fixture,status:"paid"}],total:1,total_pages:1});
+    show(<InvoiceListPage/>);await screen.findByText("INV-000001");
+    for(const name of ["Delete","Duplicate","Cancel","Create Correction / Replacement"])
+      expect(screen.queryByRole("option",{name})).not.toBeInTheDocument();
   });
 });

@@ -1,11 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/buttons/Button";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { getErrorMessage } from "@/shared/api/errors";
 import { calculateItems } from "./calculations";
-import { getCustomers, getDefaults, getInvoice, money, previewPdf, saveInvoice, type Company, type CustomerOption, type InvoiceInput, type Item } from "./api";
+import { getCustomers, getDefaults, getInvoice, money, previewPdf, saveInvoice, type Company, type CustomerOption, type Invoice, type InvoiceInput, type Item } from "./api";
+
+import { InvoiceReference } from "./InvoiceWorkflow";
 
 const blankItem = (gst="18"): Item => ({description:"",hsn:"",quantity:"1",unit:"nos.s",rate:"0",gst_rate:gst});
 function empty(): InvoiceInput {
@@ -15,6 +17,9 @@ function empty(): InvoiceInput {
 const inputClass = "w-full border border-border rounded-lg p-2 bg-card";
 
 export function InvoiceFormPage() {
+  const [sourceInvoice,setSourceInvoice]=useState<Invoice | null>(null);
+  const requestKey=useRef(crypto.randomUUID());
+  const submitting=useRef(false);
   const {invoiceId} = useParams(); const navigate = useNavigate();
   const [form,setForm] = useState<InvoiceInput>(empty); const [company,setCompany] = useState<Company | null>(null);
   const [customers,setCustomers] = useState<CustomerOption[]>([]); const [search,setSearch] = useState("");
@@ -24,6 +29,7 @@ export function InvoiceFormPage() {
     Promise.all([getDefaults(),invoiceId ? getInvoice(invoiceId) : Promise.resolve(null)]).then(([defaults,invoice])=>{
       if(!active) return; setCompany(defaults);
       if(invoice) {
+        setSourceInvoice(invoice);
         if(invoice.status!=="draft") {setError("Only draft invoices can be edited.");return;}
         const data: InvoiceInput = {customer_id:invoice.customer_id,customer:invoice.customer,invoice_date:invoice.invoice_date,due_date:invoice.due_date,place_of_supply:invoice.place_of_supply,terms:invoice.terms,tax_type:invoice.tax_type,version:invoice.version,
           items:invoice.items.map(({description,hsn,quantity,unit,rate,gst_rate})=>({description,hsn,quantity,unit,rate,gst_rate}))};
@@ -39,12 +45,14 @@ export function InvoiceFormPage() {
   let totals: ReturnType<typeof calculateItems> | null = null;
   try {totals=calculateItems(form.items,form.tax_type==="CGST_SGST");} catch { /* incomplete input; backend validates on save */ }
   async function submit(preview: boolean) {
+    if(submitting.current)return; submitting.current=true;
     setError(null);setBusy(true);
-    try {if(preview) setPdf(await previewPdf(form)); else {const invoice=await saveInvoice(form,invoiceId);navigate(`/invoices/${invoice.id}`);}}
-    catch(e){setError(getErrorMessage(e));}finally{setBusy(false);}
+    try {if(preview) setPdf(await previewPdf(form)); else {const invoice=await saveInvoice(invoiceId ? form : {...form,request_key:requestKey.current},invoiceId);navigate(`/invoices/${invoice.id}`);}}
+    catch(e){setError(getErrorMessage(e));}finally{submitting.current=false;setBusy(false);}
   }
   return <SimplePageLayout title={invoiceId?"Edit draft invoice":"Create invoice"} backTo="/invoices">
     <ErrorBanner message={error}/>
+    {sourceInvoice&&<InvoiceReference invoice={sourceInvoice}/>}
     {!ready ? <p>{error?"Invoice unavailable.":"Loading invoice…"}</p> : <form onSubmit={e=>{e.preventDefault();void submit(false);}} className="space-y-6">
       <section className="bg-card border rounded-xl p-5"><h2 className="font-semibold mb-4">Invoice details</h2><p className="text-sm mb-4">Invoice number is assigned automatically and remains fixed after creation.</p>
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">

@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import builtins
 import re
 from datetime import date
 from decimal import Decimal
@@ -214,7 +217,7 @@ class InvoiceService:
     async def preview(self, payload: InvoiceInput, actor: User) -> dict[str, Any]:
         await self.customer_validate(payload, actor)
         return (
-            payload.model_dump(mode="json")
+            payload.model_dump(mode="json", exclude={"request_key"})
             | calculate(payload.items, payload.tax_type)
             | {
                 "company": await self.snapshot(),
@@ -225,8 +228,27 @@ class InvoiceService:
         )
 
     async def create(
-        self, payload: InvoiceInput, actor: User, *, duplicated_from: str | None = None
+        self,
+        payload: InvoiceInput,
+        actor: User,
+        *,
+        duplicated_from: str | None = None,
+        replacement_for: str | None = None,
+        source_invoice_number: str | None = None,
+        correction_reason: str | None = None,
+        request_key: str | None = None,
     ) -> dict[str, Any]:
+        request_key = request_key or payload.request_key
+        if request_key:
+            existing = await self.db.invoices.find_one({"request_key": request_key})
+            if existing:
+                if (
+                    existing.get("created_by") != actor.require_id()
+                    or existing.get("duplicated_from") != duplicated_from
+                    or existing.get("replacement_for") != replacement_for
+                ):
+                    raise ConflictError("Request key already used for another operation.")
+                return await self.get(str(existing["_id"]), actor)
         doc = await self.preview(payload, actor)
         # Existing atomic counter utility; $max raises the initial floor without resets.
         company = doc["company"]
@@ -243,6 +265,24 @@ class InvoiceService:
             updated_at=now,
             version=1,
             duplicated_from=duplicated_from,
+            replacement_for=replacement_for,
+            source_invoice_number=source_invoice_number,
+            correction_reason=correction_reason,
+            request_key=request_key,
+            history=[
+                self.event(
+                    actor,
+                    "replacement_draft_created"
+                    if replacement_for
+                    else "duplicated"
+                    if duplicated_from
+                    else "created",
+                    None,
+                    "draft",
+                    related_invoice_number=source_invoice_number,
+                    reason=correction_reason,
+                )
+            ],
         )
         profile = await self.db["owner_profiles" if actor.role == OWNER else "employees"].find_one(
             {"user_id": actor.require_id()}
@@ -255,6 +295,21 @@ class InvoiceService:
         try:
             invoice_id = await self.invoices.insert(Invoice.model_validate(doc))
         except DuplicateKeyError as exc:
+            if request_key:
+                existing = await self.db.invoices.find_one({"request_key": request_key})
+                if (
+                    existing
+                    and existing.get("created_by") == actor.require_id()
+                    and existing.get("duplicated_from") == duplicated_from
+                    and existing.get("replacement_for") == replacement_for
+                ):
+                    return await self.get(str(existing["_id"]), actor)
+            if replacement_for and await self.db.invoices.find_one(
+                {"replacement_for": replacement_for}
+            ):
+                raise ConflictError(
+                    "A replacement already exists for this invoice. Open the existing replacement."
+                ) from exc
             raise ConflictError("Invoice number already exists. Please retry.") from exc
         await self.audit(
             actor,
@@ -290,12 +345,31 @@ class InvoiceService:
                 "status": current["status"],
                 "is_deleted": False,
             },
-            {"$set": updates, "$inc": {"version": 1}},
+            {
+                "$set": updates,
+                "$inc": {"version": 1},
+                "$push": {
+                    "history": self.event(
+                        actor,
+                        action,
+                        current["status"],
+                        updates.get("status", current["status"]),
+                        reason=updates.get("cancellation_reason"),
+                    )
+                },
+            },
             return_document=ReturnDocument.AFTER,
         )
         if not doc:
             raise ConflictError("Invoice changed. Reload before saving.")
-        await self.audit(actor, action, invoice_id)
+        await self.audit(
+            actor,
+            action,
+            invoice_id,
+            previous_status=current["status"],
+            new_status=updates.get("status", current["status"]),
+            reason=updates.get("cancellation_reason"),
+        )
         return public(doc)
 
     async def status(self, invoice_id: str, payload: StatusInput, actor: User) -> dict[str, Any]:
@@ -310,6 +384,10 @@ class InvoiceService:
         if payload.status not in allowed[current["status"]]:
             raise ConflictError("This status transition is not allowed.")
         updates: dict[str, Any] = {"status": payload.status}
+        if payload.status == "cancelled" and current["status"] == "partially_paid":
+            raise ConflictError(
+                "Settled invoices require an accounting adjustment; credit notes are not supported."
+            )
         if payload.status == "cancelled":
             if not payload.reason.strip():
                 raise ValidationError("Cancellation reason is required.")
@@ -319,6 +397,12 @@ class InvoiceService:
                 cancellation_reason=payload.reason.strip(),
             )
         if payload.status == "issued":
+            if current.get("replacement_for"):
+                original = await self.get(current["replacement_for"], actor)
+                if original["status"] != "cancelled":
+                    raise ConflictError(
+                        "Cancel the original through an accounting-approved process before issuing its replacement. Credit notes are not supported."
+                    )
             company = await self.draft_company(current)
             if not all(
                 [
@@ -353,9 +437,29 @@ class InvoiceService:
             invoice_id, current, payload.version, updates, actor, payload.status
         )
 
-    async def duplicate(self, invoice_id: str, actor: User) -> dict[str, Any]:
+    async def duplicate(
+        self,
+        invoice_id: str,
+        actor: User,
+        *,
+        request_key: str | None = None,
+        reason: str = "",
+        replacement: bool = False,
+    ) -> dict[str, Any]:
         old = await self.get(invoice_id, actor)
-        fields = {key: old[key] for key in InvoiceInput.model_fields if key in old}
+        if old["status"] in {"paid", "partially_paid"}:
+            raise ConflictError(
+                "Settled invoices require an accounting adjustment; credit notes are not supported."
+            )
+        if replacement and (old["status"] not in {"issued", "cancelled"} or not reason.strip()):
+            raise ValidationError(
+                "A replacement requires an issued or cancelled invoice and a correction reason."
+            )
+        fields = {
+            key: old[key]
+            for key in InvoiceInput.model_fields
+            if key in old and key != "request_key"
+        }
         fields.update(
             invoice_date=now_ist().date().isoformat(),
             due_date=now_ist().date().isoformat(),
@@ -366,5 +470,89 @@ class InvoiceService:
             for row in old["items"]
         ]
         return await self.create(
-            InvoiceInput.model_validate(fields), actor, duplicated_from=invoice_id
+            InvoiceInput.model_validate(fields),
+            actor,
+            duplicated_from=None if replacement else invoice_id,
+            replacement_for=invoice_id if replacement else None,
+            source_invoice_number=old["invoice_number"],
+            correction_reason=reason.strip() if replacement else None,
+            request_key=request_key,
         )
+
+    @staticmethod
+    def event(
+        actor: User, action: str, previous_status: str | None, new_status: str, **extra: Any
+    ) -> dict[str, Any]:
+        return dict(
+            action=action,
+            timestamp=utc_now(),
+            user_id=actor.require_id(),
+            previous_status=previous_status,
+            new_status=new_status,
+            **extra,
+        )
+
+    async def delete_draft(self, invoice_id: str, version: int, actor: User) -> None:
+        current = await self.get(invoice_id, actor)
+        if current["status"] != "draft":
+            raise ConflictError("Only draft invoices can be deleted.")
+        # No payment/posting collections reference invoices in the current application.
+        # Keep referenced source drafts available, including references from deleted copies.
+        if await self.db.invoices.find_one(
+            {"$or": [{"duplicated_from": invoice_id}, {"replacement_for": invoice_id}]}
+        ):
+            raise ConflictError("This invoice has dependent invoices and cannot be deleted.")
+        await self.replace(
+            invoice_id,
+            current,
+            version,
+            {"is_deleted": True, "deleted_by": actor.require_id(), "deleted_at": utc_now()},
+            actor,
+            "deleted",
+        )
+
+    async def history(self, invoice_id: str, actor: User) -> builtins.list[dict[str, Any]]:
+        current = await self.get(invoice_id, actor)
+        events = list(current.get("history", []))
+        # Existing audit events are real history; never synthesize missing legacy events.
+        logs = (
+            await self.db.audit_logs.find({"metadata.invoice_id": invoice_id})
+            .sort("created_at", 1)
+            .to_list(None)
+        )
+        for log in logs:
+            action = log["event_type"].removeprefix("invoice_")
+            embedded = current.get("history", [])
+            first_recorded = min((e["timestamp"] for e in embedded), default=None)
+            if action not in {e["action"] for e in embedded} or (
+                first_recorded and log["created_at"] < first_recorded
+            ):
+                events.append(
+                    {
+                        "action": action,
+                        "timestamp": log["created_at"],
+                        "user_id": log.get("user_id"),
+                    }
+                )
+        related = await self.db.invoices.find(
+            {"replacement_for": invoice_id, **await self.scope(actor)}
+        ).to_list(None)
+        for doc in related:
+            events.append(
+                {
+                    "action": "replacement_draft_created",
+                    "timestamp": doc["created_at"],
+                    "user_id": doc["created_by"],
+                    "related_invoice_number": doc["invoice_number"],
+                    "reason": doc.get("correction_reason"),
+                }
+            )
+            if doc.get("issued_at"):
+                events.append(
+                    {
+                        "action": "replacement_invoice_issued",
+                        "timestamp": doc["issued_at"],
+                        "related_invoice_number": doc["invoice_number"],
+                    }
+                )
+        return sorted(events, key=lambda event: event["timestamp"].isoformat())

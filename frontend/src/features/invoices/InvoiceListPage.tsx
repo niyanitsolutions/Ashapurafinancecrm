@@ -5,11 +5,14 @@ import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { usePermissions } from "@/features/access_control/usePermissions";
 import { getErrorMessage } from "@/shared/api/errors";
-import { downloadPdf, duplicateInvoice, invoicePdf, listInvoices, money, setInvoiceStatus, type Invoice } from "./api";
+import { downloadPdf, invoicePdf, listInvoices, money, setInvoiceStatus, type Invoice } from "./api";
+
+import { InvoiceWorkflow, type Workflow } from "./InvoiceWorkflow";
 
 export function InvoiceListPage() {
   const {can} = usePermissions();
   const navigate = useNavigate();
+  const [workflow,setWorkflow] = useState<{invoice: Invoice; mode: Workflow} | null>(null);
   const [cancel,setCancel] = useState<Invoice | null>(null); const [reason,setReason] = useState("");
   const [busy,setBusy] = useState(false); const [revision,setRevision] = useState(0);
   const [printBlob,setPrintBlob] = useState<Blob | null>(null); const [printUrl,setPrintUrl] = useState("");
@@ -33,12 +36,16 @@ export function InvoiceListPage() {
     try {
       if(action==="download") downloadPdf(await invoicePdf(row.id,"download"),`${row.invoice_number}.pdf`);
       if(action==="print") setPrintBlob(await invoicePdf(row.id,"print"));
-      if(action==="duplicate") {const copy=await duplicateInvoice(row.id);navigate(`/invoices/${copy.id}/edit`);}
+      if(["duplicate","delete","replacement","history"].includes(action)) setWorkflow({invoice: row, mode: action as Workflow});
+      if(action==="view") navigate(`/invoices/${row.id}`);
+      if(action==="edit") navigate(`/invoices/${row.id}/edit`);
+      if(action==="issue") {await setInvoiceStatus(row.id,"issued",row.version);setRevision(v=>v+1);}
       if(action==="cancel") {setCancel(row);setReason("");}
     } catch(e) {setError(getErrorMessage(e));} finally {setBusy(false);}
   }
   return <SimplePageLayout title="Invoices" subtitle="Finance / Billing" actions={can("invoices:invoices","create") && <Link className={`${BUTTON_BASE_CLASSES} ${BUTTON_SIZE_CLASSES.md} ${BUTTON_VARIANT_CLASSES.primary}`} to="/invoices/new">Create invoice</Link>}>
     <ErrorBanner message={error}/>
+    {workflow && <InvoiceWorkflow key={`${workflow.invoice.id}-${workflow.mode}`} {...workflow} onClose={()=>setWorkflow(null)} onDeleted={()=>setRevision(v=>v+1)}/>}
     {cancel&&<form className="border rounded-xl bg-card p-4 mb-4" onSubmit={async e=>{e.preventDefault();setBusy(true);try{await setInvoiceStatus(cancel.id,"cancelled",cancel.version,reason);setCancel(null);setRevision(v=>v+1);}catch(err){setError(getErrorMessage(err));}finally{setBusy(false);}}}>
       <label>Cancellation reason for {cancel.invoice_number}<textarea required maxLength={500} className="block border rounded-lg p-2 w-full my-3" value={reason} onChange={e=>setReason(e.target.value)}/></label><Button type="submit" variant="danger" disabled={busy}>Confirm cancellation</Button><Button variant="ghost" onClick={()=>setCancel(null)}>Keep invoice</Button>
     </form>}
@@ -62,7 +69,7 @@ export function InvoiceListPage() {
           <td className="p-3">{money(row.subtotal)}</td><td className="p-3">{money(row.gst_total)}</td><td className="p-3 font-semibold">{money(row.grand_total)}</td><td className="p-3">{row.status.replaceAll("_"," ")}</td>
           <td className="p-3">{row.created_by_name}</td><td className="p-3">{new Date(row.created_at).toLocaleDateString("en-IN")}</td>
           <td className="p-3"><Link className="text-primary" to={`/invoices/${row.id}`}>View</Link>{row.status === "draft" && can("invoices:invoices","edit") && <Link className="ml-3 text-primary" to={`/invoices/${row.id}/edit`}>Edit</Link>}
-            <select aria-label={`Actions for ${row.invoice_number}`} value="" disabled={busy} className="ml-3 border rounded-lg p-2" onChange={e=>void act(row,e.target.value)}><option value="">Actions</option><option value="download">Download PDF</option><option value="print">Print</option>{can("invoices:invoices","create")&&<option value="duplicate">Duplicate</option>}{can("invoices:invoices","edit")&&["draft","issued","partially_paid"].includes(row.status)&&<option value="cancel">Cancel</option>}</select>
+            <select aria-label={`Actions for ${row.invoice_number}`} value="" disabled={busy} className="ml-3 border rounded-lg p-2" onChange={e=>void act(row,e.target.value)}><option value="">Actions</option><option value="view">View</option><option value="history">View History</option>{row.status==="draft"&&can("invoices:invoices","edit")&&<><option value="edit">Edit</option><option value="delete">Delete</option><option value="issue">Issue</option></>}<option value="download">Download PDF</option><option value="print">Print</option>{can("invoices:invoices","create")&&!["paid","partially_paid"].includes(row.status)&&<option value="duplicate">{row.status==="cancelled"?"Duplicate as New Draft":"Duplicate"}</option>}{can("invoices:invoices","create")&&["issued","cancelled"].includes(row.status)&&<option value="replacement">Create Correction / Replacement</option>}{can("invoices:invoices","edit")&&["draft","issued"].includes(row.status)&&<option value="cancel">Cancel</option>}</select>
           </td>
         </tr>)}</tbody></table>
       {!data && !error && <p className="p-5">Loading invoices…</p>}

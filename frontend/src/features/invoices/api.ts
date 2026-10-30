@@ -8,6 +8,7 @@ export interface Item {
   description: string; hsn: string; quantity: string; unit: string; rate: string; gst_rate: string;
 }
 export interface InvoiceInput {
+  request_key?: string;
   customer_id: string | null; customer: BillingCustomer; invoice_date: string; due_date: string;
   place_of_supply: string; terms: string; tax_type: "IGST" | "CGST_SGST"; items: Item[]; version: number;
 }
@@ -16,6 +17,7 @@ export interface Invoice extends InvoiceInput {
   id: string; invoice_number: string; status: Status; subtotal: string; gst_total: string;
   grand_total: string; amount_in_words: string; created_by_name: string; created_at: string;
   cancellation_reason?: string;
+  duplicated_from?: string; replacement_for?: string; source_invoice_number?: string; correction_reason?: string;
 }
 export interface InvoiceConfig {
   gstin: string; website: string; bank_name: string; branch: string; account_number: string;
@@ -36,7 +38,7 @@ export function money(value: string): string {
 export const getInvoice = (id: string) => apiRequest<Invoice>(`/invoices/${id}`);
 export const listInvoices = (query: URLSearchParams) => apiRequest<{items: Invoice[]; total: number; total_pages: number}>(`/invoices?${query}`);
 export const saveInvoice = (input: InvoiceInput, id?: string) => apiRequest<Invoice>(id ? `/invoices/${id}` : "/invoices", {method: id ? "PUT" : "POST", body: JSON.stringify(input)});
-export const duplicateInvoice = (id: string) => apiRequest<Invoice>(`/invoices/${id}/duplicate`, {method: "POST"});
+export const duplicateInvoice = (id: string, requestKey?: string) => apiRequest<Invoice>(`/invoices/${id}/duplicate`, {method: "POST", body: requestKey ? JSON.stringify({request_key: requestKey}) : undefined});
 export const setInvoiceStatus = (id: string, status: Status, version: number, reason = "") => apiRequest<Invoice>(`/invoices/${id}/${status === "cancelled" ? "cancel" : "status"}`, {method: "POST", body: JSON.stringify(status === "cancelled" ? {reason, version} : {status, version})});
 export const invoicePdf = (id: string, purpose = "preview") => apiBlob(`/invoices/${id}/pdf?purpose=${purpose}`);
 export const previewPdf = (input: InvoiceInput) => apiBlob("/invoices/preview/pdf", {method: "POST", body: JSON.stringify(input)});
@@ -52,3 +54,11 @@ export function downloadPdf(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob); const a = document.createElement("a");
   a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
+
+export interface InvoiceEvent {
+  action: string; timestamp: string; user_id?: string; previous_status?: string;
+  new_status?: string; related_invoice_number?: string; reason?: string;
+}
+export const invoiceHistory = (id: string) => apiRequest<InvoiceEvent[]>(`/invoices/${id}/history`);
+export const deleteInvoice = (id: string, version: number) => apiRequest(`/invoices/${id}`, {method: "DELETE", body: JSON.stringify({version})});
+export const replacementInvoice = (id: string, reason: string, requestKey: string) => apiRequest<Invoice>(`/invoices/${id}/replacement`, {method: "POST", body: JSON.stringify({reason, request_key: requestKey})});

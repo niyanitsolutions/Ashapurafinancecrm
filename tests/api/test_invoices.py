@@ -792,3 +792,189 @@ async def test_draft_pdf_uses_current_payment_settings_without_rewriting_history
     assert (await client.get(url, headers=owner_headers)).json()["data"][
         "qr_value"
     ] == issued["qr_value"]
+
+
+async def test_draft_soft_delete_reserves_number_and_history(
+    client, owner_headers, mock_db
+):
+    doc = await create(client, owner_headers)
+    url = "/api/v1/invoices/" + doc["id"]
+    response = await client.request(
+        "DELETE", url, headers=owner_headers, json={"version": 2}
+    )
+    assert response.status_code == 409
+    response = await client.request(
+        "DELETE", url, headers=owner_headers, json={"version": 1}
+    )
+    assert response.status_code == 200, response.text
+    assert (await client.get(url, headers=owner_headers)).status_code == 404
+    assert (await client.get("/api/v1/invoices", headers=owner_headers)).json()["data"][
+        "total"
+    ] == 0
+    stored = await mock_db.invoices.find_one({"_id": ObjectId(doc["id"])})
+    assert stored["deleted_by"] and stored["deleted_at"]
+    assert stored["history"][-1]["action"] == "deleted"
+    assert (await create(client, owner_headers))["invoice_number"] != doc[
+        "invoice_number"
+    ]
+
+
+async def test_replacement_immutability_idempotency_and_issue_gate(
+    client, owner_headers, mock_db
+):
+    await ensure_invoice_indexes(mock_db)
+    await configure(client, owner_headers)
+    doc = await create(client, owner_headers)
+    url = "/api/v1/invoices/" + doc["id"]
+    issued = (
+        await client.post(
+            url + "/status",
+            headers=owner_headers,
+            json={"status": "issued", "version": 1},
+        )
+    ).json()["data"]
+    original_pdf = (await client.get(url + "/pdf", headers=owner_headers)).content
+    payload = {"request_key": "replacement-request-0001", "reason": "Correct amount"}
+    responses = await asyncio.gather(
+        *(
+            client.post(url + "/replacement", headers=owner_headers, json=payload)
+            for _ in range(3)
+        )
+    )
+    assert all(r.status_code == 200 for r in responses), [r.text for r in responses]
+    copies = [r.json()["data"] for r in responses]
+    assert len({d["id"] for d in copies}) == 1
+    copy = copies[0]
+    assert (
+        copy["replacement_for"] == doc["id"]
+        and copy["correction_reason"] == "Correct amount"
+    )
+    assert copy["invoice_number"] != doc["invoice_number"] and copy["status"] == "draft"
+    assert (await client.get(url, headers=owner_headers)).json()["data"] == issued
+    after_pdf = (await client.get(url + "/pdf", headers=owner_headers)).content
+    assert (
+        pymupdf.open(stream=original_pdf, filetype="pdf")[0].get_text()
+        == pymupdf.open(stream=after_pdf, filetype="pdf")[0].get_text()
+    )
+    copy_url = "/api/v1/invoices/" + copy["id"]
+    assert (
+        await client.post(
+            copy_url + "/status",
+            headers=owner_headers,
+            json={"status": "issued", "version": 1},
+        )
+    ).status_code == 409
+    assert (
+        await client.request("DELETE", url, headers=owner_headers, json={"version": 2})
+    ).status_code == 409
+    assert (
+        await client.post(
+            url + "/cancel",
+            headers=owner_headers,
+            json={"version": 2, "reason": "Approved cancellation"},
+        )
+    ).status_code == 200
+    assert (
+        await client.post(
+            copy_url + "/status",
+            headers=owner_headers,
+            json={"status": "issued", "version": 1},
+        )
+    ).status_code == 200
+    history = (await client.get(url + "/history", headers=owner_headers)).json()["data"]
+    assert {
+        "created",
+        "issued",
+        "replacement_draft_created",
+        "cancelled",
+        "replacement_invoice_issued",
+    } <= {e["action"] for e in history}
+    assert b"%PDF" in original_pdf
+
+
+async def test_duplicate_dependencies_idempotent_create_and_settled_guards(
+    client, owner_headers, mock_db
+):
+    await ensure_invoice_indexes(mock_db)
+    await configure(client, owner_headers)
+    payload = dict(sample(), request_key="create-invoice-request-0001")
+    docs = await asyncio.gather(
+        *(create(client, owner_headers, payload) for _ in range(3))
+    )
+    assert len({doc["id"] for doc in docs}) == 1
+    url = "/api/v1/invoices/" + docs[0]["id"]
+    copy_request = {"request_key": "duplicate-invoice-request-0001"}
+    copies = await asyncio.gather(
+        *(
+            client.post(url + "/duplicate", headers=owner_headers, json=copy_request)
+            for _ in range(3)
+        )
+    )
+    assert len({r.json()["data"]["id"] for r in copies}) == 1
+    copy = copies[0].json()["data"]
+    assert copy["duplicated_from"] == docs[0]["id"]
+    assert copy["source_invoice_number"] == docs[0]["invoice_number"]
+    assert (
+        await client.request("DELETE", url, headers=owner_headers, json={"version": 1})
+    ).status_code == 409
+    await configure(client, owner_headers)
+    for version, status in enumerate(["issued", "partially_paid"], 1):
+        assert (
+            await client.post(
+                url + "/status",
+                headers=owner_headers,
+                json={"version": version, "status": status},
+            )
+        ).status_code == 200
+    for action in ["duplicate", "replacement"]:
+        assert (
+            await client.post(
+                url + "/" + action,
+                headers=owner_headers,
+                json={
+                    "request_key": "settled-invoice-request-001",
+                    "reason": "Correction",
+                },
+            )
+        ).status_code == 409
+    assert (
+        await client.post(
+            url + "/cancel",
+            headers=owner_headers,
+            json={"version": 3, "reason": "Correction"},
+        )
+    ).status_code == 409
+
+
+async def test_workflow_security(client, owner_headers, employee_headers, mock_db):
+    doc = await create(client, owner_headers)
+    url = "/api/v1/invoices/" + doc["id"]
+    assert (await client.get(url + "/history")).status_code == 401
+    assert (
+        await client.request(
+            "DELETE", url, headers=employee_headers, json={"version": 1}
+        )
+    ).status_code == 403
+    assert (
+        await client.post(
+            url + "/replacement",
+            headers=employee_headers,
+            json={"request_key": "unauthorized-request-001", "reason": "Correction"},
+        )
+    ).status_code == 403
+    await grant_employee(mock_db, ["view", "create", "edit"])
+    assert (
+        await client.get(url + "/history", headers=employee_headers)
+    ).status_code == 404
+    assert (
+        await client.request(
+            "DELETE", url, headers=employee_headers, json={"version": 1}
+        )
+    ).status_code == 404
+    assert (
+        await client.post(
+            url + "/replacement",
+            headers=employee_headers,
+            json={"request_key": "unassigned-request-00001", "reason": "Correction"},
+        )
+    ).status_code == 404

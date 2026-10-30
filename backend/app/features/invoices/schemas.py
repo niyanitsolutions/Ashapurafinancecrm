@@ -63,6 +63,9 @@ class InvoiceItem(BaseModel):
 
 
 class InvoiceInput(BaseModel):
+    request_key: str | None = Field(
+        default=None, min_length=16, max_length=100, pattern=r"^[A-Za-z0-9-]+$"
+    )
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     customer_id: str | None = None
     customer: BillingCustomer
@@ -90,3 +93,14 @@ class StatusInput(BaseModel):
 class CancelInput(BaseModel):
     reason: str = Field(min_length=1, max_length=500)
     version: int = Field(ge=1)
+
+
+class DraftDeleteInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    version: int = Field(ge=1)
+
+
+class CopyInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    request_key: str = Field(min_length=16, max_length=100, pattern=r"^[A-Za-z0-9-]+$")
+    reason: str = Field(default="", max_length=500)

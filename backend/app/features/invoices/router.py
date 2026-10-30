@@ -17,7 +17,14 @@ from app.features.access_control.permission_engine import require_permission
 from app.features.auth.models import User
 from app.features.employee.dependencies import require_owner
 from app.features.invoices.pdf import render_invoice
-from app.features.invoices.schemas import CancelInput, InvoiceConfig, InvoiceInput, StatusInput
+from app.features.invoices.schemas import (
+    CancelInput,
+    CopyInput,
+    DraftDeleteInput,
+    InvoiceConfig,
+    InvoiceInput,
+    StatusInput,
+)
 from app.features.invoices.service import InvoiceService, payment_qr
 from app.services.storage.client import generate_presigned_download_url, get_s3_client
 
@@ -167,8 +174,36 @@ async def edit_invoice(invoice_id: str, payload: InvoiceInput, svc: Service, act
 
 
 @router.post("/invoices/{invoice_id}/duplicate")
-async def duplicate_invoice(invoice_id: str, svc: Service, actor: Create):
-    return ApiResponse.ok(await svc.duplicate(invoice_id, actor))
+async def duplicate_invoice(
+    invoice_id: str, svc: Service, actor: Create, payload: CopyInput | None = None
+):
+    return ApiResponse.ok(
+        await svc.duplicate(invoice_id, actor, request_key=payload.request_key if payload else None)
+    )
+
+
+@router.post("/invoices/{invoice_id}/replacement")
+async def replacement_invoice(invoice_id: str, payload: CopyInput, svc: Service, actor: Create):
+    return ApiResponse.ok(
+        await svc.duplicate(
+            invoice_id,
+            actor,
+            request_key=payload.request_key,
+            reason=payload.reason,
+            replacement=True,
+        )
+    )
+
+
+@router.delete("/invoices/{invoice_id}")
+async def delete_invoice(invoice_id: str, payload: DraftDeleteInput, svc: Service, actor: Edit):
+    await svc.delete_draft(invoice_id, payload.version, actor)
+    return ApiResponse.ok({"deleted": True})
+
+
+@router.get("/invoices/{invoice_id}/history")
+async def invoice_history(invoice_id: str, svc: Service, actor: View):
+    return ApiResponse.ok(await svc.history(invoice_id, actor))
 
 
 @router.post("/invoices/{invoice_id}/status")

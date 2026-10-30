@@ -5,10 +5,14 @@ import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { usePermissions } from "@/features/access_control/usePermissions";
 import { getErrorMessage } from "@/shared/api/errors";
-import { downloadPdf, duplicateInvoice, getInvoice, invoicePdf, setInvoiceStatus, type Invoice, type Status } from "./api";
+import { downloadPdf, getInvoice, invoicePdf, setInvoiceStatus, type Invoice, type Status } from "./api";
+
+import { InvoiceWorkflow, InvoiceReference, type Workflow } from "./InvoiceWorkflow";
 
 export function InvoiceViewPage() {
-  const {invoiceId=""}=useParams(); const navigate=useNavigate();const {can}=usePermissions();
+  const navigate=useNavigate();
+  const {invoiceId=""}=useParams();const {can}=usePermissions();
+  const [workflow,setWorkflow]=useState<Workflow | null>(null);
   const [invoice,setInvoice]=useState<Invoice | null>(null);const [error,setError]=useState<string | null>(null);
   const [url,setUrl]=useState("");const [blob,setBlob]=useState<Blob | null>(null);const [busy,setBusy]=useState(false);
   const [cancel,setCancel]=useState(false);const [reason,setReason]=useState("");const frame=useRef<HTMLIFrameElement>(null);
@@ -23,14 +27,16 @@ export function InvoiceViewPage() {
     {invoice?.status==="draft"&&can("invoices:invoices","edit")&&<Link className="text-primary" to={`/invoices/${invoiceId}/edit`}>Edit</Link>}
     <Button variant="secondary" disabled={busy||!invoice} onClick={()=>void action(async()=>downloadPdf(await invoicePdf(invoiceId,"download"),`${invoice?.invoice_number}.pdf`))}>Download PDF</Button>
     <Button variant="secondary" disabled={busy||!url} onClick={()=>void action(async()=>{await invoicePdf(invoiceId,"print");frame.current?.contentWindow?.focus();frame.current?.contentWindow?.print();})}>Print</Button>
-    {can("invoices:invoices","create")&&<Button variant="secondary" disabled={busy||!invoice} onClick={()=>void action(async()=>{const copy=await duplicateInvoice(invoiceId);navigate(`/invoices/${copy.id}/edit`);})}>Duplicate</Button>}
+    {invoice&&!["paid","partially_paid"].includes(invoice.status)&&can("invoices:invoices","create")&&<Button variant="secondary" disabled={busy||!invoice} onClick={()=>setWorkflow("duplicate")}>Duplicate</Button>}
   </>}>
     <ErrorBanner message={error}/>
+    {invoice && <><InvoiceReference invoice={invoice}/><div className="flex flex-wrap gap-3 mb-4"><Button variant="secondary" onClick={()=>setWorkflow("history")}>View History</Button>{invoice.status==="draft"&&can("invoices:invoices","edit")&&<Button variant="danger" onClick={()=>setWorkflow("delete")}>Delete</Button>}{["issued","cancelled"].includes(invoice.status)&&can("invoices:invoices","create")&&<Button onClick={()=>setWorkflow("replacement")}>Create Correction / Replacement</Button>}</div>{workflow&&<InvoiceWorkflow key={`${invoice.id}-${workflow}`} invoice={invoice} mode={workflow} onClose={()=>setWorkflow(null)} onDeleted={()=>{navigate("/invoices");}}/>}</>}
+
     {invoice&&can("invoices:invoices","edit")&&<div className="flex flex-wrap gap-3 mb-4">
       {invoice.status==="draft"&&<Button disabled={busy} onClick={()=>void status("issued")}>Issue invoice</Button>}
       {["issued","partially_paid"].includes(invoice.status)&&<Button disabled={busy} onClick={()=>void status("paid")}>Mark paid</Button>}
       {invoice.status==="issued"&&<Button variant="secondary" disabled={busy} onClick={()=>void status("partially_paid")}>Mark partially paid</Button>}
-      {["draft","issued","partially_paid"].includes(invoice.status)&&<Button variant="danger" disabled={busy} onClick={()=>setCancel(true)}>Cancel invoice</Button>}
+      {["draft","issued"].includes(invoice.status)&&<Button variant="danger" disabled={busy} onClick={()=>setCancel(true)}>Cancel invoice</Button>}
     </div>}
     {invoice?.cancellation_reason&&<p className="mb-4">Cancellation reason: {invoice.cancellation_reason}</p>}
     {cancel&&<form className="border rounded-xl p-4 mb-4" onSubmit={e=>{e.preventDefault();void status("cancelled");}}><label>Cancellation reason<textarea className="block w-full border rounded-lg p-2 mt-2" required maxLength={500} value={reason} onChange={e=>setReason(e.target.value)}/></label><div className="flex gap-3 mt-3"><Button variant="danger" type="submit" disabled={busy}>Confirm cancellation</Button><Button variant="secondary" onClick={()=>setCancel(false)}>Keep invoice</Button></div></form>}
