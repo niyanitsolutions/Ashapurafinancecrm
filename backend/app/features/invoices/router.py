@@ -1,6 +1,6 @@
 from datetime import date
 from io import BytesIO
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
@@ -18,6 +18,7 @@ from app.features.auth.models import User
 from app.features.employee.dependencies import require_owner
 from app.features.invoices.pdf import render_invoice
 from app.features.invoices.schemas import (
+    ArchiveInput,
     CancelInput,
     CopyInput,
     DraftDeleteInput,
@@ -140,6 +141,7 @@ async def list_invoices(
     page_size: int = Query(default=25, ge=1, le=100),
     sort: Literal["created_at", "invoice_date", "invoice_number", "customer.name"] = "created_at",
     direction: Literal[-1, 1] = -1,
+    archived: bool = False,
 ):
     if from_date and to_date and from_date > to_date:
         raise ValidationError("From date cannot be after To date.")
@@ -154,6 +156,7 @@ async def list_invoices(
             page_size=page_size,
             sort=sort,
             direction=direction,
+            archived=archived,
         )
     )
 
@@ -183,7 +186,9 @@ async def duplicate_invoice(
 
 
 @router.post("/invoices/{invoice_id}/replacement")
-async def replacement_invoice(invoice_id: str, payload: CopyInput, svc: Service, actor: Create):
+async def replacement_invoice(
+    invoice_id: str, payload: CopyInput, svc: Service, actor: Create, editor: Edit
+):
     return ApiResponse.ok(
         await svc.duplicate(
             invoice_id,
@@ -196,9 +201,31 @@ async def replacement_invoice(invoice_id: str, payload: CopyInput, svc: Service,
 
 
 @router.delete("/invoices/{invoice_id}")
-async def delete_invoice(invoice_id: str, payload: DraftDeleteInput, svc: Service, actor: Edit):
-    await svc.delete_draft(invoice_id, payload.version, actor)
-    return ApiResponse.ok({"deleted": True})
+async def delete_invoice(
+    invoice_id: str, payload: DraftDeleteInput, svc: Service, actor: Edit
+) -> ApiResponse[Any]:
+    return ApiResponse.ok(
+        await svc.delete_draft(invoice_id, payload.version, actor, payload.reason)
+    )
+
+
+@router.get("/invoices/{invoice_id}/correction")
+async def correction_draft(
+    invoice_id: str, svc: Service, actor: Edit, creator: Create
+) -> ApiResponse[Any]:
+    return ApiResponse.ok(await svc.correction_draft(invoice_id, actor))
+
+
+@router.get("/invoices/{invoice_id}/delete-options")
+async def delete_options(invoice_id: str, svc: Service, actor: Edit) -> ApiResponse[Any]:
+    return ApiResponse.ok(await svc.delete_options(invoice_id, actor))
+
+
+@router.post("/invoices/{invoice_id}/archive")
+async def archive_invoice(
+    invoice_id: str, payload: ArchiveInput, svc: Service, actor: Edit
+) -> ApiResponse[Any]:
+    return ApiResponse.ok(await svc.archive(invoice_id, payload.version, payload.reason, actor))
 
 
 @router.get("/invoices/{invoice_id}/history")

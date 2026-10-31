@@ -11,7 +11,7 @@ import { InvoiceSettingsPage } from "./InvoiceSettingsPage";
 
 const permissions=vi.hoisted(()=>({create:true,edit:true}));
 vi.mock("@/features/access_control/usePermissions",()=>({usePermissions:()=>({can:(_key: string,action: string)=>action==="view"||permissions[action as "create"|"edit"]})}));
-vi.mock("./api",async original=>({...await original<typeof import("./api")>(),listInvoices:vi.fn(),getDefaults:vi.fn(),getCustomers:vi.fn(),saveInvoice:vi.fn(),previewPdf:vi.fn(),getInvoice:vi.fn(),invoicePdf:vi.fn(),setInvoiceStatus:vi.fn(),duplicateInvoice:vi.fn(),getSettings:vi.fn(),saveSettings:vi.fn(),uploadSignature:vi.fn(),downloadPdf:vi.fn(),deleteInvoice:vi.fn(),replacementInvoice:vi.fn(),invoiceHistory:vi.fn()}));
+vi.mock("./api",async original=>({...await original<typeof import("./api")>(),listInvoices:vi.fn(),getDefaults:vi.fn(),getCustomers:vi.fn(),saveInvoice:vi.fn(),previewPdf:vi.fn(),getInvoice:vi.fn(),invoicePdf:vi.fn(),setInvoiceStatus:vi.fn(),duplicateInvoice:vi.fn(),getSettings:vi.fn(),saveSettings:vi.fn(),uploadSignature:vi.fn(),downloadPdf:vi.fn(),deleteInvoice:vi.fn(),replacementInvoice:vi.fn(),invoiceHistory:vi.fn(),getCorrectionDraft:vi.fn(),getDeleteOptions:vi.fn(),archiveInvoice:vi.fn()}));
 const fixture={id:"i1",invoice_number:"INV-000001",customer_id:null,customer:{name:"Acme",address:"Street",city:"Pune",state:"Maharashtra",pincode:"411030",country:"India",gstin:"",phone:"",email:""},invoice_date:"2026-10-04",due_date:"2026-10-04",place_of_supply:"",terms:"",tax_type:"IGST" as const,version:1,status:"draft" as const,items:[{description:"Consultancy",hsn:"9971",quantity:"3",unit:"nos.s",rate:"7753.71",gst_rate:"18"}],subtotal:"23261.13",gst_total:"4187.00",grand_total:"27448.13",amount_in_words:"Words",created_by_name:"Owner",created_at:"2026-10-04T00:00:00Z"};
 beforeEach(()=>{
   vi.clearAllMocks();permissions.create=true;permissions.edit=true;
@@ -21,6 +21,9 @@ beforeEach(()=>{
   vi.mocked(api.getCustomers).mockResolvedValue([]);vi.mocked(api.getInvoice).mockResolvedValue(fixture);
   vi.mocked(api.invoicePdf).mockResolvedValue(new Blob(["pdf"]));vi.mocked(api.previewPdf).mockResolvedValue(new Blob(["preview"]));
   vi.mocked(api.saveInvoice).mockResolvedValue(fixture);
+  vi.mocked(api.getCorrectionDraft).mockResolvedValue(null);
+  vi.mocked(api.getDeleteOptions).mockResolvedValue({eligible:true,explanation:"Eligible only while latest; this is not a reservation."});
+  vi.mocked(api.invoiceHistory).mockResolvedValue([]);
 });
 function show(element: React.ReactNode,path="/") {render(<MemoryRouter initialEntries={[path]}><Routes><Route path="/" element={element}/><Route path="/invoices/:invoiceId/edit" element={element}/><Route path="/invoices/:invoiceId" element={path==="/"?<p>Saved invoice</p>:element}/></Routes></MemoryRouter>);}
 describe("invoice screens",()=>{
@@ -106,5 +109,47 @@ describe("invoice workflows",()=>{
     show(<InvoiceListPage/>);await screen.findByText("INV-000001");
     for(const name of ["Delete","Duplicate","Cancel","Create Correction / Replacement"])
       expect(screen.queryByRole("option",{name})).not.toBeInTheDocument();
+  });
+});
+
+describe('correction persistence and archive',()=>{
+  it('resumes an existing correction without another creation request',async()=>{
+    vi.mocked(api.getInvoice).mockResolvedValue({...fixture,status:'issued'});
+    vi.mocked(api.getCorrectionDraft).mockResolvedValue({...fixture,id:'c1',invoice_number:'INV-000002',replacement_for:'i1',source_invoice_number:fixture.invoice_number,correction_reason:'Correct amount'});
+    show(<InvoiceViewPage/>,'/invoices/i1');const user=userEvent.setup();await screen.findByTitle('Invoice PDF');
+    await user.click(screen.getByRole('button',{name:'Create Correction / Replacement'}));
+    expect(await screen.findByRole('button',{name:'Resume Correction Draft'})).toBeEnabled();
+    expect(screen.getByLabelText('Correction reason')).toHaveValue('Correct amount');
+    await user.click(screen.getByRole('button',{name:'Resume Correction Draft'}));
+    expect(api.replacementInvoice).not.toHaveBeenCalled();
+  });
+  it('keeps correction identity and server version across repeated saves',async()=>{
+    const correction={...fixture,replacement_for:'original',source_invoice_number:'INV-000000',source_status:'issued',correction_reason:'Correct amount'};
+    vi.mocked(api.getInvoice).mockResolvedValue(correction);
+    vi.mocked(api.saveInvoice).mockResolvedValueOnce({...correction,version:2}).mockResolvedValueOnce({...correction,version:3});
+    show(<InvoiceFormPage/>,'/invoices/i1/edit');const user=userEvent.setup();await screen.findByDisplayValue('Consultancy');
+    await user.click(screen.getByRole('button',{name:'Save draft'}));
+    expect(await screen.findByRole('status')).toHaveTextContent('Correction draft saved: INV-000001');
+    await user.click(screen.getByRole('button',{name:'Save draft'}));
+    await waitFor(()=>expect(api.saveInvoice).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(api.saveInvoice).mock.calls.map(([input,id])=>[id,input.version])).toEqual([['i1',1],['i1',2]]);
+    expect(screen.getByRole('heading',{name:'Edit correction draft'})).toBeInTheDocument();
+  });
+  it('requires an archive reason and refreshes the list on success',async()=>{
+    vi.mocked(api.listInvoices).mockResolvedValueOnce({items:[{...fixture,status:'issued'}],total:1,total_pages:1}).mockResolvedValue({items:[],total:0,total_pages:1});
+    vi.mocked(api.archiveInvoice).mockResolvedValue({...fixture,status:'issued',is_archived:true});
+    show(<InvoiceListPage/>);const user=userEvent.setup();await screen.findByText('INV-000001');
+    await user.selectOptions(screen.getByLabelText('Actions for INV-000001'),'archive');
+    expect(screen.getByRole('button',{name:'Archive Invoice'})).toBeDisabled();
+    await user.type(screen.getByLabelText('Archive reason'),'Retain for review');
+    await user.click(screen.getByRole('button',{name:'Archive Invoice'}));
+    expect(api.archiveInvoice).toHaveBeenCalledWith('i1',1,'Retain for review');
+    expect(await screen.findByText('No invoices found.')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Invoice archived');
+  });
+  it('filters archived invoices without changing other list filters',async()=>{
+    show(<InvoiceListPage/>);const user=userEvent.setup();await screen.findByText('INV-000001');
+    await user.click(screen.getByLabelText('Archived invoices'));
+    await waitFor(()=>expect(vi.mocked(api.listInvoices).mock.lastCall?.[0].get('archived')).toBe('true'));
   });
 });

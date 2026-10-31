@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/buttons/Button";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
@@ -17,6 +17,8 @@ function empty(): InvoiceInput {
 const inputClass = "w-full border border-border rounded-lg p-2 bg-card";
 
 export function InvoiceFormPage() {
+  const location=useLocation();
+  const [saved,setSaved]=useState(false);
   const [sourceInvoice,setSourceInvoice]=useState<Invoice | null>(null);
   const requestKey=useRef(crypto.randomUUID());
   const submitting=useRef(false);
@@ -40,21 +42,23 @@ export function InvoiceFormPage() {
   },[invoiceId]);
   useEffect(()=>{let active=true;const timer=setTimeout(()=>getCustomers(search).then(v=>{if(active)setCustomers(v);}).catch(e=>{if(active)setError(getErrorMessage(e));}),250);return()=>{active=false;clearTimeout(timer);};},[search]);
   useEffect(()=>{if(!pdf){setUrl("");return;}const next=URL.createObjectURL(pdf);setUrl(next);return()=>URL.revokeObjectURL(next);},[pdf]);
-  const change = (next: InvoiceInput) => {setForm(next);setPdf(null);};
+  const change = (next: InvoiceInput) => {setForm(next);setPdf(null);setSaved(false);};
   const rowChange = (index: number, key: keyof Item, value: string) => change({...form,items:form.items.map((row,i)=>i===index?{...row,[key]:value}:row)});
   let totals: ReturnType<typeof calculateItems> | null = null;
   try {totals=calculateItems(form.items,form.tax_type==="CGST_SGST");} catch { /* incomplete input; backend validates on save */ }
   async function submit(preview: boolean) {
     if(submitting.current)return; submitting.current=true;
     setError(null);setBusy(true);
-    try {if(preview) setPdf(await previewPdf(form)); else {const invoice=await saveInvoice(invoiceId ? form : {...form,request_key:requestKey.current},invoiceId);navigate(`/invoices/${invoice.id}`);}}
+    try {if(preview) setPdf(await previewPdf(form)); else {const invoice=await saveInvoice(invoiceId ? form : {...form,request_key:requestKey.current},invoiceId);if(invoice.replacement_for && invoiceId) {setForm(f=>({...f,version:invoice.version}));setSourceInvoice(previous=>({...invoice,source_status:previous?.source_status}));setSaved(true);} else navigate(`/invoices/${invoice.id}`);}}
     catch(e){setError(getErrorMessage(e));}finally{submitting.current=false;setBusy(false);}
   }
-  return <SimplePageLayout title={invoiceId?"Edit draft invoice":"Create invoice"} backTo="/invoices">
+  return <SimplePageLayout title={sourceInvoice?.replacement_for?"Edit correction draft":invoiceId?"Edit draft invoice":"Create invoice"} backTo="/invoices">
     <ErrorBanner message={error}/>
+    {sourceInvoice?.replacement_for&&<p className="mb-4">{location.state?.correctionResumed ? "Resuming existing correction draft" : "Editing correction draft"}: {sourceInvoice.invoice_number}. Saves update this same draft.</p>}
+    {saved&&<p role="status" className="mb-4 text-success">Correction draft saved: {sourceInvoice?.invoice_number}</p>}
     {sourceInvoice&&<InvoiceReference invoice={sourceInvoice}/>}
     {!ready ? <p>{error?"Invoice unavailable.":"Loading invoice…"}</p> : <form onSubmit={e=>{e.preventDefault();void submit(false);}} className="space-y-6">
-      <section className="bg-card border rounded-xl p-5"><h2 className="font-semibold mb-4">Invoice details</h2><p className="text-sm mb-4">Invoice number is assigned automatically and remains fixed after creation.</p>
+      <section className="bg-card border rounded-xl p-5"><h2 className="font-semibold mb-4">Invoice details</h2><p className="text-sm mb-4">The server assigns and displays the actual invoice number after Save draft. An eligible latest deleted draft number may be reused; no number is reserved by this form. The number stays fixed on later saves.</p>
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <label>Invoice date<input className={inputClass} type="date" required value={form.invoice_date} onChange={e=>change({...form,invoice_date:e.target.value})}/></label>
           <label>Valid until / Due date<input className={inputClass} type="date" required min={form.invoice_date} value={form.due_date} onChange={e=>change({...form,due_date:e.target.value})}/></label>
@@ -85,7 +89,7 @@ export function InvoiceFormPage() {
       </section>
       <div className="grid lg:grid-cols-2 gap-5"><section className="bg-card border rounded-xl p-5"><h2 className="font-semibold mb-3">Bank details preview</h2><p>{company?.bank_name || "Configure bank details in Invoice Settings before issuing."}</p><p>Branch: {company?.branch}</p><p>Account: {company?.account_number}</p><p>IFSC: {company?.ifsc}</p><label className="block mt-4">Payment terms<textarea className={inputClass} maxLength={500} value={form.terms} onChange={e=>change({...form,terms:e.target.value})}/></label></section>
         <section className="bg-card border rounded-xl p-5"><h2 className="font-semibold mb-3">Tax & totals</h2><p>Subtotal: {totals?money(totals.subtotal):"—"}</p><p>{form.tax_type==="IGST"?"IGST":"CGST + SGST"}: {totals?money(totals.gst):"—"}</p><p className="font-semibold text-xl mt-3">Grand total: {totals?money(totals.total):"—"}</p><p className="text-sm mt-3">Final totals and amount in words are validated by the server when saved.</p></section></div>
-      <div className="flex gap-3"><Button variant="secondary" loading={busy} onClick={e=>{if(e.currentTarget.form?.reportValidity()) void submit(true);}}>Preview invoice</Button><Button type="submit" loading={busy}>Save draft</Button></div>
+      <div className="flex gap-3"><Button variant="secondary" loading={busy} onClick={e=>{if(e.currentTarget.form?.reportValidity()) void submit(true);}}>Preview invoice</Button><Button type="submit" loading={busy}>Save draft</Button><Button variant="secondary" disabled={busy} onClick={()=>navigate("/invoices")}>Cancel / Close</Button></div>
       {url && <section><h2 className="font-semibold mb-3">Invoice preview</h2><iframe title="Invoice preview" src={url} className="w-full h-[900px] border rounded-xl"/></section>}
     </form>}
   </SimplePageLayout>;

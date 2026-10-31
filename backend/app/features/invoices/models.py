@@ -11,7 +11,7 @@ class Invoice(BaseDocument):
     """Stored, calculated invoice with the CRM's standard lifecycle/audit fields.
 
     Monetary values are canonical decimal strings in BSON, never binary floats.
-    Draft deletion is soft-only; invoice numbers remain reserved.
+    Draft deletion retains tombstones; only an eligible tail allocation may be reused.
     """
 
     invoice_number: str
@@ -46,3 +46,10 @@ class Invoice(BaseDocument):
     correction_reason: str | None = None
     request_key: str | None = None
     history: list[dict[str, Any]] = Field(default_factory=list)
+
+    is_archived: bool = False
+    archived_at: datetime | None = None
+    archived_by: str | None = None
+    archive_reason: str | None = None
+    deletion_reason: str | None = None
+    number_reused_from: str | None = None

@@ -17,6 +17,7 @@ export interface Invoice extends InvoiceInput {
   id: string; invoice_number: string; status: Status; subtotal: string; gst_total: string;
   grand_total: string; amount_in_words: string; created_by_name: string; created_at: string;
   cancellation_reason?: string;
+  is_archived?: boolean; archive_reason?: string; source_status?: string; correction_resumed?: boolean; number_reused_from?: string;
   duplicated_from?: string; replacement_for?: string; source_invoice_number?: string; correction_reason?: string;
 }
 export interface InvoiceConfig {
@@ -60,5 +61,8 @@ export interface InvoiceEvent {
   new_status?: string; related_invoice_number?: string; reason?: string;
 }
 export const invoiceHistory = (id: string) => apiRequest<InvoiceEvent[]>(`/invoices/${id}/history`);
-export const deleteInvoice = (id: string, version: number) => apiRequest(`/invoices/${id}`, {method: "DELETE", body: JSON.stringify({version})});
+export const deleteInvoice = (id: string, version: number, reason = "") => apiRequest<{deleted: boolean; number_reusable: boolean; message: string}>(`/invoices/${id}`, {method: "DELETE", body: JSON.stringify({version, reason})});
+export const getCorrectionDraft = (id: string) => apiRequest<Invoice | null>(`/invoices/${id}/correction`);
+export const getDeleteOptions = (id: string) => apiRequest<{eligible: boolean; explanation: string}>(`/invoices/${id}/delete-options`);
+export const archiveInvoice = (id: string, version: number, reason: string) => apiRequest<Invoice>(`/invoices/${id}/archive`, {method: "POST", body: JSON.stringify({version, reason})});
 export const replacementInvoice = (id: string, reason: string, requestKey: string) => apiRequest<Invoice>(`/invoices/${id}/replacement`, {method: "POST", body: JSON.stringify({reason, request_key: requestKey})});

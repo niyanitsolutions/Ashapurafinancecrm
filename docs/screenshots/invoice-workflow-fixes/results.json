@@ -1,0 +1,46 @@
+[
+  {
+    "width": 1440,
+    "result": "passed",
+    "synthetic": true,
+    "correctionId": "000000000000000000000011",
+    "correctionCount": 1,
+    "putSaves": 3,
+    "checks": [
+      "create",
+      "edit",
+      "latest-delete-reuse",
+      "older-gap-not-reused",
+      "duplicate",
+      "correction-repeat-save",
+      "resume-correction",
+      "source-immutable",
+      "download",
+      "print-request",
+      "archive-issued-cancelled",
+      "employee-permissions"
+    ]
+  },
+  {
+    "width": 390,
+    "result": "passed",
+    "synthetic": true,
+    "correctionId": "000000000000000000000011",
+    "correctionCount": 1,
+    "putSaves": 3,
+    "checks": [
+      "create",
+      "edit",
+      "latest-delete-reuse",
+      "older-gap-not-reused",
+      "duplicate",
+      "correction-repeat-save",
+      "resume-correction",
+      "source-immutable",
+      "download",
+      "print-request",
+      "archive-issued-cancelled",
+      "employee-permissions"
+    ]
+  }
+]

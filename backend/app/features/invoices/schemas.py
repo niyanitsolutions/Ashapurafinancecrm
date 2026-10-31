@@ -96,8 +96,15 @@ class CancelInput(BaseModel):
 
 
 class DraftDeleteInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     version: int = Field(ge=1)
+    reason: str = Field(default="", max_length=500)
+
+
+class ArchiveInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    version: int = Field(ge=1)
+    reason: str = Field(min_length=1, max_length=500)
 
 
 class CopyInput(BaseModel):
