@@ -1,6 +1,6 @@
 """Invoice inputs: money crosses JSON/BSON boundaries as decimal strings."""
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 
@@ -14,6 +14,10 @@ GST = Annotated[Decimal, Field(ge=0, le=100, max_digits=5, decimal_places=2)]
 
 class InvoiceConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    same_number_reissue_enabled: bool = False
+    same_number_policy_reason: str = Field(default="", max_length=500)
+    same_number_policy_approved_by: str | None = None
+    same_number_policy_approved_at: datetime | None = None
     gstin: str = Field(default="", max_length=15, pattern=r"^$|^[0-9]{2}[A-Z0-9]{13}$")
     website: str = Field(default="", max_length=150)
     bank_name: str = Field(default="", max_length=100)
@@ -111,3 +115,17 @@ class CopyInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     request_key: str = Field(min_length=16, max_length=100, pattern=r"^[A-Za-z0-9-]+$")
     reason: str = Field(default="", max_length=500)
+
+
+class RevisionInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    invoice: InvoiceInput
+    version: int = Field(ge=1)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class ReissueInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    version: int = Field(ge=1)
+    proposal_id: str = Field(min_length=1, max_length=50)
+    approval_reason: str = Field(min_length=1, max_length=500)

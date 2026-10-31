@@ -16,11 +16,15 @@ export type Status = "draft" | "issued" | "partially_paid" | "paid" | "cancelled
 export interface Invoice extends InvoiceInput {
   id: string; invoice_number: string; status: Status; subtotal: string; gst_total: string;
   grand_total: string; amount_in_words: string; created_by_name: string; created_at: string;
+  issued_at?: string; effective_revision?: number; reissued_at?: string;
+  revision_proposal?: {id: string; status: string; reason: string; snapshot: Invoice; requested_by: string; requested_at: string} | null;
   cancellation_reason?: string;
   is_archived?: boolean; archive_reason?: string; source_status?: string; correction_resumed?: boolean; number_reused_from?: string;
   duplicated_from?: string; replacement_for?: string; source_invoice_number?: string; correction_reason?: string;
 }
 export interface InvoiceConfig {
+  same_number_reissue_enabled?: boolean; same_number_policy_reason?: string;
+  same_number_policy_approved_by?: string | null; same_number_policy_approved_at?: string | null;
   gstin: string; website: string; bank_name: string; branch: string; account_number: string;
   account_holder: string; ifsc: string; prefix: string; starting_number: number; default_gst: string;
   default_terms: string; signatory: string; designation: string; signature_s3_key: string | null;
@@ -66,3 +70,15 @@ export const getCorrectionDraft = (id: string) => apiRequest<Invoice | null>(`/i
 export const getDeleteOptions = (id: string) => apiRequest<{eligible: boolean; explanation: string}>(`/invoices/${id}/delete-options`);
 export const archiveInvoice = (id: string, version: number, reason: string) => apiRequest<Invoice>(`/invoices/${id}/archive`, {method: "POST", body: JSON.stringify({version, reason})});
 export const replacementInvoice = (id: string, reason: string, requestKey: string) => apiRequest<Invoice>(`/invoices/${id}/replacement`, {method: "POST", body: JSON.stringify({reason, request_key: requestKey})});
+
+export interface InvoiceRevision {
+  revision_number: number; previous_revision: number | null; current: boolean; status: string;
+  reason: string; changed_by?: string; approved_by?: string; approved_at?: string; reissued_at?: string;
+}
+export const requestRevision = (id: string, invoice: InvoiceInput, reason: string) => apiRequest<Invoice>(`/invoices/${id}/revision`, {method:"POST", body:JSON.stringify({invoice,version:invoice.version,reason})});
+export const reissueInvoice = (id: string, version: number, proposalId: string, reason: string) => apiRequest<Invoice>(`/invoices/${id}/reissue`, {method:"POST",body:JSON.stringify({version,proposal_id:proposalId,approval_reason:reason})});
+export const getInvoiceRevisions = (id: string) => apiRequest<InvoiceRevision[]>(`/invoices/${id}/revisions`);
+export const historicalInvoicePdf = (id: string, number: number) => apiBlob(`/invoices/${id}/revisions/${number}/pdf`);
+export const deleteIssuedInvoice = (id: string, version: number, reason: string) => apiRequest<Invoice>(`/invoices/${id}/issued-delete`, {method:"POST",body:JSON.stringify({version,reason})});
+
+export const previewRevisionPdf = (id: string, invoice: InvoiceInput, reason: string) => apiBlob(`/invoices/${id}/revision/preview/pdf`, {method:"POST",body:JSON.stringify({invoice,version:invoice.version,reason})});

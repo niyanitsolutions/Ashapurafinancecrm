@@ -174,3 +174,86 @@ async def test_real_mongo_reviewed_index_migration_and_legacy_guard(
     assert new["invoice_number"] == doc["invoice_number"]
     with pytest.raises(RuntimeError, match="Duplicate invoice numbers"):
         await migration.migrate(db, apply=True, rollback=True)
+
+
+async def test_real_mongo_same_number_revision_cas_and_immutable_original(
+    real_invoice_db, mock_redis
+):
+    from app.features.invoices.revisions import InvoiceRevisionService
+    from app.features.invoices.schemas import ReissueInput, RevisionInput
+    from app.utils.datetime import utc_now
+
+    db = real_invoice_db
+    await ensure_invoice_indexes(db)
+    actor = User(id=str(ObjectId()), mobile="9000000001", role="owner")
+    service = InvoiceService(db, mock_redis)
+    company = await service.company.get_or_create()
+    await service.company.update(
+        company.require_id(),
+        {
+            "company_name": "Synthetic Invoice Revision Test",
+            "address": {
+                "line1": "Test street",
+                "city": "Pune",
+                "state": "Maharashtra",
+                "pincode": "411030",
+            },
+            "invoice_config": {
+                "gstin": "29DFPPP1103E1ZI",
+                "bank_name": "Test bank",
+                "account_number": "1234",
+                "ifsc": "UBIN0813982",
+                "same_number_reissue_enabled": True,
+                "same_number_policy_reason": "Approved synthetic test policy",
+                "same_number_policy_approved_by": actor.require_id(),
+                "same_number_policy_approved_at": utc_now(),
+            },
+        },
+    )
+    original = await service.create(InvoiceInput.model_validate(sample()), actor)
+    original = await service.status(
+        original["id"], StatusInput(status="issued", version=1), actor
+    )
+    revisions = InvoiceRevisionService(service)
+    original_snapshot = await revisions.historical(original["id"], 1, actor)
+    counter = await db.counters.find_one({"_id": "INV"})
+    indexes = await db.invoices.index_information()
+    changed = sample()
+    changed["items"][0].update(rate="100", quantity="2")
+    payload = RevisionInput(
+        invoice=InvoiceInput.model_validate(changed),
+        version=original["version"],
+        reason="Correct amount",
+    )
+    requests = await asyncio.gather(
+        *(revisions.request(original["id"], payload, actor) for _ in range(10)),
+        return_exceptions=True,
+    )
+    assert sum(isinstance(row, dict) for row in requests) == 1
+    pending = next(row for row in requests if isinstance(row, dict))
+    approvals = await asyncio.gather(
+        *(
+            revisions.reissue(
+                original["id"],
+                ReissueInput(
+                    version=pending["version"],
+                    proposal_id=pending["revision_proposal"]["id"],
+                    approval_reason="Owner approved",
+                ),
+                actor,
+            )
+            for _ in range(8)
+        ),
+        return_exceptions=True,
+    )
+    assert sum(isinstance(row, dict) for row in approvals) == 1
+    effective = await service.get(original["id"], actor)
+    assert (
+        effective["id"] == original["id"]
+        and effective["invoice_number"] == original["invoice_number"]
+    )
+    assert effective["effective_revision"] == 2 and effective["grand_total"] == "236.00"
+    assert await revisions.historical(original["id"], 1, actor) == original_snapshot
+    assert await db.invoices.count_documents({}) == 1
+    assert (await db.counters.find_one({"_id": "INV"}))["seq"] == counter["seq"]
+    assert await db.invoices.index_information() == indexes

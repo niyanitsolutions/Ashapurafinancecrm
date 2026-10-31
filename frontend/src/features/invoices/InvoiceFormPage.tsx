@@ -4,8 +4,9 @@ import { Button } from "@/components/buttons/Button";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { getErrorMessage } from "@/shared/api/errors";
+import { usePermissions } from "@/features/access_control/usePermissions";
 import { calculateItems } from "./calculations";
-import { getCustomers, getDefaults, getInvoice, money, previewPdf, saveInvoice, type Company, type CustomerOption, type Invoice, type InvoiceInput, type Item } from "./api";
+import { previewRevisionPdf, reissueInvoice, requestRevision, getCustomers, getDefaults, getInvoice, money, previewPdf, saveInvoice, type Company, type CustomerOption, type Invoice, type InvoiceInput, type Item } from "./api";
 
 import { InvoiceReference } from "./InvoiceWorkflow";
 
@@ -18,6 +19,10 @@ const inputClass = "w-full border border-border rounded-lg p-2 bg-card";
 
 export function InvoiceFormPage() {
   const location=useLocation();
+  const revisionMode=new URLSearchParams(location.search).get("mode")==="revision";
+  const {isOwner}=usePermissions();
+  const [correctionReason,setCorrectionReason]=useState("");
+  const [approvalReason,setApprovalReason]=useState("");
   const [saved,setSaved]=useState(false);
   const [sourceInvoice,setSourceInvoice]=useState<Invoice | null>(null);
   const requestKey=useRef(crypto.randomUUID());
@@ -32,14 +37,18 @@ export function InvoiceFormPage() {
       if(!active) return; setCompany(defaults);
       if(invoice) {
         setSourceInvoice(invoice);
-        if(invoice.status!=="draft") {setError("Only draft invoices can be edited.");return;}
-        const data: InvoiceInput = {customer_id:invoice.customer_id,customer:invoice.customer,invoice_date:invoice.invoice_date,due_date:invoice.due_date,place_of_supply:invoice.place_of_supply,terms:invoice.terms,tax_type:invoice.tax_type,version:invoice.version,
+        if(invoice.status!=="draft"&&!(revisionMode&&invoice.status==="issued"&&!invoice.is_archived)) {setError("Only draft invoices can be edited outside revision mode.");return;}
+        if(revisionMode&&!defaults.same_number_reissue_enabled){setError("Same-number reissue is disabled by the accounting policy.");return;}
+        const effective=invoice;
+        if(revisionMode&&invoice.revision_proposal){setSaved(true);setCorrectionReason(invoice.revision_proposal.reason);invoice=invoice.revision_proposal.snapshot;}
+
+        const data: InvoiceInput = {customer_id:invoice.customer_id,customer:invoice.customer,invoice_date:invoice.invoice_date,due_date:invoice.due_date,place_of_supply:invoice.place_of_supply,terms:invoice.terms,tax_type:invoice.tax_type,version:effective.version,
           items:invoice.items.map(({description,hsn,quantity,unit,rate,gst_rate})=>({description,hsn,quantity,unit,rate,gst_rate}))};
         setForm(data);
       } else setForm(f=>({...f,terms:defaults.default_terms,items:[blankItem(defaults.default_gst)]}));
       setReady(true);
     }).catch(e=>{if(active) setError(getErrorMessage(e));});return()=>{active=false;};
-  },[invoiceId]);
+  },[invoiceId,revisionMode]);
   useEffect(()=>{let active=true;const timer=setTimeout(()=>getCustomers(search).then(v=>{if(active)setCustomers(v);}).catch(e=>{if(active)setError(getErrorMessage(e));}),250);return()=>{active=false;clearTimeout(timer);};},[search]);
   useEffect(()=>{if(!pdf){setUrl("");return;}const next=URL.createObjectURL(pdf);setUrl(next);return()=>URL.revokeObjectURL(next);},[pdf]);
   const change = (next: InvoiceInput) => {setForm(next);setPdf(null);setSaved(false);};
@@ -49,16 +58,23 @@ export function InvoiceFormPage() {
   async function submit(preview: boolean) {
     if(submitting.current)return; submitting.current=true;
     setError(null);setBusy(true);
-    try {if(preview) setPdf(await previewPdf(form)); else {const invoice=await saveInvoice(invoiceId ? form : {...form,request_key:requestKey.current},invoiceId);if(invoice.replacement_for && invoiceId) {setForm(f=>({...f,version:invoice.version}));setSourceInvoice(previous=>({...invoice,source_status:previous?.source_status}));setSaved(true);} else navigate(`/invoices/${invoice.id}`);}}
+    try {if(revisionMode&&!preview&&invoiceId){const invoice=await requestRevision(invoiceId,form,correctionReason);setSourceInvoice(invoice);setForm(f=>({...f,version:invoice.version}));setSaved(true);}else if(preview) setPdf(revisionMode&&invoiceId?await previewRevisionPdf(invoiceId,form,correctionReason):await previewPdf(form)); else {const invoice=await saveInvoice(invoiceId ? form : {...form,request_key:requestKey.current},invoiceId);if(invoice.replacement_for && invoiceId) {setForm(f=>({...f,version:invoice.version}));setSourceInvoice(previous=>({...invoice,source_status:previous?.source_status}));setSaved(true);} else navigate(`/invoices/${invoice.id}`);}}
     catch(e){setError(getErrorMessage(e));}finally{submitting.current=false;setBusy(false);}
   }
-  return <SimplePageLayout title={sourceInvoice?.replacement_for?"Edit correction draft":invoiceId?"Edit draft invoice":"Create invoice"} backTo="/invoices">
+  async function approve() {
+    if(!invoiceId||!sourceInvoice?.revision_proposal||submitting.current)return;
+    submitting.current=true;setBusy(true);setError(null);
+    try{await reissueInvoice(invoiceId,sourceInvoice.version,sourceInvoice.revision_proposal.id,approvalReason);navigate(`/invoices/${invoiceId}`);}catch(e){setError(getErrorMessage(e));}finally{submitting.current=false;setBusy(false);}
+  }
+  return <SimplePageLayout title={revisionMode?"Issued invoice revision":sourceInvoice?.replacement_for?"Edit correction draft":invoiceId?"Edit draft invoice":"Create invoice"} backTo="/invoices">
     <ErrorBanner message={error}/>
-    {sourceInvoice?.replacement_for&&<p className="mb-4">{location.state?.correctionResumed ? "Resuming existing correction draft" : "Editing correction draft"}: {sourceInvoice.invoice_number}. Saves update this same draft.</p>}
-    {saved&&<p role="status" className="mb-4 text-success">Correction draft saved: {sourceInvoice?.invoice_number}</p>}
+    {revisionMode&&sourceInvoice&&<section className="border rounded-xl p-4 mb-4 space-y-3"><label>Invoice number<input className={inputClass} readOnly value={sourceInvoice.invoice_number}/></label><p>Revision mode: current effective revision {sourceInvoice.effective_revision || 1}. Original issued: {sourceInvoice.issued_at || "See original issue record"}. The number and original issue timestamp remain unchanged.</p><p>Approval state: {sourceInvoice.revision_proposal?.status.replaceAll("_"," ") || "Unsaved proposal"}. The current issued invoice remains effective until owner approval.</p><label className="block">Correction reason<textarea form="invoice-editor" required maxLength={500} className={inputClass} value={correctionReason} onChange={e=>{setCorrectionReason(e.target.value);setSaved(false);}}/></label>{sourceInvoice.revision_proposal&&isOwner&&<><p>Review the saved proposal before approving. Any unsaved edits must be saved for approval first.</p><label className="block">Accounting approval reason<textarea maxLength={500} className={inputClass} value={approvalReason} onChange={e=>setApprovalReason(e.target.value)}/></label><Button disabled={busy||!saved||!approvalReason.trim()} onClick={()=>void approve()}>Approve &amp; Reissue Saved Revision</Button></>}</section>}
+    {revisionMode&&saved&&<p role="status" className="mb-4">Revision proposal saved for {sourceInvoice?.invoice_number}. Pending accounting-owner approval.</p>}
+    {!revisionMode&&sourceInvoice?.replacement_for&&<p className="mb-4">{location.state?.correctionResumed ? "Resuming existing correction draft" : "Editing correction draft"}: {sourceInvoice.invoice_number}. Saves update this same draft.</p>}
+    {!revisionMode&&saved&&<p role="status" className="mb-4 text-success">Correction draft saved: {sourceInvoice?.invoice_number}</p>}
     {sourceInvoice&&<InvoiceReference invoice={sourceInvoice}/>}
-    {!ready ? <p>{error?"Invoice unavailable.":"Loading invoice…"}</p> : <form onSubmit={e=>{e.preventDefault();void submit(false);}} className="space-y-6">
-      <section className="bg-card border rounded-xl p-5"><h2 className="font-semibold mb-4">Invoice details</h2><p className="text-sm mb-4">The server assigns and displays the actual invoice number after Save draft. An eligible latest deleted draft number may be reused; no number is reserved by this form. The number stays fixed on later saves.</p>
+    {!ready ? <p>{error?"Invoice unavailable.":"Loading invoice…"}</p> : <form id="invoice-editor" onSubmit={e=>{e.preventDefault();void submit(false);}} className="space-y-6">
+      <section className="bg-card border rounded-xl p-5"><h2 className="font-semibold mb-4">Invoice details</h2><p className="text-sm mb-4">{revisionMode?"This proposal retains the existing invoice identity and number. No number is allocated or reserved.":"The server assigns the actual number after Save draft. Eligible latest deleted draft numbers may be reused; this form does not reserve a number."}</p>
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <label>Invoice date<input className={inputClass} type="date" required value={form.invoice_date} onChange={e=>change({...form,invoice_date:e.target.value})}/></label>
           <label>Valid until / Due date<input className={inputClass} type="date" required min={form.invoice_date} value={form.due_date} onChange={e=>change({...form,due_date:e.target.value})}/></label>
@@ -89,7 +105,7 @@ export function InvoiceFormPage() {
       </section>
       <div className="grid lg:grid-cols-2 gap-5"><section className="bg-card border rounded-xl p-5"><h2 className="font-semibold mb-3">Bank details preview</h2><p>{company?.bank_name || "Configure bank details in Invoice Settings before issuing."}</p><p>Branch: {company?.branch}</p><p>Account: {company?.account_number}</p><p>IFSC: {company?.ifsc}</p><label className="block mt-4">Payment terms<textarea className={inputClass} maxLength={500} value={form.terms} onChange={e=>change({...form,terms:e.target.value})}/></label></section>
         <section className="bg-card border rounded-xl p-5"><h2 className="font-semibold mb-3">Tax & totals</h2><p>Subtotal: {totals?money(totals.subtotal):"—"}</p><p>{form.tax_type==="IGST"?"IGST":"CGST + SGST"}: {totals?money(totals.gst):"—"}</p><p className="font-semibold text-xl mt-3">Grand total: {totals?money(totals.total):"—"}</p><p className="text-sm mt-3">Final totals and amount in words are validated by the server when saved.</p></section></div>
-      <div className="flex gap-3"><Button variant="secondary" loading={busy} onClick={e=>{if(e.currentTarget.form?.reportValidity()) void submit(true);}}>Preview invoice</Button><Button type="submit" loading={busy}>Save draft</Button><Button variant="secondary" disabled={busy} onClick={()=>navigate("/invoices")}>Cancel / Close</Button></div>
+      <div className="flex gap-3"><Button variant="secondary" loading={busy} onClick={e=>{if(e.currentTarget.form?.reportValidity()) void submit(true);}}>Preview invoice</Button><Button type="submit" loading={busy}>{revisionMode?"Save Revision Proposal":"Save draft"}</Button><Button variant="secondary" disabled={busy} onClick={()=>navigate("/invoices")}>Cancel / Close</Button></div>
       {url && <section><h2 className="font-semibold mb-3">Invoice preview</h2><iframe title="Invoice preview" src={url} className="w-full h-[900px] border rounded-xl"/></section>}
     </form>}
   </SimplePageLayout>;

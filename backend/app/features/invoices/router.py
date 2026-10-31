@@ -17,6 +17,7 @@ from app.features.access_control.permission_engine import require_permission
 from app.features.auth.models import User
 from app.features.employee.dependencies import require_owner
 from app.features.invoices.pdf import render_invoice
+from app.features.invoices.revisions import InvoiceRevisionService
 from app.features.invoices.schemas import (
     ArchiveInput,
     CancelInput,
@@ -24,10 +25,13 @@ from app.features.invoices.schemas import (
     DraftDeleteInput,
     InvoiceConfig,
     InvoiceInput,
+    ReissueInput,
+    RevisionInput,
     StatusInput,
 )
 from app.features.invoices.service import InvoiceService, payment_qr
 from app.services.storage.client import generate_presigned_download_url, get_s3_client
+from app.utils.datetime import utc_now
 
 router = APIRouter(tags=["invoices"])
 
@@ -63,12 +67,34 @@ async def save_settings(payload: InvoiceConfig, svc: Service, actor: Owner):
     ):
         raise ValidationError("Invalid signature image reference.")
     company = await svc.company.get_or_create()
+    previous = InvoiceConfig.model_validate(company.invoice_config)
+    if payload.same_number_reissue_enabled and not payload.same_number_policy_reason.strip():
+        raise ValidationError("An accounting-owner policy approval reason is required.")
+    policy_changed = (
+        payload.same_number_reissue_enabled != previous.same_number_reissue_enabled
+        or payload.same_number_policy_reason != previous.same_number_policy_reason
+    )
+    payload.same_number_policy_approved_by = (
+        actor.require_id()
+        if policy_changed and payload.same_number_reissue_enabled
+        else previous.same_number_policy_approved_by
+    )
+    payload.same_number_policy_approved_at = (
+        utc_now()
+        if policy_changed and payload.same_number_reissue_enabled
+        else previous.same_number_policy_approved_at
+    )
     await svc.company.update(
         company.require_id(),
         {"invoice_config": payload.model_dump(mode="json")},
         updated_by=actor.require_id(),
     )
-    await svc.audit(actor, "settings_updated")
+    await svc.audit(
+        actor,
+        "reissue_policy_updated" if policy_changed else "settings_updated",
+        enabled=payload.same_number_reissue_enabled,
+        reason=payload.same_number_policy_reason,
+    )
     return ApiResponse.ok(payload.model_dump(mode="json"))
 
 
@@ -264,10 +290,12 @@ def asset_bytes(key: str) -> bytes:
     return data
 
 
-async def pdf_response(doc, purpose, svc, actor):
+async def pdf_response(
+    doc: dict[str, Any], purpose: str, svc: InvoiceService, actor: User, frozen: bool = False
+) -> Response:
     # Draft payment/signature previews follow current settings without rewriting
     # stored invoice amounts or the immutable snapshots of issued invoices.
-    if doc["status"] == "draft":
+    if doc["status"] == "draft" and not frozen:
         company = await svc.draft_company(doc)
         doc = doc | {"company": company}
         doc = doc | {"qr_value": payment_qr(company, doc)}
@@ -307,3 +335,64 @@ async def invoice_pdf(
     purpose: Literal["download", "print", "preview"] = "download",
 ):
     return await pdf_response(await svc.get(invoice_id, actor), purpose, svc, actor)
+
+
+@router.post("/invoices/{invoice_id}/revision")
+async def request_revision(
+    invoice_id: str, payload: RevisionInput, svc: Service, actor: Edit
+) -> ApiResponse[Any]:
+    return ApiResponse.ok(await InvoiceRevisionService(svc).request(invoice_id, payload, actor))
+
+
+@router.post("/invoices/{invoice_id}/reissue")
+async def reissue(
+    invoice_id: str, payload: ReissueInput, svc: Service, actor: Owner
+) -> ApiResponse[Any]:
+    return ApiResponse.ok(await InvoiceRevisionService(svc).reissue(invoice_id, payload, actor))
+
+
+@router.get("/invoices/{invoice_id}/revisions")
+async def revision_history(invoice_id: str, svc: Service, actor: View) -> ApiResponse[Any]:
+    return ApiResponse.ok(await InvoiceRevisionService(svc).history(invoice_id, actor))
+
+
+@router.get("/invoices/{invoice_id}/revisions/{number}")
+async def historical_revision(
+    invoice_id: str, number: int, svc: Service, actor: View
+) -> ApiResponse[Any]:
+    return ApiResponse.ok(await InvoiceRevisionService(svc).historical(invoice_id, number, actor))
+
+
+@router.get("/invoices/{invoice_id}/revisions/{number}/pdf")
+async def historical_pdf(invoice_id: str, number: int, svc: Service, actor: View) -> Response:
+    doc = await InvoiceRevisionService(svc).historical(invoice_id, number, actor)
+    response = await pdf_response(doc, "preview", svc, actor)
+    response.headers["Content-Disposition"] = (
+        f'attachment; filename="{doc["invoice_number"]}-revision-{number}.pdf"'
+    )
+    await svc.audit(actor, "historical_pdf_downloaded", invoice_id, revision_number=number)
+    return response
+
+
+@router.post("/invoices/{invoice_id}/issued-delete")
+async def issued_delete(
+    invoice_id: str, payload: ArchiveInput, svc: Service, actor: Owner
+) -> ApiResponse[Any]:
+    current = await svc.get(invoice_id, actor)
+    if current["status"] != "issued":
+        raise ValidationError("Only an issued invoice can use this controlled archive action.")
+    return ApiResponse.ok(await svc.archive(invoice_id, payload.version, payload.reason, actor))
+
+
+@router.post("/invoices/{invoice_id}/revision/preview/pdf")
+async def revision_preview_pdf(
+    invoice_id: str, payload: RevisionInput, svc: Service, actor: Edit
+) -> Response:
+    current = await InvoiceRevisionService(svc).editable(invoice_id, actor)
+    await svc.customer_validate(payload.invoice, actor)
+    from app.features.invoices.calculations import calculate
+
+    business = payload.invoice.model_dump(mode="json", exclude={"request_key", "version"})
+    doc = current | business | calculate(payload.invoice.items, payload.invoice.tax_type)
+    doc.update(company=current["company"], status="draft", qr_value="")
+    return await pdf_response(doc, "preview", svc, actor, frozen=True)

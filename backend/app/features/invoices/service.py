@@ -178,14 +178,17 @@ class InvoiceService:
                 query["invoice_date"]["$lte"] = to_date.isoformat()
         count = await self.db.invoices.count_documents(query)
         docs = (
-            await self.db.invoices.find(query)
+            await self.db.invoices.find(query, {"revisions": 0, "revision_proposal": 0})
             .sort([(sort, direction), ("_id", direction)])
             .skip((page - 1) * page_size)
             .limit(page_size)
             .to_list(page_size)
         )
         return {
-            "items": [public(d) for d in docs],
+            "items": [
+                public({k: v for k, v in d.items() if k not in {"revisions", "revision_proposal"}})
+                for d in docs
+            ],
             "total": count,
             "page": page,
             "page_size": page_size,
@@ -403,7 +406,9 @@ class InvoiceService:
                         updates.get("status", current["status"]),
                         reason=updates.get("cancellation_reason")
                         or updates.get("archive_reason")
-                        or updates.get("deletion_reason"),
+                        or updates.get("deletion_reason")
+                        or (updates.get("revision_proposal") or {}).get("reason")
+                        or ((updates.get("revisions") or [{}])[-1]).get("reason"),
                     )
                 },
             },
@@ -419,7 +424,9 @@ class InvoiceService:
             new_status=updates.get("status", current["status"]),
             reason=updates.get("cancellation_reason")
             or updates.get("archive_reason")
-            or updates.get("deletion_reason"),
+            or updates.get("deletion_reason")
+            or (updates.get("revision_proposal") or {}).get("reason")
+            or ((updates.get("revisions") or [{}])[-1]).get("reason"),
         )
         return public(doc)
 
@@ -442,6 +449,10 @@ class InvoiceService:
                 "Settled invoices require an accounting adjustment; credit notes are not supported."
             )
         if payload.status == "cancelled":
+            if current["status"] == "issued" and actor.role != OWNER:
+                raise ForbiddenError(
+                    "Accounting-owner approval is required to cancel an issued invoice."
+                )
             if not payload.reason.strip():
                 raise ValidationError("Cancellation reason is required.")
             updates.update(
@@ -486,6 +497,20 @@ class InvoiceService:
                     "Company images could not be saved. The invoice remains a draft."
                 ) from exc
             updates["company"] = frozen_company
+            from app.features.invoices.revisions import original_record
+
+            updates["effective_revision"] = 1
+            updates["revisions"] = [
+                original_record(
+                    current
+                    | updates
+                    | {
+                        "updated_by": actor.require_id(),
+                        "version": current["version"] + 1,
+                    }
+                )
+            ]
+            updates["revisions"][0]["historical_capture"] = False
         return await self.replace(
             invoice_id,
             current,
@@ -610,6 +635,10 @@ class InvoiceService:
         self, invoice_id: str, version: int, reason: str, actor: User
     ) -> dict[str, Any]:
         current = await self.get(invoice_id, actor)
+        if current["status"] == "issued" and actor.role != OWNER:
+            raise ForbiddenError(
+                "Accounting-owner approval is required to archive an issued invoice."
+            )
         if current["status"] not in {"issued", "cancelled", "paid", "partially_paid"}:
             raise ConflictError("Drafts must use the draft deletion workflow.")
         if not reason.strip():

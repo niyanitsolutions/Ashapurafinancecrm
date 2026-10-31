@@ -53,3 +53,8 @@ class Invoice(BaseDocument):
     archive_reason: str | None = None
     deletion_reason: str | None = None
     number_reused_from: str | None = None
+
+    effective_revision: int = 1
+    revisions: list[dict[str, Any]] = Field(default_factory=list)
+    revision_proposal: dict[str, Any] | None = None
+    reissued_at: datetime | None = None
