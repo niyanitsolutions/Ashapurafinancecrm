@@ -12,7 +12,7 @@ import { InvoiceSettingsPage } from "./InvoiceSettingsPage";
 
 const permissions=vi.hoisted(()=>({create:true,edit:true,owner:true}));
 vi.mock("@/features/access_control/usePermissions",()=>({usePermissions:()=>({isOwner:permissions.owner,can:(_key: string,action: string)=>action==="view"||permissions[action as "create"|"edit"]})}));
-vi.mock("./api",async original=>({...await original<typeof import("./api")>(),listInvoices:vi.fn(),getDefaults:vi.fn(),getCustomers:vi.fn(),saveInvoice:vi.fn(),previewPdf:vi.fn(),getInvoice:vi.fn(),invoicePdf:vi.fn(),setInvoiceStatus:vi.fn(),duplicateInvoice:vi.fn(),getSettings:vi.fn(),saveSettings:vi.fn(),uploadSignature:vi.fn(),downloadPdf:vi.fn(),deleteInvoice:vi.fn(),replacementInvoice:vi.fn(),invoiceHistory:vi.fn(),getCorrectionDraft:vi.fn(),getDeleteOptions:vi.fn(),archiveInvoice:vi.fn(),getInvoiceRevisions:vi.fn(),historicalInvoicePdf:vi.fn(),requestRevision:vi.fn(),reissueInvoice:vi.fn(),deleteIssuedInvoice:vi.fn(),previewRevisionPdf:vi.fn()}));
+vi.mock("./api",async original=>({...await original<typeof import("./api")>(),listInvoices:vi.fn(),getDefaults:vi.fn(),getCustomers:vi.fn(),saveInvoice:vi.fn(),previewPdf:vi.fn(),getInvoice:vi.fn(),invoicePdf:vi.fn(),setInvoiceStatus:vi.fn(),duplicateInvoice:vi.fn(),getSettings:vi.fn(),saveSettings:vi.fn(),uploadSignature:vi.fn(),downloadPdf:vi.fn(),deleteInvoice:vi.fn(),replacementInvoice:vi.fn(),invoiceHistory:vi.fn(),getCorrectionDraft:vi.fn(),getDeleteOptions:vi.fn(),archiveInvoice:vi.fn(),getInvoiceRevisions:vi.fn(),historicalInvoicePdf:vi.fn(),requestRevision:vi.fn(),reissueInvoice:vi.fn(),deleteIssuedInvoice:vi.fn(),previewRevisionPdf:vi.fn(),getRevisionConflicts:vi.fn()}));
 const fixture={id:"i1",invoice_number:"INV-000001",customer_id:null,customer:{name:"Acme",address:"Street",city:"Pune",state:"Maharashtra",pincode:"411030",country:"India",gstin:"",phone:"",email:""},invoice_date:"2026-10-04",due_date:"2026-10-04",place_of_supply:"",terms:"",tax_type:"IGST" as const,version:1,status:"draft" as const,items:[{description:"Consultancy",hsn:"9971",quantity:"3",unit:"nos.s",rate:"7753.71",gst_rate:"18"}],subtotal:"23261.13",gst_total:"4187.00",grand_total:"27448.13",amount_in_words:"Words",created_by_name:"Owner",created_at:"2026-10-04T00:00:00Z"};
 beforeEach(()=>{
   vi.clearAllMocks();permissions.create=true;permissions.edit=true;permissions.owner=true;
@@ -26,6 +26,7 @@ beforeEach(()=>{
   vi.mocked(api.getDeleteOptions).mockResolvedValue({eligible:true,explanation:"Eligible only while latest; this is not a reservation."});
   vi.mocked(api.invoiceHistory).mockResolvedValue([]);
   vi.mocked(api.getInvoiceRevisions).mockResolvedValue([]);
+  vi.mocked(api.getRevisionConflicts).mockResolvedValue({drafts:[],blockers:[]});
   vi.mocked(api.historicalInvoicePdf).mockResolvedValue(new Blob(["historical"]));
 });
 function show(element: React.ReactNode,path="/") {render(<MemoryRouter initialEntries={[path]}><Routes><Route path="/" element={element}/><Route path="/invoices" element={<p>Invoice list</p>}/><Route path="/invoices/:invoiceId/edit" element={element}/><Route path="/invoices/:invoiceId" element={path==="/"?<p>Saved invoice</p>:element}/></Routes></MemoryRouter>);}
@@ -187,7 +188,7 @@ describe('same-number issued invoice revisions',()=>{
     expect(screen.getByRole('button',{name:'Approve & Reissue Saved Revision'})).toBeDisabled();
     await user.type(screen.getByLabelText('Accounting approval reason'),'Owner reviewed');
     await user.click(screen.getByRole('button',{name:'Approve & Reissue Saved Revision'}));
-    await waitFor(()=>expect(api.reissueInvoice).toHaveBeenCalledWith('i1',3,'proposal-1','Owner reviewed'));
+    await waitFor(()=>expect(api.reissueInvoice).toHaveBeenCalledWith('i1',3,'proposal-1','Owner reviewed',false,undefined));
   });
   it('shows historical and current revisions with explicit historical PDF downloads',async()=>{
     vi.mocked(api.getInvoice).mockResolvedValue({...issued,effective_revision:2});
@@ -256,4 +257,30 @@ describe('cancelled invoice recovery',()=>{
     expect(api.invoiceStatusLabel({...cancelled,reissued_at:'2026-11-01T00:00:00Z'})).toBe('cancelled');
     expect(api.invoiceStatusLabel({status:'paid',reissued_at:'2026-11-01T00:00:00Z'})).toBe('paid');
   });
+});
+
+it('saves with an older replacement and requires explicit retirement only at approval',async()=>{
+  const original={...fixture,status:'cancelled' as const,version:3,issued_at:'2026-10-30T00:00:00Z'};
+  const oldCopy={id:'legacy1',invoice_number:'INV-100000014',status:'draft' as const,version:1};
+  vi.mocked(api.getDefaults).mockResolvedValue({same_number_reissue_enabled:true} as api.Company);
+  vi.mocked(api.getInvoice).mockResolvedValue(original);
+  let legacyVersion=1;
+  vi.mocked(api.getRevisionConflicts).mockImplementation(async()=>({drafts:[{...oldCopy,version:legacyVersion}],blockers:[]}));
+  vi.mocked(api.requestRevision).mockResolvedValue({...original,version:4,revision_proposal:{id:'p1',base_status:'cancelled',status:'pending_owner_approval',reason:'Company name correction',snapshot:original,requested_by:'owner',requested_at:'2026-11-01T00:00:00Z'}});
+  vi.mocked(api.reissueInvoice).mockRejectedValue(new ApiError('conflict','Invoice changed. Reload before approving.'));
+  show(<InvoiceFormPage/>,'/invoices/i1/edit?mode=revision');const user=userEvent.setup();await screen.findByDisplayValue('Consultancy');
+  await user.type(screen.getByLabelText('Correction reason'),'Company name correction');
+  await user.click(screen.getByRole('button',{name:'Save Revision Proposal'}));
+  expect(await screen.findByRole('status')).toHaveTextContent('Revision proposal saved');
+  expect(await screen.findByRole('link',{name:'INV-100000014'})).toHaveAttribute('href','/invoices/legacy1');
+  await user.type(screen.getByLabelText('Accounting approval reason'),'Owner approved retirement');
+  expect(screen.getByRole('button',{name:'Approve & Reissue Saved Revision'})).toBeDisabled();
+  await user.click(screen.getByRole('checkbox',{name:/Retire these unissued replacement drafts/}));
+  legacyVersion=2;await user.click(screen.getByRole('button',{name:'Refresh replacement records'}));
+  await waitFor(()=>expect(screen.getByRole('checkbox',{name:/Retire these unissued replacement drafts/})).not.toBeChecked());
+  await user.click(screen.getByRole('checkbox',{name:/Retire these unissued replacement drafts/}));
+  await user.click(screen.getByRole('button',{name:'Approve & Reissue Saved Revision'}));
+  await waitFor(()=>expect(api.reissueInvoice).toHaveBeenCalledWith('i1',4,'p1','Owner approved retirement',true,{legacy1:2}));
+  expect(await screen.findByText('Invoice changed. Reload before approving.')).toBeInTheDocument();
+  expect(screen.getByLabelText('Correction reason')).toHaveValue('Company name correction');
 });

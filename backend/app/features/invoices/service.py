@@ -463,6 +463,10 @@ class InvoiceService:
         if payload.status == "issued":
             if current.get("replacement_for"):
                 original = await self.get(current["replacement_for"], actor)
+                if original.get("revision_proposal"):
+                    raise ConflictError(
+                        "A same-number revision is pending for the original invoice. This replacement cannot be issued while that proposal is active."
+                    )
                 if original["status"] != "cancelled":
                     raise ConflictError(
                         "Cancel the original through an accounting-approved process before issuing its replacement. Credit notes are not supported."
@@ -714,7 +718,12 @@ class InvoiceService:
             )
             if doc.get("replacement_for"):
                 for event in doc.get("history", []):
-                    if event["action"] in {"correction_draft_updated", "deleted", "archived"}:
+                    if event["action"] in {
+                        "correction_draft_updated",
+                        "deleted",
+                        "archived",
+                        "legacy_draft_retired",
+                    }:
                         events.append(
                             event
                             | {

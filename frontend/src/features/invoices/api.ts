@@ -79,9 +79,13 @@ export interface InvoiceRevision {
   reason: string; changed_by?: string; approved_by?: string; approved_at?: string; reissued_at?: string;
 }
 export const requestRevision = (id: string, invoice: InvoiceInput, reason: string) => apiRequest<Invoice>(`/invoices/${id}/revision`, {method:"POST", body:JSON.stringify({invoice,version:invoice.version,reason})});
-export const reissueInvoice = (id: string, version: number, proposalId: string, reason: string) => apiRequest<Invoice>(`/invoices/${id}/reissue`, {method:"POST",body:JSON.stringify({version,proposal_id:proposalId,approval_reason:reason})});
+export const reissueInvoice = (id: string, version: number, proposalId: string, reason: string, retireLegacyDrafts = false, legacyDraftVersions: Record<string,number> = {}) => apiRequest<Invoice>(`/invoices/${id}/reissue`, {method:"POST",body:JSON.stringify({version,proposal_id:proposalId,approval_reason:reason,retire_legacy_drafts:retireLegacyDrafts,legacy_draft_versions:legacyDraftVersions})});
 export const getInvoiceRevisions = (id: string) => apiRequest<InvoiceRevision[]>(`/invoices/${id}/revisions`);
 export const historicalInvoicePdf = (id: string, number: number) => apiBlob(`/invoices/${id}/revisions/${number}/pdf`);
 export const deleteIssuedInvoice = (id: string, version: number, reason: string) => apiRequest<Invoice>(`/invoices/${id}/issued-delete`, {method:"POST",body:JSON.stringify({version,reason})});
 
 export const previewRevisionPdf = (id: string, invoice: InvoiceInput, reason: string) => apiBlob(`/invoices/${id}/revision/preview/pdf`, {method:"POST",body:JSON.stringify({invoice,version:invoice.version,reason})});
+
+export interface RevisionConflict {id: string; invoice_number: string; status: Status; version: number}
+export interface RevisionConflicts {drafts: RevisionConflict[]; blockers: RevisionConflict[]}
+export const getRevisionConflicts = (id: string) => apiRequest<RevisionConflicts>(`/invoices/${id}/revision-conflicts`);

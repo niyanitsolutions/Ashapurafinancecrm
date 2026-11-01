@@ -58,3 +58,5 @@ class Invoice(BaseDocument):
     revisions: list[dict[str, Any]] = Field(default_factory=list)
     revision_proposal: dict[str, Any] | None = None
     reissued_at: datetime | None = None
+
+    retired_for_revision_of: str | None = None

@@ -1,0 +1,58 @@
+[
+  {
+    "width": 1440,
+    "result": "passed",
+    "synthetic": true,
+    "correctionId": "000000000000000000000004",
+    "effectiveRevision": 2,
+    "numberAllocationsDuringRevision": 0,
+    "putSaves": 1,
+    "checks": [
+      "create",
+      "edit",
+      "latest-delete-reuse",
+      "older-gap-not-reused",
+      "duplicate",
+      "same-number-proposal-repeat-save",
+      "resume-revision",
+      "owner-reissue",
+      "legacy-draft-explicit-retirement",
+      "cancelled-proposal-save-with-legacy",
+      "original-snapshot-immutable",
+      "revision-history",
+      "no-number-allocation",
+      "download",
+      "print-request",
+      "archive-issued-cancelled",
+      "employee-permissions"
+    ]
+  },
+  {
+    "width": 390,
+    "result": "passed",
+    "synthetic": true,
+    "correctionId": "000000000000000000000004",
+    "effectiveRevision": 2,
+    "numberAllocationsDuringRevision": 0,
+    "putSaves": 1,
+    "checks": [
+      "create",
+      "edit",
+      "latest-delete-reuse",
+      "older-gap-not-reused",
+      "duplicate",
+      "same-number-proposal-repeat-save",
+      "resume-revision",
+      "owner-reissue",
+      "legacy-draft-explicit-retirement",
+      "cancelled-proposal-save-with-legacy",
+      "original-snapshot-immutable",
+      "revision-history",
+      "no-number-allocation",
+      "download",
+      "print-request",
+      "archive-issued-cancelled",
+      "employee-permissions"
+    ]
+  }
+]

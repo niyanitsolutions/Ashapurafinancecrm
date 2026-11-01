@@ -14,6 +14,7 @@ from app.constants.roles import OWNER
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from app.features.auth.models import User
 from app.features.invoices.calculations import calculate
+from app.features.invoices.numbering import never_issued_draft
 from app.features.invoices.schemas import InvoiceConfig, InvoiceItem, ReissueInput, RevisionInput
 from app.utils.datetime import utc_now
 
@@ -96,12 +97,97 @@ class InvoiceRevisionService:
                 raise ConflictError(
                     "This cancelled invoice has settlement history and requires an accounting adjustment, not same-number reissue."
                 )
-        if await self.db.invoices.find_one({"replacement_for": invoice_id, "is_deleted": False}):
-            raise ConflictError(
-                "A legacy separately numbered correction exists. Review that record before requesting a same-number revision; it will not be converted or discarded."
-            )
         await self.policy()
         return current
+
+    async def legacy_conflicts(
+        self, invoice_id: str, actor: User
+    ) -> dict[str, list[dict[str, Any]]]:
+        if actor.role != OWNER:
+            raise ForbiddenError(
+                "Accounting-owner access is required to review replacement conflicts."
+            )
+        await self.invoices.get(invoice_id, actor)
+        docs = await self.db.invoices.find(
+            {"replacement_for": invoice_id, "is_deleted": False}
+        ).to_list(None)
+        result: dict[str, list[dict[str, Any]]] = {"drafts": [], "blockers": []}
+        for doc in docs:
+            # Cancelled, never-issued copies cannot be issued again and reserve their numbers.
+            if (
+                doc["status"] == "cancelled"
+                and not doc.get("issued_at")
+                and not doc.get("revisions")
+                and not any(
+                    event.get("new_status") in {"issued", "paid", "partially_paid"}
+                    or event.get("action") in {"issued", "paid", "partially_paid"}
+                    for event in doc.get("history", [])
+                )
+                and not await self.db.audit_logs.find_one(
+                    {
+                        "metadata.invoice_id": str(doc["_id"]),
+                        "event_type": {
+                            "$in": ["invoice_issued", "invoice_paid", "invoice_partially_paid"]
+                        },
+                    }
+                )
+            ):
+                continue
+            item = {
+                "id": str(doc["_id"]),
+                "invoice_number": doc["invoice_number"],
+                "status": doc["status"],
+                "version": doc["version"],
+            }
+            result["drafts" if never_issued_draft(doc) else "blockers"].append(item)
+        return result
+
+    async def retire_legacy_drafts(
+        self, invoice_id: str, payload: ReissueInput, actor: User, source_number: str
+    ) -> list[dict[str, Any]]:
+        conflicts = await self.legacy_conflicts(invoice_id, actor)
+        if conflicts["blockers"]:
+            numbers = ", ".join(doc["invoice_number"] for doc in conflicts["blockers"])
+            raise ConflictError(
+                f"Replacement {numbers} was issued or finalized and cannot be retired automatically. Review that financial record before reissuing this invoice."
+            )
+        if conflicts["drafts"] and not payload.retire_legacy_drafts:
+            raise ConflictError(
+                "Confirm retirement of the listed unissued replacement drafts before approving same-number reissue. Your proposal has been saved."
+            )
+        expected = {doc["id"]: doc["version"] for doc in conflicts["drafts"]}
+        if expected and payload.legacy_draft_versions != expected:
+            raise ConflictError(
+                "Older replacement drafts changed. Refresh the replacement records and confirm again. Your proposal remains saved."
+            )
+        retired = []
+        for item in conflicts["drafts"]:
+            current = await self.invoices.get(item["id"], actor)
+            if current["version"] != item["version"] or not never_issued_draft(current):
+                raise ConflictError("Replacement changed. Reload and review it before approving.")
+            now = utc_now()
+            reason = f"Retired for same-number reissue of {source_number}: {payload.approval_reason.strip()}"
+            # This CAS races on the SAME legacy document as issue. Only retirement or issue can win.
+            await self.invoices.replace(
+                item["id"],
+                current,
+                item["version"],
+                {
+                    "status": "cancelled",
+                    "cancelled_by": actor.require_id(),
+                    "cancelled_at": now,
+                    "cancellation_reason": reason,
+                    "is_archived": True,
+                    "archived_by": actor.require_id(),
+                    "archived_at": now,
+                    "archive_reason": reason,
+                    "retired_for_revision_of": invoice_id,
+                },
+                actor,
+                "legacy_draft_retired",
+            )
+            retired.append({"id": item["id"], "invoice_number": item["invoice_number"]})
+        return retired
 
     @staticmethod
     def capacity(current: dict[str, Any], updates: dict[str, Any]) -> None:
@@ -157,6 +243,8 @@ class InvoiceRevisionService:
             raise ForbiddenError("Accounting-owner approval is required to reissue.")
         current = await self.editable(invoice_id, actor)
         policy = await self.policy()
+        if payload.version != current["version"]:
+            raise ConflictError("Invoice changed. Reload and review before approving.")
         proposal = current.get("revision_proposal")
         if not proposal or proposal["id"] != payload.proposal_id:
             raise ConflictError("Revision proposal changed. Reload and review it before approving.")
@@ -227,6 +315,11 @@ class InvoiceRevisionService:
             revisions=[*current["revisions"], record],
         )
         self.capacity(current, updates)
+        retired = await self.retire_legacy_drafts(
+            invoice_id, payload, actor, current["invoice_number"]
+        )
+        if retired:
+            record["retired_legacy_drafts"] = retired
         return await self.invoices.replace(
             invoice_id, current, payload.version, updates, actor, "same_number_reissued"
         )

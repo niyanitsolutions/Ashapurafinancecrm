@@ -80,7 +80,7 @@ Enabling the policy is an accounting-owner assertion that the operation is permi
 
 Existing `replacement_for` records, numbers, drafts, source references, PDFs and history are not converted, merged, renumbered or deleted. Legacy drafts remain editable through their existing invoice ID. Legacy replacement APIs remain compatible for explicit old clients, but the new issued Edit path never invokes them.
 
-An active legacy correction against the original blocks a new same-number proposal with a clear message. The owner must review that existing workflow. A never-issued legacy draft can use the existing audited deletion policy if it is intentionally abandoned; finalized records cannot be discarded. The system does not automatically resolve accounting relationships between legacy and new workflows.
+A legacy correction no longer blocks saving a same-number proposal. Before approval, owners review linked copies. With explicit confirmation tied to each displayed draft ID/version, unissued legacy drafts are cancelled and archived with their data, numbers and audit history preserved. Issued or finalized legacy replacements still block approval and require accounting review; they are never automatically retired. A refresh control updates conflict details without losing form edits.
 
 Ordinary Duplicate remains an independent new-draft action from invoice detail. It does not become a revision. Its obsolete internal-revision alternative was removed from that modal to avoid confusing duplication with Edit & Reissue.
 
@@ -177,6 +177,21 @@ A previously issued, non-archived invoice cancelled by mistake now offers **Edit
 
 Original issue snapshots, issue timestamp and cancellation metadata/history remain intact. The approved revision records that its previous state was cancelled and retains the cancellation details. Current and new-revision PDFs no longer carry the CANCELLED stamp; old issued snapshots remain accessible. Proposals saved before a later cancellation cannot be approved without saving/reviewing a fresh proposal against the cancelled state.
 
-Cancelled drafts that were never issued, archived invoices, invoices with settlement history, and originals with active legacy replacements remain blocked. No policy gate, ownership or permission checks were removed, and no migration or production data edit is required. Re-issued is a display label; the existing issued status filter still includes these invoices.
+Cancelled drafts that were never issued, archived invoices, invoices with settlement history, remain blocked. Legacy replacements are handled at approval as described above. No policy gate, ownership or permission checks were removed, and no migration or production data edit is required. Re-issued is a display label; the existing issued status filter still includes these invoices.
 
 Validation for this fix: 54 invoice/revision API tests, 5 real local MongoDB integration tests and 24 frontend invoice tests passed. TypeScript, invoice ESLint, Ruff/formatting and production build passed. The existing bundle-size warning remains. No production deployment or database changes were performed.
+
+
+## Legacy correction save-error fix (2026-11-01)
+
+The screenshot's error came from the blanket `replacement_for` check in revision eligibility. It ran during Save Revision Proposal even though saving a non-effective proposal does not issue a financial document. That check has moved to the approval stage, with an actionable owner-only replacement review endpoint (`GET /invoices/{id}/revision-conflicts`).
+
+Owners can explicitly confirm retirement of listed never-issued replacement drafts when approving. Requests carry `retire_legacy_drafts` and `legacy_draft_versions`; changed drafts require fresh confirmation. The optional `retired_for_revision_of` field links archived copies to the original. No new invoice, number, collection, index or migration is created by resolving a conflict.
+
+Retirement uses the existing invoice compare-and-update and records `legacy_draft_retired`, cancellation/archive reason, actor and server timestamp. Its number stays permanently reserved. Legacy issuance is blocked while a same-number proposal is active; a legacy issue already in progress competes with retirement on the same document version, so only one can succeed. A real-Mongo test pauses an old issue immediately before its update and verifies that retirement makes that issue fail rather than creating two effective invoices.
+
+If retirement succeeds but a later original-invoice save fails (for example, a concurrent edit), the archive remains as the owner's explicitly approved action. Reload the saved original proposal and review again; retries do not duplicate or remove financial records. Already-issued/finalized replacements remain read-only blockers to automatic resolution. Their numbers and records are shown for accounting review.
+
+No production invoice data was inspected or modified. The historical numbering migration remains unchanged. Desktop/mobile evidence for this fix is stored under `docs/screenshots/invoice-legacy-resolution/`; browser checks use synthetic API fixtures, while actual backend concurrency is tested separately against random local MongoDB test databases.
+
+Legacy-resolution validation: 63 backend/API/real-local-Mongo tests and 25 frontend invoice tests passed. Desktop/mobile synthetic browser checks passed with an existing numbered draft and accidental cancellation, with zero number allocations during reissue. TypeScript, invoice ESLint, Ruff/formatting and production build passed. Strict mypy remains at the existing 112 errors. No production deployment or data migration was performed.

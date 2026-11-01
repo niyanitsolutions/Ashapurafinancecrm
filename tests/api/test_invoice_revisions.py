@@ -283,11 +283,11 @@ async def test_revision_security_archive_and_legacy_compatibility(
             },
         )
     ).json()["data"]
-    assert (
-        await client.post(
-            url + "/revision", headers=owner_headers, json=proposal(doc["version"])
-        )
-    ).status_code == 409
+    saved = await client.post(
+        url + "/revision", headers=owner_headers, json=proposal(doc["version"])
+    )
+    assert saved.status_code == 200, saved.text
+    doc = saved.json()["data"]
     assert (
         await client.get("/api/v1/invoices/" + legacy["id"], headers=owner_headers)
     ).status_code == 200
@@ -630,3 +630,197 @@ async def test_cancelled_invoice_requires_fresh_proposal_after_cancellation(
     assert (await client.get(url, headers=owner_headers)).json()["data"][
         "status"
     ] == "cancelled"
+
+
+async def legacy_recovery_fixture(client, owner_headers):
+    doc = await issued(client, owner_headers)
+    await enable_policy(client, owner_headers)
+    url = "/api/v1/invoices/" + doc["id"]
+    cancelled = (
+        await client.post(
+            url + "/cancel",
+            headers=owner_headers,
+            json={"version": doc["version"], "reason": "Cancelled by mistake"},
+        )
+    ).json()["data"]
+    legacy = (
+        await client.post(
+            url + "/replacement",
+            headers=owner_headers,
+            json={
+                "reason": "Earlier numbered correction attempt",
+                "request_key": "legacy-recovery-fixture-0001",
+            },
+        )
+    ).json()["data"]
+    return url, cancelled, legacy
+
+
+async def test_save_with_legacy_draft_then_explicit_retirement_and_reissue(
+    client, owner_headers, mock_db
+):
+    url, original, legacy = await legacy_recovery_fixture(client, owner_headers)
+    counter = await mock_db.counters.find_one({"_id": "INV"})
+    response = await client.post(
+        url + "/revision",
+        headers=owner_headers,
+        json=proposal(original["version"], name="Corrected Company"),
+    )
+    assert response.status_code == 200, response.text
+    pending = response.json()["data"]
+    assert pending["status"] == "cancelled"
+    context = (
+        await client.get(url + "/revision-conflicts", headers=owner_headers)
+    ).json()["data"]
+    assert [d["id"] for d in context["drafts"]] == [legacy["id"]] and not context[
+        "blockers"
+    ]
+    payload = {
+        "version": pending["version"],
+        "proposal_id": pending["revision_proposal"]["id"],
+        "approval_reason": "Owner approves same-number correction",
+    }
+    response = await client.post(url + "/reissue", headers=owner_headers, json=payload)
+    assert (
+        response.status_code == 409
+        and "Confirm retirement" in response.json()["error"]["message"]
+    )
+    assert (
+        await client.get("/api/v1/invoices/" + legacy["id"], headers=owner_headers)
+    ).json()["data"]["status"] == "draft"
+    assert (
+        await client.post(
+            "/api/v1/invoices/" + legacy["id"] + "/status",
+            headers=owner_headers,
+            json={"version": 1, "status": "issued"},
+        )
+    ).status_code == 409
+    changed_copy = await client.post(
+        url + "/reissue",
+        headers=owner_headers,
+        json=dict(
+            payload,
+            retire_legacy_drafts=True,
+            legacy_draft_versions={legacy["id"]: legacy["version"] + 1},
+        ),
+    )
+    assert (
+        changed_copy.status_code == 409
+        and "drafts changed" in changed_copy.json()["error"]["message"]
+    )
+    response = await client.post(
+        url + "/reissue",
+        headers=owner_headers,
+        json=dict(
+            payload,
+            retire_legacy_drafts=True,
+            legacy_draft_versions={legacy["id"]: legacy["version"]},
+        ),
+    )
+    assert response.status_code == 200, response.text
+    restored = response.json()["data"]
+    assert (
+        restored["id"] == original["id"]
+        and restored["invoice_number"] == original["invoice_number"]
+    )
+    assert (
+        restored["status"] == "issued"
+        and restored["customer"]["name"] == "Corrected Company"
+    )
+    retired = (
+        await client.get("/api/v1/invoices/" + legacy["id"], headers=owner_headers)
+    ).json()["data"]
+    assert retired["status"] == "cancelled" and retired["is_archived"]
+    assert retired["retired_for_revision_of"] == original["id"]
+    for field in [
+        "invoice_number",
+        "items",
+        "grand_total",
+        "customer",
+        "replacement_for",
+    ]:
+        assert retired[field] == legacy[field]
+    assert retired["history"][-1]["action"] == "legacy_draft_retired"
+    assert restored["revisions"][-1]["retired_legacy_drafts"][0]["id"] == legacy["id"]
+    assert await mock_db.invoices.count_documents({}) == 2
+    assert (await mock_db.counters.find_one({"_id": "INV"}))["seq"] == counter["seq"]
+    assert (
+        await client.get(url + "/revision-conflicts", headers=owner_headers)
+    ).json()["data"] == {"drafts": [], "blockers": []}
+
+
+async def test_issued_legacy_replacement_does_not_block_save_but_blocks_reissue(
+    client, owner_headers
+):
+    url, original, legacy = await legacy_recovery_fixture(client, owner_headers)
+    legacy_url = "/api/v1/invoices/" + legacy["id"]
+    response = await client.post(
+        legacy_url + "/status",
+        headers=owner_headers,
+        json={"version": 1, "status": "issued"},
+    )
+    assert response.status_code == 200, response.text
+    frozen = (await client.get(legacy_url, headers=owner_headers)).json()["data"]
+    pending = (
+        await client.post(
+            url + "/revision", headers=owner_headers, json=proposal(original["version"])
+        )
+    ).json()["data"]
+    context = (
+        await client.get(url + "/revision-conflicts", headers=owner_headers)
+    ).json()["data"]
+    assert context["blockers"][0]["invoice_number"] == legacy["invoice_number"]
+    response = await client.post(
+        url + "/reissue",
+        headers=owner_headers,
+        json={
+            "version": pending["version"],
+            "proposal_id": pending["revision_proposal"]["id"],
+            "approval_reason": "Attempt approval",
+            "retire_legacy_drafts": True,
+        },
+    )
+    assert (
+        response.status_code == 409
+        and legacy["invoice_number"] in response.json()["error"]["message"]
+    )
+    assert (await client.get(legacy_url, headers=owner_headers)).json()[
+        "data"
+    ] == frozen
+    assert (await client.get(url, headers=owner_headers)).json()["data"][
+        "status"
+    ] == "cancelled"
+
+
+async def test_stale_approval_cannot_retire_legacy_draft_and_staff_cannot_resolve(
+    client, owner_headers, employee_headers
+):
+    url, original, legacy = await legacy_recovery_fixture(client, owner_headers)
+    pending = (
+        await client.post(
+            url + "/revision", headers=owner_headers, json=proposal(original["version"])
+        )
+    ).json()["data"]
+    newer = await client.post(
+        url + "/revision",
+        headers=owner_headers,
+        json=proposal(pending["version"], name="Newer edit"),
+    )
+    assert newer.status_code == 200
+    response = await client.post(
+        url + "/reissue",
+        headers=owner_headers,
+        json={
+            "version": pending["version"],
+            "proposal_id": pending["revision_proposal"]["id"],
+            "approval_reason": "Outdated approval",
+            "retire_legacy_drafts": True,
+        },
+    )
+    assert response.status_code == 409
+    assert (
+        await client.get("/api/v1/invoices/" + legacy["id"], headers=owner_headers)
+    ).json()["data"]["status"] == "draft"
+    assert (
+        await client.get(url + "/revision-conflicts", headers=employee_headers)
+    ).status_code == 403

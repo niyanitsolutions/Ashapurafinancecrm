@@ -4,7 +4,7 @@ import {readFile, mkdir, writeFile} from 'node:fs/promises';
 import {chromium} from '../frontend/node_modules/.cache/voice-ui-audit/node_modules/playwright/index.mjs';
 
 const origin='http://127.0.0.1:5175';
-const output='docs/screenshots/invoice-same-number-reissue';
+const output='docs/screenshots/invoice-legacy-resolution';
 await mkdir(output,{recursive:true});
 const pdf=await readFile('docs/invoices/sample-invoice.pdf');
 const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
@@ -23,6 +23,8 @@ try {
     original.issued_at='2026-10-30T00:00:00Z';original.effective_revision=1;
     original.revisions=[{revision_number:1,previous_revision:null,status:'issued',reason:'Original issued snapshot',snapshot:snap(original)}];
     const frozen=JSON.stringify(original.revisions[0].snapshot);
+    const legacy=create({replacement_for:original.id,source_invoice_number:original.invoice_number},'draft','INV-100000014');
+    const legacyFrozen=snap(legacy);
     let role='owner';
     await context.route('**/*',async route=>{
       const req=route.request(),url=new URL(req.url()),path=url.pathname.replace(/^\/api\/v1/,'');
@@ -40,13 +42,18 @@ try {
       else if(path.startsWith('/invoices/')) {
         const [, ,id,action]=path.split('/');const row=rows.find(r=>r.id===id);assert.ok(row,`Missing synthetic invoice ${path}`);
         if(action==='pdf'||(action==='revisions'&&path.endsWith('/pdf'))){writes.push({method,path,purpose:url.searchParams.get('purpose')});return route.fulfill({contentType:'application/pdf',body:pdf});}
-        if(action==='revision'){
-          assert.equal(body.version,row.version);row.revision_proposal={id:`proposal-${row.version}`,status:'pending_owner_approval',reason:body.reason,requested_by:'synthetic-owner',requested_at:fixture.created_at,snapshot:{...snap(row),...body.invoice}};row.version++;data=row;writes.push({method,path,id:row.id});
+        if(action==='revision-conflicts')data={drafts:rows.filter(copy=>copy.replacement_for===id&&!copy.is_deleted&&!copy.is_archived&&copy.status==='draft').map(({id,invoice_number,status,version})=>({id,invoice_number,status,version})),blockers:[]};
+        else if(action==='cancel'){assert.equal(body.version,row.version);row.status='cancelled';row.cancellation_reason=body.reason;row.cancelled_at=fixture.created_at;row.version++;data=row;}
+        else if(action==='revision'){
+          assert.equal(body.version,row.version);row.revision_proposal={id:`proposal-${row.version}`,base_status:row.status,status:'pending_owner_approval',reason:body.reason,requested_by:'synthetic-owner',requested_at:fixture.created_at,snapshot:{...snap(row),...body.invoice}};row.version++;data=row;writes.push({method,path,id:row.id});
         }
         else if(action==='reissue'){
           assert.equal(body.version,row.version);assert.equal(body.proposal_id,row.revision_proposal.id);
+          const linked=rows.filter(copy=>copy.replacement_for===id&&!copy.is_archived&&copy.status==='draft');
+          if(linked.length){assert.equal(body.retire_legacy_drafts,true);for(const copy of linked)assert.equal(body.legacy_draft_versions[copy.id],copy.version);}
+          for(const copy of linked){copy.status='cancelled';copy.is_archived=true;copy.version++;copy.retired_for_revision_of=id;}
           const saved=row.revision_proposal;const next=row.effective_revision+1;const history=row.revisions;
-          Object.assign(row,saved.snapshot,{version:row.version+1,effective_revision:next,revision_proposal:null});
+          Object.assign(row,saved.snapshot,{status:"issued",reissued_at:fixture.created_at,version:row.version+1,effective_revision:next,revision_proposal:null});
           row.revisions=[...history,{revision_number:next,previous_revision:next-1,status:'issued',reason:saved.reason,approved_by:'synthetic-owner',approved_at:fixture.created_at,snapshot:snap(row)}];data=row;writes.push({method,path,id:row.id});
         }
         else if(action==='revisions')data=(row.revisions||[]).map(({snapshot,...record})=>({...record,current:record.revision_number===row.effective_revision}));
@@ -71,6 +78,7 @@ try {
     await remove(newest);const reused=await newInvoice('Synthetic reused');assert.equal(reused.invoice_number,newestNumber);assert.notEqual(reused.id,newest.id);
     await remove(older);const next=await newInvoice('Synthetic next');assert.notEqual(next.invoice_number,older.invoice_number);assert.notEqual(next.invoice_number,reused.invoice_number);
     await page.goto(`${origin}/invoices/${original.id}`);await page.getByRole('button',{name:'Duplicate',exact:true}).click();await page.getByRole('button',{name:'Create New Invoice',exact:true}).click();await page.waitForURL(/\/edit$/);const duplicate=rows.at(-1);assert.equal(duplicate.duplicated_from,original.id);assert.equal(duplicate.replacement_for,undefined);assert.equal(duplicate.status,'draft');
+    await page.goto(`${origin}/invoices/${original.id}`);await page.getByRole('button',{name:'Cancel invoice',exact:true}).click();await page.getByLabel('Cancellation reason',{exact:true}).fill('Accidental cancellation');await page.getByRole('button',{name:'Confirm cancellation',exact:true}).click();await page.getByRole('button',{name:'Edit & Reissue',exact:true}).waitFor();assert.equal(original.status,'cancelled');
     const countBefore=rows.length;const sequenceBefore=sequence;
     await list();await page.getByLabel('Actions for INV-000001').selectOption('edit');await page.getByRole('button',{name:'Edit & Reissue',exact:true}).click();await page.waitForURL(/mode=revision$/);const correctionId=original.id;
     assert.equal(await page.getByLabel('Invoice number',{exact:true}).inputValue(),'INV-000001');assert.equal(await page.getByLabel('Invoice number',{exact:true}).getAttribute('readonly'),'');
@@ -80,14 +88,14 @@ try {
     await list();await page.getByLabel('Actions for INV-000001').selectOption('edit');await page.getByRole('button',{name:'Edit & Reissue',exact:true}).click();await page.waitForURL(/mode=revision$/);assert.equal(await page.getByLabel('Customer / Company name',{exact:true}).inputValue(),'Synthetic corrected customer');
     assert.equal(rows.length,countBefore);assert.equal(sequence,sequenceBefore);
     await page.screenshot({path:`${output}/revision-${width}.png`,fullPage:true});
-    await page.getByLabel('Accounting approval reason',{exact:true}).fill('Synthetic owner approval');await page.getByRole('button',{name:'Approve & Reissue Saved Revision',exact:true}).click();await page.waitForURL(new RegExp(`${original.id}$`));
-    assert.equal(original.invoice_number,'INV-000001');assert.equal(original.effective_revision,2);assert.equal(original.customer.name,'Synthetic corrected customer');assert.equal(JSON.stringify(original.revisions[0].snapshot),frozen);assert.equal(rows.length,countBefore);assert.equal(sequence,sequenceBefore);
+    await page.getByLabel('Accounting approval reason',{exact:true}).fill('Synthetic owner approval');assert.equal(await page.getByRole('button',{name:'Approve & Reissue Saved Revision',exact:true}).isDisabled(),true);await page.getByRole('checkbox',{name:/Retire these unissued replacement drafts/}).check();await page.getByRole('button',{name:'Approve & Reissue Saved Revision',exact:true}).click();await page.waitForURL(new RegExp(`${original.id}$`));
+    assert.equal(original.invoice_number,'INV-000001');assert.equal(original.effective_revision,2);assert.equal(original.status,'issued');assert.equal(legacy.is_archived,true);assert.equal(legacy.status,'cancelled');for(const key of ['invoice_number','customer','items','grand_total'])assert.deepEqual(legacy[key],legacyFrozen[key]);assert.equal(original.customer.name,'Synthetic corrected customer');assert.equal(JSON.stringify(original.revisions[0].snapshot),frozen);assert.equal(rows.length,countBefore);assert.equal(sequence,sequenceBefore);
     await page.getByRole('button',{name:'Download revision 1 PDF',exact:true}).waitFor();
     await page.goto(`${origin}/invoices/${original.id}`);await page.getByTitle('Invoice PDF',{exact:true}).waitFor();const download=page.waitForEvent('download');await page.getByRole('button',{name:'Download PDF',exact:true}).click();assert.equal((await download).suggestedFilename(),'INV-000001.pdf');await page.getByRole('button',{name:'Print',exact:true}).click();assert.ok(writes.some(w=>w.purpose==='print'));
     for(const row of [cancelled,original]){await list();await page.getByLabel(`Actions for ${row.invoice_number}`).selectOption(row===original?'issued-delete':'archive');await page.getByLabel(row===original?'Deletion / archive reason':'Archive reason',{exact:true}).fill('Synthetic archive');await page.getByRole('button',{name:row===original?'Approve Archive of Issued Invoice':'Archive Invoice',exact:true}).click();await page.getByRole('dialog').waitFor({state:'hidden'});assert.equal(row.status,row===original?'issued':'cancelled');}
     await page.getByLabel('Archived invoices',{exact:true}).check();await page.getByRole('link',{name:'INV-000001',exact:true}).waitFor();
     role='employee';await page.reload();await page.getByRole('heading',{name:'Invoices',exact:true}).waitFor();assert.equal(await page.getByRole('link',{name:'Create invoice',exact:true}).count(),0);assert.equal(await page.getByRole('option',{name:'Delete',exact:true}).count(),0);assert.equal(await page.getByRole('option',{name:'Archive',exact:true}).count(),0);
-    assert.deepEqual(errors,[]);results.push({width,result:'passed',synthetic:true,correctionId,effectiveRevision:original.effective_revision,numberAllocationsDuringRevision:sequence-sequenceBefore,putSaves:writes.filter(w=>w.method==='PUT').length,checks:['create','edit','latest-delete-reuse','older-gap-not-reused','duplicate','same-number-proposal-repeat-save','resume-revision','owner-reissue','original-snapshot-immutable','revision-history','no-number-allocation','download','print-request','archive-issued-cancelled','employee-permissions']});await context.close();
+    assert.deepEqual(errors,[]);results.push({width,result:'passed',synthetic:true,correctionId,effectiveRevision:original.effective_revision,numberAllocationsDuringRevision:sequence-sequenceBefore,putSaves:writes.filter(w=>w.method==='PUT').length,checks:['create','edit','latest-delete-reuse','older-gap-not-reused','duplicate','same-number-proposal-repeat-save','resume-revision','owner-reissue','legacy-draft-explicit-retirement','cancelled-proposal-save-with-legacy','original-snapshot-immutable','revision-history','no-number-allocation','download','print-request','archive-issued-cancelled','employee-permissions']});await context.close();
   }
   await writeFile(`${output}/results.json`,JSON.stringify(results,null,2));console.log(JSON.stringify(results,null,2));
 } finally {await browser.close();}

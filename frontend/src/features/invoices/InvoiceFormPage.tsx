@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/buttons/Button";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { getErrorMessage } from "@/shared/api/errors";
 import { usePermissions } from "@/features/access_control/usePermissions";
 import { calculateItems } from "./calculations";
-import { previewRevisionPdf, reissueInvoice, requestRevision, getCustomers, getDefaults, getInvoice, money, previewPdf, saveInvoice, type Company, type CustomerOption, type Invoice, type InvoiceInput, type Item } from "./api";
+import { getRevisionConflicts, type RevisionConflicts, previewRevisionPdf, reissueInvoice, requestRevision, getCustomers, getDefaults, getInvoice, money, previewPdf, saveInvoice, type Company, type CustomerOption, type Invoice, type InvoiceInput, type Item } from "./api";
 
 import { InvoiceReference } from "./InvoiceWorkflow";
 
@@ -23,6 +23,8 @@ export function InvoiceFormPage() {
   const {isOwner}=usePermissions();
   const [correctionReason,setCorrectionReason]=useState("");
   const [approvalReason,setApprovalReason]=useState("");
+  const [conflicts,setConflicts]=useState<RevisionConflicts | null>(null);
+  const [retireLegacyDrafts,setRetireLegacyDrafts]=useState(false);
   const [saved,setSaved]=useState(false);
   const [sourceInvoice,setSourceInvoice]=useState<Invoice | null>(null);
   const requestKey=useRef(crypto.randomUUID());
@@ -51,6 +53,13 @@ export function InvoiceFormPage() {
   },[invoiceId,revisionMode]);
   useEffect(()=>{let active=true;const timer=setTimeout(()=>getCustomers(search).then(v=>{if(active)setCustomers(v);}).catch(e=>{if(active)setError(getErrorMessage(e));}),250);return()=>{active=false;clearTimeout(timer);};},[search]);
   useEffect(()=>{if(!pdf){setUrl("");return;}const next=URL.createObjectURL(pdf);setUrl(next);return()=>URL.revokeObjectURL(next);},[pdf]);
+  useEffect(()=>{
+    if(!revisionMode||!isOwner||!invoiceId)return;
+    let active=true;setConflicts(null);setRetireLegacyDrafts(false);
+    getRevisionConflicts(invoiceId).then(value=>{if(active)setConflicts(value);})
+      .catch(e=>{if(active)setError(getErrorMessage(e));});
+    return()=>{active=false;};
+  },[invoiceId,revisionMode,isOwner,sourceInvoice?.version]);
   const change = (next: InvoiceInput) => {setForm(next);setPdf(null);setSaved(false);};
   const rowChange = (index: number, key: keyof Item, value: string) => change({...form,items:form.items.map((row,i)=>i===index?{...row,[key]:value}:row)});
   let totals: ReturnType<typeof calculateItems> | null = null;
@@ -64,11 +73,11 @@ export function InvoiceFormPage() {
   async function approve() {
     if(!invoiceId||!sourceInvoice?.revision_proposal||submitting.current)return;
     submitting.current=true;setBusy(true);setError(null);
-    try{await reissueInvoice(invoiceId,sourceInvoice.version,sourceInvoice.revision_proposal.id,approvalReason);navigate(`/invoices/${invoiceId}`);}catch(e){setError(getErrorMessage(e));}finally{submitting.current=false;setBusy(false);}
+    try{await reissueInvoice(invoiceId,sourceInvoice.version,sourceInvoice.revision_proposal.id,approvalReason,retireLegacyDrafts,retireLegacyDrafts?Object.fromEntries((conflicts?.drafts || []).map(copy=>[copy.id,copy.version])):undefined);navigate(`/invoices/${invoiceId}`);}catch(e){setError(getErrorMessage(e));}finally{submitting.current=false;setBusy(false);}
   }
   return <SimplePageLayout title={revisionMode?"Issued invoice revision":sourceInvoice?.replacement_for?"Edit correction draft":invoiceId?"Edit draft invoice":"Create invoice"} backTo="/invoices">
     <ErrorBanner message={error}/>
-    {revisionMode&&sourceInvoice&&<section className="border rounded-xl p-4 mb-4 space-y-3"><label>Invoice number<input className={inputClass} readOnly value={sourceInvoice.invoice_number}/></label><p>Revision mode: current effective revision {sourceInvoice.effective_revision || 1}. Original issued: {sourceInvoice.issued_at || "See original issue record"}. The number and original issue timestamp remain unchanged.</p><p>Approval state: {sourceInvoice.revision_proposal?.status.replaceAll("_"," ") || "Unsaved proposal"}. {sourceInvoice.status==="cancelled"?"The invoice remains cancelled until the owner approves reissue.":"The current issued invoice remains effective until owner approval."}</p><label className="block">Correction reason<textarea form="invoice-editor" required maxLength={500} className={inputClass} value={correctionReason} onChange={e=>{setCorrectionReason(e.target.value);setSaved(false);}}/></label>{sourceInvoice.revision_proposal&&isOwner&&<><p>Review the saved proposal before approving. Any unsaved edits must be saved for approval first.</p><label className="block">Accounting approval reason<textarea maxLength={500} className={inputClass} value={approvalReason} onChange={e=>setApprovalReason(e.target.value)}/></label><Button disabled={busy||!saved||!approvalReason.trim()} onClick={()=>void approve()}>Approve &amp; Reissue Saved Revision</Button></>}</section>}
+    {revisionMode&&sourceInvoice&&<section className="border rounded-xl p-4 mb-4 space-y-3"><label>Invoice number<input className={inputClass} readOnly value={sourceInvoice.invoice_number}/></label><p>Revision mode: current effective revision {sourceInvoice.effective_revision || 1}. Original issued: {sourceInvoice.issued_at || "See original issue record"}. The number and original issue timestamp remain unchanged.</p><p>Approval state: {sourceInvoice.revision_proposal?.status.replaceAll("_"," ") || "Unsaved proposal"}. {sourceInvoice.status==="cancelled"?"The invoice remains cancelled until the owner approves reissue.":"The current issued invoice remains effective until owner approval."}</p><label className="block">Correction reason<textarea form="invoice-editor" required maxLength={500} className={inputClass} value={correctionReason} onChange={e=>{setCorrectionReason(e.target.value);setSaved(false);}}/></label>{sourceInvoice.revision_proposal&&isOwner&&<><p>Review the saved proposal before approving. Any unsaved edits must be saved for approval first.</p><label className="block">Accounting approval reason<textarea maxLength={500} className={inputClass} value={approvalReason} onChange={e=>setApprovalReason(e.target.value)}/></label>{!conflicts&&<p>Checking older replacement records before approval...</p>}<Button variant="secondary" disabled={busy} onClick={()=>{setConflicts(null);setRetireLegacyDrafts(false);getRevisionConflicts(sourceInvoice.id).then(setConflicts).catch(e=>setError(getErrorMessage(e)));}}>Refresh replacement records</Button>{conflicts&&conflicts.drafts.length>0&&<div className="space-y-2"><p>Older unissued replacement drafts are linked to this invoice:</p>{conflicts.drafts.map(copy=><p key={copy.id}><Link className="text-primary" target="_blank" to={`/invoices/${copy.id}`}>{copy.invoice_number}</Link> (draft)</p>)}<label className="block"><input type="checkbox" checked={retireLegacyDrafts} onChange={e=>setRetireLegacyDrafts(e.target.checked)}/> Retire these unissued replacement drafts and reissue this invoice with its existing number. Their records and numbers will be preserved in the archive.</label></div>}{conflicts&&conflicts.blockers.length>0&&<div role="alert"><p>Your proposal can be saved, but these issued or finalized replacements require accounting review before reissue:</p>{conflicts.blockers.map(copy=><p key={copy.id}><Link className="text-primary" target="_blank" to={`/invoices/${copy.id}`}>{copy.invoice_number}</Link> ({copy.status})</p>)}</div>}<Button disabled={busy||!saved||!approvalReason.trim()||!conflicts||conflicts.blockers.length>0||(conflicts.drafts.length>0&&!retireLegacyDrafts)} onClick={()=>void approve()}>Approve &amp; Reissue Saved Revision</Button></>}</section>}
     {revisionMode&&saved&&<p role="status" className="mb-4">Revision proposal saved for {sourceInvoice?.invoice_number}. Pending accounting-owner approval.</p>}
     {!revisionMode&&sourceInvoice?.replacement_for&&<p className="mb-4">{location.state?.correctionResumed ? "Resuming existing correction draft" : "Editing correction draft"}: {sourceInvoice.invoice_number}. Saves update this same draft.</p>}
     {!revisionMode&&saved&&<p role="status" className="mb-4 text-success">Correction draft saved: {sourceInvoice?.invoice_number}</p>}

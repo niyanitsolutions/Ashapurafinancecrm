@@ -271,3 +271,112 @@ async def test_real_mongo_same_number_revision_cas_and_immutable_original(
     assert await db.invoices.count_documents({}) == 1
     assert (await db.counters.find_one({"_id": "INV"}))["seq"] == counter["seq"]
     assert await db.invoices.index_information() == indexes
+
+
+async def test_real_mongo_retirement_wins_against_already_started_legacy_issue(
+    real_invoice_db, mock_redis, monkeypatch
+):
+    from app.features.invoices.revisions import InvoiceRevisionService
+    from app.features.invoices.schemas import ReissueInput, RevisionInput
+    from app.utils.datetime import utc_now
+
+    db = real_invoice_db
+    await ensure_invoice_indexes(db)
+    actor = User(id=str(ObjectId()), mobile="9000000001", role="owner")
+    service = InvoiceService(db, mock_redis)
+    company = await service.company.get_or_create()
+    await service.company.update(
+        company.require_id(),
+        {
+            "company_name": "Synthetic Legacy Recovery",
+            "address": {
+                "line1": "Test street",
+                "city": "Pune",
+                "state": "Maharashtra",
+                "pincode": "411030",
+            },
+            "invoice_config": {
+                "gstin": "29DFPPP1103E1ZI",
+                "bank_name": "Test bank",
+                "account_number": "1234",
+                "ifsc": "UBIN0813982",
+                "same_number_reissue_enabled": True,
+                "same_number_policy_reason": "Owner approved test",
+                "same_number_policy_approved_by": actor.require_id(),
+                "same_number_policy_approved_at": utc_now(),
+            },
+        },
+    )
+    original = await service.create(InvoiceInput.model_validate(sample()), actor)
+    original = await service.status(
+        original["id"], StatusInput(status="issued", version=1), actor
+    )
+    original = await service.status(
+        original["id"],
+        StatusInput(
+            status="cancelled",
+            version=original["version"],
+            reason="Accidental cancellation",
+        ),
+        actor,
+    )
+    legacy = await service.duplicate(
+        original["id"], actor, replacement=True, reason="Old workflow"
+    )
+    before_counter = await db.counters.find_one({"_id": "INV"})
+    ready, release = asyncio.Event(), asyncio.Event()
+    real_replace = service.replace
+
+    async def paused_replace(invoice_id, current, version, updates, user, action):
+        if invoice_id == legacy["id"] and updates.get("status") == "issued":
+            ready.set()
+            await release.wait()
+        return await real_replace(invoice_id, current, version, updates, user, action)
+
+    monkeypatch.setattr(service, "replace", paused_replace)
+    issuing = asyncio.create_task(
+        service.status(legacy["id"], StatusInput(status="issued", version=1), actor)
+    )
+    try:
+        await asyncio.wait_for(ready.wait(), 5)
+        revisions = InvoiceRevisionService(service)
+        pending = await revisions.request(
+            original["id"],
+            RevisionInput(
+                invoice=InvoiceInput.model_validate(sample()),
+                version=original["version"],
+                reason="Correct original number",
+            ),
+            actor,
+        )
+        restored = await revisions.reissue(
+            original["id"],
+            ReissueInput(
+                version=pending["version"],
+                proposal_id=pending["revision_proposal"]["id"],
+                approval_reason="Owner approved retiring old copy",
+                retire_legacy_drafts=True,
+                legacy_draft_versions={legacy["id"]: legacy["version"]},
+            ),
+            actor,
+        )
+        assert (
+            restored["invoice_number"] == original["invoice_number"]
+            and restored["status"] == "issued"
+        )
+    finally:
+        release.set()
+        outcome = await asyncio.gather(issuing, return_exceptions=True)
+    assert getattr(outcome[0], "http_status", None) == 409
+    retired = await service.get(legacy["id"], actor)
+    assert (
+        retired["status"] == "cancelled"
+        and retired["is_archived"]
+        and not retired["issued_at"]
+    )
+    assert retired["invoice_number"] == legacy["invoice_number"]
+    assert (await db.counters.find_one({"_id": "INV"}))["seq"] == before_counter["seq"]
+    assert (
+        await db.invoices.count_documents({"status": "issued", "is_deleted": False})
+        == 1
+    )

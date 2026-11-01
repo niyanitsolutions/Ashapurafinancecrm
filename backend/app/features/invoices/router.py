@@ -396,3 +396,8 @@ async def revision_preview_pdf(
     doc = current | business | calculate(payload.invoice.items, payload.invoice.tax_type)
     doc.update(company=current["company"], status="draft", qr_value="")
     return await pdf_response(doc, "preview", svc, actor, frozen=True)
+
+
+@router.get("/invoices/{invoice_id}/revision-conflicts")
+async def revision_conflicts(invoice_id: str, svc: Service, actor: Owner) -> ApiResponse[Any]:
+    return ApiResponse.ok(await InvoiceRevisionService(svc).legacy_conflicts(invoice_id, actor))

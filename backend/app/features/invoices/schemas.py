@@ -125,6 +125,8 @@ class RevisionInput(BaseModel):
 
 
 class ReissueInput(BaseModel):
+    retire_legacy_drafts: bool = False
+    legacy_draft_versions: dict[str, int] = Field(default_factory=dict, max_length=100)
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     version: int = Field(ge=1)
     proposal_id: str = Field(min_length=1, max_length=50)
