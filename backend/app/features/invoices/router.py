@@ -22,6 +22,7 @@ from app.features.invoices.schemas import (
     ArchiveInput,
     CancelInput,
     CopyInput,
+    DirectRevisionInput,
     DraftDeleteInput,
     InvoiceConfig,
     InvoiceInput,
@@ -401,3 +402,10 @@ async def revision_preview_pdf(
 @router.get("/invoices/{invoice_id}/revision-conflicts")
 async def revision_conflicts(invoice_id: str, svc: Service, actor: Owner) -> ApiResponse[Any]:
     return ApiResponse.ok(await InvoiceRevisionService(svc).legacy_conflicts(invoice_id, actor))
+
+
+@router.post("/invoices/{invoice_id}/revision/save")
+async def save_revision(
+    invoice_id: str, payload: DirectRevisionInput, svc: Service, actor: Owner
+) -> ApiResponse[Any]:
+    return ApiResponse.ok(await InvoiceRevisionService(svc).save(invoice_id, payload, actor))

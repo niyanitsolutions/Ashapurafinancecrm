@@ -75,6 +75,7 @@ export const archiveInvoice = (id: string, version: number, reason: string) => a
 export const replacementInvoice = (id: string, reason: string, requestKey: string) => apiRequest<Invoice>(`/invoices/${id}/replacement`, {method: "POST", body: JSON.stringify({reason, request_key: requestKey})});
 
 export interface InvoiceRevision {
+  authorization_mode?: "owner_save" | "separate_owner_approval";
   revision_number: number; previous_revision: number | null; current: boolean; status: string;
   reason: string; changed_by?: string; approved_by?: string; approved_at?: string; reissued_at?: string;
 }
@@ -86,6 +87,8 @@ export const deleteIssuedInvoice = (id: string, version: number, reason: string)
 
 export const previewRevisionPdf = (id: string, invoice: InvoiceInput, reason: string) => apiBlob(`/invoices/${id}/revision/preview/pdf`, {method:"POST",body:JSON.stringify({invoice,version:invoice.version,reason})});
 
-export interface RevisionConflict {id: string; invoice_number: string; status: Status; version: number}
+export interface RevisionConflict {id: string; invoice_number: string; status: Status; version: number; can_supersede?: boolean}
 export interface RevisionConflicts {drafts: RevisionConflict[]; blockers: RevisionConflict[]}
 export const getRevisionConflicts = (id: string) => apiRequest<RevisionConflicts>(`/invoices/${id}/revision-conflicts`);
+
+export const saveAndReissueInvoice = (id: string, invoice: InvoiceInput, reason: string, legacyVersions: Record<string,number>) => apiRequest<Invoice>(`/invoices/${id}/revision/save`, {method:"POST",body:JSON.stringify({invoice,version:invoice.version,reason,legacy_replacement_versions:legacyVersions})});

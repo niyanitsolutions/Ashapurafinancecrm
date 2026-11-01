@@ -47,7 +47,10 @@ def public(doc: dict[str, Any]) -> dict[str, Any]:
     data = {
         ("id" if k == "_id" else k): str(v) if isinstance(v, ObjectId) else v
         for k, v in doc.items()
+        if k not in {"revision_save_lock", "revision_save_lock_until"}
     }
+    if doc.get("revision_save_lock"):
+        data["same_number_save_in_progress"] = True
     data["total_quantity"] = str(
         sum((Decimal(item["quantity"]) for item in doc["items"]), Decimal(0))
     )
@@ -383,6 +386,8 @@ class InvoiceService:
         updates: dict[str, Any],
         actor: User,
         action: str,
+        *,
+        save_lock: str | None = None,
     ) -> dict[str, Any]:
         if version != current["version"]:
             raise ConflictError("Invoice changed. Reload before saving.")
@@ -394,8 +399,14 @@ class InvoiceService:
                 "status": current["status"],
                 "is_archived": True if current.get("is_archived") else {"$ne": True},
                 "is_deleted": False,
+                "revision_save_lock": save_lock,
             },
             {
+                **(
+                    {"$unset": {"revision_save_lock": "", "revision_save_lock_until": ""}}
+                    if save_lock
+                    else {}
+                ),
                 "$set": updates,
                 "$inc": {"version": 1},
                 "$push": {
@@ -463,6 +474,10 @@ class InvoiceService:
         if payload.status == "issued":
             if current.get("replacement_for"):
                 original = await self.get(current["replacement_for"], actor)
+                if original.get("same_number_save_in_progress"):
+                    raise ConflictError(
+                        "The original invoice is being saved and reissued. This replacement cannot be issued."
+                    )
                 if original.get("revision_proposal"):
                     raise ConflictError(
                         "A same-number revision is pending for the original invoice. This replacement cannot be issued while that proposal is active."
@@ -723,6 +738,7 @@ class InvoiceService:
                         "deleted",
                         "archived",
                         "legacy_draft_retired",
+                        "replacement_superseded",
                     }:
                         events.append(
                             event

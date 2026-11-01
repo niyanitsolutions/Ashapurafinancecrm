@@ -131,3 +131,7 @@ class ReissueInput(BaseModel):
     version: int = Field(ge=1)
     proposal_id: str = Field(min_length=1, max_length=50)
     approval_reason: str = Field(min_length=1, max_length=500)
+
+
+class DirectRevisionInput(RevisionInput):
+    legacy_replacement_versions: dict[str, int] = Field(default_factory=dict, max_length=100)

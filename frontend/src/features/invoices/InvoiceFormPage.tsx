@@ -6,7 +6,7 @@ import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { getErrorMessage } from "@/shared/api/errors";
 import { usePermissions } from "@/features/access_control/usePermissions";
 import { calculateItems } from "./calculations";
-import { getRevisionConflicts, type RevisionConflicts, previewRevisionPdf, reissueInvoice, requestRevision, getCustomers, getDefaults, getInvoice, money, previewPdf, saveInvoice, type Company, type CustomerOption, type Invoice, type InvoiceInput, type Item } from "./api";
+import { getRevisionConflicts, type RevisionConflicts, previewRevisionPdf, saveAndReissueInvoice, requestRevision, getCustomers, getDefaults, getInvoice, money, previewPdf, saveInvoice, type Company, type CustomerOption, type Invoice, type InvoiceInput, type Item } from "./api";
 
 import { InvoiceReference } from "./InvoiceWorkflow";
 
@@ -22,9 +22,7 @@ export function InvoiceFormPage() {
   const revisionMode=new URLSearchParams(location.search).get("mode")==="revision";
   const {isOwner}=usePermissions();
   const [correctionReason,setCorrectionReason]=useState("");
-  const [approvalReason,setApprovalReason]=useState("");
   const [conflicts,setConflicts]=useState<RevisionConflicts | null>(null);
-  const [retireLegacyDrafts,setRetireLegacyDrafts]=useState(false);
   const [saved,setSaved]=useState(false);
   const [sourceInvoice,setSourceInvoice]=useState<Invoice | null>(null);
   const requestKey=useRef(crypto.randomUUID());
@@ -55,7 +53,7 @@ export function InvoiceFormPage() {
   useEffect(()=>{if(!pdf){setUrl("");return;}const next=URL.createObjectURL(pdf);setUrl(next);return()=>URL.revokeObjectURL(next);},[pdf]);
   useEffect(()=>{
     if(!revisionMode||!isOwner||!invoiceId)return;
-    let active=true;setConflicts(null);setRetireLegacyDrafts(false);
+    let active=true;setConflicts(null);
     getRevisionConflicts(invoiceId).then(value=>{if(active)setConflicts(value);})
       .catch(e=>{if(active)setError(getErrorMessage(e));});
     return()=>{active=false;};
@@ -67,23 +65,30 @@ export function InvoiceFormPage() {
   async function submit(preview: boolean) {
     if(submitting.current)return; submitting.current=true;
     setError(null);setBusy(true);
-    try {if(revisionMode&&!preview&&invoiceId){const invoice=await requestRevision(invoiceId,form,correctionReason);setSourceInvoice(invoice);setForm(f=>({...f,version:invoice.version}));setSaved(true);}else if(preview) setPdf(revisionMode&&invoiceId?await previewRevisionPdf(invoiceId,form,correctionReason):await previewPdf(form)); else {const invoice=await saveInvoice(invoiceId ? form : {...form,request_key:requestKey.current},invoiceId);if(invoice.replacement_for && invoiceId) {setForm(f=>({...f,version:invoice.version}));setSourceInvoice(previous=>({...invoice,source_status:previous?.source_status}));setSaved(true);} else navigate(`/invoices/${invoice.id}`);}}
+    try {if(revisionMode&&!preview&&invoiceId&&isOwner){
+      if(!conflicts)throw new Error("Linked invoices are still loading.");
+      const copies=[...conflicts.drafts,...conflicts.blockers];
+      const invoice=await saveAndReissueInvoice(invoiceId,form,correctionReason,Object.fromEntries(copies.map(copy=>[copy.id,copy.version])));
+      navigate(`/invoices/${invoice.id}`,{state:{invoiceNotice:`${invoice.invoice_number} saved and re-issued.`}});
+    }else if(revisionMode&&!preview&&invoiceId){const invoice=await requestRevision(invoiceId,form,correctionReason);setSourceInvoice(invoice);setForm(f=>({...f,version:invoice.version}));setSaved(true);}else if(preview) setPdf(revisionMode&&invoiceId?await previewRevisionPdf(invoiceId,form,correctionReason):await previewPdf(form)); else {const invoice=await saveInvoice(invoiceId ? form : {...form,request_key:requestKey.current},invoiceId);if(invoice.replacement_for && invoiceId) {setForm(f=>({...f,version:invoice.version}));setSourceInvoice(previous=>({...invoice,source_status:previous?.source_status}));setSaved(true);} else navigate(`/invoices/${invoice.id}`);}}
     catch(e){setError(getErrorMessage(e));}finally{submitting.current=false;setBusy(false);}
-  }
-  async function approve() {
-    if(!invoiceId||!sourceInvoice?.revision_proposal||submitting.current)return;
-    submitting.current=true;setBusy(true);setError(null);
-    try{await reissueInvoice(invoiceId,sourceInvoice.version,sourceInvoice.revision_proposal.id,approvalReason,retireLegacyDrafts,retireLegacyDrafts?Object.fromEntries((conflicts?.drafts || []).map(copy=>[copy.id,copy.version])):undefined);navigate(`/invoices/${invoiceId}`);}catch(e){setError(getErrorMessage(e));}finally{submitting.current=false;setBusy(false);}
   }
   return <SimplePageLayout title={revisionMode?"Issued invoice revision":sourceInvoice?.replacement_for?"Edit correction draft":invoiceId?"Edit draft invoice":"Create invoice"} backTo="/invoices">
     <ErrorBanner message={error}/>
-    {revisionMode&&sourceInvoice&&<section className="border rounded-xl p-4 mb-4 space-y-3"><label>Invoice number<input className={inputClass} readOnly value={sourceInvoice.invoice_number}/></label><p>Revision mode: current effective revision {sourceInvoice.effective_revision || 1}. Original issued: {sourceInvoice.issued_at || "See original issue record"}. The number and original issue timestamp remain unchanged.</p><p>Approval state: {sourceInvoice.revision_proposal?.status.replaceAll("_"," ") || "Unsaved proposal"}. {sourceInvoice.status==="cancelled"?"The invoice remains cancelled until the owner approves reissue.":"The current issued invoice remains effective until owner approval."}</p><label className="block">Correction reason<textarea form="invoice-editor" required maxLength={500} className={inputClass} value={correctionReason} onChange={e=>{setCorrectionReason(e.target.value);setSaved(false);}}/></label>{sourceInvoice.revision_proposal&&isOwner&&<><p>Review the saved proposal before approving. Any unsaved edits must be saved for approval first.</p><label className="block">Accounting approval reason<textarea maxLength={500} className={inputClass} value={approvalReason} onChange={e=>setApprovalReason(e.target.value)}/></label>{!conflicts&&<p>Checking older replacement records before approval...</p>}<Button variant="secondary" disabled={busy} onClick={()=>{setConflicts(null);setRetireLegacyDrafts(false);getRevisionConflicts(sourceInvoice.id).then(setConflicts).catch(e=>setError(getErrorMessage(e)));}}>Refresh replacement records</Button>{conflicts&&conflicts.drafts.length>0&&<div className="space-y-2"><p>Older unissued replacement drafts are linked to this invoice:</p>{conflicts.drafts.map(copy=><p key={copy.id}><Link className="text-primary" target="_blank" to={`/invoices/${copy.id}`}>{copy.invoice_number}</Link> (draft)</p>)}<label className="block"><input type="checkbox" checked={retireLegacyDrafts} onChange={e=>setRetireLegacyDrafts(e.target.checked)}/> Retire these unissued replacement drafts and reissue this invoice with its existing number. Their records and numbers will be preserved in the archive.</label></div>}{conflicts&&conflicts.blockers.length>0&&<div role="alert"><p>Your proposal can be saved, but these issued or finalized replacements require accounting review before reissue:</p>{conflicts.blockers.map(copy=><p key={copy.id}><Link className="text-primary" target="_blank" to={`/invoices/${copy.id}`}>{copy.invoice_number}</Link> ({copy.status})</p>)}</div>}<Button disabled={busy||!saved||!approvalReason.trim()||!conflicts||conflicts.blockers.length>0||(conflicts.drafts.length>0&&!retireLegacyDrafts)} onClick={()=>void approve()}>Approve &amp; Reissue Saved Revision</Button></>}</section>}
-    {revisionMode&&saved&&<p role="status" className="mb-4">Revision proposal saved for {sourceInvoice?.invoice_number}. Pending accounting-owner approval.</p>}
+    {revisionMode&&sourceInvoice&&<section className="border rounded-xl p-4 mb-4 space-y-3">
+      <label>Invoice number<input className={inputClass} readOnly value={sourceInvoice.invoice_number}/></label>
+      <p>Current revision: {sourceInvoice.effective_revision || 1}. Original issued: {sourceInvoice.issued_at || "See original issue record"}. Your invoice number stays unchanged.</p>
+      {isOwner?<p>Save &amp; Reissue applies your edits immediately with the same invoice number. Previous versions remain in history. No separate approval step is required.</p>:<p>Staff edits are saved as a proposal for the owner.</p>}
+      {isOwner&&sourceInvoice.revision_proposal&&<p>Previously saved edits have been loaded. Save &amp; Reissue applies the changes shown below.</p>}
+      <label className="block">Correction reason<textarea form="invoice-editor" required maxLength={500} className={inputClass} value={correctionReason} onChange={e=>{setCorrectionReason(e.target.value);setSaved(false);}}/></label>
+      {isOwner&&<>{!conflicts&&<p>Loading linked invoices...</p>}{conflicts&&[...conflicts.drafts,...conflicts.blockers].length>0&&<div className="space-y-2"><p>Saving will cancel and archive the linked replacement invoices below so that only this invoice remains active. Their numbers, original documents and history are preserved.</p>{[...conflicts.drafts,...conflicts.blockers].map(copy=><p key={copy.id}><Link className="text-primary" target="_blank" to={`/invoices/${copy.id}`}>{copy.invoice_number}</Link> ({copy.status}){copy.can_supersede===false?" - settled or restricted; cannot be cancelled by this save":""}</p>)}</div>}<Button variant="secondary" disabled={busy} onClick={()=>{setConflicts(null);getRevisionConflicts(sourceInvoice.id).then(setConflicts).catch(e=>setError(getErrorMessage(e)));}}>Refresh linked invoices</Button></>}
+    </section>}
+    {revisionMode&&!isOwner&&saved&&<p role="status" className="mb-4">Revision proposal saved for {sourceInvoice?.invoice_number}.</p>}
     {!revisionMode&&sourceInvoice?.replacement_for&&<p className="mb-4">{location.state?.correctionResumed ? "Resuming existing correction draft" : "Editing correction draft"}: {sourceInvoice.invoice_number}. Saves update this same draft.</p>}
     {!revisionMode&&saved&&<p role="status" className="mb-4 text-success">Correction draft saved: {sourceInvoice?.invoice_number}</p>}
     {sourceInvoice&&<InvoiceReference invoice={sourceInvoice}/>}
     {!ready ? <p>{error?"Invoice unavailable.":"Loading invoice…"}</p> : <form id="invoice-editor" onSubmit={e=>{e.preventDefault();void submit(false);}} className="space-y-6">
-      <section className="bg-card border rounded-xl p-5"><h2 className="font-semibold mb-4">Invoice details</h2><p className="text-sm mb-4">{revisionMode?"This proposal retains the existing invoice identity and number. No number is allocated or reserved.":"The server assigns the actual number after Save draft. Eligible latest deleted draft numbers may be reused; this form does not reserve a number."}</p>
+      <section className="bg-card border rounded-xl p-5"><h2 className="font-semibold mb-4">Invoice details</h2><p className="text-sm mb-4">{revisionMode?"Your edits retain the existing invoice identity and number. No new number is generated.":"The server assigns the actual number after Save draft. Eligible latest deleted draft numbers may be reused; this form does not reserve a number."}</p>
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <label>Invoice date<input className={inputClass} type="date" required value={form.invoice_date} onChange={e=>change({...form,invoice_date:e.target.value})}/></label>
           <label>Valid until / Due date<input className={inputClass} type="date" required min={form.invoice_date} value={form.due_date} onChange={e=>change({...form,due_date:e.target.value})}/></label>
@@ -114,7 +119,7 @@ export function InvoiceFormPage() {
       </section>
       <div className="grid lg:grid-cols-2 gap-5"><section className="bg-card border rounded-xl p-5"><h2 className="font-semibold mb-3">Bank details preview</h2><p>{company?.bank_name || "Configure bank details in Invoice Settings before issuing."}</p><p>Branch: {company?.branch}</p><p>Account: {company?.account_number}</p><p>IFSC: {company?.ifsc}</p><label className="block mt-4">Payment terms<textarea className={inputClass} maxLength={500} value={form.terms} onChange={e=>change({...form,terms:e.target.value})}/></label></section>
         <section className="bg-card border rounded-xl p-5"><h2 className="font-semibold mb-3">Tax & totals</h2><p>Subtotal: {totals?money(totals.subtotal):"—"}</p><p>{form.tax_type==="IGST"?"IGST":"CGST + SGST"}: {totals?money(totals.gst):"—"}</p><p className="font-semibold text-xl mt-3">Grand total: {totals?money(totals.total):"—"}</p><p className="text-sm mt-3">Final totals and amount in words are validated by the server when saved.</p></section></div>
-      <div className="flex gap-3"><Button variant="secondary" loading={busy} onClick={e=>{if(e.currentTarget.form?.reportValidity()) void submit(true);}}>Preview invoice</Button><Button type="submit" loading={busy}>{revisionMode?"Save Revision Proposal":"Save draft"}</Button><Button variant="secondary" disabled={busy} onClick={()=>navigate("/invoices")}>Cancel / Close</Button></div>
+      <div className="flex gap-3"><Button variant="secondary" loading={busy} onClick={e=>{if(e.currentTarget.form?.reportValidity()) void submit(true);}}>Preview invoice</Button><Button type="submit" loading={busy} disabled={revisionMode&&isOwner&&(!conflicts||[...conflicts.drafts,...conflicts.blockers].some(copy=>copy.can_supersede===false))}>{revisionMode?(isOwner?"Save & Reissue":"Save Revision Proposal"):"Save draft"}</Button><Button variant="secondary" disabled={busy} onClick={()=>navigate("/invoices")}>Cancel / Close</Button></div>
       {url && <section><h2 className="font-semibold mb-3">Invoice preview</h2><iframe title="Invoice preview" src={url} className="w-full h-[900px] border rounded-xl"/></section>}
     </form>}
   </SimplePageLayout>;

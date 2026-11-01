@@ -12,7 +12,7 @@ import { InvoiceSettingsPage } from "./InvoiceSettingsPage";
 
 const permissions=vi.hoisted(()=>({create:true,edit:true,owner:true}));
 vi.mock("@/features/access_control/usePermissions",()=>({usePermissions:()=>({isOwner:permissions.owner,can:(_key: string,action: string)=>action==="view"||permissions[action as "create"|"edit"]})}));
-vi.mock("./api",async original=>({...await original<typeof import("./api")>(),listInvoices:vi.fn(),getDefaults:vi.fn(),getCustomers:vi.fn(),saveInvoice:vi.fn(),previewPdf:vi.fn(),getInvoice:vi.fn(),invoicePdf:vi.fn(),setInvoiceStatus:vi.fn(),duplicateInvoice:vi.fn(),getSettings:vi.fn(),saveSettings:vi.fn(),uploadSignature:vi.fn(),downloadPdf:vi.fn(),deleteInvoice:vi.fn(),replacementInvoice:vi.fn(),invoiceHistory:vi.fn(),getCorrectionDraft:vi.fn(),getDeleteOptions:vi.fn(),archiveInvoice:vi.fn(),getInvoiceRevisions:vi.fn(),historicalInvoicePdf:vi.fn(),requestRevision:vi.fn(),reissueInvoice:vi.fn(),deleteIssuedInvoice:vi.fn(),previewRevisionPdf:vi.fn(),getRevisionConflicts:vi.fn()}));
+vi.mock("./api",async original=>({...await original<typeof import("./api")>(),listInvoices:vi.fn(),getDefaults:vi.fn(),getCustomers:vi.fn(),saveInvoice:vi.fn(),previewPdf:vi.fn(),getInvoice:vi.fn(),invoicePdf:vi.fn(),setInvoiceStatus:vi.fn(),duplicateInvoice:vi.fn(),getSettings:vi.fn(),saveSettings:vi.fn(),uploadSignature:vi.fn(),downloadPdf:vi.fn(),deleteInvoice:vi.fn(),replacementInvoice:vi.fn(),invoiceHistory:vi.fn(),getCorrectionDraft:vi.fn(),getDeleteOptions:vi.fn(),archiveInvoice:vi.fn(),getInvoiceRevisions:vi.fn(),historicalInvoicePdf:vi.fn(),requestRevision:vi.fn(),reissueInvoice:vi.fn(),deleteIssuedInvoice:vi.fn(),previewRevisionPdf:vi.fn(),getRevisionConflicts:vi.fn(),saveAndReissueInvoice:vi.fn()}));
 const fixture={id:"i1",invoice_number:"INV-000001",customer_id:null,customer:{name:"Acme",address:"Street",city:"Pune",state:"Maharashtra",pincode:"411030",country:"India",gstin:"",phone:"",email:""},invoice_date:"2026-10-04",due_date:"2026-10-04",place_of_supply:"",terms:"",tax_type:"IGST" as const,version:1,status:"draft" as const,items:[{description:"Consultancy",hsn:"9971",quantity:"3",unit:"nos.s",rate:"7753.71",gst_rate:"18"}],subtotal:"23261.13",gst_total:"4187.00",grand_total:"27448.13",amount_in_words:"Words",created_by_name:"Owner",created_at:"2026-10-04T00:00:00Z"};
 beforeEach(()=>{
   vi.clearAllMocks();permissions.create=true;permissions.edit=true;permissions.owner=true;
@@ -29,7 +29,7 @@ beforeEach(()=>{
   vi.mocked(api.getRevisionConflicts).mockResolvedValue({drafts:[],blockers:[]});
   vi.mocked(api.historicalInvoicePdf).mockResolvedValue(new Blob(["historical"]));
 });
-function show(element: React.ReactNode,path="/") {render(<MemoryRouter initialEntries={[path]}><Routes><Route path="/" element={element}/><Route path="/invoices" element={<p>Invoice list</p>}/><Route path="/invoices/:invoiceId/edit" element={element}/><Route path="/invoices/:invoiceId" element={path==="/"?<p>Saved invoice</p>:element}/></Routes></MemoryRouter>);}
+function show(element: React.ReactNode,path="/") {render(<MemoryRouter initialEntries={[path]}><Routes><Route path="/" element={element}/><Route path="/invoices" element={<p>Invoice list</p>}/><Route path="/invoices/:invoiceId/edit" element={element}/><Route path="/invoices/:invoiceId" element={(path==="/"||path.includes("/edit"))?<p>Saved invoice</p>:element}/></Routes></MemoryRouter>);}
 describe("invoice screens",()=>{
   it("lists invoices and applies search filters",async()=>{
     show(<InvoiceListPage/>);expect(await screen.findByText("INV-000001")).toBeInTheDocument();
@@ -171,24 +171,21 @@ describe('same-number issued invoice revisions',()=>{
     expect(screen.getByRole('button',{name:'Edit & Reissue'})).toBeDisabled();
     expect(api.replacementInvoice).not.toHaveBeenCalled();expect(api.requestRevision).not.toHaveBeenCalled();
   });
-  it('saves proposals against the original ID and requires reason and owner approval',async()=>{
+  it('directly saves the existing invoice with no approval form or proposal request',async()=>{
     vi.mocked(api.getDefaults).mockResolvedValue({default_gst:'18',same_number_reissue_enabled:true} as api.Company);
     vi.mocked(api.getInvoice).mockResolvedValue(issued);
-    const pending={...issued,version:3,revision_proposal:{id:'proposal-1',status:'pending_owner_approval',reason:'Correct amount',snapshot:issued,requested_by:'owner',requested_at:'2026-10-31T00:00:00Z'}};
-    vi.mocked(api.requestRevision).mockResolvedValue(pending);
-    vi.mocked(api.reissueInvoice).mockResolvedValue({...issued,version:4,effective_revision:2});
+    vi.mocked(api.saveAndReissueInvoice).mockResolvedValue({...issued,version:3,effective_revision:2,reissued_at:'2026-11-01T00:00:00Z'});
     show(<InvoiceFormPage/>,'/invoices/i1/edit?mode=revision');const user=userEvent.setup();await screen.findByDisplayValue('Consultancy');
     expect(screen.getByLabelText('Invoice number')).toHaveValue('INV-000001');expect(screen.getByLabelText('Invoice number')).toHaveAttribute('readonly');
-    await user.click(screen.getByRole('button',{name:'Save Revision Proposal'}));expect(api.requestRevision).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText('Accounting approval reason')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:'Approve & Reissue Saved Revision'})).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button',{name:'Save & Reissue'}));expect(api.saveAndReissueInvoice).not.toHaveBeenCalled();
     await user.type(screen.getByLabelText('Correction reason'),'Correct amount');
-    await user.click(screen.getByRole('button',{name:'Save Revision Proposal'}));
-    expect(await screen.findByRole('status')).toHaveTextContent('Pending accounting-owner approval');
-    expect(api.requestRevision).toHaveBeenCalledWith('i1',expect.objectContaining({version:2}),'Correct amount');
+    await user.click(screen.getByRole('button',{name:'Save & Reissue'}));
+    await waitFor(()=>expect(api.saveAndReissueInvoice).toHaveBeenCalledWith('i1',expect.objectContaining({version:2}),'Correct amount',{}));
+    expect(await screen.findByText('Saved invoice')).toBeInTheDocument();
+    expect(api.requestRevision).not.toHaveBeenCalled();expect(api.reissueInvoice).not.toHaveBeenCalled();
     expect(api.saveInvoice).not.toHaveBeenCalled();expect(api.replacementInvoice).not.toHaveBeenCalled();
-    expect(screen.getByRole('button',{name:'Approve & Reissue Saved Revision'})).toBeDisabled();
-    await user.type(screen.getByLabelText('Accounting approval reason'),'Owner reviewed');
-    await user.click(screen.getByRole('button',{name:'Approve & Reissue Saved Revision'}));
-    await waitFor(()=>expect(api.reissueInvoice).toHaveBeenCalledWith('i1',3,'proposal-1','Owner reviewed',false,undefined));
   });
   it('shows historical and current revisions with explicit historical PDF downloads',async()=>{
     vi.mocked(api.getInvoice).mockResolvedValue({...issued,effective_revision:2});
@@ -235,20 +232,20 @@ describe('cancelled invoice recovery',()=>{
     await user.selectOptions(screen.getByLabelText('Actions for INV-000001'),'edit');
     expect(await screen.findByRole('dialog')).toHaveTextContent('Edit Cancelled Invoice');
     await waitFor(()=>expect(screen.getByRole('button',{name:'Edit & Reissue'})).toBeEnabled());
-    expect(screen.getByText(/retaining its cancellation history/)).toBeInTheDocument();
+    expect(screen.getByText(/retains its cancellation history/)).toBeInTheDocument();
     expect(api.replacementInvoice).not.toHaveBeenCalled();expect(api.duplicateInvoice).not.toHaveBeenCalled();
   });
   it('opens the cancelled invoice in revision mode without allocating a new invoice',async()=>{
     vi.mocked(api.getDefaults).mockResolvedValue({same_number_reissue_enabled:true} as api.Company);
     vi.mocked(api.getInvoice).mockResolvedValue(cancelled);
     const pending={...cancelled,version:4,revision_proposal:{id:'cancel-recovery',base_status:'cancelled' as const,status:'pending_owner_approval',reason:'Restore mistaken cancellation',snapshot:cancelled,requested_by:'owner',requested_at:'2026-11-01T00:00:00Z'}};
-    vi.mocked(api.requestRevision).mockResolvedValue(pending);
+    vi.mocked(api.saveAndReissueInvoice).mockResolvedValue({...pending,status:"issued",revision_proposal:null});
     show(<InvoiceFormPage/>,'/invoices/i1/edit?mode=revision');const user=userEvent.setup();await screen.findByDisplayValue('Consultancy');
     expect(screen.getByLabelText('Invoice number')).toHaveValue('INV-000001');
-    expect(screen.getByText(/remains cancelled until the owner approves/)).toBeInTheDocument();
+    expect(screen.getByText(/No separate approval step is required/)).toBeInTheDocument();
     await user.type(screen.getByLabelText('Correction reason'),'Restore mistaken cancellation');
-    await user.click(screen.getByRole('button',{name:'Save Revision Proposal'}));
-    await waitFor(()=>expect(api.requestRevision).toHaveBeenCalledWith('i1',expect.objectContaining({version:3}),'Restore mistaken cancellation'));
+    await user.click(screen.getByRole('button',{name:'Save & Reissue'}));
+    await waitFor(()=>expect(api.saveAndReissueInvoice).toHaveBeenCalledWith('i1',expect.objectContaining({version:3}),'Restore mistaken cancellation',{}));
     expect(api.saveInvoice).not.toHaveBeenCalled();expect(api.replacementInvoice).not.toHaveBeenCalled();
   });
   it('shows Re-issued in the list and keeps later paid or cancelled statuses accurate',async()=>{
@@ -259,28 +256,44 @@ describe('cancelled invoice recovery',()=>{
   });
 });
 
-it('saves with an older replacement and requires explicit retirement only at approval',async()=>{
+it('directly saves despite an issued unpaid replacement and preserves edits on failure',async()=>{
   const original={...fixture,status:'cancelled' as const,version:3,issued_at:'2026-10-30T00:00:00Z'};
-  const oldCopy={id:'legacy1',invoice_number:'INV-100000014',status:'draft' as const,version:1};
+  const oldCopy={id:'legacy1',invoice_number:'INV-100000014',status:'issued' as const,version:2,can_supersede:true};
   vi.mocked(api.getDefaults).mockResolvedValue({same_number_reissue_enabled:true} as api.Company);
   vi.mocked(api.getInvoice).mockResolvedValue(original);
-  let legacyVersion=1;
-  vi.mocked(api.getRevisionConflicts).mockImplementation(async()=>({drafts:[{...oldCopy,version:legacyVersion}],blockers:[]}));
-  vi.mocked(api.requestRevision).mockResolvedValue({...original,version:4,revision_proposal:{id:'p1',base_status:'cancelled',status:'pending_owner_approval',reason:'Company name correction',snapshot:original,requested_by:'owner',requested_at:'2026-11-01T00:00:00Z'}});
-  vi.mocked(api.reissueInvoice).mockRejectedValue(new ApiError('conflict','Invoice changed. Reload before approving.'));
+  vi.mocked(api.getRevisionConflicts).mockResolvedValue({drafts:[],blockers:[oldCopy]});
+  vi.mocked(api.saveAndReissueInvoice).mockRejectedValue(new ApiError('conflict','Linked replacement changed. Refresh the linked records before saving.'));
   show(<InvoiceFormPage/>,'/invoices/i1/edit?mode=revision');const user=userEvent.setup();await screen.findByDisplayValue('Consultancy');
-  await user.type(screen.getByLabelText('Correction reason'),'Company name correction');
-  await user.click(screen.getByRole('button',{name:'Save Revision Proposal'}));
-  expect(await screen.findByRole('status')).toHaveTextContent('Revision proposal saved');
   expect(await screen.findByRole('link',{name:'INV-100000014'})).toHaveAttribute('href','/invoices/legacy1');
-  await user.type(screen.getByLabelText('Accounting approval reason'),'Owner approved retirement');
-  expect(screen.getByRole('button',{name:'Approve & Reissue Saved Revision'})).toBeDisabled();
-  await user.click(screen.getByRole('checkbox',{name:/Retire these unissued replacement drafts/}));
-  legacyVersion=2;await user.click(screen.getByRole('button',{name:'Refresh replacement records'}));
-  await waitFor(()=>expect(screen.getByRole('checkbox',{name:/Retire these unissued replacement drafts/})).not.toBeChecked());
-  await user.click(screen.getByRole('checkbox',{name:/Retire these unissued replacement drafts/}));
-  await user.click(screen.getByRole('button',{name:'Approve & Reissue Saved Revision'}));
-  await waitFor(()=>expect(api.reissueInvoice).toHaveBeenCalledWith('i1',4,'p1','Owner approved retirement',true,{legacy1:2}));
-  expect(await screen.findByText('Invoice changed. Reload before approving.')).toBeInTheDocument();
+  expect(screen.getByText(/Saving will cancel and archive/)).toBeInTheDocument();
+  expect(screen.queryByLabelText('Accounting approval reason')).not.toBeInTheDocument();
+  expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+  await user.type(screen.getByLabelText('Correction reason'),'Company name correction');
+  await user.click(screen.getByRole('button',{name:'Save & Reissue'}));
+  await waitFor(()=>expect(api.saveAndReissueInvoice).toHaveBeenCalledWith('i1',expect.objectContaining({version:3}),'Company name correction',{legacy1:2}));
+  expect(await screen.findByText('Linked replacement changed. Refresh the linked records before saving.')).toBeInTheDocument();
   expect(screen.getByLabelText('Correction reason')).toHaveValue('Company name correction');
+});
+
+it('does not grant direct-save rights to staff',async()=>{
+  permissions.owner=false;
+  const original={...fixture,status:'issued' as const,version:2,issued_at:'2026-10-30T00:00:00Z'};
+  vi.mocked(api.getDefaults).mockResolvedValue({same_number_reissue_enabled:true} as api.Company);
+  vi.mocked(api.getInvoice).mockResolvedValue(original);
+  vi.mocked(api.requestRevision).mockResolvedValue({...original,version:3});
+  show(<InvoiceFormPage/>,'/invoices/i1/edit?mode=revision');const user=userEvent.setup();await screen.findByDisplayValue('Consultancy');
+  await user.type(screen.getByLabelText('Correction reason'),'Staff edit request');
+  await user.click(screen.getByRole('button',{name:'Save Revision Proposal'}));
+  await waitFor(()=>expect(api.requestRevision).toHaveBeenCalled());
+  expect(api.saveAndReissueInvoice).not.toHaveBeenCalled();
+});
+
+it('explains when a settled linked invoice cannot be cancelled by direct save',async()=>{
+  vi.mocked(api.getDefaults).mockResolvedValue({same_number_reissue_enabled:true} as api.Company);
+  vi.mocked(api.getInvoice).mockResolvedValue({...fixture,status:'cancelled',issued_at:'2026-10-30T00:00:00Z'});
+  vi.mocked(api.getRevisionConflicts).mockResolvedValue({drafts:[],blockers:[{id:'paid1',invoice_number:'INV-PAID',status:'paid',version:3,can_supersede:false}]});
+  show(<InvoiceFormPage/>,'/invoices/i1/edit?mode=revision');await screen.findByDisplayValue('Consultancy');
+  expect(await screen.findByText(/settled or restricted/)).toBeInTheDocument();
+  expect(screen.getByRole('button',{name:'Save & Reissue'})).toBeDisabled();
+  expect(api.saveAndReissueInvoice).not.toHaveBeenCalled();
 });

@@ -380,3 +380,89 @@ async def test_real_mongo_retirement_wins_against_already_started_legacy_issue(
         await db.invoices.count_documents({"status": "issued", "is_deleted": False})
         == 1
     )
+
+
+async def test_real_mongo_direct_save_concurrency_with_issued_replacement(
+    real_invoice_db, mock_redis
+):
+    from app.features.invoices.revisions import InvoiceRevisionService
+    from app.features.invoices.schemas import DirectRevisionInput
+    from app.utils.datetime import utc_now
+
+    db = real_invoice_db
+    await ensure_invoice_indexes(db)
+    actor = User(id=str(ObjectId()), mobile="9000000001", role="owner")
+    service = InvoiceService(db, mock_redis)
+    company = await service.company.get_or_create()
+    await service.company.update(
+        company.require_id(),
+        {
+            "company_name": "Synthetic Legacy Recovery",
+            "address": {
+                "line1": "Test street",
+                "city": "Pune",
+                "state": "Maharashtra",
+                "pincode": "411030",
+            },
+            "invoice_config": {
+                "gstin": "29DFPPP1103E1ZI",
+                "bank_name": "Test bank",
+                "account_number": "1234",
+                "ifsc": "UBIN0813982",
+                "same_number_reissue_enabled": True,
+                "same_number_policy_reason": "Owner approved test",
+                "same_number_policy_approved_by": actor.require_id(),
+                "same_number_policy_approved_at": utc_now(),
+            },
+        },
+    )
+
+    original = await service.create(InvoiceInput.model_validate(sample()), actor)
+    original = await service.status(
+        original["id"], StatusInput(status="issued", version=1), actor
+    )
+    original = await service.status(
+        original["id"],
+        StatusInput(status="cancelled", version=2, reason="Accidental cancellation"),
+        actor,
+    )
+    # Seed the historical separately numbered copy through its existing legacy API.
+    legacy = await service.duplicate(
+        original["id"], actor, replacement=True, reason="Legacy correction"
+    )
+    legacy = await service.status(
+        legacy["id"], StatusInput(status="issued", version=legacy["version"]), actor
+    )
+    revisions = InvoiceRevisionService(service)
+    frozen = await revisions.historical(original["id"], 1, actor)
+    child_frozen = await revisions.historical(legacy["id"], 1, actor)
+    counter = await db.counters.find_one({"_id": "INV"})
+    changed = sample()
+    changed["customer"]["name"] = "Directly saved company"
+    payload = DirectRevisionInput(
+        invoice=InvoiceInput.model_validate(changed),
+        version=original["version"],
+        reason="Direct correction",
+        legacy_replacement_versions={legacy["id"]: legacy["version"]},
+    )
+    outcomes = await asyncio.gather(
+        *(revisions.save(original["id"], payload, actor) for _ in range(12)),
+        return_exceptions=True,
+    )
+    assert sum(isinstance(row, dict) for row in outcomes) == 1
+    saved = await service.get(original["id"], actor)
+    assert (
+        saved["invoice_number"] == original["invoice_number"]
+        and saved["status"] == "issued"
+    )
+    assert saved["effective_revision"] == 2 and saved["revision_proposal"] is None
+    assert saved["customer"]["name"] == "Directly saved company"
+    assert await revisions.historical(original["id"], 1, actor) == frozen
+    assert await revisions.historical(legacy["id"], 1, actor) == child_frozen
+    child = await service.get(legacy["id"], actor)
+    assert child["status"] == "cancelled" and child["is_archived"]
+    assert await db.invoices.count_documents({"status": "issued"}) == 1
+    assert await db.invoices.count_documents({}) == 2
+    assert (await db.counters.find_one({"_id": "INV"}))["seq"] == counter["seq"]
+    raw = await db.invoices.find_one({"_id": ObjectId(original["id"])})
+    assert "revision_save_lock" not in raw

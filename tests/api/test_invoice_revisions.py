@@ -824,3 +824,174 @@ async def test_stale_approval_cannot_retire_legacy_draft_and_staff_cannot_resolv
     assert (
         await client.get(url + "/revision-conflicts", headers=employee_headers)
     ).status_code == 403
+
+
+async def test_direct_save_reissues_without_persisting_proposal_or_allocating_number(
+    client, owner_headers, mock_db
+):
+    doc = await issued(client, owner_headers)
+    await enable_policy(client, owner_headers)
+    url = "/api/v1/invoices/" + doc["id"]
+    original = (await client.get(url + "/revisions/1", headers=owner_headers)).json()[
+        "data"
+    ]
+    counter = await mock_db.counters.find_one({"_id": "INV"})
+    data = proposal(doc["version"], name="Immediately Saved Company")
+    data["invoice"]["items"][0].update(quantity="5", rate="8765.33")
+    response = await client.post(
+        url + "/revision/save", headers=owner_headers, json=data
+    )
+    assert response.status_code == 200, response.text
+    saved = response.json()["data"]
+    assert saved["invoice_number"] == doc["invoice_number"] and saved["id"] == doc["id"]
+    assert (
+        saved["grand_total"] == "51715.45"
+        and saved["customer"]["name"] == "Immediately Saved Company"
+    )
+    assert (
+        saved["status"] == "issued"
+        and saved["reissued_at"]
+        and saved["revision_proposal"] is None
+    )
+    assert saved["version"] == doc["version"] + 1
+    assert saved["revisions"][-1]["authorization_mode"] == "owner_save"
+    assert (await client.get(url + "/revisions/1", headers=owner_headers)).json()[
+        "data"
+    ] == original
+    assert (
+        await mock_db.audit_logs.count_documents(
+            {"event_type": "invoice_revision_requested"}
+        )
+        == 0
+    )
+    assert await mock_db.invoices.count_documents({}) == 1
+    assert (await mock_db.counters.find_one({"_id": "INV"}))["seq"] == counter["seq"]
+    assert (
+        await client.post(url + "/revision/save", headers=owner_headers, json=data)
+    ).status_code == 409
+
+
+@pytest.mark.parametrize("archived_legacy", [False, True])
+async def test_direct_save_restores_original_and_supersedes_issued_unpaid_replacement(
+    client, owner_headers, mock_db, archived_legacy
+):
+    url, original, legacy = await legacy_recovery_fixture(client, owner_headers)
+    legacy_url = "/api/v1/invoices/" + legacy["id"]
+    assert (
+        await client.post(
+            legacy_url + "/status",
+            headers=owner_headers,
+            json={"version": 1, "status": "issued"},
+        )
+    ).status_code == 200
+    if archived_legacy:
+        assert (
+            await client.post(
+                legacy_url + "/archive",
+                headers=owner_headers,
+                json={"version": 2, "reason": "Earlier archive"},
+            )
+        ).status_code == 200
+    frozen = (await client.get(legacy_url, headers=owner_headers)).json()["data"]
+    child_original = (
+        await client.get(legacy_url + "/revisions/1", headers=owner_headers)
+    ).json()["data"]
+    old_pending = (
+        await client.post(
+            url + "/revision",
+            headers=owner_headers,
+            json=proposal(original["version"], name="Old pending name"),
+        )
+    ).json()["data"]
+    context = (
+        await client.get(url + "/revision-conflicts", headers=owner_headers)
+    ).json()["data"]
+    assert context["blockers"][0]["can_supersede"]
+    counter = await mock_db.counters.find_one({"_id": "INV"})
+    data = proposal(old_pending["version"], name="Latest directly saved name")
+    data["legacy_replacement_versions"] = {legacy["id"]: frozen["version"]}
+    response = await client.post(
+        url + "/revision/save", headers=owner_headers, json=data
+    )
+    assert response.status_code == 200, response.text
+    saved = response.json()["data"]
+    assert (
+        saved["status"] == "issued"
+        and saved["invoice_number"] == original["invoice_number"]
+    )
+    assert (
+        saved["customer"]["name"] == "Latest directly saved name"
+        and saved["revision_proposal"] is None
+    )
+    closed = (await client.get(legacy_url, headers=owner_headers)).json()["data"]
+    assert closed["status"] == "cancelled" and closed["is_archived"]
+    for field in ["invoice_number", "customer", "items", "grand_total", "issued_at"]:
+        assert closed[field] == frozen[field]
+    assert (
+        await client.get(legacy_url + "/revisions/1", headers=owner_headers)
+    ).json()["data"] == child_original
+    assert (
+        saved["revisions"][-1]["retired_legacy_drafts"][0]["previous_status"]
+        == "issued"
+    )
+    assert (await mock_db.counters.find_one({"_id": "INV"}))["seq"] == counter["seq"]
+    assert await mock_db.invoices.count_documents({"status": "issued"}) == 1
+    next_save = await client.post(
+        url + "/revision/save",
+        headers=owner_headers,
+        json=proposal(saved["version"], name="Saved again"),
+    )
+    assert next_save.status_code == 200, next_save.text
+    assert next_save.json()["data"]["invoice_number"] == original["invoice_number"]
+    assert next_save.json()["data"]["effective_revision"] == 3
+
+
+async def test_direct_save_rejects_paid_replacement_and_unauthorized_users_without_pending_writes(
+    client, owner_headers, employee_headers, mock_db
+):
+    url, original, legacy = await legacy_recovery_fixture(client, owner_headers)
+    legacy_url = "/api/v1/invoices/" + legacy["id"]
+    for status, version in [("issued", 1), ("paid", 2)]:
+        assert (
+            await client.post(
+                legacy_url + "/status",
+                headers=owner_headers,
+                json={"version": version, "status": status},
+            )
+        ).status_code == 200
+    data = proposal(original["version"])
+    data["legacy_replacement_versions"] = {legacy["id"]: 3}
+    assert (
+        await client.post(url + "/revision/save", headers=employee_headers, json=data)
+    ).status_code == 403
+    response = await client.post(
+        url + "/revision/save", headers=owner_headers, json=data
+    )
+    assert (
+        response.status_code == 409 and "settled" in response.json()["error"]["message"]
+    )
+    unchanged = (await client.get(url, headers=owner_headers)).json()["data"]
+    assert unchanged["status"] == "cancelled" and unchanged["revision_proposal"] is None
+    assert unchanged["version"] == original["version"]
+    assert (await client.get(legacy_url, headers=owner_headers)).json()["data"][
+        "status"
+    ] == "paid"
+
+
+async def test_direct_save_validates_linked_versions_before_financial_changes(
+    client, owner_headers
+):
+    url, original, legacy = await legacy_recovery_fixture(client, owner_headers)
+    data = proposal(original["version"])
+    response = await client.post(
+        url + "/revision/save", headers=owner_headers, json=data
+    )
+    assert (
+        response.status_code == 409 and "changed" in response.json()["error"]["message"]
+    )
+    assert (await client.get(url, headers=owner_headers)).json()["data"][
+        "revision_proposal"
+    ] is None
+    assert (
+        await client.get("/api/v1/invoices/" + legacy["id"], headers=owner_headers)
+    ).json()["data"]["status"] == "draft"
