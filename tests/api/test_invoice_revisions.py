@@ -324,8 +324,8 @@ async def test_revision_security_archive_and_legacy_compatibility(
     ).status_code == 200
 
 
-@pytest.mark.parametrize("state", ["paid", "partially_paid", "cancelled"])
-async def test_settled_cancelled_revisions_blocked(client, owner_headers, state):
+@pytest.mark.parametrize("state", ["paid", "partially_paid"])
+async def test_settled_revisions_blocked(client, owner_headers, state):
     doc = await issued(client, owner_headers)
     await enable_policy(client, owner_headers)
     url = "/api/v1/invoices/" + doc["id"]
@@ -413,3 +413,220 @@ async def test_assigned_employee_can_propose_but_only_owner_can_approve_or_remov
     assert final["revisions"][-1]["changed_by"] == doc["created_by"]
     assert final["revisions"][-1]["approved_by"] != doc["created_by"]
     assert final["invoice_number"] == doc["invoice_number"]
+
+
+async def test_cancelled_invoice_reissued_same_number_preserves_cancellation_and_pdfs(
+    client, owner_headers, mock_db
+):
+    doc = await issued(client, owner_headers)
+    await enable_policy(client, owner_headers)
+    url = "/api/v1/invoices/" + doc["id"]
+    original = (await client.get(url + "/revisions/1", headers=owner_headers)).json()[
+        "data"
+    ]
+    counter = await mock_db.counters.find_one({"_id": "INV"})
+    cancelled = (
+        await client.post(
+            url + "/cancel",
+            headers=owner_headers,
+            json={"version": doc["version"], "reason": "Cancelled by mistake"},
+        )
+    ).json()["data"]
+    cancelled_pdf = pymupdf.open(
+        stream=(await client.get(url + "/pdf", headers=owner_headers)).content,
+        filetype="pdf",
+    )[0].get_text()
+    assert "CANCELLED" in cancelled_pdf
+    response = await client.post(
+        url + "/revision",
+        headers=owner_headers,
+        json=proposal(cancelled["version"], name="Restored Customer"),
+    )
+    assert response.status_code == 200, response.text
+    pending = response.json()["data"]
+    assert (
+        pending["status"] == "cancelled"
+        and pending["revision_proposal"]["base_status"] == "cancelled"
+    )
+    response = await client.post(
+        url + "/reissue",
+        headers=owner_headers,
+        json={
+            "version": pending["version"],
+            "proposal_id": pending["revision_proposal"]["id"],
+            "approval_reason": "Owner approved accidental cancellation recovery",
+        },
+    )
+    assert response.status_code == 200, response.text
+    restored = response.json()["data"]
+    assert (
+        restored["id"] == doc["id"]
+        and restored["invoice_number"] == doc["invoice_number"]
+    )
+    assert restored["status"] == "issued" and restored["reissued_at"]
+    assert (
+        restored["issued_at"] == doc["issued_at"]
+        and restored["customer"]["name"] == "Restored Customer"
+    )
+    assert restored["cancellation_reason"] == "Cancelled by mistake"
+    assert restored["revisions"][-1]["previous_status"] == "cancelled"
+    assert (
+        restored["revisions"][-1]["cancellation"]["cancelled_at"]
+        == cancelled["cancelled_at"]
+    )
+    assert restored["revisions"][-1]["snapshot"]["status"] == "issued"
+    assert (await client.get(url + "/revisions/1", headers=owner_headers)).json()[
+        "data"
+    ] == original
+    current_pdf = pymupdf.open(
+        stream=(await client.get(url + "/pdf", headers=owner_headers)).content,
+        filetype="pdf",
+    )[0].get_text()
+    assert "Restored Customer" in current_pdf and "CANCELLED" not in current_pdf
+    historical_pdf = pymupdf.open(
+        stream=(
+            await client.get(url + "/revisions/2/pdf", headers=owner_headers)
+        ).content,
+        filetype="pdf",
+    )[0].get_text()
+    assert "CANCELLED" not in historical_pdf
+    history = (await client.get(url + "/history", headers=owner_headers)).json()["data"]
+    assert any(
+        e["action"] == "cancelled" and e["reason"] == "Cancelled by mistake"
+        for e in history
+    )
+    assert any(
+        e["action"] == "same_number_reissued"
+        and e["previous_status"] == "cancelled"
+        and e["new_status"] == "issued"
+        for e in history
+    )
+    assert await mock_db.invoices.count_documents({}) == 1
+    assert (await mock_db.counters.find_one({"_id": "INV"}))["seq"] == counter["seq"]
+    assert (
+        await client.post(
+            url + "/reissue",
+            headers=owner_headers,
+            json={
+                "version": pending["version"],
+                "proposal_id": pending["revision_proposal"]["id"],
+                "approval_reason": "Retry",
+            },
+        )
+    ).status_code == 409
+
+
+async def test_cancelled_reissue_keeps_policy_archive_and_settlement_guards(
+    client, owner_headers, mock_db
+):
+    doc = await issued(client, owner_headers)
+    url = "/api/v1/invoices/" + doc["id"]
+    cancelled = (
+        await client.post(
+            url + "/cancel",
+            headers=owner_headers,
+            json={"version": doc["version"], "reason": "Mistake"},
+        )
+    ).json()["data"]
+    assert (
+        await client.post(
+            url + "/revision",
+            headers=owner_headers,
+            json=proposal(cancelled["version"]),
+        )
+    ).status_code == 409
+    await enable_policy(client, owner_headers)
+    # Representative legacy cancellation of a previously settled invoice remains blocked.
+    await mock_db.invoices.update_one(
+        {"_id": ObjectId(doc["id"])},
+        {
+            "$push": {
+                "history": {"action": "partially_paid", "new_status": "partially_paid"}
+            }
+        },
+    )
+    assert (
+        await client.post(
+            url + "/revision",
+            headers=owner_headers,
+            json=proposal(cancelled["version"]),
+        )
+    ).status_code == 409
+    second = await create(client, owner_headers)
+    second_url = "/api/v1/invoices/" + second["id"]
+    draft_cancelled = (
+        await client.post(
+            second_url + "/cancel",
+            headers=owner_headers,
+            json={"version": 1, "reason": "Unissued draft"},
+        )
+    ).json()["data"]
+    assert (
+        await client.post(
+            second_url + "/revision",
+            headers=owner_headers,
+            json=proposal(draft_cancelled["version"]),
+        )
+    ).status_code == 409
+    third = await issued(client, owner_headers)
+    third_url = "/api/v1/invoices/" + third["id"]
+    # configure() defaults the policy off, so explicitly restore owner approval.
+    await enable_policy(client, owner_headers)
+    cancelled = (
+        await client.post(
+            third_url + "/cancel",
+            headers=owner_headers,
+            json={"version": third["version"], "reason": "Mistake"},
+        )
+    ).json()["data"]
+    archived = (
+        await client.post(
+            third_url + "/archive",
+            headers=owner_headers,
+            json={"version": cancelled["version"], "reason": "Retain archive"},
+        )
+    ).json()["data"]
+    assert (
+        await client.post(
+            third_url + "/revision",
+            headers=owner_headers,
+            json=proposal(archived["version"]),
+        )
+    ).status_code == 409
+
+
+async def test_cancelled_invoice_requires_fresh_proposal_after_cancellation(
+    client, owner_headers
+):
+    doc = await issued(client, owner_headers)
+    await enable_policy(client, owner_headers)
+    url = "/api/v1/invoices/" + doc["id"]
+    pending = (
+        await client.post(
+            url + "/revision", headers=owner_headers, json=proposal(doc["version"])
+        )
+    ).json()["data"]
+    cancelled = (
+        await client.post(
+            url + "/cancel",
+            headers=owner_headers,
+            json={
+                "version": pending["version"],
+                "reason": "Accidental cancellation after proposing",
+            },
+        )
+    ).json()["data"]
+    response = await client.post(
+        url + "/reissue",
+        headers=owner_headers,
+        json={
+            "version": cancelled["version"],
+            "proposal_id": pending["revision_proposal"]["id"],
+            "approval_reason": "Old proposal",
+        },
+    )
+    assert response.status_code == 409
+    assert "status changed" in response.json()["error"]["message"]
+    assert (await client.get(url, headers=owner_headers)).json()["data"][
+        "status"
+    ] == "cancelled"

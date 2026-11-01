@@ -5,7 +5,7 @@ import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { usePermissions } from "@/features/access_control/usePermissions";
 import { getErrorMessage } from "@/shared/api/errors";
-import { downloadPdf, invoicePdf, listInvoices, money, setInvoiceStatus, type Invoice } from "./api";
+import { invoiceStatusLabel, downloadPdf, invoicePdf, listInvoices, money, setInvoiceStatus, type Invoice } from "./api";
 
 import { InvoiceWorkflow, type Workflow } from "./InvoiceWorkflow";
 
@@ -41,7 +41,7 @@ export function InvoiceListPage() {
       if(action==="print") setPrintBlob(await invoicePdf(row.id,"print"));
       if(["duplicate","delete","replacement","history","archive","issued-edit","issued-delete"].includes(action)) setWorkflow({invoice: row, mode: action as Workflow});
       if(action==="view") navigate(`/invoices/${row.id}`);
-      if(action==="edit") {if(row.status==="issued")setWorkflow({invoice:row,mode:"issued-edit"});else navigate(`/invoices/${row.id}/edit`);}
+      if(action==="edit") {if(["issued","cancelled"].includes(row.status))setWorkflow({invoice:row,mode:"issued-edit"});else navigate(`/invoices/${row.id}/edit`);}
       if(action==="issue") {await setInvoiceStatus(row.id,"issued",row.version);setRevision(v=>v+1);}
       if(action==="cancel") {setCancel(row);setReason("");}
     } catch(e) {setError(getErrorMessage(e));} finally {setBusy(false);}
@@ -71,10 +71,10 @@ export function InvoiceListPage() {
         <tbody>{data?.items.map(row=><tr className="border-t" key={row.id}>
           <td className="p-3"><Link className="text-primary" to={`/invoices/${row.id}`}>{row.invoice_number}</Link></td>
           <td className="p-3">{row.customer.name}</td><td className="p-3">{row.invoice_date}</td><td className="p-3">{row.due_date}</td><td className="p-3">{row.customer.gstin || "—"}</td>
-          <td className="p-3">{money(row.subtotal)}</td><td className="p-3">{money(row.gst_total)}</td><td className="p-3 font-semibold">{money(row.grand_total)}</td><td className="p-3">{row.status.replaceAll("_"," ")}</td>
+          <td className="p-3">{money(row.subtotal)}</td><td className="p-3">{money(row.gst_total)}</td><td className="p-3 font-semibold">{money(row.grand_total)}</td><td className="p-3">{invoiceStatusLabel(row)}</td>
           <td className="p-3">{row.created_by_name}</td><td className="p-3">{new Date(row.created_at).toLocaleDateString("en-IN")}</td>
           <td className="p-3"><Link className="text-primary" to={`/invoices/${row.id}`}>View</Link>{!row.is_archived && row.status === "draft" && can("invoices:invoices","edit") && <Link className="ml-3 text-primary" to={`/invoices/${row.id}/edit`}>Edit</Link>}
-            <select aria-label={`Actions for ${row.invoice_number}`} value="" disabled={busy} className="ml-3 border rounded-lg p-2" onChange={e=>void act(row,e.target.value)}><option value="">Actions</option><option value="view">View</option>{!row.is_archived&&["draft","issued"].includes(row.status)&&can("invoices:invoices","edit")&&<option value="edit">Edit</option>}{!row.is_archived&&row.status==="draft"&&can("invoices:invoices","edit")&&<option value="delete">Delete</option>}{!row.is_archived&&row.status==="issued"&&isOwner&&<option value="issued-delete">Delete</option>}{!row.is_archived&&["cancelled","paid","partially_paid"].includes(row.status)&&can("invoices:invoices","edit")&&<option value="archive">Archive</option>}</select>
+            <select aria-label={`Actions for ${row.invoice_number}`} value="" disabled={busy} className="ml-3 border rounded-lg p-2" onChange={e=>void act(row,e.target.value)}><option value="">Actions</option><option value="view">View</option>{!row.is_archived&&(row.status==="draft"||row.status==="issued"||(row.status==="cancelled"&&Boolean(row.issued_at)))&&can("invoices:invoices","edit")&&<option value="edit">{row.status==="cancelled"?"Edit & Reissue":"Edit"}</option>}{!row.is_archived&&row.status==="draft"&&can("invoices:invoices","edit")&&<option value="delete">Delete</option>}{!row.is_archived&&row.status==="issued"&&isOwner&&<option value="issued-delete">Delete</option>}{!row.is_archived&&["cancelled","paid","partially_paid"].includes(row.status)&&can("invoices:invoices","edit")&&<option value="archive">Archive</option>}</select>
           </td>
         </tr>)}</tbody></table>
       {!data && !error && <p className="p-5">Loading invoices…</p>}

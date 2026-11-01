@@ -176,8 +176,9 @@ async def test_real_mongo_reviewed_index_migration_and_legacy_guard(
         await migration.migrate(db, apply=True, rollback=True)
 
 
+@pytest.mark.parametrize("restore_cancelled", [False, True])
 async def test_real_mongo_same_number_revision_cas_and_immutable_original(
-    real_invoice_db, mock_redis
+    real_invoice_db, mock_redis, restore_cancelled
 ):
     from app.features.invoices.revisions import InvoiceRevisionService
     from app.features.invoices.schemas import ReissueInput, RevisionInput
@@ -214,6 +215,16 @@ async def test_real_mongo_same_number_revision_cas_and_immutable_original(
     original = await service.status(
         original["id"], StatusInput(status="issued", version=1), actor
     )
+    if restore_cancelled:
+        original = await service.status(
+            original["id"],
+            StatusInput(
+                status="cancelled",
+                version=original["version"],
+                reason="Accidental cancellation",
+            ),
+            actor,
+        )
     revisions = InvoiceRevisionService(service)
     original_snapshot = await revisions.historical(original["id"], 1, actor)
     counter = await db.counters.find_one({"_id": "INV"})
@@ -253,6 +264,9 @@ async def test_real_mongo_same_number_revision_cas_and_immutable_original(
         and effective["invoice_number"] == original["invoice_number"]
     )
     assert effective["effective_revision"] == 2 and effective["grand_total"] == "236.00"
+    assert effective["status"] == "issued" and effective["reissued_at"]
+    if restore_cancelled:
+        assert effective["cancellation_reason"] == "Accidental cancellation"
     assert await revisions.historical(original["id"], 1, actor) == original_snapshot
     assert await db.invoices.count_documents({}) == 1
     assert (await db.counters.find_one({"_id": "INV"}))["seq"] == counter["seq"]

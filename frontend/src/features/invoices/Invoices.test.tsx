@@ -223,3 +223,37 @@ it('prints only the freshly fetched current PDF',async()=>{
   fireEvent.load(printFrame);expect(print).toHaveBeenCalledTimes(1);
   expect(api.invoicePdf).toHaveBeenCalledWith('i1','print');
 });
+
+describe('cancelled invoice recovery',()=>{
+  const cancelled={...fixture,status:'cancelled' as const,version:3,issued_at:'2026-10-04T12:00:00Z',cancellation_reason:'Cancelled by mistake'};
+  it('offers same-number Edit & Reissue for a previously issued cancelled invoice',async()=>{
+    vi.mocked(api.listInvoices).mockResolvedValue({items:[cancelled],total:1,total_pages:1});
+    vi.mocked(api.getDefaults).mockResolvedValue({same_number_reissue_enabled:true} as api.Company);
+    show(<InvoiceListPage/>);const user=userEvent.setup();await screen.findByText('INV-000001');
+    expect(screen.getByRole('option',{name:'Edit & Reissue'})).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText('Actions for INV-000001'),'edit');
+    expect(await screen.findByRole('dialog')).toHaveTextContent('Edit Cancelled Invoice');
+    await waitFor(()=>expect(screen.getByRole('button',{name:'Edit & Reissue'})).toBeEnabled());
+    expect(screen.getByText(/retaining its cancellation history/)).toBeInTheDocument();
+    expect(api.replacementInvoice).not.toHaveBeenCalled();expect(api.duplicateInvoice).not.toHaveBeenCalled();
+  });
+  it('opens the cancelled invoice in revision mode without allocating a new invoice',async()=>{
+    vi.mocked(api.getDefaults).mockResolvedValue({same_number_reissue_enabled:true} as api.Company);
+    vi.mocked(api.getInvoice).mockResolvedValue(cancelled);
+    const pending={...cancelled,version:4,revision_proposal:{id:'cancel-recovery',base_status:'cancelled' as const,status:'pending_owner_approval',reason:'Restore mistaken cancellation',snapshot:cancelled,requested_by:'owner',requested_at:'2026-11-01T00:00:00Z'}};
+    vi.mocked(api.requestRevision).mockResolvedValue(pending);
+    show(<InvoiceFormPage/>,'/invoices/i1/edit?mode=revision');const user=userEvent.setup();await screen.findByDisplayValue('Consultancy');
+    expect(screen.getByLabelText('Invoice number')).toHaveValue('INV-000001');
+    expect(screen.getByText(/remains cancelled until the owner approves/)).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Correction reason'),'Restore mistaken cancellation');
+    await user.click(screen.getByRole('button',{name:'Save Revision Proposal'}));
+    await waitFor(()=>expect(api.requestRevision).toHaveBeenCalledWith('i1',expect.objectContaining({version:3}),'Restore mistaken cancellation'));
+    expect(api.saveInvoice).not.toHaveBeenCalled();expect(api.replacementInvoice).not.toHaveBeenCalled();
+  });
+  it('shows Re-issued in the list and keeps later paid or cancelled statuses accurate',async()=>{
+    vi.mocked(api.listInvoices).mockResolvedValue({items:[{...fixture,status:'issued',reissued_at:'2026-11-01T00:00:00Z'}],total:1,total_pages:1});
+    show(<InvoiceListPage/>);expect(await screen.findByText('Re-issued')).toBeInTheDocument();
+    expect(api.invoiceStatusLabel({...cancelled,reissued_at:'2026-11-01T00:00:00Z'})).toBe('cancelled');
+    expect(api.invoiceStatusLabel({status:'paid',reissued_at:'2026-11-01T00:00:00Z'})).toBe('paid');
+  });
+});

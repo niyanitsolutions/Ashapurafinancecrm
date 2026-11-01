@@ -17,10 +17,13 @@ export interface Invoice extends InvoiceInput {
   id: string; invoice_number: string; status: Status; subtotal: string; gst_total: string;
   grand_total: string; amount_in_words: string; created_by_name: string; created_at: string;
   issued_at?: string; effective_revision?: number; reissued_at?: string;
-  revision_proposal?: {id: string; status: string; reason: string; snapshot: Invoice; requested_by: string; requested_at: string} | null;
+  revision_proposal?: {base_status?: Status; id: string; status: string; reason: string; snapshot: Invoice; requested_by: string; requested_at: string} | null;
   cancellation_reason?: string;
   is_archived?: boolean; archive_reason?: string; source_status?: string; correction_resumed?: boolean; number_reused_from?: string;
   duplicated_from?: string; replacement_for?: string; source_invoice_number?: string; correction_reason?: string;
+}
+export function invoiceStatusLabel(invoice: Pick<Invoice,"status" | "reissued_at">): string {
+  return invoice.status === "issued" && invoice.reissued_at ? "Re-issued" : invoice.status.replaceAll("_", " ");
 }
 export interface InvoiceConfig {
   same_number_reissue_enabled?: boolean; same_number_policy_reason?: string;

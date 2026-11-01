@@ -1,4 +1,4 @@
-﻿# Issued invoice same-number revisions and reissue
+# Issued invoice same-number revisions and reissue
 
 ## Outcome and root cause
 
@@ -70,7 +70,7 @@ Supported customer, dates, items, quantities, rates, GST, supply and terms field
 - Policy approver identity/time are set by the backend; submitted values cannot spoof them.
 - Issued Delete is owner-controlled archive, with a mandatory reason. It does not physically remove the invoice, revisions, PDFs, number or financial state. It is not legal cancellation.
 - The older generic archive and cancellation APIs also require an owner for issued invoices, preventing staff from bypassing the new approval UI. Draft and cancelled-record operations retain their existing appropriate rules.
-- Settled, cancelled and archived records cannot enter same-number revision mode. Archived records expose only View in list actions.
+- Settled and archived records cannot enter same-number revision mode. Previously issued cancelled invoices without settlement history may request recovery through the same owner-approved workflow. Archived records expose only View in list actions.
 
 No separate RBAC architecture or grants were added. Existing owner/employee assignment scope is reused. The application remains its existing single-company/assignment-scoped system; this work does not claim new multi-tenant isolation.
 
@@ -169,3 +169,14 @@ Prefer a forward fix or a compatibility release that retains history access. Old
 Do not reset counters, remove revision arrays, delete numbered invoices, or roll back the deployed reuse indexes. If an approved correction must itself be corrected, use another reviewed same-number revision when permitted. Never restore an older snapshot by silently overwriting the canonical document. Follow the established backup/recovery process for a disaster restore; no production recovery action is automated here.
 
 No unrelated application modules or files were intentionally modified.
+
+
+## Cancelled-invoice recovery fix (2026-11-01)
+
+A previously issued, non-archived invoice cancelled by mistake now offers **Edit & Reissue** in the list and detail view. It uses the existing policy gate, correction reason, proposal and owner approval. The number and ID are never regenerated. The invoice remains cancelled while a proposal is pending. Approval restores the issued lifecycle state and displays **Re-issued** in the list/detail status, using the existing `reissued_at` field. Keeping the underlying issued state preserves payment, cancellation and numbering rules.
+
+Original issue snapshots, issue timestamp and cancellation metadata/history remain intact. The approved revision records that its previous state was cancelled and retains the cancellation details. Current and new-revision PDFs no longer carry the CANCELLED stamp; old issued snapshots remain accessible. Proposals saved before a later cancellation cannot be approved without saving/reviewing a fresh proposal against the cancelled state.
+
+Cancelled drafts that were never issued, archived invoices, invoices with settlement history, and originals with active legacy replacements remain blocked. No policy gate, ownership or permission checks were removed, and no migration or production data edit is required. Re-issued is a display label; the existing issued status filter still includes these invoices.
+
+Validation for this fix: 54 invoice/revision API tests, 5 real local MongoDB integration tests and 24 frontend invoice tests passed. TypeScript, invoice ESLint, Ruff/formatting and production build passed. The existing bundle-size warning remains. No production deployment or database changes were performed.

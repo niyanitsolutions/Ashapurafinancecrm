@@ -73,10 +73,29 @@ class InvoiceRevisionService:
 
     async def editable(self, invoice_id: str, actor: User) -> dict[str, Any]:
         current = await self.invoices.get(invoice_id, actor)
-        if current["status"] != "issued" or current.get("is_archived"):
+        if current["status"] not in {"issued", "cancelled"} or current.get("is_archived"):
             raise ConflictError(
-                "Only active, unsettled issued invoices can enter same-number revision mode."
+                "Only non-archived issued or previously issued cancelled invoices can enter same-number revision mode."
             )
+        if current["status"] == "cancelled":
+            if not current.get("issued_at"):
+                raise ConflictError(
+                    "This cancelled draft was never issued and cannot use issued-invoice reissue."
+                )
+            settled = any(
+                event.get("new_status") in {"paid", "partially_paid"}
+                or event.get("action") in {"paid", "partially_paid"}
+                for event in current.get("history", [])
+            )
+            if settled or await self.db.audit_logs.find_one(
+                {
+                    "metadata.invoice_id": invoice_id,
+                    "event_type": {"$in": ["invoice_paid", "invoice_partially_paid"]},
+                }
+            ):
+                raise ConflictError(
+                    "This cancelled invoice has settlement history and requires an accounting adjustment, not same-number reissue."
+                )
         if await self.db.invoices.find_one({"replacement_for": invoice_id, "is_deleted": False}):
             raise ConflictError(
                 "A legacy separately numbered correction exists. Review that record before requesting a same-number revision; it will not be converted or discarded."
@@ -121,6 +140,7 @@ class InvoiceRevisionService:
             "requested_by": actor.require_id(),
             "requested_at": utc_now(),
             "base_revision": current.get("effective_revision", 1),
+            "base_status": current["status"],
             "changed_fields": [k for k in business if business[k] != old_business.get(k)],
         }
         updates = {
@@ -140,6 +160,10 @@ class InvoiceRevisionService:
         proposal = current.get("revision_proposal")
         if not proposal or proposal["id"] != payload.proposal_id:
             raise ConflictError("Revision proposal changed. Reload and review it before approving.")
+        if proposal.get("base_status", "issued") != current["status"]:
+            raise ConflictError(
+                "Invoice status changed. Save and review a new proposal before approving."
+            )
         if not payload.approval_reason.strip():
             raise ValidationError("Accounting approval reason is required.")
         if proposal["base_revision"] != current.get("effective_revision", 1):
@@ -148,6 +172,7 @@ class InvoiceRevisionService:
         number = current.get("effective_revision", 1) + 1
         approved = deepcopy(proposal["snapshot"])
         approved.update(
+            status="issued",
             effective_revision=number,
             reissued_at=now,
             updated_by=actor.require_id(),
@@ -170,7 +195,17 @@ class InvoiceRevisionService:
             "policy_approved_at": policy.same_number_policy_approved_at,
             "reissued_at": now,
         }
-        # Update only business/PDF fields; never replace identity/lifecycle/audit metadata.
+        if current["status"] == "cancelled":
+            record["previous_status"] = "cancelled"
+            record["cancellation"] = {
+                key: current.get(key)
+                for key in (
+                    "cancelled_by",
+                    "cancelled_at",
+                    "cancellation_reason",
+                )
+            }
+        # Reissue restores the active issued state; historical cancellation metadata stays intact.
         fields = set(proposal["changed_fields"]) | {
             "items",
             "subtotal",
@@ -185,6 +220,7 @@ class InvoiceRevisionService:
         }
         updates = {key: approved[key] for key in fields}
         updates.update(
+            status="issued",
             effective_revision=number,
             reissued_at=now,
             revision_proposal=None,

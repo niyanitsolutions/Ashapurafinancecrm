@@ -5,7 +5,7 @@ import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { usePermissions } from "@/features/access_control/usePermissions";
 import { getErrorMessage } from "@/shared/api/errors";
-import { downloadPdf, getInvoice, invoicePdf, setInvoiceStatus, type Invoice, type Status } from "./api";
+import { invoiceStatusLabel, downloadPdf, getInvoice, invoicePdf, setInvoiceStatus, type Invoice, type Status } from "./api";
 
 import { InvoiceRevisionHistory } from "./InvoiceRevisionHistory";
 import { InvoiceWorkflow, InvoiceReference, type Workflow } from "./InvoiceWorkflow";
@@ -27,8 +27,8 @@ export function InvoiceViewPage() {
   useEffect(()=>{if(!printBlob)return;const next=URL.createObjectURL(printBlob);setPrintUrl(next);return()=>URL.revokeObjectURL(next);},[printBlob]);
   async function action(fn: ()=>Promise<void>) {setBusy(true);setError(null);try{await fn();}catch(e){setError(getErrorMessage(e));}finally{setBusy(false);}}
   const status=(next: Status)=>action(async()=>{if(invoice){setInvoice(await setInvoiceStatus(invoiceId,next,invoice.version,reason));setCancel(false);}});
-  return <SimplePageLayout title={invoice?.invoice_number??"Invoice"} backTo="/invoices" subtitle={invoice?.status.replaceAll("_"," ")} actions={<>
-    {!invoice?.is_archived&&invoice?.status==="issued"&&can("invoices:invoices","edit")&&<Button variant="secondary" onClick={()=>setWorkflow("issued-edit")}>Edit</Button>}
+  return <SimplePageLayout title={invoice?.invoice_number??"Invoice"} backTo="/invoices" subtitle={invoice?invoiceStatusLabel(invoice):undefined} actions={<>
+    {!invoice?.is_archived&&(invoice?.status==="issued"||(invoice?.status==="cancelled"&&Boolean(invoice.issued_at)))&&can("invoices:invoices","edit")&&<Button variant="secondary" onClick={()=>setWorkflow("issued-edit")}>{invoice?.status==="cancelled"?"Edit & Reissue":"Edit"}</Button>}
     {!invoice?.is_archived&&invoice?.status==="draft"&&can("invoices:invoices","edit")&&<Link className="text-primary" to={`/invoices/${invoiceId}/edit`}>Edit</Link>}
     <Button variant="secondary" disabled={busy||!invoice} onClick={()=>void action(async()=>downloadPdf(await invoicePdf(invoiceId,"download"),`${invoice?.invoice_number}.pdf`))}>Download PDF</Button>
     <Button variant="secondary" disabled={busy||!url} onClick={()=>void action(async()=>{const latest=await invoicePdf(invoiceId,"print");setBlob(latest);setPrintBlob(latest);})}>Print</Button>
@@ -46,7 +46,7 @@ export function InvoiceViewPage() {
     {invoice?.issued_at&&<><p className="mb-4">Current effective revision: {invoice.effective_revision || 1}. Original issued: {invoice.issued_at}</p>{invoice.revision_proposal&&<p className="mb-4">A revision proposal is pending owner approval. The PDF below shows the current effective invoice. {!invoice.is_archived&&can("invoices:invoices","edit")&&<Link className="text-primary" to={`/invoices/${invoice.id}/edit?mode=revision`}>Review revision proposal</Link>}</p>}<InvoiceRevisionHistory id={invoice.id} number={invoice.invoice_number} version={invoice.version}/></>}
     {invoice?.number_reused_from&&<p className="mb-4">Invoice number {invoice.invoice_number} was allocated from the latest eligible deleted draft. The previous draft remains in audit history.</p>}
     {invoice?.is_archived&&<p className="mb-4">Archived: {invoice.archive_reason}. Invoice status and reserved number are unchanged.</p>}
-    {invoice?.cancellation_reason&&<p className="mb-4">Cancellation reason: {invoice.cancellation_reason}</p>}
+    {invoice?.cancellation_reason&&<p className="mb-4">{invoice.status==="issued"&&invoice.reissued_at?"Previous cancellation reason":"Cancellation reason"}: {invoice.cancellation_reason}</p>}
     {cancel&&<form className="border rounded-xl p-4 mb-4" onSubmit={e=>{e.preventDefault();void status("cancelled");}}><label>Cancellation reason<textarea className="block w-full border rounded-lg p-2 mt-2" required maxLength={500} value={reason} onChange={e=>setReason(e.target.value)}/></label><div className="flex gap-3 mt-3"><Button variant="danger" type="submit" disabled={busy}>Confirm cancellation</Button><Button variant="secondary" onClick={()=>setCancel(false)}>Keep invoice</Button></div></form>}
     {printUrl&&<iframe key={printUrl} title="Print latest invoice" className="fixed w-0 h-0 border-0" src={printUrl} onLoad={e=>{e.currentTarget.contentWindow?.focus();e.currentTarget.contentWindow?.print();}}/>}
     {url?<iframe title="Invoice PDF" src={url} className="w-full h-[1050px] border rounded-xl bg-white"/>:!error&&<p>Loading invoice preview…</p>}
