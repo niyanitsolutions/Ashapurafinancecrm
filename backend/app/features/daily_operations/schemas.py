@@ -35,6 +35,7 @@ class FollowUpInput(BaseModel):
     employee_name: str = Field(default="", max_length=200)
     assigned_to: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{24}$")
     bank: str = Field(min_length=1, max_length=200)
+    customer_interest_option_id: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{24}$")
     status: FollowStatus = "FOLLOW UP PENDING"
     remarks: str = Field(default="", max_length=4000)
     remarks_date: CalendarDate

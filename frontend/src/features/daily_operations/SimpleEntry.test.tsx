@@ -17,7 +17,7 @@ function mount(area: "follow-ups" | "progress" | "issues" | "sessions") {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks(); mocks.owner = false;
+  vi.clearAllMocks(); mocks.request.mockResolvedValue([]); mocks.owner = false;
   mocks.list.mockResolvedValue({ items: [], total: 0 });
   mocks.lookup.mockResolvedValue({ self_id: "synthetic-user", employees: [{ id: "synthetic-user", name: "Synthetic Employee" }], leads: [], cases: [] });
   mocks.save.mockResolvedValue({ id: "synthetic-row", version: 1 }); mocks.remove.mockResolvedValue({ deleted: true });

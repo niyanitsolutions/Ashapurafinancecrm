@@ -16,7 +16,7 @@ vi.mock("./api", async importOriginal => ({ ...await importOriginal<typeof impor
 function mount(component: React.ReactNode, initialEntries = ["/"]) {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={initialEntries}>{component}</MemoryRouter></QueryClientProvider>);
 }
-beforeEach(() => { vi.clearAllMocks(); mocks.can.mockReturnValue(true); mocks.list.mockResolvedValue({ items: [], total: 0 }); mocks.getLookups.mockResolvedValue({ self_id: "synthetic-user", employees: [], leads: [], cases: [] }); });
+beforeEach(() => { vi.clearAllMocks(); mocks.request.mockResolvedValue([]); mocks.can.mockReturnValue(true); mocks.list.mockResolvedValue({ items: [], total: 0 }); mocks.getLookups.mockResolvedValue({ self_id: "synthetic-user", employees: [], leads: [], cases: [] }); });
 
 describe("daily operations", () => {
   it.each([

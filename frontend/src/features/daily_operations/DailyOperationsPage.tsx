@@ -16,12 +16,13 @@ import { usePermissions } from "@/features/access_control/usePermissions";
 import { apiRequest } from "@/shared/api/client";
 import { formatISTDate, todayISTDateString } from "@/shared/dateFormat";
 import { areas, base, businessTime, deleteRecord, download, followStatuses, getLookups, getRecord, issueStatuses, listRecords, text, type Area, type Row } from "./api";
+import { useInterestOptions } from "./interestOptions";
 import { RecordForm } from "./RecordForm";
 import { EmployeeNameField } from "./EmployeeNameField";
 
-const FILTER_KEYS = ["month", "sort", "search", "status", "date_from", "date_to", "employee_name", "bank", "loan_type", "overdue", "old_days"];
+const FILTER_KEYS = ["customer_interest_option_id", "month", "sort", "search", "status", "date_from", "date_to", "employee_name", "bank", "loan_type", "overdue", "old_days"];
 const columns: Record<Area, [string, string][]> = {
-  "follow-ups": [["date", "DATE"], ["loan_type", "LOAN TYPE"], ["bank", "BANK / NBFCs"], ["customer_name", "CX NAME"], ["customer_number", "CX NUMBER"], ["remarks", "TODAY CASE STATUS"], ["remarks_date", "REMARKS DATE"], ["status", "FOLLOW PENDING"], ["due_date", "NEXT FOLLOW-UP"], ["employee_name", "EMPLOYEE NAME"]],
+  "follow-ups": [["date", "DATE"], ["loan_type", "LOAN TYPE"], ["bank", "BANK / NBFCs"], ["customer_name", "CX NAME"], ["customer_number", "CX NUMBER"], ["remarks", "TODAY CASE STATUS"], ["remarks_date", "REMARKS DATE"], ["status", "FOLLOW PENDING"], ["customer_interest_status_snapshot", "CUSTOMER INTEREST STATUS"], ["due_date", "NEXT FOLLOW-UP"], ["employee_name", "EMPLOYEE NAME"]],
   progress: [["date", "DATE"], ["customer_name", "CX NAME"], ["customer_number", "CX NUMBER"], ["bank", "BANK / NBFC"], ["status", "TODAY CASE STAGE"], ["next_action", "WHAT'S NEXT?"], ["due_date", "NEXT FOLLOW-UP"], ["approved_amount", "APPROVED AMOUNT"], ["employee_name", "EMPLOYEE NAME"]],
   sessions: [["date", "DATE"], ["employee_name", "EMPLOYEE NAME"], ["login_at", "LOGIN TIME"], ["logout_at", "LOGOUT TIME"], ["recorded_seconds", "DURATION"], ["status", "STATUS"]],
   issues: [["date", "DATE"], ["employee_name", "EMPLOYEE NAME"], ["inquiry", "INQUIRY OR ISSUE"], ["assigned_to_name", "ASSIGNED TO"], ["priority", "PRIORITY"], ["status", "STATUS"], ["resolution_notes", "RESOLUTION NOTES"]],
@@ -38,6 +39,7 @@ const money = (value: unknown) => value == null ? "—" : Number(value).toLocale
 export function DailyOperationsPage({ area }: { area: Area }) {
   const { userId } = useAuth();
   const { can, isOwner, loading } = usePermissions();
+  const interests = useInterestOptions(area === "follow-ups" && can("daily_operations:follow-ups", "view"), true);
   const client = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   // Keep consecutive filter interactions together while router transitions commit.
@@ -101,6 +103,7 @@ export function DailyOperationsPage({ area }: { area: Area }) {
           {filterField("date_from", "From date", "date")}{filterField("date_to", "To date", "date")}
           {area === "progress" ? filterField("status", "Case stage") : area !== "sessions" && <SelectField label="Status" placeholder="All statuses" value={filters.status ?? ""} options={(area === "issues" ? issueStatuses : followStatuses).map(value => ({ value, label: pretty(value) }))} onChange={event => filter("status", event.target.value)} />}
           {["follow-ups", "progress"].includes(area) && <>{filterField("bank", "Bank / NBFC")}{filterField("loan_type", "Loan type")}</>}
+          {area === "follow-ups" && <SelectField label="Customer Interest Status" placeholder="All interest statuses" value={filters.customer_interest_option_id??""} options={(interests.data??[]).map(row=>({value:row.id,label:row.name+(row.is_active?"":" (archived)")}))} onChange={event=>filter("customer_interest_option_id",event.target.value)}/>}
           {area === "follow-ups" && <SelectField label="Due" value={filters.overdue ?? ""} options={[{ value: "", label: "All follow-ups" }, { value: "true", label: "Overdue only" }]} onChange={event => filter("overdue", event.target.value)} />}
           {area !== "sessions" && <SelectField label="Sort" value={filters.sort} options={(area === "progress" ? [["-date", "Latest update"], ["created_at", "Oldest first"]] : [["-date", "Newest date"], ["date", "Oldest date"], ["status", "Status"]]).map(([value, label]) => ({ value, label }))} onChange={event => filter("sort", event.target.value)} />}
           <Button variant="ghost" onClick={() => { pendingParams.current = new URLSearchParams(); setSearchParams({}); }}>Clear filters</Button>

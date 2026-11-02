@@ -9,6 +9,7 @@ import { usePermissions } from "@/features/access_control/usePermissions";
 import { useAuth } from "@/features/auth/useAuth";
 import { apiRequest } from "@/shared/api/client";
 import { istDateKey, todayISTDateString } from "@/shared/dateFormat";
+import { CustomerInterestField } from "./CustomerInterestField";
 import { EmployeeNameField } from "./EmployeeNameField";
 import { base, businessTime, followStatuses, getLookups, issueStatuses, saveRecord, type Area, type Row } from "./api";
 
@@ -83,6 +84,7 @@ export function RecordForm({ area, record, onSaved, onCancel }: {
             remarks: values.remarks ?? "", remarks_date: values.remarks_date || values.date,
             next_action: values.next_action || values.remarks || "Follow up with customer",
             due_date: openFollowUp ? values.due_date || values.date : null,
+            customer_interest_option_id: values.customer_interest_option_id || null,
             rejection_reason: values.status === "REJECTED WITH REASON" ? values.rejection_reason : "" };
         } else {
           payload = { ...payload, case_id: values.case_id || null,
@@ -143,6 +145,7 @@ export function RecordForm({ area, record, onSaved, onCancel }: {
             {openFollowUp && field("due_date", "Next follow-up date", true, "date")}
           </div>
           {values.status === "REJECTED WITH REASON" && field("rejection_reason", "Rejection reason", true)}
+          <CustomerInterestField value={values.customer_interest_option_id??""} onChange={id=>change("customer_interest_option_id",id)} historicalId={record?.customer_interest_option_id?String(record.customer_interest_option_id):undefined} historicalLabel={record?.customer_interest_status_snapshot?String(record.customer_interest_status_snapshot):undefined}/>
         </> : <>
           {field("status", "Today's case stage", true)}
           <div className="grid sm:grid-cols-2 gap-x-4">{field("next_action", "What's next?")}{field("due_date", "Next follow-up date", false, "date")}</div>

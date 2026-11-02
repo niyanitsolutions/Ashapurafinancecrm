@@ -502,6 +502,11 @@ async def commit(service: DailyOperationsService, actor: User, batch_id: str) ->
                     }
                     schema = schemas[destination]
                     values_to_save = model.model_dump(exclude={"record_id", "version"})
+                    if (
+                        isinstance(model, FollowUpInput)
+                        and "customer_interest_option_id" not in model.model_fields_set
+                    ):
+                        values_to_save.pop("customer_interest_option_id", None)
                     if isinstance(model, ProgressRow) and "status" not in model.model_fields_set:
                         values_to_save.pop("status", None)
                     payload = schema.model_validate(values_to_save)

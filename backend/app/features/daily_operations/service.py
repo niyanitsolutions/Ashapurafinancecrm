@@ -46,7 +46,10 @@ def public(doc: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
     from app.features.daily_operations.follow_status import effective_status
 
     if "due_date" in doc and "customer_number" in doc:
-        doc = {**doc, "status": effective_status(doc["status"], doc.get("due_date"), now or utc_now())}
+        doc = {
+            **doc,
+            "status": effective_status(doc["status"], doc.get("due_date"), now or utc_now()),
+        }
     doc = calendar_values(doc)
     if "history" in doc:
         doc["history"] = [
@@ -305,6 +308,24 @@ class DailyOperationsService:
             )
         if isinstance(payload, FollowUpInput):
             data = await self.validate_follow_up(payload, actor)
+            from app.features.daily_operations.interest_options import InterestOptions
+
+            if old and "customer_interest_option_id" not in payload.model_fields_set:
+                data.update(
+                    {
+                        key: old.get(key)
+                        for key in (
+                            "customer_interest_option_id",
+                            "customer_interest_status_snapshot",
+                        )
+                    }
+                )
+            else:
+                data.update(
+                    await InterestOptions(self).record_value(
+                        payload.customer_interest_option_id, old
+                    )
+                )
         else:
             data = await self.validate_issue(payload, actor, old)
         now = utc_now()
@@ -374,6 +395,7 @@ class DailyOperationsService:
         *,
         search: str = "",
         status: str = "",
+        customer_interest_option_id: str = "",
         employee: str = "",
         employee_name: str = "",
         bank: str = "",
@@ -390,6 +412,8 @@ class DailyOperationsService:
         query = await self.scope(actor, kind)
         if kind == "progress":
             query["case_id"] = None  # Linked annotations are already merged with CRM cases.
+        if kind == "follow-ups" and customer_interest_option_id:
+            query["customer_interest_option_id"] = customer_interest_option_id
         if date_from and date_to and date_from > date_to:
             raise ValidationError("Start date must be before end date.")
         if employee:
@@ -640,6 +664,10 @@ class DailyOperationsService:
 
 
 async def ensure_daily_operations_indexes(db: AsyncIOMotorDatabase[Any]) -> None:
+    from app.features.daily_operations.interest_options import install
+
+    await install(db)
+    await db.daily_follow_ups.create_index([("customer_interest_option_id", 1), ("date", -1)])
     for name in COLLECTIONS.values():
         if name == "daily_progress_entries":
             await db[name].create_index("import_key", unique=True, sparse=True)

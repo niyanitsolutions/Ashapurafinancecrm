@@ -1,0 +1,36 @@
+[
+  {
+    "width": 1440,
+    "result": "passed",
+    "backend": "actual FastAPI",
+    "database": "isolated local MongoDB",
+    "checks": [
+      "two-employee-sharing",
+      "create-and-autoselect",
+      "save-record",
+      "cross-session-refresh",
+      "edit-retention",
+      "rename",
+      "archive-confirmation",
+      "historical-label-preserved",
+      "archived-new-selection-excluded"
+    ]
+  },
+  {
+    "width": 390,
+    "result": "passed",
+    "backend": "actual FastAPI",
+    "database": "isolated local MongoDB",
+    "checks": [
+      "two-employee-sharing",
+      "create-and-autoselect",
+      "save-record",
+      "cross-session-refresh",
+      "edit-retention",
+      "rename",
+      "archive-confirmation",
+      "historical-label-preserved",
+      "archived-new-selection-excluded"
+    ]
+  }
+]
