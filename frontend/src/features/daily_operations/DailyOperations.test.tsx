@@ -16,17 +16,19 @@ vi.mock("./api", async importOriginal => ({ ...await importOriginal<typeof impor
 function mount(component: React.ReactNode, initialEntries = ["/"]) {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={initialEntries}>{component}</MemoryRouter></QueryClientProvider>);
 }
-beforeEach(() => { vi.clearAllMocks(); mocks.request.mockResolvedValue([]); mocks.can.mockReturnValue(true); mocks.list.mockResolvedValue({ items: [], total: 0 }); mocks.getLookups.mockResolvedValue({ self_id: "synthetic-user", employees: [], leads: [], cases: [] }); });
+beforeEach(() => { vi.clearAllMocks(); mocks.request.mockResolvedValue(["FOLLOW UP PENDING","NEXT FOLLOW UP","DISBURSE","REJECTED WITH REASON"].map((name,index)=>({id:String(index),value:name,name,color:"#FFF0C2",display_order:index,is_system:true,is_active:true}))); mocks.can.mockReturnValue(true); mocks.list.mockResolvedValue({ items: [], total: 0 }); mocks.getLookups.mockResolvedValue({ self_id: "synthetic-user", employees: [], leads: [], cases: [] }); });
 
 describe("daily operations", () => {
   it.each([
-    ["FOLLOW UP PENDING", "!bg-red-300"], ["NEXT FOLLOW UP", "!bg-blue-300"],
-    ["DISBURSE", "!bg-green-300"], ["REJECTED WITH REASON", "!bg-yellow-300"],
+    ["FOLLOW UP PENDING", "#FFF0C2"], ["NEXT FOLLOW UP", "#DCEBFF"],
+    ["DISBURSE", "#D9F5E3"], ["REJECTED WITH REASON", "#FFE0E0"],
   ])("colors the whole %s row and retains its label", async (status, color) => {
+    mocks.request.mockResolvedValue([{id:status,value:status,name:status,color,is_active:true}]);
     mocks.list.mockResolvedValue({ items: [{ id: "row", status, customer_name: "Synthetic Customer" }], total: 1 });
     mount(<DailyOperationsPage area="follow-ups" />);
     const row = (await screen.findByText("Synthetic Customer")).closest("tr")!;
-    expect(row).toHaveClass(color);
+    await waitFor(()=>expect(row).toHaveStyle({backgroundColor:color}));
+    expect(screen.queryByRole("columnheader",{name:"CUSTOMER INTEREST STATUS"})).not.toBeInTheDocument();
     expect(within(row).getByText(status)).toBeInTheDocument();
   });
   it("opens separate session history from a daily summary", async () => {
@@ -87,9 +89,10 @@ describe("daily operations", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Service unavailable");
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
-  it("requires rejection reasons and due dates in status-dependent forms", () => {
+  it("requires rejection reasons and due dates in status-dependent forms", async () => {
     mount(<RecordForm area="follow-ups" onSaved={vi.fn()} onCancel={vi.fn()} />);
     expect(screen.getByLabelText("Next follow-up date")).toBeRequired();
+    await screen.findByRole("option",{name:"REJECTED WITH REASON"});
     fireEvent.change(screen.getByLabelText("Follow-up status"), { target: { value: "REJECTED WITH REASON" } });
     expect(screen.getByLabelText("Rejection reason")).toBeRequired();
     expect(screen.queryByLabelText("Next follow-up date")).not.toBeInTheDocument();

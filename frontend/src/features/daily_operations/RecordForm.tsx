@@ -9,7 +9,7 @@ import { usePermissions } from "@/features/access_control/usePermissions";
 import { useAuth } from "@/features/auth/useAuth";
 import { apiRequest } from "@/shared/api/client";
 import { istDateKey, todayISTDateString } from "@/shared/dateFormat";
-import { CustomerInterestField } from "./CustomerInterestField";
+import { FollowUpStatusField } from "./FollowUpStatusField";
 import { EmployeeNameField } from "./EmployeeNameField";
 import { base, businessTime, followStatuses, getLookups, issueStatuses, saveRecord, type Area, type Row } from "./api";
 
@@ -59,6 +59,7 @@ export function RecordForm({ area, record, onSaved, onCancel }: {
   const linked = !!values.case_id || !!values.lead_id;
   const crmProgress = area === "progress" && !!values.case_id;
   const openFollowUp = followStatuses.slice(0, 2).includes(values.status);
+  const showFollowUpDate = openFollowUp || !followStatuses.includes(values.status);
 
   async function submit(event: FormEvent) {
     event.preventDefault(); setSaving(true); setError(null);
@@ -83,8 +84,7 @@ export function RecordForm({ area, record, onSaved, onCancel }: {
             loan_type: values.loan_type ?? "", bank: values.bank, status: values.status,
             remarks: values.remarks ?? "", remarks_date: values.remarks_date || values.date,
             next_action: values.next_action || values.remarks || "Follow up with customer",
-            due_date: openFollowUp ? values.due_date || values.date : null,
-            customer_interest_option_id: values.customer_interest_option_id || null,
+            due_date: showFollowUpDate ? values.due_date || values.date : null,
             rejection_reason: values.status === "REJECTED WITH REASON" ? values.rejection_reason : "" };
         } else {
           payload = { ...payload, case_id: values.case_id || null,
@@ -141,11 +141,10 @@ export function RecordForm({ area, record, onSaved, onCancel }: {
         {area === "follow-ups" ? <>
           <TextareaField label="Today's case status / remarks" rows={2} value={values.remarks ?? ""} maxLength={4000} placeholder="What happened today?" onChange={event => change("remarks", event.target.value)} />
           <div className="grid sm:grid-cols-2 gap-x-4">
-            <SelectField label="Follow-up status" value={values.status} options={followStatuses.map(value => ({ value, label: value }))} onChange={event => change("status", event.target.value)} />
-            {openFollowUp && field("due_date", "Next follow-up date", true, "date")}
+            <FollowUpStatusField value={values.status} onChange={value=>change("status",value)} historicalValue={record?.status?String(record.status):undefined} historicalLabel={record?.status_display?String(record.status_display):undefined}/>
+            {showFollowUpDate && field("due_date", "Next follow-up date", openFollowUp, "date")}
           </div>
           {values.status === "REJECTED WITH REASON" && field("rejection_reason", "Rejection reason", true)}
-          <CustomerInterestField value={values.customer_interest_option_id??""} onChange={id=>change("customer_interest_option_id",id)} historicalId={record?.customer_interest_option_id?String(record.customer_interest_option_id):undefined} historicalLabel={record?.customer_interest_status_snapshot?String(record.customer_interest_status_snapshot):undefined}/>
         </> : <>
           {field("status", "Today's case stage", true)}
           <div className="grid sm:grid-cols-2 gap-x-4">{field("next_action", "What's next?")}{field("due_date", "Next follow-up date", false, "date")}</div>

@@ -14,12 +14,6 @@ from app.features.auth.dependencies import get_current_active_user
 from app.features.auth.models import User
 from app.features.bulk_import.files import MAX_BYTES
 from app.features.daily_operations import entries, transfers, views
-from app.features.daily_operations.interest_options import (
-    InterestOptions,
-    OptionEdit,
-    OptionName,
-    OptionVersion,
-)
 from app.features.daily_operations.schemas import (
     DeleteRecord,
     FollowUpInput,
@@ -30,6 +24,12 @@ from app.features.daily_operations.schemas import (
     ProgressUpdate,
 )
 from app.features.daily_operations.service import DailyOperationsService, public
+from app.features.daily_operations.status_options import (
+    OptionEdit,
+    OptionName,
+    OptionVersion,
+    StatusOptions,
+)
 from app.shared.audit_log import write_audit_log
 
 router = APIRouter(prefix="/daily-operations", tags=["daily-operations"])
@@ -42,7 +42,6 @@ class Filters(BaseModel):
     page: int = 1
     page_size: int = 20
     search: str = ""
-    customer_interest_option_id: str = ""
     status: str = ""
     employee: str = ""
     employee_name: str = ""
@@ -61,7 +60,6 @@ def filters(
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
     search: Annotated[str, Query(max_length=200)] = "",
     status: Annotated[str, Query(max_length=100)] = "",
-    customer_interest_option_id: Annotated[str, Query(pattern=r"^([a-fA-F0-9]{24})?$")] = "",
     employee: Annotated[str, Query(max_length=24)] = "",
     employee_name: Annotated[str, Query(max_length=200)] = "",
     bank: Annotated[str, Query(max_length=200)] = "",
@@ -101,7 +99,6 @@ async def list_area(
         )
     values.pop("month")
     if kind == "progress":
-        values.pop("customer_interest_option_id", None)
         values.pop("overdue")
         if values["sort"] == "-date":
             values["sort"] = "-updated_at"
@@ -243,7 +240,6 @@ async def export(
         raise ValidationError("Export is limited to 500 rows. Narrow the date range or filters.")
     extra = {
         "follow-ups": {
-            "customer_interest_status_snapshot": "CUSTOMER INTEREST STATUS",
             "loan_type": "LOAN TYPE",
             "customer_name": "CX NAME",
             "customer_number": "CX NUMBER",
@@ -283,6 +279,8 @@ async def export(
     }
     columns = {**transfers.COLUMNS[kind], **extra[kind]}
     items = result["items"]
+    if kind == "follow-ups":
+        items = [{**item, "status": item.get("status_display") or item["status"]} for item in items]
     if kind == "sessions":
         columns = {
             "date": "DATE",
@@ -327,7 +325,7 @@ async def progress(
     db: Db,
     criteria: Annotated[Filters, Depends(filters)],
 ) -> ApiResponse[dict[str, Any]]:
-    values = criteria.model_dump(exclude={"overdue", "month", "customer_interest_option_id"})
+    values = criteria.model_dump(exclude={"overdue", "month"})
     if values["sort"] == "-date":
         values["sort"] = "-updated_at"
     return ApiResponse[dict[str, Any]].ok(
@@ -408,50 +406,51 @@ async def update_issue(
     )
 
 
-@router.get("/interest-options")
-async def interest_options(
-    actor: Actor, db: Db, include_archived: bool = False
-) -> ApiResponse[Any]:
+@router.get("/follow-up-status-options")
+async def status_options(actor: Actor, db: Db, include_archived: bool = False) -> ApiResponse[Any]:
     return ApiResponse.ok(
-        await InterestOptions(DailyOperationsService(db)).list(actor, include_archived)
+        await StatusOptions(DailyOperationsService(db)).list(actor, include_archived)
     )
 
 
-@router.post("/interest-options")
-async def create_interest_option(payload: OptionName, actor: Actor, db: Db) -> ApiResponse[Any]:
+@router.post("/follow-up-status-options")
+async def create_status_option(payload: OptionName, actor: Actor, db: Db) -> ApiResponse[Any]:
     return ApiResponse.ok(
-        await InterestOptions(DailyOperationsService(db)).change(actor, name=payload.name)
+        await StatusOptions(DailyOperationsService(db)).change(actor, **payload.model_dump())
     )
 
 
-@router.patch("/interest-options/{option_id}")
-async def rename_interest_option(
+@router.patch("/follow-up-status-options/{option_id}")
+async def rename_status_option(
     option_id: str, payload: OptionEdit, actor: Actor, db: Db
 ) -> ApiResponse[Any]:
     return ApiResponse.ok(
-        await InterestOptions(DailyOperationsService(db)).change(
-            actor, option_id=option_id, version=payload.version, name=payload.name
+        await StatusOptions(DailyOperationsService(db)).change(
+            actor,
+            option_id=option_id,
+            version=payload.version,
+            **payload.model_dump(exclude={"version"}, exclude_unset=True),
         )
     )
 
 
-@router.post("/interest-options/{option_id}/archive")
-async def archive_interest_option(
+@router.post("/follow-up-status-options/{option_id}/archive")
+async def archive_status_option(
     option_id: str, payload: OptionVersion, actor: Actor, db: Db
 ) -> ApiResponse[Any]:
     return ApiResponse.ok(
-        await InterestOptions(DailyOperationsService(db)).change(
+        await StatusOptions(DailyOperationsService(db)).change(
             actor, option_id=option_id, version=payload.version, active=False
         )
     )
 
 
-@router.post("/interest-options/{option_id}/restore")
-async def restore_interest_option(
+@router.post("/follow-up-status-options/{option_id}/restore")
+async def restore_status_option(
     option_id: str, payload: OptionVersion, actor: Actor, db: Db
 ) -> ApiResponse[Any]:
     return ApiResponse.ok(
-        await InterestOptions(DailyOperationsService(db)).change(
+        await StatusOptions(DailyOperationsService(db)).change(
             actor, option_id=option_id, version=payload.version, active=True
         )
     )

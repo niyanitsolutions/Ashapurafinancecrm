@@ -21,17 +21,12 @@ from app.utils.datetime import utc_now
 
 COMPANY = "default"
 INITIAL = [
-    "INTERESTED",
-    "NOT INTERESTED",
-    "HIGH INTEREST",
-    "LOW INTEREST",
-    "FOLLOW-UP REQUIRED",
-    "CALL BACK LATER",
-    "REJECTED",
-    "NOT CONTACTABLE",
-    "DOCUMENTS PENDING",
-    "OTHER",
+    ("FOLLOW UP PENDING", "#FFF0C2"),
+    ("NEXT FOLLOW UP", "#DCEBFF"),
+    ("DISBURSE", "#D9F5E3"),
+    ("REJECTED WITH REASON", "#FFE0E0"),
 ]
+BUILTINS = {name for name, _color in INITIAL}
 
 
 def normalized(name: str) -> str:
@@ -41,6 +36,8 @@ def normalized(name: str) -> str:
 class OptionName(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     name: str = Field(min_length=1, max_length=60)
+    color: str = Field(default="#DCEBFF", pattern=r"^#[0-9a-fA-F]{6}$")
+    display_order: int = Field(default=100, ge=0, le=100000)
 
     @field_validator("name")
     @classmethod
@@ -69,16 +66,19 @@ def public(doc: dict[str, Any]) -> dict[str, Any]:
 
 
 async def install(db: Any) -> None:
-    collection = db.daily_interest_options
+    collection = db.daily_followup_status_options
     await collection.create_index(
         [("company_id", 1), ("normalized_name", 1)],
         unique=True,
         partialFilterExpression={"is_active": True},
-        name="active_company_interest_name",
+        name="active_company_followup_status_name",
     )
     await collection.create_index([("company_id", 1), ("is_active", 1), ("name", 1)])
-    for name in INITIAL:
-        oid = ObjectId(hashlib.sha256((COMPANY + ":interest:" + name).encode()).hexdigest()[:24])
+    await collection.create_index([("company_id", 1), ("value", 1)], unique=True)
+    for order, (name, color) in enumerate(INITIAL):
+        oid = ObjectId(
+            hashlib.sha256((COMPANY + ":followup-status:" + name).encode()).hexdigest()[:24]
+        )
         now = utc_now()
         try:
             await collection.update_one(
@@ -87,6 +87,10 @@ async def install(db: Any) -> None:
                     "$setOnInsert": {
                         "company_id": COMPANY,
                         "name": name,
+                        "value": name,
+                        "color": color,
+                        "display_order": order,
+                        "is_system": True,
                         "normalized_name": normalized(name),
                         "is_active": True,
                         "version": 1,
@@ -105,11 +109,11 @@ async def install(db: Any) -> None:
             pass
 
 
-class InterestOptions:
+class StatusOptions:
     def __init__(self, service: Any) -> None:
         self.service = service
         self.db = service.db
-        self.collection = self.db.daily_interest_options
+        self.collection = self.db.daily_followup_status_options
 
     async def authorize(self, actor: User, manage: bool = False) -> None:
         await self.service.employee_id(actor)  # active employee or owner, no customers/partners
@@ -137,7 +141,10 @@ class InterestOptions:
         if not archived:
             query["is_active"] = True
         return [
-            public(doc) for doc in await self.collection.find(query).sort("name", 1).to_list(None)
+            public(doc)
+            for doc in await self.collection.find(query)
+            .sort([("display_order", 1), ("name", 1)])
+            .to_list(None)
         ]
 
     async def change(
@@ -148,24 +155,44 @@ class InterestOptions:
         option_id: str | None = None,
         version: int | None = None,
         active: bool | None = None,
+        color: str | None = None,
+        display_order: int | None = None,
     ) -> dict[str, Any]:
         await self.authorize(actor, True)
         now = utc_now()
         before = None
         if option_id:
             if not ObjectId.is_valid(option_id):
-                raise NotFoundError("Interest option not found.")
+                raise NotFoundError("Follow-up status option not found.")
             before = await self.collection.find_one(
                 {"_id": ObjectId(option_id), "company_id": COMPANY}
             )
             if not before:
-                raise NotFoundError("Interest option not found.")
+                raise NotFoundError("Follow-up status option not found.")
+        if (
+            before
+            and before.get("is_system")
+            and ((name is not None and name != before["name"]) or active is False)
+        ):
+            raise ValidationError(
+                "Default status names must be kept. You can edit their colors and display order."
+            )
         data: dict[str, Any] = {"updated_by": actor.require_id(), "updated_at": now}
+        if color is not None:
+            data["color"] = color.upper()
+        if display_order is not None:
+            data["display_order"] = display_order
         if name is not None:
             data.update(name=name, normalized_name=normalized(name))
         if active is not None:
             data.update(is_active=active, deleted_at=None if active else now)
-        action = "renamed" if name is not None else "restored" if active else "archived"
+        action = (
+            "updated"
+            if name is not None or color is not None or display_order is not None
+            else "restored"
+            if active
+            else "archived"
+        )
         try:
             if before:
                 doc = await self.collection.find_one_and_update(
@@ -183,8 +210,14 @@ class InterestOptions:
                     if actor.role != OWNER
                     else await self.db.owner_profiles.find_one({"user_id": actor.require_id()})
                 )
+                oid = ObjectId()
                 doc = {
                     **data,
+                    "_id": oid,
+                    "value": "custom:" + str(oid),
+                    "is_system": False,
+                    "color": data.get("color", "#DCEBFF"),
+                    "display_order": data.get("display_order", 100),
                     "company_id": COMPANY,
                     "is_active": True,
                     "version": 1,
@@ -203,7 +236,7 @@ class InterestOptions:
             ) from None
         await write_audit_log(
             self.db,
-            event_type="customer_interest_option_" + action,
+            event_type="followup_status_option_" + action,
             user_id=actor.require_id(),
             metadata={
                 "company_id": COMPANY,
@@ -214,25 +247,17 @@ class InterestOptions:
         )
         return public(doc)
 
-    async def record_value(
-        self, option_id: str | None, old: dict[str, Any] | None
-    ) -> dict[str, Any]:
-        if old and option_id == old.get("customer_interest_option_id"):
-            # Keep the saved label even after a central rename or archive.
-            return {
-                "customer_interest_option_id": option_id,
-                "customer_interest_status_snapshot": old.get("customer_interest_status_snapshot"),
-            }
-        if option_id is None:
-            return {"customer_interest_option_id": None, "customer_interest_status_snapshot": None}
+    async def record_value(self, value: str, old: dict[str, Any] | None) -> dict[str, Any]:
+        if old and value == old.get("status"):
+            return {"status_label": old.get("status_label")}
         doc = await self.collection.find_one(
-            {"_id": ObjectId(option_id), "company_id": COMPANY, "is_active": True}
+            {"value": value, "company_id": COMPANY, "is_active": True}
         )
-        if not doc:
-            raise ValidationError(
-                "Select an active Customer Interest Status. Refresh options if it was removed."
-            )
-        return {
-            "customer_interest_option_id": option_id,
-            "customer_interest_status_snapshot": doc["name"],
-        }
+        if doc:
+            return {"status_label": None if doc.get("is_system") else doc["name"]}
+        # Built-in business rules also work in older databases before additive setup.
+        if value in BUILTINS:
+            return {"status_label": None}
+        raise ValidationError(
+            "Select an active Follow-up Status. Refresh options if it was archived."
+        )

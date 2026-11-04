@@ -275,6 +275,9 @@ async def validate_row(
             await service.authorize(actor, kind, "create")
     if isinstance(model, FollowUpInput):
         derived = await service.validate_follow_up(model, actor)
+        from app.features.daily_operations.status_options import StatusOptions
+
+        await StatusOptions(service).record_value(model.status, old)
         if isinstance(model, FollowUpRow) and (model.lead_id or model.case_id):
             for field in READ_ONLY - {"employee_name"}:
                 if getattr(model, field) and getattr(model, field) != derived[field]:
@@ -502,11 +505,6 @@ async def commit(service: DailyOperationsService, actor: User, batch_id: str) ->
                     }
                     schema = schemas[destination]
                     values_to_save = model.model_dump(exclude={"record_id", "version"})
-                    if (
-                        isinstance(model, FollowUpInput)
-                        and "customer_interest_option_id" not in model.model_fields_set
-                    ):
-                        values_to_save.pop("customer_interest_option_id", None)
                     if isinstance(model, ProgressRow) and "status" not in model.model_fields_set:
                         values_to_save.pop("status", None)
                     payload = schema.model_validate(values_to_save)

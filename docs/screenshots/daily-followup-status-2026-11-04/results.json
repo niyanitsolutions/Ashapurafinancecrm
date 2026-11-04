@@ -1,0 +1,38 @@
+[
+  {
+    "width": 1440,
+    "result": "passed",
+    "backend": "actual FastAPI",
+    "database": "isolated local MongoDB",
+    "checks": [
+      "interest-removed",
+      "shared-status-create-select",
+      "configured-whole-row-color",
+      "rename-archive-history",
+      "dark-color-contrast",
+      "status-change-immediate-color",
+      "default-name-protection",
+      "picker-preview",
+      "refresh-persistence",
+      "mobile-no-page-overflow"
+    ]
+  },
+  {
+    "width": 390,
+    "result": "passed",
+    "backend": "actual FastAPI",
+    "database": "isolated local MongoDB",
+    "checks": [
+      "interest-removed",
+      "shared-status-create-select",
+      "configured-whole-row-color",
+      "rename-archive-history",
+      "dark-color-contrast",
+      "status-change-immediate-color",
+      "default-name-protection",
+      "picker-preview",
+      "refresh-persistence",
+      "mobile-no-page-overflow"
+    ]
+  }
+]

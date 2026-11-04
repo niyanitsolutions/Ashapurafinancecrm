@@ -50,13 +50,26 @@ def public(doc: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
             **doc,
             "status": effective_status(doc["status"], doc.get("due_date"), now or utc_now()),
         }
+    # Keep retired interest data in MongoDB, but exclude it from the active API/history UI.
+    retired = {"customer_interest_option_id", "customer_interest_status_snapshot"}
+    doc = {key: value for key, value in doc.items() if key not in retired}
+    if "customer_number" in doc and "status" in doc:
+        doc["status_display"] = doc.get("status_label") or doc["status"]
     doc = calendar_values(doc)
     if "history" in doc:
         doc["history"] = [
             {
                 **event,
-                "before": calendar_values(event["before"]) if event.get("before") else None,
-                "after": calendar_values(event["after"]) if event.get("after") else None,
+                "before": calendar_values(
+                    {k: v for k, v in event["before"].items() if k not in retired}
+                )
+                if event.get("before")
+                else None,
+                "after": calendar_values(
+                    {k: v for k, v in event["after"].items() if k not in retired}
+                )
+                if event.get("after")
+                else None,
             }
             for event in doc["history"]
         ]
@@ -308,24 +321,9 @@ class DailyOperationsService:
             )
         if isinstance(payload, FollowUpInput):
             data = await self.validate_follow_up(payload, actor)
-            from app.features.daily_operations.interest_options import InterestOptions
+            from app.features.daily_operations.status_options import StatusOptions
 
-            if old and "customer_interest_option_id" not in payload.model_fields_set:
-                data.update(
-                    {
-                        key: old.get(key)
-                        for key in (
-                            "customer_interest_option_id",
-                            "customer_interest_status_snapshot",
-                        )
-                    }
-                )
-            else:
-                data.update(
-                    await InterestOptions(self).record_value(
-                        payload.customer_interest_option_id, old
-                    )
-                )
+            data.update(await StatusOptions(self).record_value(payload.status, old))
         else:
             data = await self.validate_issue(payload, actor, old)
         now = utc_now()
@@ -395,7 +393,6 @@ class DailyOperationsService:
         *,
         search: str = "",
         status: str = "",
-        customer_interest_option_id: str = "",
         employee: str = "",
         employee_name: str = "",
         bank: str = "",
@@ -412,8 +409,6 @@ class DailyOperationsService:
         query = await self.scope(actor, kind)
         if kind == "progress":
             query["case_id"] = None  # Linked annotations are already merged with CRM cases.
-        if kind == "follow-ups" and customer_interest_option_id:
-            query["customer_interest_option_id"] = customer_interest_option_id
         if date_from and date_to and date_from > date_to:
             raise ValidationError("Start date must be before end date.")
         if employee:
@@ -664,10 +659,9 @@ class DailyOperationsService:
 
 
 async def ensure_daily_operations_indexes(db: AsyncIOMotorDatabase[Any]) -> None:
-    from app.features.daily_operations.interest_options import install
+    from app.features.daily_operations.status_options import install
 
     await install(db)
-    await db.daily_follow_ups.create_index([("customer_interest_option_id", 1), ("date", -1)])
     for name in COLLECTIONS.values():
         if name == "daily_progress_entries":
             await db[name].create_index("import_key", unique=True, sparse=True)

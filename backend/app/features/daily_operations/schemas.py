@@ -20,7 +20,7 @@ def phone_number(value: str) -> str:
     return normalized
 
 
-FollowStatus = Literal["FOLLOW UP PENDING", "NEXT FOLLOW UP", "DISBURSE", "REJECTED WITH REASON"]
+FollowStatus = str
 
 
 class FollowUpInput(BaseModel):
@@ -35,8 +35,7 @@ class FollowUpInput(BaseModel):
     employee_name: str = Field(default="", max_length=200)
     assigned_to: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{24}$")
     bank: str = Field(min_length=1, max_length=200)
-    customer_interest_option_id: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{24}$")
-    status: FollowStatus = "FOLLOW UP PENDING"
+    status: FollowStatus = Field(default="FOLLOW UP PENDING", min_length=1, max_length=100)
     remarks: str = Field(default="", max_length=4000)
     remarks_date: CalendarDate
     next_action: str = Field(default="", max_length=1000)

@@ -17,7 +17,7 @@ function mount(area: "follow-ups" | "progress" | "issues" | "sessions") {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks(); mocks.request.mockResolvedValue([]); mocks.owner = false;
+  vi.clearAllMocks(); mocks.request.mockResolvedValue(["FOLLOW UP PENDING","NEXT FOLLOW UP","DISBURSE","REJECTED WITH REASON"].map((name,index)=>({id:String(index),value:name,name,color:"#FFF0C2",display_order:index,is_system:true,is_active:true}))); mocks.owner = false;
   mocks.list.mockResolvedValue({ items: [], total: 0 });
   mocks.lookup.mockResolvedValue({ self_id: "synthetic-user", employees: [{ id: "synthetic-user", name: "Synthetic Employee" }], leads: [], cases: [] });
   mocks.save.mockResolvedValue({ id: "synthetic-row", version: 1 }); mocks.remove.mockResolvedValue({ deleted: true });

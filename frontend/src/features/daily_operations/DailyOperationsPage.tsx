@@ -15,23 +15,17 @@ import { useAuth } from "@/features/auth/useAuth";
 import { usePermissions } from "@/features/access_control/usePermissions";
 import { apiRequest } from "@/shared/api/client";
 import { formatISTDate, todayISTDateString } from "@/shared/dateFormat";
-import { areas, base, businessTime, deleteRecord, download, followStatuses, getLookups, getRecord, issueStatuses, listRecords, text, type Area, type Row } from "./api";
-import { useInterestOptions } from "./interestOptions";
+import { areas, base, businessTime, deleteRecord, download, getLookups, getRecord, issueStatuses, listRecords, text, type Area, type Row } from "./api";
+import { useStatusOptions, statusRowStyle } from "./statusOptions";
 import { RecordForm } from "./RecordForm";
 import { EmployeeNameField } from "./EmployeeNameField";
 
-const FILTER_KEYS = ["customer_interest_option_id", "month", "sort", "search", "status", "date_from", "date_to", "employee_name", "bank", "loan_type", "overdue", "old_days"];
+const FILTER_KEYS = ["month", "sort", "search", "status", "date_from", "date_to", "employee_name", "bank", "loan_type", "overdue", "old_days"];
 const columns: Record<Area, [string, string][]> = {
-  "follow-ups": [["date", "DATE"], ["loan_type", "LOAN TYPE"], ["bank", "BANK / NBFCs"], ["customer_name", "CX NAME"], ["customer_number", "CX NUMBER"], ["remarks", "TODAY CASE STATUS"], ["remarks_date", "REMARKS DATE"], ["status", "FOLLOW PENDING"], ["customer_interest_status_snapshot", "CUSTOMER INTEREST STATUS"], ["due_date", "NEXT FOLLOW-UP"], ["employee_name", "EMPLOYEE NAME"]],
+  "follow-ups": [["date", "DATE"], ["loan_type", "LOAN TYPE"], ["bank", "BANK / NBFCs"], ["customer_name", "CX NAME"], ["customer_number", "CX NUMBER"], ["remarks", "TODAY CASE STATUS"], ["remarks_date", "REMARKS DATE"], ["status", "FOLLOW PENDING"], ["due_date", "NEXT FOLLOW-UP"], ["employee_name", "EMPLOYEE NAME"]],
   progress: [["date", "DATE"], ["customer_name", "CX NAME"], ["customer_number", "CX NUMBER"], ["bank", "BANK / NBFC"], ["status", "TODAY CASE STAGE"], ["next_action", "WHAT'S NEXT?"], ["due_date", "NEXT FOLLOW-UP"], ["approved_amount", "APPROVED AMOUNT"], ["employee_name", "EMPLOYEE NAME"]],
   sessions: [["date", "DATE"], ["employee_name", "EMPLOYEE NAME"], ["login_at", "LOGIN TIME"], ["logout_at", "LOGOUT TIME"], ["recorded_seconds", "DURATION"], ["status", "STATUS"]],
   issues: [["date", "DATE"], ["employee_name", "EMPLOYEE NAME"], ["inquiry", "INQUIRY OR ISSUE"], ["assigned_to_name", "ASSIGNED TO"], ["priority", "PRIORITY"], ["status", "STATUS"], ["resolution_notes", "RESOLUTION NOTES"]],
-};
-const followRowColors: Record<string, string> = {
-  "FOLLOW UP PENDING": "!bg-red-300 text-red-950 hover:!bg-red-400 focus-within:!bg-red-400 [&>td]:bg-inherit",
-  "NEXT FOLLOW UP": "!bg-blue-300 text-blue-950 hover:!bg-blue-400 focus-within:!bg-blue-400 [&>td]:bg-inherit",
-  "DISBURSE": "!bg-green-300 text-green-950 hover:!bg-green-400 focus-within:!bg-green-400 [&>td]:bg-inherit",
-  "REJECTED WITH REASON": "!bg-yellow-300 text-yellow-950 hover:!bg-yellow-400 focus-within:!bg-yellow-400 [&>td]:bg-inherit",
 };
 const pretty = (value: unknown) => text(value).replaceAll("_", " ").replace(/\b\w/g, letter => letter.toUpperCase());
 const money = (value: unknown) => value == null ? "—" : Number(value).toLocaleString("en-IN", { style: "currency", currency: "INR" });
@@ -39,7 +33,7 @@ const money = (value: unknown) => value == null ? "—" : Number(value).toLocale
 export function DailyOperationsPage({ area }: { area: Area }) {
   const { userId } = useAuth();
   const { can, isOwner, loading } = usePermissions();
-  const interests = useInterestOptions(area === "follow-ups" && can("daily_operations:follow-ups", "view"), true);
+  const statuses = useStatusOptions(area === "follow-ups" && can("daily_operations:follow-ups", "view"), true);
   const client = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   // Keep consecutive filter interactions together while router transitions commit.
@@ -101,9 +95,8 @@ export function DailyOperationsPage({ area }: { area: Area }) {
         <div className="min-w-48 flex-1"><EmployeeNameField label="Employee name" value={filters.employee_name ?? ""} options={lookup.data?.employees ?? []} onChange={name => filter("employee_name", name)} /></div>
         <details className="min-w-48 self-start mt-7"><summary className="cursor-pointer rounded-lg border border-border bg-card px-4 py-2.5 text-sm">More filters</summary><div className="mt-3 grid sm:grid-cols-2 lg:grid-cols-3 gap-x-4 rounded-lg border border-border bg-card p-4">
           {filterField("date_from", "From date", "date")}{filterField("date_to", "To date", "date")}
-          {area === "progress" ? filterField("status", "Case stage") : area !== "sessions" && <SelectField label="Status" placeholder="All statuses" value={filters.status ?? ""} options={(area === "issues" ? issueStatuses : followStatuses).map(value => ({ value, label: pretty(value) }))} onChange={event => filter("status", event.target.value)} />}
+          {area === "progress" ? filterField("status", "Case stage") : area !== "sessions" && <SelectField label="Status" placeholder="All statuses" value={filters.status ?? ""} options={area === "issues" ? issueStatuses.map(value=>({value,label:pretty(value)})) : (statuses.data??[]).map(row=>({value:row.value,label:row.name+(row.is_active?"":" (archived)")}))} onChange={event => filter("status", event.target.value)} />}
           {["follow-ups", "progress"].includes(area) && <>{filterField("bank", "Bank / NBFC")}{filterField("loan_type", "Loan type")}</>}
-          {area === "follow-ups" && <SelectField label="Customer Interest Status" placeholder="All interest statuses" value={filters.customer_interest_option_id??""} options={(interests.data??[]).map(row=>({value:row.id,label:row.name+(row.is_active?"":" (archived)")}))} onChange={event=>filter("customer_interest_option_id",event.target.value)}/>}
           {area === "follow-ups" && <SelectField label="Due" value={filters.overdue ?? ""} options={[{ value: "", label: "All follow-ups" }, { value: "true", label: "Overdue only" }]} onChange={event => filter("overdue", event.target.value)} />}
           {area !== "sessions" && <SelectField label="Sort" value={filters.sort} options={(area === "progress" ? [["-date", "Latest update"], ["created_at", "Oldest first"]] : [["-date", "Newest date"], ["date", "Oldest date"], ["status", "Status"]]).map(([value, label]) => ({ value, label }))} onChange={event => filter("sort", event.target.value)} />}
           <Button variant="ghost" onClick={() => { pendingParams.current = new URLSearchParams(); setSearchParams({}); }}>Clear filters</Button>
@@ -112,13 +105,13 @@ export function DailyOperationsPage({ area }: { area: Area }) {
       {area === "progress" && <label className="mb-3 flex gap-2 text-sm text-textSecondary"><input type="checkbox" checked={extraColumns} onChange={event => setExtraColumns(event.target.checked)} />Show login and disbursement details</label>}
       {query.isLoading || loading ? <p role="status">Loading records…</p> : query.isError ? <Button variant="secondary" onClick={() => void query.refetch()}>Retry</Button> : <>
         <TableContainer><Table aria-label={`${areas[area]} records`}><TableHead><TableHeadRow>{visibleColumns.map(([key, label]) => <Th key={key}>{label}</Th>)}<Th className="sticky right-0 bg-card">Actions</Th></TableHeadRow></TableHead><TableBody>
-          {!query.data?.items.length ? <TableRow><Td colSpan={visibleColumns.length + 1}><div className="py-8 text-center text-textSecondary">No records match these filters.{area !== "sessions" && " Use Add record to enter your first row."}</div></Td></TableRow> : query.data.items.map(row => <TableRow key={row.id} className={area === "follow-ups" ? followRowColors[text(row.status)] : ""}>
-            {visibleColumns.map(([key]) => <Td key={key} className="py-2.5 max-w-xs"><span className={key === "status" ? "inline-block rounded-md bg-primary/5 px-2 py-1 text-xs font-medium" : ""}>{cell(key, row[key])}</span>{area === "progress" && key === "customer_name" && row.source === "manual" && <span className="block text-xs text-textSecondary">Daily entry</span>}</Td>)}
+          {!query.data?.items.length ? <TableRow><Td colSpan={visibleColumns.length + 1}><div className="py-8 text-center text-textSecondary">No records match these filters.{area !== "sessions" && " Use Add record to enter your first row."}</div></Td></TableRow> : query.data.items.map(row => <TableRow key={row.id} style={area === "follow-ups" ? statusRowStyle(text(row.status),statuses.data??[]) : undefined} className={area === "follow-ups" ? "[&>td]:!bg-inherit hover:brightness-95 focus-within:outline focus-within:outline-2 focus-within:outline-current" : ""}>
+            {visibleColumns.map(([key]) => <Td key={key} className="py-2.5 max-w-xs"><span className={key === "status" ? "inline-block rounded-md bg-primary/5 px-2 py-1 text-xs font-medium" : ""}>{cell(key, area==="follow-ups"&&key==="status"?(row.status_display||row.status):row[key])}</span>{area === "progress" && key === "customer_name" && row.source === "manual" && <span className="block text-xs text-textSecondary">Daily entry</span>}</Td>)}
             <Td className={`sticky right-0 py-2 ${area === "follow-ups" ? "bg-inherit" : "bg-card"}`}><div className="flex items-center gap-1">
-              {(area !== "sessions" && can(`daily_operations:${area}`, "edit")) && <Button variant="ghost" size="sm" className={area === "follow-ups" ? "!text-inherit focus-visible:!outline-black" : ""} onClick={() => void inspect(row, true)}>Edit</Button>}
-              <Button variant="ghost" size="sm" className={area === "follow-ups" ? "!text-inherit focus-visible:!outline-black" : ""} onClick={() => void inspect(row, false)}>{area === "sessions" ? "Session history" : "History"}</Button>
+              {(area !== "sessions" && can(`daily_operations:${area}`, "edit")) && <Button variant="ghost" size="sm" className={area === "follow-ups" ? "!text-inherit focus-visible:!outline-current" : ""} onClick={() => void inspect(row, true)}>Edit</Button>}
+              <Button variant="ghost" size="sm" className={area === "follow-ups" ? "!text-inherit focus-visible:!outline-current" : ""} onClick={() => void inspect(row, false)}>{area === "sessions" ? "Session history" : "History"}</Button>
               {area === "sessions" && !isOwner && <Button variant="ghost" size="sm" onClick={() => { setRequesting(row); setRequestReason(""); }}>Request correction</Button>}
-              {isOwner && area !== "sessions" && <Button variant="danger" size="sm" className={area === "follow-ups" ? "hover:!bg-white focus-visible:!outline-black" : ""} onClick={() => setRemoving(row)}>Delete</Button>}
+              {isOwner && area !== "sessions" && <Button variant="danger" size="sm" className={area === "follow-ups" ? "!text-inherit hover:brightness-95 focus-visible:!outline-current" : ""} onClick={() => setRemoving(row)}>Delete</Button>}
             </div></Td>
           </TableRow>)}
         </TableBody></Table></TableContainer>
@@ -137,7 +130,7 @@ export function DailyOperationsPage({ area }: { area: Area }) {
         <p>{cell("recorded_seconds", session.recorded_seconds)} ? {pretty(session.status)} ? {pretty(session.end_reason)}</p>
         {isOwner && can("daily_operations:sessions", "edit") && <Button variant="ghost" size="sm" onClick={() => { setEditing(session); setHistory(null); }}>Correct session</Button>}
       </div>)}</div>}
-      <ol className="space-y-4">{(history?.history as { at: string; before?: Record<string, unknown>; after?: Record<string, unknown> }[] ?? []).map((event, index) => <li key={index} className="border-b border-border pb-3"><p className="text-sm font-medium">{businessTime(event.at)}</p><dl className="mt-2 text-sm">{Object.entries(event.after ?? {}).filter(([key, value]) => !["lead_id", "case_id", "assigned_to", "source"].includes(key) && value !== event.before?.[key]).map(([key, value]) => <div key={key} className="grid grid-cols-2 gap-3"><dt className="text-textSecondary">{pretty(key)}</dt><dd className="break-words">{event.before ? `${text(event.before[key])} → ` : ""}{cell(key, value)}</dd></div>)}</dl></li>)}</ol>
+      <ol className="space-y-4">{(history?.history as { at: string; before?: Record<string, unknown>; after?: Record<string, unknown> }[] ?? []).map((event, index) => <li key={index} className="border-b border-border pb-3"><p className="text-sm font-medium">{businessTime(event.at)}</p><dl className="mt-2 text-sm">{Object.entries(event.after ?? {}).filter(([key, value]) => !["lead_id", "case_id", "assigned_to", "source", "status_label", "customer_interest_option_id", "customer_interest_status_snapshot"].includes(key) && value !== event.before?.[key]).map(([key, value]) => <div key={key} className="grid grid-cols-2 gap-3"><dt className="text-textSecondary">{pretty(key)}</dt><dd className="break-words">{event.before ? `${text(key==="status"?(event.before.status_label||event.before[key]):event.before[key])} → ` : ""}{cell(key, key==="status"?(event.after?.status_label||value):value)}</dd></div>)}</dl></li>)}</ol>
     </Modal>
     <ConfirmDialog open={!!removing} title="Delete this daily record?" message="This removes the row from Daily Update and keeps its history. Linked loans and original sign-in records are retained." confirmLabel="Delete record" confirmVariant="danger" onClose={() => setRemoving(null)} onConfirm={async () => {
       if (!removing) return;

@@ -18,7 +18,9 @@ from test_invoice_mongo_integration import real_invoice_db  # noqa: F401
     os.environ.get("AFS_DAILY_BROWSER_CHECK") != "1",
     reason="Opt-in local browser check",
 )
-async def test_two_employee_browser_journey(client, mock_db, staff, real_invoice_db):
+async def test_two_employee_status_color_journey(
+    client, mock_db, staff, real_invoice_db
+):
     db = real_invoice_db
     for name in await mock_db.list_collection_names():
         docs = await mock_db[name].find({}).to_list(None)
@@ -52,7 +54,7 @@ async def test_two_employee_browser_journey(client, mock_db, staff, real_invoice
         }
         process = await asyncio.create_subprocess_exec(
             str(root / "frontend/node_modules/.cache/voice-node22/node.exe"),
-            str(root / "scripts/daily-interest-ui-check.mjs"),
+            str(root / "scripts/daily-status-ui-check.mjs"),
             cwd=root,
             env=env,
             stdout=asyncio.subprocess.PIPE,
@@ -61,9 +63,10 @@ async def test_two_employee_browser_journey(client, mock_db, staff, real_invoice
         output, _ = await asyncio.wait_for(process.communicate(), 180)
         assert process.returncode == 0, output.decode(errors="replace")
         print(output.decode())
+        assert await db.daily_follow_ups.count_documents({}) == 2
         assert (
             await db.daily_follow_ups.count_documents(
-                {"customer_interest_status_snapshot": "Browser interest A"}
+                {"status_label": {"$regex": "Browser status B"}}
             )
             == 2
         )
