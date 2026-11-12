@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { chromium } from "../frontend/node_modules/.cache/voice-ui-audit/node_modules/playwright/index.mjs";
 
 const origin = "http://127.0.0.1:5175";
-const output = resolve("docs/screenshots/daily-simple-entry-2026-10-25");
+const output = resolve("docs/screenshots/daily-simple-entry-2026-11-12");
 await mkdir(output, { recursive: true });
 const browser = await chromium.launch({ executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true });
 const evidence = [];
@@ -31,6 +31,8 @@ try {
       else if (path === "/my-permissions") data = { grants: role === "owner" ? {} : Object.fromEntries(Object.keys(rows).map(area => [`daily_operations:${area}`, area === "sessions" ? ["view", "export"] : ["view", "create", "edit", "export", "import", ...(area === "issues" ? ["approve"] : [])]])) };
       else if (path === "/dashboard/nav") data = ["dashboard", "leads", "loan_cases", "insurance_cases", "daily_follow-ups", "daily_progress", "daily_sessions", "daily_issues", ...(role === "owner" ? ["invoices", "voice_assistant", "referral_partners", "reports", "messaging", "support_tickets", "integrations"] : [])].map((key, order) => ({ key, label: key, route: "/", order }));
       else if (path === "/daily-operations/lookups") data = { self_id: role === "owner" ? ownerId : employeeId, self_name: `Synthetic ${role}`, employees: [{ id: employeeId, name: "Synthetic Employee" }], leads: [], cases: [] };
+      else if (path === "/daily-operations/bank-options") data = [{id:"cccccccccccccccccccccccc",name:"Synthetic Bank",is_active:true,version:1}];
+      else if (path === "/daily-operations/follow-up-status-options") data = ["FOLLOW UP PENDING","NEXT FOLLOW UP","DISBURSE","REJECTED WITH REASON"].map(value=>({id:value,value,name:value,is_active:true,color:"#DCEBFF"}));
       else if (path.includes("unread-count")) data = { count: 0 };
       else if (path.startsWith("/daily-operations/")) {
         const [, , area, id] = path.split("/");
@@ -70,7 +72,7 @@ try {
       await dialog.getByLabel("Customer name", { exact: true }).fill(`Synthetic ${area} customer`);
       await dialog.getByLabel("Customer number", { exact: true }).fill("9000000000");
       await dialog.getByLabel("Loan type", { exact: true }).fill("Personal Loan");
-      await dialog.getByLabel("Bank / NBFC", { exact: true }).fill("Synthetic Bank");
+      if(area==="follow-ups"){await dialog.getByLabel("Bank / NBFC", {exact:true}).click();await dialog.getByRole("checkbox",{name:"Synthetic Bank",exact:true}).check();}else await dialog.getByLabel("Bank / NBFC", { exact: true }).fill("Synthetic Bank");
       if (area === "follow-ups") await dialog.getByLabel("Today's case status / remarks", { exact: true }).fill("Documents requested");
       else {
         await dialog.getByLabel("Today's case stage", { exact: true }).fill("Application login");

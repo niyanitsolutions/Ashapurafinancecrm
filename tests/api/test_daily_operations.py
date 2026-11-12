@@ -27,7 +27,9 @@ async def follow_payload(client, mock_db, owner_headers):
     )
     return {
         "date": "2026-10-25",
-        "lead_id": lead["id"],
+        "lead_id": None,
+        "customer_name": lead["full_name"],
+        "customer_number": lead["mobile"],
         "bank": "Test Bank",
         "status": "NEXT FOLLOW UP",
         "remarks": "Initial attempt",
@@ -83,7 +85,6 @@ async def test_follow_up_history_concurrency_and_filters(
         {"next_action": ""},
         {"due_date": None},
         {"status": "REJECTED WITH REASON", "due_date": None},
-        {"status": "DISBURSE", "due_date": None},
         {"status": "UNKNOWN"},
         {"rejection_reason": "Contradictory reason"},
         {"assigned_to": "forged employee"},
@@ -288,15 +289,16 @@ async def test_import_revalidates_relationships_and_batch_ownership(
     )
     assert response.status_code == 404
     await mock_db.leads.update_one(
-        {"_id": ObjectId(follow_payload["lead_id"])}, {"$set": {"is_deleted": True}}
+        {"_id": ObjectId(str((await mock_db.leads.find_one({}))["_id"]))},
+        {"$set": {"is_deleted": True}},
     )
     response = await client.post(
         f"{BASE}/transfers/{batch['id']}/confirm",
         json={"confirmed": True},
         headers=owner_headers,
     )
-    assert response.json()["data"]["rejected"] == 1
-    assert await mock_db.daily_follow_ups.count_documents({}) == 0
+    assert response.json()["data"]["inserted"] == 1
+    assert await mock_db.daily_follow_ups.count_documents({}) == 1
 
 
 @pytest.mark.parametrize(
@@ -372,7 +374,10 @@ async def test_sessions_group_rotations_and_preserve_original_correction(
     response = await client.get(f"{BASE}/sessions", headers=owner_headers)
     assert response.status_code == 200, response.text
     row = next(
-        session for item in response.json()["data"]["items"] for session in item["sessions"] if session["id"] == family
+        session
+        for item in response.json()["data"]["items"]
+        for session in item["sessions"]
+        if session["id"] == family
     )
     assert row["recorded_seconds"] == 3600
     correction = {
@@ -394,9 +399,15 @@ async def test_sessions_group_rotations_and_preserve_original_correction(
     ).status_code == 409
     response = await client.get(f"{BASE}/sessions", headers=owner_headers)
     row = next(
-        session for item in response.json()["data"]["items"] for session in item["sessions"] if session["id"] == family
+        session
+        for item in response.json()["data"]["items"]
+        for session in item["sessions"]
+        if session["id"] == family
     )
-    assert row["end_reason"] == "administrative_correction" and row["recorded_seconds"] == 7200
+    assert (
+        row["end_reason"] == "administrative_correction"
+        and row["recorded_seconds"] == 7200
+    )
     assert (
         await mock_db.sessions.count_documents(
             {"family_id": family, "login_at": now - timedelta(hours=2)}
@@ -499,41 +510,31 @@ async def seed_case(mock_db, lead_id, *, disbursed=False):
     )
 
 
-async def test_verified_disbursement_and_relationship_integrity(
+async def test_disburse_is_independent_and_new_links_are_rejected(
     client, mock_db, owner_headers, follow_payload
 ):
-    case_id = await seed_case(mock_db, follow_payload["lead_id"])
-    payload = {
-        **follow_payload,
-        "case_id": case_id,
-        "status": "DISBURSE",
-        "due_date": None,
-    }
+    case_id = await seed_case(mock_db, str((await mock_db.leads.find_one({}))["_id"]))
+    before = await mock_db.application_workflows.find_one({"_id": ObjectId(case_id)})
+    payload = {**follow_payload, "status": "DISBURSE", "due_date": None}
+    saved = await create(client, owner_headers, "follow-ups", payload)
+    assert saved["status"] == "DISBURSE" and saved["case_id"] is None
     assert (
-        await client.post(f"{BASE}/follow-ups", headers=owner_headers, json=payload)
+        await client.post(
+            f"{BASE}/follow-ups",
+            headers=owner_headers,
+            json={**payload, "case_id": case_id},
+        )
     ).status_code == 422
-    await mock_db.application_workflows.update_one(
-        {"_id": ObjectId(case_id)},
-        {
-            "$set": {
-                "current_status": "disbursed",
-                "loan_details.disbursed_amount": 900,
-                "loan_details.disbursed_at": utc_now(),
-                "loan_details.disbursed_reference": "TEST-REF",
-            }
-        },
+    assert (
+        await mock_db.application_workflows.find_one({"_id": ObjectId(case_id)})
+        == before
     )
-    await create(client, owner_headers, "follow-ups", payload)
-    await mock_db.applications.update_many({}, {"$set": {"lead_id": str(ObjectId())}})
-    assert (
-        await client.post(f"{BASE}/follow-ups", headers=owner_headers, json=payload)
-    ).status_code == 422
 
 
-async def test_progress_uses_actual_amounts_and_imports_only_follow_up_actions(
+async def test_progress_annotations_keep_actual_amounts_without_creating_followups(
     client, mock_db, owner_headers, follow_payload
 ):
-    case_id = await seed_case(mock_db, follow_payload["lead_id"])
+    case_id = await seed_case(mock_db, str((await mock_db.leads.find_one({}))["_id"]))
     response = await client.get(f"{BASE}/progress", headers=owner_headers)
     assert response.status_code == 200, response.text
     item = response.json()["data"]["items"][0]
@@ -557,9 +558,9 @@ async def test_progress_uses_actual_amounts_and_imports_only_follow_up_actions(
         json={"confirmed": True},
     )
     assert result.json()["data"]["inserted"] == 1, result.text
+    assert await mock_db.daily_follow_ups.count_documents({}) == 0
     response = await client.get(f"{BASE}/progress", headers=owner_headers)
     item = response.json()["data"]["items"][0]
-    assert item["next_action"] == "Contact bank" and item["due_date"] == "2026-10-26"
     assert (await mock_db.application_workflows.find_one({"_id": ObjectId(case_id)}))[
         "current_status"
     ] == "credit_evaluation"
@@ -695,12 +696,17 @@ async def test_follow_up_assignment_follows_lead_without_leaking_to_previous_own
         }
     )
     record = await create(client, owner_headers, "follow-ups", follow_payload)
+    legacy_lead = str((await mock_db.leads.find_one({}))["_id"])
+    await mock_db.daily_follow_ups.update_one(
+        {"_id": ObjectId(record["id"])},
+        {"$set": {"lead_id": legacy_lead, "lead_oid": ObjectId(legacy_lead)}},
+    )
     headers = await _login(client, "9511111111", "InitialPass1!")
     assert (await client.get(f"{BASE}/follow-ups", headers=headers)).json()["data"][
         "total"
     ] == 0
     await mock_db.leads.update_one(
-        {"_id": ObjectId(follow_payload["lead_id"])},
+        {"_id": ObjectId(str((await mock_db.leads.find_one({}))["_id"]))},
         {"$set": {"assigned_to": employee["id"]}},
     )
     assert (await client.get(f"{BASE}/follow-ups", headers=headers)).json()["data"][
@@ -710,7 +716,7 @@ async def test_follow_up_assignment_follows_lead_without_leaking_to_previous_own
         await client.get(f"{BASE}/follow-ups/{record['id']}", headers=headers)
     ).status_code == 200
     await mock_db.leads.update_one(
-        {"_id": ObjectId(follow_payload["lead_id"])},
+        {"_id": ObjectId(str((await mock_db.leads.find_one({}))["_id"]))},
         {"$set": {"assigned_to": str(ObjectId())}},
     )
     assert (
@@ -776,7 +782,9 @@ async def test_internal_notifications_are_authorized_and_retry_safe(
     )
     assert (await deliver_notifications(mock_db))["created"] == 0
     await mock_db.leads.update_many({}, {"$set": {"assigned_to": str(ObjectId())}})
-    assert (await deliver_notifications(mock_db))["skipped"] == 1
+    assert (await deliver_notifications(mock_db))[
+        "skipped"
+    ] == 0  # Independent rows do not follow lead reassignment.
     assert (
         await mock_db.notifications.count_documents(
             {"notification_type": "daily_follow_up_due"}
@@ -788,18 +796,20 @@ async def test_internal_notifications_are_authorized_and_retry_safe(
 async def test_report_financial_totals_ignore_follow_up_disburse_labels(
     client, mock_db, owner_headers, follow_payload
 ):
-    case_id = await seed_case(mock_db, follow_payload["lead_id"], disbursed=True)
-    await create(
-        client,
-        owner_headers,
-        "follow-ups",
-        {**follow_payload, "case_id": case_id, "status": "DISBURSE", "due_date": None},
+    await seed_case(
+        mock_db, str((await mock_db.leads.find_one({}))["_id"]), disbursed=True
     )
     await create(
         client,
         owner_headers,
         "follow-ups",
-        {**follow_payload, "case_id": case_id, "status": "DISBURSE", "due_date": None},
+        {**follow_payload, "status": "DISBURSE", "due_date": None},
+    )
+    await create(
+        client,
+        owner_headers,
+        "follow-ups",
+        {**follow_payload, "status": "DISBURSE", "due_date": None},
     )
     result = (await client.get(f"{BASE}/progress", headers=owner_headers)).json()[
         "data"
@@ -829,7 +839,7 @@ async def test_templates_preserve_headings_and_read_only_customer_identity(
     batch = await preview(
         client, owner_headers, [{**follow_payload, "customer_name": "Forged identity"}]
     )
-    assert "read-only" in batch["rows"][0]["errors"][0]["message"]
+    assert not batch["rows"][0]["errors"]  # Daily customer labels are independent.
     record = await create(client, owner_headers, "follow-ups", follow_payload)
     stored = await mock_db.daily_follow_ups.find_one({"_id": ObjectId(record["id"])})
     from app.utils.datetime import to_ist

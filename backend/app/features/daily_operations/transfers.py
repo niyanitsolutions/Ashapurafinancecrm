@@ -7,7 +7,6 @@ from datetime import date as CalendarDate
 from datetime import timedelta
 from typing import Any, Literal
 
-from bson import ObjectId
 from openpyxl import Workbook  # type: ignore[import-untyped]
 from pydantic import BaseModel, Field, model_validator
 from pydantic import ValidationError as SchemaError
@@ -23,7 +22,6 @@ from app.features.daily_operations.schemas import (
 )
 from app.features.daily_operations.service import DailyOperationsService
 from app.features.daily_operations.views import SessionCorrection, correct_session
-from app.features.loan_management.service import LoanCaseService
 from app.shared.audit_log import write_audit_log
 from app.utils.datetime import utc_now
 
@@ -217,29 +215,8 @@ def spreadsheet(headers: list[str], rows: list[list[Any]], format: str) -> bytes
 async def progress_payload(
     service: DailyOperationsService, actor: User, row: ProgressActionInput
 ) -> FollowUpInput:
-    case = await LoanCaseService(service.db).get_case(row.case_id, actor)
-    application = await service.db.applications.find_one(
-        {"_id": ObjectId(case.application_id), "is_deleted": False}
-    )
-    if not application or not application.get("lead_id"):
-        raise ValidationError(
-            "Progress action imports require an existing linked lead; use Loan Management for lead-less cases."
-        )
-    details = case.loan_details
-    bank = (details.bank_nbfc_name or details.preferred_bank_name) if details else None
-    if not bank:
-        raise ValidationError(
-            "Record the applied bank in Loan Management before importing follow-up actions."
-        )
-    return FollowUpInput(
-        date=row.date,
-        lead_id=application["lead_id"],
-        case_id=row.case_id,
-        bank=bank,
-        status="NEXT FOLLOW UP",
-        remarks_date=row.date,
-        next_action=row.next_action,
-        due_date=row.due_date,
+    raise ValidationError(
+        "Loan-linked follow-up imports are retired. Create an independent Daily Follow-up record instead."
     )
 
 
@@ -274,7 +251,14 @@ async def validate_row(
         else:
             await service.authorize(actor, kind, "create")
     if isinstance(model, FollowUpInput):
+        if (model.lead_id and model.lead_id != (old or {}).get("lead_id")) or (
+            model.case_id and model.case_id != (old or {}).get("case_id")
+        ):
+            raise ValidationError("Daily follow-ups cannot create new CRM links.")
         derived = await service.validate_follow_up(model, actor)
+        from app.features.daily_operations.bank_options import BankOptions
+
+        await BankOptions(service).selections(model.banks, model.bank, old)
         from app.features.daily_operations.status_options import StatusOptions
 
         await StatusOptions(service).record_value(model.status, old)

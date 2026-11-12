@@ -17,7 +17,7 @@ function mount(area: "follow-ups" | "progress" | "issues" | "sessions") {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks(); mocks.request.mockResolvedValue(["FOLLOW UP PENDING","NEXT FOLLOW UP","DISBURSE","REJECTED WITH REASON"].map((name,index)=>({id:String(index),value:name,name,color:"#FFF0C2",display_order:index,is_system:true,is_active:true}))); mocks.owner = false;
+  vi.clearAllMocks(); mocks.request.mockImplementation(async (path:string)=>path.includes("/bank-options")?[{id:"aaaaaaaaaaaaaaaaaaaaaaaa",name:"Synthetic Bank",is_active:true,version:1}]:["FOLLOW UP PENDING","NEXT FOLLOW UP","DISBURSE","REJECTED WITH REASON"].map((name,index)=>({id:String(index),value:name,name,color:"#FFF0C2",display_order:index,is_system:true,is_active:true}))); mocks.owner = false;
   mocks.list.mockResolvedValue({ items: [], total: 0 });
   mocks.lookup.mockResolvedValue({ self_id: "synthetic-user", employees: [{ id: "synthetic-user", name: "Synthetic Employee" }], leads: [], cases: [] });
   mocks.save.mockResolvedValue({ id: "synthetic-row", version: 1 }); mocks.remove.mockResolvedValue({ deleted: true });
@@ -40,12 +40,14 @@ describe("simple daily entry", () => {
     const dialog = within(screen.getByRole("dialog"));
     await waitFor(() => expect(dialog.getByLabelText("Employee name")).toHaveValue("Synthetic Employee"));
     fireEvent.change(dialog.getByLabelText("Employee name"), { target: { value: "Synthetic manual label" } });
-    for (const [label, value] of [["Customer name", "Synthetic Customer"], ["Customer number", "9000000000"], ["Bank / NBFC", "Synthetic Bank"], ["Today's case status / remarks", "Call tomorrow"]]) {
+    for (const [label, value] of [["Customer name", "Synthetic Customer"], ["Customer number", "9000000000"], ["Today's case status / remarks", "Call tomorrow"]]) {
       fireEvent.change(dialog.getByLabelText(label), { target: { value } });
     }
+    fireEvent.click(dialog.getByLabelText("Bank / NBFC"));
+    fireEvent.click(await dialog.findByRole("checkbox",{name:"Synthetic Bank"}));
     expect(dialog.queryByLabelText(/CRM ID|LEAD ID|Employee ID/)).not.toBeInTheDocument();
     fireEvent.click(dialog.getByRole("button", { name: "Save record" }));
-    await waitFor(() => expect(mocks.save).toHaveBeenCalledWith("follow-ups", expect.objectContaining({ lead_id: null, customer_name: "Synthetic Customer", employee_name: "Synthetic manual label", assigned_to: "synthetic-user", next_action: "Call tomorrow" }), undefined));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledWith("follow-ups", expect.objectContaining({ banks: [{option_id:"aaaaaaaaaaaaaaaaaaaaaaaa",name:"Synthetic Bank"}], customer_name: "Synthetic Customer", employee_name: "Synthetic manual label", assigned_to: "synthetic-user", next_action: "Call tomorrow" }), undefined));
   });
 
   it("provides Add record and individual Edit for loan progress", async () => {

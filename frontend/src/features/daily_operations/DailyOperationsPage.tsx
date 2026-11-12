@@ -45,7 +45,7 @@ export function DailyOperationsPage({ area }: { area: Area }) {
   const allowed = can(`daily_operations:${area}`, "view");
   const params = new URLSearchParams({ ...Object.fromEntries(Object.entries(filters).filter(([, value]) => value)), page: String(page), page_size: "20" });
   const query = useQuery({ queryKey: ["daily-operations", userId, area, params.toString()], queryFn: () => listRecords(area, params.toString()), enabled: !loading && allowed, refetchInterval: area === "sessions" || area === "follow-ups" ? 30000 : false });
-  const lookup = useQuery({ queryKey: ["daily-lookups", userId, ""], queryFn: () => getLookups(), enabled: !loading && allowed });
+  const lookup = useQuery({ queryKey: ["daily-lookups", userId, area, ""], queryFn: () => getLookups("", area === "progress"), enabled: !loading && allowed });
   const [editing, setEditing] = useState<Row | null | undefined>(undefined);
   const [history, setHistory] = useState<Row | null>(null);
   const [removing, setRemoving] = useState<Row | null>(null);
@@ -74,6 +74,8 @@ export function DailyOperationsPage({ area }: { area: Area }) {
   }
   const visibleColumns = [...columns[area], ...(area === "progress" && extraColumns ? [["login_date", "DATE OF LOGIN"], ["age_days", "AGE (DAYS)"], ["disbursed_at", "DATE OF DISBURSE"], ["disbursed_amount", "DISBURSED AMOUNT"], ["updated_at", "UPDATE DATE"]] : [])];
   function cell(key: string, value: unknown) {
+    if (key === "banks") return Array.isArray(value)?value.map(bank=>String((bank as {name:string}).name)).join(", "):text(value);
+    if (key === "bank" && Array.isArray(value)) return value.map(bank=>String((bank as {name:string}).name)).join(", ");
     if (key === "approved_amount" || key === "disbursed_amount") return money(value);
     if (key === "recorded_seconds") return value == null ? "Open session" : `${Math.floor(Number(value) / 3600)}h ${Math.floor(Number(value) % 3600 / 60)}m`;
     if (["login_at", "logout_at", "updated_at"].includes(key)) return businessTime(value);
@@ -106,7 +108,7 @@ export function DailyOperationsPage({ area }: { area: Area }) {
       {query.isLoading || loading ? <p role="status">Loading records…</p> : query.isError ? <Button variant="secondary" onClick={() => void query.refetch()}>Retry</Button> : <>
         <TableContainer><Table aria-label={`${areas[area]} records`}><TableHead><TableHeadRow>{visibleColumns.map(([key, label]) => <Th key={key}>{label}</Th>)}<Th className="sticky right-0 bg-card">Actions</Th></TableHeadRow></TableHead><TableBody>
           {!query.data?.items.length ? <TableRow><Td colSpan={visibleColumns.length + 1}><div className="py-8 text-center text-textSecondary">No records match these filters.{area !== "sessions" && " Use Add record to enter your first row."}</div></Td></TableRow> : query.data.items.map(row => <TableRow key={row.id} style={area === "follow-ups" ? statusRowStyle(text(row.status),statuses.data??[]) : undefined} className={area === "follow-ups" ? "[&>td]:!bg-inherit hover:brightness-95 focus-within:outline focus-within:outline-2 focus-within:outline-current" : ""}>
-            {visibleColumns.map(([key]) => <Td key={key} className="py-2.5 max-w-xs"><span className={key === "status" ? "inline-block rounded-md bg-primary/5 px-2 py-1 text-xs font-medium" : ""}>{cell(key, area==="follow-ups"&&key==="status"?(row.status_display||row.status):row[key])}</span>{area === "progress" && key === "customer_name" && row.source === "manual" && <span className="block text-xs text-textSecondary">Daily entry</span>}</Td>)}
+            {visibleColumns.map(([key]) => <Td key={key} className="py-2.5 max-w-xs"><span title={key==="bank"&&area==="follow-ups"?cell("banks",row.banks):undefined} className={key === "status" ? "inline-block rounded-md bg-primary/5 px-2 py-1 text-xs font-medium" : key==="bank"?"line-clamp-2":""}>{cell(key, area==="follow-ups"&&key==="status"?(row.status_display||row.status):area==="follow-ups"&&key==="bank"?(row.banks||row.bank):row[key])}</span>{area === "progress" && key === "customer_name" && row.source === "manual" && <span className="block text-xs text-textSecondary">Daily entry</span>}</Td>)}
             <Td className={`sticky right-0 py-2 ${area === "follow-ups" ? "bg-inherit" : "bg-card"}`}><div className="flex items-center gap-1">
               {(area !== "sessions" && can(`daily_operations:${area}`, "edit")) && <Button variant="ghost" size="sm" className={area === "follow-ups" ? "!text-inherit focus-visible:!outline-current" : ""} onClick={() => void inspect(row, true)}>Edit</Button>}
               <Button variant="ghost" size="sm" className={area === "follow-ups" ? "!text-inherit focus-visible:!outline-current" : ""} onClick={() => void inspect(row, false)}>{area === "sessions" ? "Session history" : "History"}</Button>

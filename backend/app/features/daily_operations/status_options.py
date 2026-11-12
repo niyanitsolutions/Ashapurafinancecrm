@@ -110,10 +110,14 @@ async def install(db: Any) -> None:
 
 
 class StatusOptions:
+    collection_name = "daily_followup_status_options"
+    audit_prefix = "followup_status_option_"
+    styled = True
+
     def __init__(self, service: Any) -> None:
         self.service = service
         self.db = service.db
-        self.collection = self.db.daily_followup_status_options
+        self.collection = self.db[self.collection_name]
 
     async def authorize(self, actor: User, manage: bool = False) -> None:
         await self.service.employee_id(actor)  # active employee or owner, no customers/partners
@@ -228,6 +232,9 @@ class StatusOptions:
                     "created_at": now,
                     "deleted_at": None,
                 }
+                if not self.styled:
+                    doc.pop("color", None)
+                    doc.pop("display_order", None)
                 doc["_id"] = (await self.collection.insert_one(doc)).inserted_id
                 action = "created"
         except DuplicateKeyError:
@@ -236,7 +243,7 @@ class StatusOptions:
             ) from None
         await write_audit_log(
             self.db,
-            event_type="followup_status_option_" + action,
+            event_type=self.audit_prefix + action,
             user_id=actor.require_id(),
             metadata={
                 "company_id": COMPANY,

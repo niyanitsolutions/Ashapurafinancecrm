@@ -13,7 +13,7 @@ export interface DailyLookups {
   leads: { id: string; name: string; number: string; code: string }[];
   cases: { id: string; name: string; number: string; code: string; bank: string; status?: string }[];
 }
-export const getLookups = (search = "") => apiRequest<DailyLookups>(`/daily-operations/lookups?search=${encodeURIComponent(search)}`);
+export const getLookups = (search = "", includeCrm = false) => apiRequest<DailyLookups>(`/daily-operations/lookups?search=${encodeURIComponent(search)}&include_crm=${includeCrm}`);
 export const deleteRecord = (area: Area, row: Row) => apiRequest(`/daily-operations/${area}/${row.id}`, { method: "DELETE", body: JSON.stringify({ version: row.version ?? 0 }) });
 export interface List { month?: string; business_timezone?: string; as_of?: string; items: Row[]; total: number; statuses?: Record<string, number>; metrics?: { approved_amount: number; disbursed_amount: number }; breakdowns?: Record<string, { label: string; count: number }[]> }
 export interface RowError { column: string; message: string }

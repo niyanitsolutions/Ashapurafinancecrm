@@ -391,7 +391,7 @@ async def remove(
 
 
 async def lookups(
-    service: "DailyOperationsService", actor: User, search: str = ""
+    service: "DailyOperationsService", actor: User, search: str = "", include_crm: bool = False
 ) -> dict[str, Any]:
     await service.authorize(actor, "follow-ups")
     own_id = await service.employee_id(actor)
@@ -415,6 +415,14 @@ async def lookups(
         (e["display_name"] for e in employees if str(e["_id"]) == own_id),
         (own_profile or {}).get("full_name", "Owner" if actor.role == OWNER else ""),
     )
+    if not include_crm:
+        return {
+            "self_id": own_id,
+            "self_name": self_name,
+            "employees": [{"id": str(e["_id"]), "name": e["display_name"]} for e in employees],
+            "leads": [],
+            "cases": [],
+        }
     query: dict[str, Any] = {"is_deleted": False, "product_category": "loan"}
     if actor.role != OWNER:
         query["assigned_to"] = own_id

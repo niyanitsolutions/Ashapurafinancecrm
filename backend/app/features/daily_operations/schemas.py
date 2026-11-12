@@ -4,6 +4,8 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.features.daily_operations.bank_options import BankChoice
+
 
 def phone_number(value: str) -> str:
     if not value:
@@ -34,7 +36,8 @@ class FollowUpInput(BaseModel):
     loan_type: str = Field(default="", max_length=200)
     employee_name: str = Field(default="", max_length=200)
     assigned_to: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{24}$")
-    bank: str = Field(min_length=1, max_length=200)
+    bank: str = Field(default="", max_length=200)
+    banks: list[BankChoice] | None = Field(default=None, min_length=1, max_length=30)
     status: FollowStatus = Field(default="FOLLOW UP PENDING", min_length=1, max_length=100)
     remarks: str = Field(default="", max_length=4000)
     remarks_date: CalendarDate
@@ -55,8 +58,6 @@ class FollowUpInput(BaseModel):
             raise ValueError("REJECTED WITH REASON requires a rejection reason.")
         if self.status != "REJECTED WITH REASON" and self.rejection_reason:
             raise ValueError("Rejection reason is only valid for REJECTED WITH REASON.")
-        if self.status == "DISBURSE" and not self.case_id:
-            raise ValueError("DISBURSE requires a linked loan case.")
         if self.status in {"DISBURSE", "REJECTED WITH REASON"} and self.due_date:
             raise ValueError("Resolved follow-ups cannot have a pending due date.")
         if (

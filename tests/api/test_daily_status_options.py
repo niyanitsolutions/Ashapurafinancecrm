@@ -279,7 +279,7 @@ async def test_status_changes_preserve_history_and_default_rules(client, staff):
     assert saved.status_code == 200, saved.text
     assert saved.json()["data"]["status_display"] == "REJECTED WITH REASON"
     assert saved.json()["data"]["history"][-1]["before"]["status"] == status["value"]
-    for status_name in ("DISBURSE", "REJECTED WITH REASON"):
+    for status_name in ("REJECTED WITH REASON",):
         assert (
             await client.post(
                 BASE + "/follow-ups",

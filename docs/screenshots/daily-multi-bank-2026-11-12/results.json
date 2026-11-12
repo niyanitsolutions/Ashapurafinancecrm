@@ -1,0 +1,42 @@
+[
+  {
+    "width": 1440,
+    "result": "passed",
+    "backend": "actual FastAPI",
+    "database": "isolated MongoDB",
+    "checks": [
+      "multi-bank-create",
+      "chips-remove-reselect",
+      "shared-options",
+      "rename-archive",
+      "historical-banks",
+      "edit-preserves-other-banks",
+      "independent-DISBURSE",
+      "configured-row-color",
+      "history",
+      "search-filter-export",
+      "employee-owner-permissions",
+      "refresh-mobile-layout"
+    ]
+  },
+  {
+    "width": 390,
+    "result": "passed",
+    "backend": "actual FastAPI",
+    "database": "isolated MongoDB",
+    "checks": [
+      "multi-bank-create",
+      "chips-remove-reselect",
+      "shared-options",
+      "rename-archive",
+      "historical-banks",
+      "edit-preserves-other-banks",
+      "independent-DISBURSE",
+      "configured-row-color",
+      "history",
+      "search-filter-export",
+      "employee-owner-permissions",
+      "refresh-mobile-layout"
+    ]
+  }
+]

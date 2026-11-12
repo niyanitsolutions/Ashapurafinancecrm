@@ -14,6 +14,7 @@ from app.features.auth.dependencies import get_current_active_user
 from app.features.auth.models import User
 from app.features.bulk_import.files import MAX_BYTES
 from app.features.daily_operations import entries, transfers, views
+from app.features.daily_operations.bank_options import BankEdit, BankName, BankOptions
 from app.features.daily_operations.schemas import (
     DeleteRecord,
     FollowUpInput,
@@ -109,10 +110,13 @@ async def list_area(
 
 @router.get("/lookups")
 async def lookups(
-    actor: Actor, db: Db, search: Annotated[str, Query(max_length=200)] = ""
+    actor: Actor,
+    db: Db,
+    search: Annotated[str, Query(max_length=200)] = "",
+    include_crm: bool = False,
 ) -> ApiResponse[dict[str, Any]]:
     return ApiResponse[dict[str, Any]].ok(
-        await entries.lookups(DailyOperationsService(db), actor, search)
+        await entries.lookups(DailyOperationsService(db), actor, search, include_crm)
     )
 
 
@@ -402,6 +406,53 @@ async def update_issue(
             actor,
             record_id,
             payload.version,
+        )
+    )
+
+
+@router.get("/bank-options")
+async def bank_options(actor: Actor, db: Db, include_archived: bool = False) -> ApiResponse[Any]:
+    return ApiResponse.ok(
+        await BankOptions(DailyOperationsService(db)).list(actor, include_archived)
+    )
+
+
+@router.post("/bank-options")
+async def create_bank_option(payload: BankName, actor: Actor, db: Db) -> ApiResponse[Any]:
+    return ApiResponse.ok(
+        await BankOptions(DailyOperationsService(db)).change(actor, name=payload.name)
+    )
+
+
+@router.patch("/bank-options/{option_id}")
+async def edit_bank_option(
+    option_id: str, payload: BankEdit, actor: Actor, db: Db
+) -> ApiResponse[Any]:
+    return ApiResponse.ok(
+        await BankOptions(DailyOperationsService(db)).change(
+            actor, name=payload.name, option_id=option_id, version=payload.version
+        )
+    )
+
+
+@router.post("/bank-options/{option_id}/archive")
+async def archive_bank_option(
+    option_id: str, payload: OptionVersion, actor: Actor, db: Db
+) -> ApiResponse[Any]:
+    return ApiResponse.ok(
+        await BankOptions(DailyOperationsService(db)).change(
+            actor, option_id=option_id, version=payload.version, active=False
+        )
+    )
+
+
+@router.post("/bank-options/{option_id}/restore")
+async def restore_bank_option(
+    option_id: str, payload: OptionVersion, actor: Actor, db: Db
+) -> ApiResponse[Any]:
+    return ApiResponse.ok(
+        await BankOptions(DailyOperationsService(db)).change(
+            actor, option_id=option_id, version=payload.version, active=True
         )
     )
 

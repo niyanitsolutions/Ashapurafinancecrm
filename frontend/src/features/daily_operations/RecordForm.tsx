@@ -10,6 +10,8 @@ import { useAuth } from "@/features/auth/useAuth";
 import { apiRequest } from "@/shared/api/client";
 import { istDateKey, todayISTDateString } from "@/shared/dateFormat";
 import { FollowUpStatusField } from "./FollowUpStatusField";
+import { BankMultiSelect } from "./BankMultiSelect";
+import { recordBanks } from "./bankOptions";
 import { EmployeeNameField } from "./EmployeeNameField";
 import { base, businessTime, followStatuses, getLookups, issueStatuses, saveRecord, type Area, type Row } from "./api";
 
@@ -40,8 +42,9 @@ export function RecordForm({ area, record, onSaved, onCancel }: {
     }
     return defaults;
   });
+  const [banks,setBanks]=useState(()=>recordBanks(record));
   const [linkSearch, setLinkSearch] = useState("");
-  const lookup = useQuery({ queryKey: ["daily-lookups", userId, linkSearch], queryFn: () => getLookups(linkSearch), enabled: area !== "sessions" });
+  const lookup = useQuery({ queryKey: ["daily-lookups", userId, area, linkSearch], queryFn: () => getLookups(linkSearch,area === "progress"), enabled: area !== "sessions" });
   const employees = lookup.data?.employees ?? [];
   const defaultName = lookup.data?.self_name ?? employees.find(employee => employee.id === lookup.data?.self_id)?.name ?? (isOwner ? "Owner" : "");
   const selectedName = values.employee_name ?? employees.find(employee => employee.id === values.assigned_to)?.name ?? defaultName;
@@ -56,7 +59,7 @@ export function RecordForm({ area, record, onSaved, onCancel }: {
       value={values[key] ?? ""} maxLength={1000} min={type === "number" ? 0 : key === "due_date" ? values.date : undefined}
       step={type === "number" ? "0.01" : undefined} onChange={event => change(key, event.target.value)} />
   );
-  const linked = !!values.case_id || !!values.lead_id;
+  const linked = area === "progress" && (!!values.case_id || !!values.lead_id);
   const crmProgress = area === "progress" && !!values.case_id;
   const openFollowUp = followStatuses.slice(0, 2).includes(values.status);
   const showFollowUpDate = openFollowUp || !followStatuses.includes(values.status);
@@ -79,9 +82,10 @@ export function RecordForm({ area, record, onSaved, onCancel }: {
           payload = { ...payload, inquiry: values.inquiry, priority: values.priority,
             status: values.status, resolution_notes: values.status === "RESOLVED" ? values.resolution_notes : "" };
         } else if (area === "follow-ups") {
-          payload = { ...payload, lead_id: values.lead_id || null, case_id: values.case_id || null,
+          if(!banks.length)throw new Error("Select at least one Bank / NBFC.");
+          payload = { ...payload, banks,
             customer_name: values.customer_name ?? "", customer_number: values.customer_number ?? "",
-            loan_type: values.loan_type ?? "", bank: values.bank, status: values.status,
+            loan_type: values.loan_type ?? "", status: values.status,
             remarks: values.remarks ?? "", remarks_date: values.remarks_date || values.date,
             next_action: values.next_action || values.remarks || "Follow up with customer",
             due_date: showFollowUpDate ? values.due_date || values.date : null,
@@ -103,12 +107,10 @@ export function RecordForm({ area, record, onSaved, onCancel }: {
     finally { setSaving(false); }
   }
 
-  const linkOptions = area === "progress" || values.status === "DISBURSE" ? lookup.data?.cases ?? [] : [
-    ...(lookup.data?.leads ?? []), ...(area === "follow-ups" ? (lookup.data?.cases ?? []).map(option => ({ ...option, id: `case:${option.id}` })) : []),
-  ];
+  const linkOptions = lookup.data?.cases ?? [];
   function linkRecord(id: string) {
     const selected = linkOptions.find(option => option.id === id);
-    const isCase = id.startsWith("case:") || area === "progress" || values.status === "DISBURSE";
+    const isCase = id.startsWith("case:") || area === "progress";
     const canonicalId = id.replace(/^case:/, "");
     setValues(old => ({ ...old, lead_id: area === "follow-ups" && !isCase ? canonicalId : "", case_id: isCase ? canonicalId : "",
       customer_name: selected?.name ?? old.customer_name ?? "", customer_number: selected?.number ?? old.customer_number ?? "",
@@ -129,7 +131,7 @@ export function RecordForm({ area, record, onSaved, onCancel }: {
         {area !== "issues" && <>
           {field("customer_name", "Customer name", !linked, "text", linked)}
           {field("customer_number", "Customer number", !linked, "tel", linked)}
-          {field("loan_type", "Loan type", false, "text", linked)}{field("bank", "Bank / NBFC", !crmProgress, "text", crmProgress)}
+          {field("loan_type", "Loan type", false, "text", linked)}{area === "follow-ups"?<BankMultiSelect value={banks} onChange={setBanks}/>:field("bank", "Bank / NBFC", !crmProgress, "text", crmProgress)}
         </>}
       </div>
       {area === "issues" ? <>
@@ -162,14 +164,13 @@ export function RecordForm({ area, record, onSaved, onCancel }: {
           </>}
         </div>
         {area === "progress" && <p className="text-xs text-textSecondary mb-3">Daily entries do not approve or disburse a loan. Official amounts are managed in Loan Management.</p>}
-        {area !== "issues" && !record && <>
+        {area === "progress" && !record && <>
           <FormField label="Find an existing CRM record (optional)" value={linkSearch} placeholder="Search customer name or case code" onChange={event => setLinkSearch(event.target.value)} />
-          <SelectField label="Link existing CRM record" placeholder="Manual entry — no CRM link" value={values.case_id && area === "follow-ups" && values.status !== "DISBURSE" ? `case:${values.case_id}` : values.case_id || values.lead_id || ""}
+          <SelectField label="Link existing CRM record" placeholder="Manual entry — no CRM link" value={values.case_id || ""}
             options={linkOptions.map(option => ({ value: option.id, label: [option.name, "bank" in option ? option.bank : "", option.code].filter(Boolean).join(" · ") }))}
             onChange={event => linkRecord(event.target.value)} />
         </>}
       </details>
-      {area === "follow-ups" && values.status === "DISBURSE" && !values.case_id && <SelectField label="Verified disbursed loan" required placeholder="Choose the loan" value="" options={(lookup.data?.cases ?? []).map(option => ({ value: option.id, label: [option.name, option.bank, option.code].filter(Boolean).join(" · ") }))} onChange={event => linkRecord(event.target.value)} />}
     </>}
     <div className="flex justify-end gap-2 border-t border-border pt-4">
       <Button variant="secondary" onClick={onCancel}>Cancel</Button>

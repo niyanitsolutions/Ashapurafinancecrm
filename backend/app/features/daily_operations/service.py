@@ -53,6 +53,10 @@ def public(doc: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
     # Keep retired interest data in MongoDB, but exclude it from the active API/history UI.
     retired = {"customer_interest_option_id", "customer_interest_status_snapshot"}
     doc = {key: value for key, value in doc.items() if key not in retired}
+    if "remarks_date" in doc and "customer_number" in doc and "banks" not in doc:
+        from app.features.daily_operations.bank_options import saved_banks
+
+        doc["banks"] = saved_banks(doc)
     if "customer_number" in doc and "status" in doc:
         doc["status_display"] = doc.get("status_label") or doc["status"]
     doc = calendar_values(doc)
@@ -113,90 +117,16 @@ class DailyOperationsService:
 
     async def validate_follow_up(self, payload: FollowUpInput, actor: User) -> dict[str, Any]:
         await self.authorize(actor, "follow-ups")
-        from app.features.daily_operations.entries import assignee, case_row
+        from app.features.daily_operations.entries import assignee
 
-        if payload.case_id:
-            from math import isfinite
-
-            linked = await case_row(self, actor, payload.case_id)
-            application = await self.db.applications.find_one(
-                {"_id": ObjectId(linked["application_id"]), "is_deleted": False}
+        if not payload.customer_name or not payload.customer_number:
+            raise ValidationError(
+                "Enter the customer name and number for this independent daily record."
             )
-            if payload.lead_id and (
-                not application or application.get("lead_id") != payload.lead_id
-            ):
-                raise ValidationError("Loan case and lead do not belong to the same application.")
-            if payload.status == "DISBURSE" and (
-                linked["canonical_status"] != "disbursed"
-                or linked["disbursed_amount"] is None
-                or not isfinite(linked["disbursed_amount"])
-                or linked["disbursed_amount"] < 0
-                or linked["disbursed_at"] is None
-                or not linked["disbursed_reference"]
-            ):
-                raise ValidationError(
-                    "Choose a loan with a verified disbursement before marking DISBURSE."
-                )
-            data = stored_values(payload)
-            data.update(
-                {
-                    key: linked[key]
-                    for key in ("customer_name", "customer_number", "loan_type", "bank")
-                }
-            )
-            data.update(await assignee(self, actor, linked.get("assigned_to"), ""))
-            data["source"] = "crm"
-            return data
-        if not payload.lead_id:
-            from app.shared.customer_identity import normalize_mobile, normalized_name
-
-            try:
-                mobile = normalize_mobile(payload.customer_number)
-            except ValueError:
-                mobile = payload.customer_number  # Preserve manual international numbers.
-            matches = (
-                await LeadService(self.db).check_duplicate(mobile, actor)
-                if mobile.isdigit() and len(mobile) == 10 and mobile[0] in "6789"
-                else []
-            )
-            if matches:
-                matching = matches[0]
-                if normalized_name(matching.full_name) != normalized_name(payload.customer_name):
-                    raise ValidationError(
-                        "This mobile belongs to a different customer name. Review the linked lead before continuing."
-                    )
-                return await self.validate_follow_up(
-                    payload.model_copy(update={"lead_id": matching.require_id()}), actor
-                )
-            customer = await self.db.customers.find_one(
-                {"mobile": mobile, "is_deleted": False}, {"_id": 1}
-            )
-            if customer:
-                raise ValidationError(
-                    "Use Link existing CRM record to choose the existing customer's loan. This daily entry does not create a new customer."
-                )
-            data = stored_values(payload)
-            data.update(await assignee(self, actor, payload.assigned_to, payload.employee_name))
-            data["source"] = "manual"
-            return data
-        lead = await LeadService(self.db).get_lead_scoped(payload.lead_id, actor)
-        if lead.product_category != "loan":
-            raise ValidationError("Daily loan follow-ups require a loan lead.")
-        if not lead.assigned_to:
-            raise ValidationError("Assign the lead in Leads before scheduling a follow-up.")
-        product = await self.db.loan_products.find_one({"_id": ObjectId(lead.product_id)})
-        assigned_employee = await self.db.employees.find_one(
-            {"_id": ObjectId(lead.assigned_to), "is_deleted": False}, {"display_name": 1}
-        )
-        return {
-            **stored_values(payload),
-            "assigned_to": lead.assigned_to,
-            "customer_name": lead.full_name,
-            "customer_number": lead.mobile,
-            "loan_type": product.get("name", "") if product else "",
-            "lead_code": lead.lead_code,
-            "employee_name": assigned_employee["display_name"] if assigned_employee else "Owner",
-        }
+        data = stored_values(payload)
+        data.update(await assignee(self, actor, payload.assigned_to, payload.employee_name))
+        data["source"] = "manual"
+        return data
 
     async def validate_issue(
         self, payload: IssueInput, actor: User, old: dict[str, Any] | None = None
@@ -267,30 +197,22 @@ class DailyOperationsService:
                 and doc.get("assigned_to") != await self.employee_id(actor)
             ):
                 raise ForbiddenError("This daily entry is not assigned to you.")
-            current = await self.validate_follow_up(
-                FollowUpInput.model_validate(
-                    {
-                        k: value
-                        for k, value in calendar_values(doc).items()
-                        if k in FollowUpInput.model_fields
-                    }
-                ),
-                actor,
-            )
-            if doc.get("lead_id") or doc.get("case_id"):
-                doc = {
-                    **doc,
-                    **{
-                        key: current[key]
-                        for key in (
-                            "assigned_to",
-                            "employee_name",
-                            "customer_name",
-                            "customer_number",
-                            "loan_type",
-                        )
-                    },
-                }
+            if doc.get("case_id"):
+                case = await self.db.application_workflows.find_one(
+                    {"_id": ObjectId(doc["case_id"]), "is_deleted": False}
+                )
+                if not case or (
+                    actor.role != OWNER and case.get("assigned_to") != await self.employee_id(actor)
+                ):
+                    raise ForbiddenError(
+                        "This historical daily entry is no longer assigned to you."
+                    )
+                if actor.role != OWNER:
+                    doc["assigned_to"] = case["assigned_to"]
+            elif doc.get("lead_id"):
+                lead = await LeadService(self.db).get_lead_scoped(doc["lead_id"], actor)
+                if actor.role != OWNER:
+                    doc["assigned_to"] = lead.assigned_to
         return doc
 
     async def save(
@@ -308,19 +230,23 @@ class DailyOperationsService:
 
             return await save_progress(self, actor, payload, record_id, version, import_key)
         old = await self.get(kind, record_id, actor) if record_id else None
-        if (
-            old
-            and kind == "follow-ups"
-            and (
-                payload.lead_id != old["lead_id"]  # type: ignore[union-attr]
-                or (old.get("case_id") and payload.case_id != old.get("case_id"))  # type: ignore[union-attr]
-            )
-        ):
-            raise ValidationError(
-                "Linked lead and loan case cannot be changed; create a new record."
-            )
         if isinstance(payload, FollowUpInput):
+            if (payload.lead_id and payload.lead_id != (old or {}).get("lead_id")) or (
+                payload.case_id and payload.case_id != (old or {}).get("case_id")
+            ):
+                raise ValidationError(
+                    "Daily Follow-up records are independent; new CRM links are not supported."
+                )
             data = await self.validate_follow_up(payload, actor)
+            from app.features.daily_operations.bank_options import BankOptions
+
+            banks = await BankOptions(self).selections(payload.banks, payload.bank, old)
+            data.update(
+                banks=banks,
+                bank=", ".join(row["name"] for row in banks),
+                lead_id=(old or {}).get("lead_id"),
+                case_id=(old or {}).get("case_id"),
+            )
             from app.features.daily_operations.status_options import StatusOptions
 
             data.update(await StatusOptions(self).record_value(payload.status, old))
@@ -433,7 +359,13 @@ class DailyOperationsService:
                     ]
                 }
             )
-        for key, value in (("status", status), ("bank", bank), ("loan_type", loan_type)):
+        if kind == "follow-ups" and bank:
+            query.setdefault("$and", []).append({"$or": [{"banks.name": bank}, {"bank": bank}]})
+        for key, value in (
+            ("status", status),
+            ("bank", bank if kind != "follow-ups" else ""),
+            ("loan_type", loan_type),
+        ):
             if value:
                 query[key] = value
         if date_from or date_to:
@@ -481,7 +413,6 @@ class DailyOperationsService:
             from app.features.daily_operations.follow_status import status_stage
 
             pipeline.append(status_stage(now))
-            await self.authorize_lead_view(actor)
             if actor.role != OWNER:
                 # Old linked rows predate case_oid. Fail closed on their case ownership;
                 # new rows use the live indexed case lookup below, including reassignment.
@@ -558,8 +489,6 @@ class DailyOperationsService:
                                     {"$ifNull": ["$lead.assigned_to", "$assigned_to"]},
                                 ]
                             },
-                            "customer_name": {"$ifNull": ["$lead.full_name", "$customer_name"]},
-                            "customer_number": {"$ifNull": ["$lead.mobile", "$customer_number"]},
                         }
                     },
                 ]
@@ -591,7 +520,13 @@ class DailyOperationsService:
                             {"$limit": 100},
                         ],
                         "by_bank": [
-                            {"$group": {"_id": "$bank", "count": {"$sum": 1}}},
+                            {"$unwind": {"path": "$banks", "preserveNullAndEmptyArrays": True}},
+                            {
+                                "$group": {
+                                    "_id": {"$ifNull": ["$banks.name", "$bank"]},
+                                    "count": {"$sum": 1},
+                                }
+                            },
                             {"$sort": {"count": -1, "_id": 1}},
                             {"$limit": 100},
                         ],
@@ -662,6 +597,9 @@ async def ensure_daily_operations_indexes(db: AsyncIOMotorDatabase[Any]) -> None
     from app.features.daily_operations.status_options import install
 
     await install(db)
+    from app.features.daily_operations.bank_options import install as install_banks
+
+    await install_banks(db)
     for name in COLLECTIONS.values():
         if name == "daily_progress_entries":
             await db[name].create_index("import_key", unique=True, sparse=True)

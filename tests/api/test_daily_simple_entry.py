@@ -391,7 +391,11 @@ async def test_linked_follow_up_tracks_current_case_owner_after_reassignment(
         {"_id": ObjectId(lead["id"])}, {"$set": {"assigned_to": first["id"]}}
     )
     case_id = await seed_case(mock_db, lead["id"])
-    row = await create(client, headers, "follow-ups", follow(case_id=case_id))
+    row = await create(client, headers, "follow-ups", follow())
+    await mock_db.daily_follow_ups.update_one(
+        {"_id": ObjectId(row["id"])},
+        {"$set": {"case_id": case_id, "case_oid": ObjectId(case_id)}},
+    )
     assert (await client.get(f"{BASE}/follow-ups", headers=headers)).json()["data"][
         "total"
     ] == 1
