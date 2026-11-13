@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 from pymongo.errors import DuplicateKeyError
 
+from app.core.exceptions import ValidationError
 from app.features.integrations.airtel_iq import (
     APPROVED_MESSAGE,
     BLOCKED,
@@ -60,7 +61,13 @@ async def request(body: dict[str, Any], authorization: str) -> tuple[int, Any]:
 async def submit(
     db: Any, config: dict[str, str], mobile: str, otp: str, reference: str
 ) -> dict[str, Any]:
-    validate_config({k: v for k, v in config.items() if k not in {"provider", "_provider"}})
+    if len(otp) != 4 or not otp.isascii() or not otp.isdigit():
+        raise ValidationError("Airtel OTP must contain exactly four numeric digits.")
+    if len(mobile) != 10 or not mobile.isascii() or not mobile.isdigit():
+        raise ValidationError("Use the registered ten-digit mobile number.")
+    config = validate_config(
+        {k: v for k, v in config.items() if k not in {"provider", "_provider"}}
+    )
     if not confirmed_contract(config):
         return {"success": False, "status": "unconfigured", "error": BLOCKED}
     key = hashlib.sha256(
@@ -91,7 +98,7 @@ async def submit(
         ),
         "dltTemplateId": config["dlt_template_id"],
         "entityId": config["entity_id"],
-        "message": APPROVED_MESSAGE.replace("##numeric##", otp),
+        "message": APPROVED_MESSAGE.replace("{#numeric#}", otp),
         "messageType": config["message_type"],
         "sourceAddress": config["sender_id"],
     }

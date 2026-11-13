@@ -289,11 +289,12 @@ export function CreateConfigForm({
                     </select>
                   ) : (
                     <input
-                      type={field.secret ? "password" : "text"} value={fieldValues[field.key] || ""}
+                      aria-label={isAirtel ? field.label : undefined} type={field.secret ? "password" : "text"} value={fieldValues[field.key] || ""}
                       onChange={(e) => { setFieldValues((prev) => ({ ...prev, [field.key]: e.target.value })); resetTestState(); }}
                       className="mt-1 block w-full rounded border border-border px-3 py-2 text-sm"
                     />
                   )}
+                  {isAirtel && field.helpText && <span className="mt-1 block">{field.helpText}</span>}
                 </label>
               ))}
             </div>
@@ -310,9 +311,9 @@ export function CreateConfigForm({
           </li>
         ) : (
           <li>
-            <StepHeading step={3} title="Test Connection" />
+            <StepHeading step={3} title={isAirtel ? "Validate Configuration (no SMS)" : "Test Connection"} />
             <Button variant="secondary" size="sm" className="mb-3" disabled={!requiredFieldsFilled || isTesting} onClick={handleTest}>
-              {isTesting ? "Testing…" : "Test Connection"}
+              {isTesting ? "Testing…" : isAirtel ? "Validate Configuration (no SMS)" : "Test Connection"}
             </Button>
             {testError && <p className="mb-2 text-sm text-danger">{testError}</p>}
             {testResult && (

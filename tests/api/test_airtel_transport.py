@@ -6,7 +6,7 @@ import json
 import httpx
 import pytest
 from app.features.communication import airtel_iq as adapter
-from app.features.integrations.airtel_iq import APPROVED_MESSAGE, DEFAULTS, ENDPOINT
+from app.features.integrations.airtel_iq import DEFAULTS, ENDPOINT
 
 CONFIG = DEFAULTS | {
     "customer_id": "fixture-customer",
@@ -17,6 +17,44 @@ CONFIG = DEFAULTS | {
     "success_value": "true",
     "contract_confirmed": "true",
 }
+
+
+@pytest.mark.parametrize(
+    "destination",
+    [
+        "[1234567890]",
+        '[{"mobile":"{{mobile}}"}]',
+        '["{{mobile}}","other"]',
+        '["literal-mobile"]',
+    ],
+)
+async def test_invalid_destination_shape_never_sends(mock_db, monkeypatch, destination):
+    async def forbidden(*args):
+        raise AssertionError("Invalid destination must not reach Airtel")
+
+    monkeypatch.setattr(adapter, "request", forbidden)
+    result = await adapter.submit(
+        mock_db,
+        CONFIG | {"destination_template": destination},
+        "9000000001",
+        "0472",
+        "invalid-destination",
+    )
+    assert not result["success"]
+    assert await mock_db.sms_submissions.count_documents({}) == 0
+
+
+@pytest.mark.parametrize("otp", ["12345", "{#numeric#}", "abcd", "１２３４"])
+async def test_invalid_otp_never_sends(mock_db, monkeypatch, otp):
+    from app.core.exceptions import ValidationError
+
+    async def forbidden(*args):
+        raise AssertionError("Invalid OTP must not reach Airtel")
+
+    monkeypatch.setattr(adapter, "request", forbidden)
+    with pytest.raises(ValidationError):
+        await adapter.submit(mock_db, CONFIG, "9000000001", otp, "invalid-otp")
+    assert await mock_db.sms_submissions.count_documents({}) == 0
 
 
 async def test_exact_post_headers_body_and_no_secret_persistence(mock_db, monkeypatch):
@@ -43,7 +81,7 @@ async def test_exact_post_headers_body_and_no_secret_persistence(mock_db, monkey
         "destinationAddress": ["9000000001"],
         "dltTemplateId": DEFAULTS["dlt_template_id"],
         "entityId": DEFAULTS["entity_id"],
-        "message": APPROVED_MESSAGE.replace("##numeric##", "0472"),
+        "message": "Your OTP for mobile verification with Ashapura Financial Services is 0472. It is valid for 10 minutes. Do not share this OTP with anyone.",
         "messageType": "fixture-type",
         "sourceAddress": "ASHFNS",
     }

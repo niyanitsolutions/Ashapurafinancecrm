@@ -518,7 +518,7 @@ export function IntegrationDetailsPage() {
             </div>
           )}
           <Button variant="secondary" size="sm" disabled={isTesting} onClick={handleTest}>
-            {isTesting ? "Testing…" : "Test Connection"}
+            {isTesting ? "Testing…" : config.provider === "airtel_iq" ? "Validate Configuration (no SMS)" : "Test Connection"}
           </Button>
         </div>
 
@@ -559,11 +559,18 @@ export function IntegrationDetailsPage() {
             {fields.map((field) => (
               <label key={field.key} className="text-xs text-text/60">
                 {field.label} {field.secret && <span className="text-text/40">(current: {config.config[field.key] || "not set"})</span>}
-                <input
-                  type={field.secret ? "password" : "text"} placeholder={field.secret ? "Leave blank to keep current value" : config.config[field.key] || ""}
+                {config.provider === "airtel_iq" && field.toggle ? (
+                  <select value={fieldValues[field.key] ?? config.config[field.key] ?? "false"}
+                    onChange={(e) => setFieldValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                    className="mt-1 block w-full rounded border border-border px-3 py-2 text-sm">
+                    <option value="false">Not confirmed</option><option value="true">Confirmed with Airtel</option>
+                  </select>
+                ) : <input
+                  aria-label={config.provider === "airtel_iq" ? field.label : undefined} type={field.secret ? "password" : "text"} placeholder={field.secret ? "Leave blank to keep current value" : config.config[field.key] || ""}
                   value={fieldValues[field.key] || ""} onChange={(e) => setFieldValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
                   className="mt-1 block w-full rounded border border-border px-3 py-2 text-sm"
-                />
+                />}
+                {config.provider === "airtel_iq" && field.helpText && <span className="mt-1 block">{field.helpText}</span>}
               </label>
             ))}
           </div>

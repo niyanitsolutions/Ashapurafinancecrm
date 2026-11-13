@@ -13,10 +13,12 @@ DEFAULTS = {
     "dlt_template_id": "1077151820081508033",
     "entity_id": "1001474305342749488",
 }
+# username/password and message_id_field remain accepted for saved-config compatibility;
+# they are never used to infer authentication or sent in the Airtel request.
 SENSITIVE = frozenset({"customer_id", "username", "password", "authorization_value"})
 MASK = "********"
 BLOCKED = "Airtel IQ prepaid API contract is awaiting confirmation. No SMS was sent; activation is unavailable."
-APPROVED_MESSAGE = "Your OTP for mobile verification with Ashapura Financial Services is ##numeric##. It is valid for 10 minutes. Do not share this OTP with anyone."
+APPROVED_MESSAGE = "Your OTP for mobile verification with Ashapura Financial Services is {#numeric#}. It is valid for 10 minutes. Do not share this OTP with anyone."
 ALLOWED = frozenset(
     {
         *DEFAULTS,
@@ -68,7 +70,7 @@ def confirmed_contract(config: dict[str, str]) -> bool:
     import json
 
     if config.get("contract_confirmed") != "true" or any(
-        not config.get(key) for key in CONTRACT_KEYS
+        not config.get(key, "").strip() for key in CONTRACT_KEYS
     ):
         return False
     try:
@@ -77,6 +79,8 @@ def confirmed_contract(config: dict[str, str]) -> bool:
         return (
             isinstance(target, list)
             and len(target) == 1
+            and isinstance(target[0], str)
+            and bool(target[0].strip())
             and config["destination_template"].count("{{mobile}}") == 1
             and type(expected) in (str, int, bool)
             and bool(config["success_field"].strip())

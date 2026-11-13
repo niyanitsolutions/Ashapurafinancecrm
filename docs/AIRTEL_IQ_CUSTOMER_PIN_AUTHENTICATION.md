@@ -34,20 +34,19 @@ headers and an Authorization header. The adapter sends exactly these body keys:
 The approved fixed values are sender `ASHFNS`, template `1077151820081508033`,
 entity `1001474305342749488`. The message is preserved exactly:
 
-> Your OTP for mobile verification with Ashapura Financial Services is ##numeric##. It is valid for 10 minutes. Do not share this OTP with anyone.
+> Your OTP for mobile verification with Ashapura Financial Services is {#numeric#}. It is valid for 10 minutes. Do not share this OTP with anyone.
 
 Only the numeric placeholder is replaced with a cryptographically generated
 four-digit OTP, preserving leading zeros.
 
-**Unconfirmed:** actual Authorization scheme/value, destination array element
-structure and mobile format, permitted messageType values and response schema.
+**Unconfirmed:** actual Authorization scheme/value, destination array mobile format, permitted messageType values and response schema.
 No Basic/Bearer scheme, country prefix, message type or success code is assumed.
 The dedicated adapter isolates these rules behind explicit encrypted configuration:
 
 | Field | Purpose |
 |---|---|
-| Customer ID / Username / Password | Account credentials, fully masked after saving |
-| Authorization header value | Exact complete value confirmed for this account; username/password are not automatically combined into a guessed scheme |
+| Customer ID / Authorization header value | Required account-specific credentials, fully masked after saving |
+| Authorization header value | Exact complete value confirmed for this account; legacy username/password values are retained but not used or shown as required fields |
 | Message Type | Explicit account-supported value |
 | destinationAddress JSON array | Confirmed array structure containing exactly one `{{mobile}}` placeholder and one destination element; the placeholder receives the existing registered ten-digit mobile |
 | Response success field path | Explicit dot-delimited field path; numeric segments can address array elements |
