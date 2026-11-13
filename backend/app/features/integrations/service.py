@@ -91,6 +91,11 @@ class IntegrationsService:
             raise ValidationError(f"Unknown provider '{payload.provider}' for integration type '{payload.integration_type}'.")
 
         config_values = dict(payload.config)
+        if payload.provider == "airtel_iq":
+            from app.features.integrations.airtel_iq import validate_config
+            if payload.integration_type != IntegrationType.SMS:
+                raise ValidationError("Airtel IQ is an SMS provider.")
+            config_values = validate_config(config_values)
         generated: dict[str, str] = {}
         if payload.integration_type == IntegrationType.META:
             # No reason to make an Owner hand-type random tokens — generated once here and
@@ -137,10 +142,13 @@ class IntegrationsService:
             # to start with an asterisk is never silently dropped.
             incoming = {
                 k: v for k, v in payload.config.items()
-                if not (is_secret_key(k) and k in current and v == mappers.mask_secret(str(current[k])))
+                if not ((is_secret_key(k) or (config.provider == "airtel_iq" and k in {"customer_id", "username", "password", "authorization_value"})) and k in current and v == mappers.mask_provider_value(config.provider, k, str(current[k])))
             }
             credentials_changed = any(current.get(k) != v for k, v in incoming.items())
             current.update(incoming)
+            if config.provider == "airtel_iq":
+                from app.features.integrations.airtel_iq import validate_config
+                current = validate_config(current)
             updates["config_encrypted"] = encrypt(json.dumps(current))
             if credentials_changed:
                 # Editing credentials must require re-proving them — a stale "last success"
@@ -167,6 +175,11 @@ class IntegrationsService:
 
     async def activate_config(self, config_id: str, actor: User) -> IntegrationConfig:
         config = await self.get_config(config_id)
+        if config.provider == "airtel_iq":
+            from app.features.integrations.airtel_iq import BLOCKED, confirmed_contract
+            values = json.loads(decrypt(config.config_encrypted))
+            if not confirmed_contract(values):
+                raise ValidationError(BLOCKED)
         if not config.is_enabled:
             raise ValidationError("Only an enabled configuration can be made active. Enable it first.")
         if config.last_success_at is None:

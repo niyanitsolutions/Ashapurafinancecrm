@@ -208,6 +208,9 @@ async def send_sms(
     *, recipient: str, subject: str | None, body: str, config: dict[str, str],
     variables: dict[str, str] | None = None, variable_order: list[str] | None = None, provider_template_meta: dict[str, str | None] | None = None,
 ) -> DeliveryOutcome:
+    if config.get("_provider") == "airtel_iq" or config.get("provider") == "airtel_iq":
+        from app.features.integrations.airtel_iq import BLOCKED
+        return DeliveryOutcome(False, None, BLOCKED, is_transient=False)
     if config.get("_provider") == "msg91":
         return await _send_msg91_sms(recipient=recipient, config=config, variables=variables, variable_order=variable_order)
     api_url = config.get("api_url")

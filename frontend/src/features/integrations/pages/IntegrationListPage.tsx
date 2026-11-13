@@ -201,13 +201,14 @@ export function CreateConfigForm({
   // (OAuth, from the details page after Save) acquires. Test Connection only applies
   // once a real token exists, so Meta skips straight from credentials to Save.
   const isMeta = integrationType === "meta";
+  const isAirtel = integrationType === "sms" && provider === "airtel_iq";
 
   // Any change to type/provider/credentials invalidates a previous successful test —
   // Save stays locked until the *current* values have been proven, mirroring the backend's
   // own rule (editing a saved config's credentials clears its last_success_at the same way).
   const currentSnapshot = JSON.stringify({ integrationType, config: fieldValues });
-  const requiredFieldsFilled = Boolean(integrationType && provider && name) && fields.every((f) => f.toggle || (fieldValues[f.key] || "").trim() !== "");
-  const isVerified = isMeta ? requiredFieldsFilled : testResult?.success === true && testedSnapshot === currentSnapshot;
+  const requiredFieldsFilled = Boolean(integrationType && provider && name) && fields.every((f) => f.toggle || (isAirtel && f.optional) || (fieldValues[f.key] || "").trim() !== "");
+  const isVerified = isMeta || isAirtel ? requiredFieldsFilled : testResult?.success === true && testedSnapshot === currentSnapshot;
 
   const resetTestState = () => {
     setTestResult(null);
@@ -219,7 +220,7 @@ export function CreateConfigForm({
     setTestError(null);
     setIsTesting(true);
     try {
-      const result = await testDraftConnection({ integration_type: integrationType, config: fieldValues });
+      const result = await testDraftConnection({ integration_type: integrationType, provider, config: fieldValues });
       setTestResult(result);
       setTestedSnapshot(result.success ? currentSnapshot : null);
     } catch (err) {
@@ -238,6 +239,7 @@ export function CreateConfigForm({
         onSubmit({ integration_type: integrationType, provider, name, config: fieldValues });
       }}
     >
+      {isAirtel && <p role="status" className="mb-4 text-sm">Airtel IQ can be saved as a draft. Confirm account-specific request and response rules before explicitly sending a test SMS from the saved configuration. Activation requires a successful submission test.</p>}
       <ol className="space-y-5">
         <li>
           <StepHeading step={1} title="Choose Provider" />
@@ -254,7 +256,7 @@ export function CreateConfigForm({
             </select>
             <select
               value={provider}
-              onChange={(e) => { setProvider(e.target.value); resetTestState(); }}
+              onChange={(e) => { const next=e.target.value; setProvider(next); setFieldValues(Object.fromEntries(fieldsFor(integrationType,next).filter(field=>field.defaultValue!==undefined).map(field=>[field.key,field.defaultValue!]))); resetTestState(); }}
               className="rounded border border-border px-3 py-2 text-sm" required disabled={!integrationType}
             >
               <option value="" disabled>Provider…</option>

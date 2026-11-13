@@ -125,6 +125,9 @@ class AuthService:
 
     async def forgot_password(self, *, mobile: str) -> str | None:
         user = await self._users.find_by_mobile(mobile)
+        from app.features.auth.pin_service import policy
+        if user and user.role == "customer" and (user.pin_hash or await policy(self._db) == "pin_only"):
+            return None  # PIN recovery uses purpose-bound database challenges.
         if user is None or user.status != ACCOUNT_STATUS_ACTIVE:
             # Deliberately silent — don't reveal account existence.
             return None
@@ -206,6 +209,8 @@ class AuthService:
         if user is None:
             raise InvalidTicketError("Account no longer exists.")
 
+        if user.role == "customer" and user.pin_hash:
+            raise ForbiddenError("This account uses a PIN. Use Forgot PIN to recover access.")
         await self._users.update(
             user.require_id(),
             {
@@ -245,6 +250,8 @@ class AuthService:
 
     async def change_password(self, *, user_id: str, current_password: str, new_password: str) -> None:
         user = await self._users.find_by_id(user_id)
+        if user and user.role == "customer" and user.pin_hash:
+            raise ForbiddenError("This account uses a PIN. Use Forgot PIN to change it.")
         if user is None or user.password_hash is None or not verify_password(current_password, user.password_hash):
             raise InvalidCredentialsError("Current password is incorrect.")
 
@@ -260,6 +267,9 @@ class AuthService:
             raise AccountLockedError("Account is temporarily locked due to too many failed attempts.")
 
         user = await self._users.find_by_mobile(mobile)
+        from app.features.auth.pin_service import policy
+        if user and user.role == "customer" and (user.pin_hash or await policy(self._db) == "pin_only"):
+            raise InvalidCredentialsError("Use mobile number and PIN to log in.")
         failure_reason = self._login_failure_reason(user, password)
 
         if failure_reason is not None:
@@ -301,6 +311,15 @@ class AuthService:
         duplicating token/session/audit-log logic. `login_method` is stamped onto the
         `Session` row so the two are always distinguishable in
         Session/audit-log history."""
+        from app.features.auth.pin_service import policy
+        if login_method != "pin" and user.role == "customer" and (user.pin_hash or await policy(self._db) == "pin_only"):
+            raise ForbiddenError("Use PIN authentication to establish a session.")
+        if login_method == "pin":
+            if user.role != "customer":
+                raise InvalidCredentialsError("PIN sign-in is available only for customers.")
+            current = await self._users.find_by_id(user.require_id())
+            if not current or current.role != "customer" or current.status != "active" or current.pin_hash != user.pin_hash or current.pin_epoch != user.pin_epoch:
+                raise InvalidCredentialsError("PIN changed. Please log in again.")
         user_id = user.require_id()
         request_key = (
             hashlib.sha256(f"{user_id}:{ctx.login_request_key}".encode()).hexdigest()
@@ -333,6 +352,7 @@ class AuthService:
         day_id = await ensure_summary(self._db, user_id, now)
         session = Session(
             user_id=user_id,
+            auth_epoch=user.pin_epoch,
             attendance_day_id=day_id,
             family_id=family_id,
             token_id=token_id,
@@ -522,6 +542,7 @@ class AuthService:
             Session(
                 user_id=user_id,
                 family_id=session.family_id,
+                auth_epoch=session.auth_epoch,
                 attendance_day_id=session.attendance_day_id,
                 token_id=new_token_id,
                 refresh_token_hash=hash_value(new_refresh_token),

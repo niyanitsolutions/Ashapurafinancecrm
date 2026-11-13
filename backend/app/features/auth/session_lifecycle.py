@@ -170,5 +170,9 @@ async def validate_family(
                 },
             )
         raise UnauthorizedError("Session expired or revoked. Please login again.")
+    from bson import ObjectId
+    user = await db.users.find_one({"_id": ObjectId(user_id)}) if ObjectId.is_valid(user_id) else None
+    if user and doc.get("auth_epoch", 0) != user.get("pin_epoch", 0):
+        raise UnauthorizedError("PIN changed. Please log in again.")
     await ensure_summary(db, user_id, now)
     return dict(doc)

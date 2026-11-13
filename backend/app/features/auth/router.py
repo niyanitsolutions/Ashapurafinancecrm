@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 
@@ -9,6 +9,11 @@ from app.features.auth.dependencies import (
     get_request_context,
 )
 from app.features.auth.models import Session, User
+from app.features.auth.pin_service import Complete as PinComplete
+from app.features.auth.pin_service import Login as PinLogin
+from app.features.auth.pin_service import PinService
+from app.features.auth.pin_service import Start as PinStart
+from app.features.auth.pin_service import Verify as PinVerify
 from app.features.auth.schemas import (
     ChangePasswordRequest,
     ForgotPasswordRequest,
@@ -149,3 +154,74 @@ def _session_summary(session: Session) -> SessionSummary:
 async def activity(current_user: CurrentUserDep) -> ApiResponse[dict[str, bool]]:
     """Called on visible user interaction; polling/refresh never extends idle time."""
     return ApiResponse[dict[str, bool]].ok({"active": True})
+
+
+@router.get("/pin/policy")
+async def pin_policy(auth: AuthServiceDep) -> ApiResponse[dict[str, Any]]:
+    from app.features.auth.pin_service import policy
+
+    return ApiResponse.ok({"mode": await policy(auth._db)})
+
+
+@router.post("/pin/start", dependencies=[rate_limited(limit=10)])
+async def pin_start(
+    payload: PinStart, auth: AuthServiceDep, ctx: RequestContextDep
+) -> ApiResponse[dict[str, Any]]:
+    return ApiResponse.ok(await PinService(auth).start(payload, ctx))
+
+
+@router.post("/pin/verify", dependencies=[rate_limited(limit=30)])
+async def pin_verify(
+    payload: PinVerify, auth: AuthServiceDep, ctx: RequestContextDep
+) -> ApiResponse[dict[str, Any]]:
+    return ApiResponse.ok(await PinService(auth).verify(payload, ctx))
+
+
+@router.post("/pin/complete", dependencies=[rate_limited(limit=20)])
+async def pin_complete(
+    payload: PinComplete, auth: AuthServiceDep, ctx: RequestContextDep
+) -> ApiResponse[Any]:
+    return ApiResponse.ok(await PinService(auth).complete(payload, ctx))
+
+
+@router.post("/pin/login", dependencies=[rate_limited(limit=20)])
+async def pin_login(payload: PinLogin, auth: AuthServiceDep, ctx: RequestContextDep) -> ApiResponse[Any]:
+    return ApiResponse.ok(await PinService(auth).login(payload, ctx))
+
+
+@router.post("/pin/cutover")
+async def pin_cutover(auth: AuthServiceDep, actor: CurrentUserDep) -> ApiResponse[dict[str, Any]]:
+    from app.core.exceptions import ConflictError, ForbiddenError
+    from app.shared.audit_log import write_audit_log
+
+    if actor.role != "owner":
+        raise ForbiddenError("Owner access is required.")
+    outstanding = await auth._db.users.count_documents(
+        {
+            "role": "customer",
+            "status": "active",
+            "is_deleted": False,
+            "$or": [{"pin_hash": None}, {"pin_hash": {"$exists": False}}],
+        }
+    )
+    ready = await auth._db.integration_configs.find_one(
+        {
+            "provider": "airtel_iq",
+            "integration_type": "sms",
+            "is_active": True,
+            "is_enabled": True,
+            "is_deleted": False,
+            "last_success_at": {"$ne": None},
+        }
+    )
+    if outstanding or not ready:
+        raise ConflictError(
+            "Enroll every active customer account and successfully test/activate Airtel before PIN-only cutover."
+        )
+    await auth._db.auth_login_policy.update_one(
+        {"_id": "default"},
+        {"$set": {"mode": "pin_only", "scope": "customer", "updated_by": actor.require_id()}},
+        upsert=True,
+    )
+    await write_audit_log(auth._db, event_type="pin_only_cutover", user_id=actor.require_id(), metadata={"scope":"customer"})
+    return ApiResponse.ok({"mode": "pin_only"})

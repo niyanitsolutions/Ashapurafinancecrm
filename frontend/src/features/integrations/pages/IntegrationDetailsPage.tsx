@@ -6,6 +6,7 @@ import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
 import { Pagination } from "@/components/tables/Pagination";
 import { getErrorMessage } from "@/features/customer/errors";
+import { AirtelTestPanel } from "@/features/integrations/components/AirtelTestPanel";
 import { ConnectionCheckList } from "@/features/integrations/components/ConnectionCheckList";
 import {
   activateIntegrationConfig,
@@ -477,6 +478,8 @@ export function IntegrationDetailsPage() {
           <div><span className="text-text/50">Last Success</span><div>{formatDate(config.last_success_at)}</div></div>
           <div><span className="text-text/50">Last Failure</span><div>{formatDate(config.last_failure_at)}</div></div>
         </div>
+        {config.provider === "airtel_iq" && <AirtelTestPanel configId={config.id} onChanged={(notice) => { setMessage(notice); load(); }}/>}
+        {config.provider === "airtel_iq" && <p role="status" className="mb-4 text-sm">Confirm the account-specific contract before sending. Test Connection sends no SMS; use the explicit test below. Accepted submission is not proof of delivery.</p>}
         {config.last_error_message && <p className="mb-4 text-sm text-danger">Last error: {config.last_error_message}</p>}
         {configJustChanged && (
           <div className="mb-4 rounded border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">

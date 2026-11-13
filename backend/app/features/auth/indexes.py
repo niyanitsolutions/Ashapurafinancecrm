@@ -28,6 +28,11 @@ async def ensure_auth_indexes(db: AsyncIOMotorDatabase[Any]) -> None:
     await db["audit_logs"].create_index("mobile")
     await db["audit_logs"].create_index("created_at")
 
+    await db.auth_pin_challenges.create_index("challenge_id", unique=True)
+    await db.auth_pin_challenges.create_index("authorization_hash", unique=True, sparse=True)
+    await db.auth_pin_challenges.create_index("expires_at", expireAfterSeconds=3600)
+    await db.auth_pin_limits.create_index("expires_at", expireAfterSeconds=0)
+    await db.sms_submissions.create_index([("provider", 1), ("created_at", -1)])
     await ensure_attendance_indexes(db)
 
 

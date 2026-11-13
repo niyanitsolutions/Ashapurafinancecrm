@@ -22,6 +22,7 @@ from app.config.settings import get_settings
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.pagination import PageParams, page_params
 from app.core.response import ApiResponse, ResponseMeta
+from app.middleware.rate_limit import rate_limited
 from app.features.access_control.permission_engine import require_permission
 from app.features.auth.dependencies import get_request_context
 from app.features.auth.models import User
@@ -29,6 +30,7 @@ from app.features.auth.service import RequestContext
 from app.features.integrations import mappers
 from app.features.integrations.dependencies import get_integrations_service
 from app.features.integrations.schemas import (
+    AirtelTestRequest,
     CreateIntegrationConfigRequest,
     IntegrationConfigResponse,
     IntegrationProviderResponse,
@@ -225,3 +227,77 @@ async def receive_oauth_callback(request: Request, service: ServiceDep) -> Redir
         return _redirect(fallback_config_id, oauth_error=f"Facebook request failed: {exc}")
 
     return _redirect(fallback_config_id, oauth_session=session_id)
+
+
+@router.post(
+    "/integration-configs/{config_id}/airtel-test-sms", dependencies=[rate_limited(limit=5)]
+)
+async def airtel_test_sms(
+    config_id: str,
+    payload: AirtelTestRequest,
+    service: ServiceDep,
+    actor: Annotated[User, _perm("edit")],
+) -> ApiResponse[dict[str, Any]]:
+    import json
+    import secrets
+    from time import perf_counter
+
+    from app.core.exceptions import ValidationError
+    from app.features.communication.airtel_iq import submit
+    from app.features.integrations.models import IntegrationTestLog
+    from app.security.encryption import decrypt
+    from app.shared.audit_log import write_audit_log
+    from app.utils.datetime import utc_now
+
+    config = await service.get_config(config_id)
+    if config.provider != "airtel_iq" or not config.is_enabled or not payload.confirm_send:
+        raise ValidationError("Enable Airtel and explicitly confirm sending to the test mobile.")
+    started = perf_counter()
+    outcome = await submit(
+        service._db,
+        json.loads(decrypt(config.config_encrypted)),
+        payload.mobile,
+        str(secrets.randbelow(10000)).zfill(4),
+        "admin-test:" + config_id + ":" + payload.request_id,
+    )
+    now = utc_now()
+    from bson import ObjectId
+
+    await service._db.integration_configs.update_one(
+        {
+            "_id": ObjectId(config_id),
+            "config_encrypted": config.config_encrypted,
+            "is_enabled": True,
+            "is_deleted": False,
+        },
+        {
+            "$set": {
+                "last_tested_at": now,
+                "last_success_at": now if outcome["success"] else None,
+                "last_failure_at": None if outcome["success"] else now,
+                "last_error_message": outcome["error"],
+                "health_status": "healthy" if outcome["success"] else "error",
+                "updated_by": actor.require_id(),
+                "updated_at": now,
+            }
+        },
+    )
+    await service._test_logs.insert(
+        IntegrationTestLog(
+            config_id=config_id,
+            integration_type="sms",
+            provider="airtel_iq",
+            success=outcome["success"],
+            response_time_ms=round((perf_counter()-started)*1000),
+            error_message=outcome["error"],
+            tested_at=now,
+            created_by=actor.require_id(),
+        )
+    )
+    await write_audit_log(
+        service._db,
+        event_type="airtel_test_submission",
+        user_id=actor.require_id(),
+        metadata={"config_id": config_id, "status": outcome["status"]},
+    )
+    return ApiResponse.ok(outcome)

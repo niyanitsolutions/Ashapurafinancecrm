@@ -24,6 +24,12 @@ class User(BaseDocument):
     mobile: str
     role: str = Field(pattern=f"^({'|'.join(ALL_ROLES)})$")
     password_hash: str | None = None
+    pin_hash: str | None = Field(default=None, repr=False)
+    pin_epoch: int = 0
+    pin_updated_at: datetime | None = None
+    mobile_verified_at: datetime | None = None
+    failed_pin_attempts: int = 0
+    pin_locked_until: datetime | None = None
     is_mobile_verified: bool = False
     # Set True only for Employees created with an Owner-set temporary password (see
     # employee/service.py::create_employee) — forces a password change before the first
@@ -53,6 +59,7 @@ class Session(BaseDocument):
     user_id: str
     family_id: str
     token_id: str
+    auth_epoch: int = 0
     refresh_token_hash: str
     login_method: str
     device: str | None = None

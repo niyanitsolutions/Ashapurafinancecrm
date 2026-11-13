@@ -1039,6 +1039,7 @@ async def seed_integration_providers() -> None:
         IntegrationProvider(integration_type=IntegrationType.META, provider="meta", label="Meta (Facebook/Instagram)"),
         IntegrationProvider(integration_type=IntegrationType.WHATSAPP, provider="whatsapp_business_api", label="WhatsApp Business API"),
         IntegrationProvider(integration_type=IntegrationType.SMS, provider="generic_sms", label="Generic SMS Provider"),
+        IntegrationProvider(integration_type=IntegrationType.SMS, provider="airtel_iq", label="Airtel IQ"),
         IntegrationProvider(integration_type=IntegrationType.EMAIL, provider="smtp", label="SMTP"),
         IntegrationProvider(integration_type=IntegrationType.EMAIL, provider="email_api", label="Email API Provider"),
         IntegrationProvider(integration_type=IntegrationType.MAPS, provider="google_maps", label="Google Maps"),

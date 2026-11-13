@@ -24,6 +24,14 @@ def mask_secret(plaintext: str) -> str:
     return f"{'*' * max(0, len(plaintext) - 4)}{plaintext[-4:]}"
 
 
+def mask_provider_value(provider: str, key: str, value: str) -> str:
+    from app.features.integrations.airtel_iq import MASK, PROVIDER, SENSITIVE
+
+    if provider == PROVIDER and key in SENSITIVE:
+        return MASK if value else ""
+    return mask_secret(value) if is_secret_key(key) else value
+
+
 def mask_config(config: dict[str, str]) -> dict[str, str]:
     return {key: (mask_secret(value) if is_secret_key(key) else value) for key, value in config.items()}
 
@@ -34,7 +42,7 @@ def provider_to_response(provider: IntegrationProvider) -> IntegrationProviderRe
 
 def config_to_response(config: IntegrationConfig, *, reveal: dict[str, str] | None = None, webhook_callback_path: str | None = None) -> IntegrationConfigResponse:
     decrypted = json.loads(decrypt(config.config_encrypted)) if config.config_encrypted else {}
-    masked = mask_config(decrypted)
+    masked = {key: mask_provider_value(config.provider, key, value) for key,value in decrypted.items()}
     # `reveal` is only ever passed by the create-config route, immediately after
     # `IntegrationsService.create_config` auto-generates Meta's webhook credentials —
     # this is the one response where the Owner needs the plaintext to paste into Meta's

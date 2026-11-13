@@ -1,10 +1,11 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import { LoginPage } from "./LoginPage";
 
 vi.mock("@/features/auth/useAuth", () => ({ useAuth: () => ({ setSession: vi.fn() }) }));
+vi.mock("@/features/auth/pinApi", () => ({pinPolicy: async () => ({mode: "pin_only"})}));
 vi.mock("@/features/auth/api", () => ({ login: vi.fn() }));
 
 function renderPage(entry = "/login") {
@@ -16,15 +17,15 @@ function renderPage(entry = "/login") {
 }
 
 describe("LoginPage default tab", () => {
-  it("opens with the Customer tab selected and the Customer login form visible", () => {
-    renderPage();
+  it("opens with the Customer tab selected and the Customer login form visible", async () => {
+    await act(async () => { renderPage(); });
     expect(screen.getByRole("tab", { name: "Customer" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: "Employee / Partner" })).toHaveAttribute("aria-selected", "false");
     expect(screen.getByRole("heading", { name: "Customer Login" })).toBeInTheDocument();
   });
 
-  it("still opens on Customer even for a returning secure-application link", () => {
-    renderPage("/login?return=%2Fapply%2Fabc123");
+  it("still opens on Customer even for a returning secure-application link", async () => {
+    await act(async () => { renderPage("/login?return=%2Fapply%2Fabc123"); });
     expect(screen.getByRole("tab", { name: "Customer" })).toHaveAttribute("aria-selected", "true");
   });
 
@@ -33,5 +34,8 @@ describe("LoginPage default tab", () => {
     await userEvent.setup().click(screen.getByRole("tab", { name: "Employee / Partner" }));
     expect(screen.getByRole("tab", { name: "Employee / Partner" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("heading", { name: "Employee / Partner Login" })).toBeInTheDocument();
+    expect(document.getElementById("internal-password")).toBeVisible();
+    expect(screen.getByLabelText("4-digit PIN")).not.toBeVisible();
+    expect(screen.queryByRole("button", { name: "Forgot PIN" })).not.toBeInTheDocument();
   });
 });

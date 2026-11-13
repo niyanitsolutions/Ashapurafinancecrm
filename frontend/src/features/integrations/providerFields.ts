@@ -12,6 +12,7 @@ export interface ProviderField {
   section?: ProviderFieldSection;
   optional?: boolean;
   helpText?: string;
+  defaultValue?: string;
 }
 
 // Field lists per the brief's own spec, matching backend/app/features/integrations/
@@ -95,9 +96,26 @@ export const MSG91_WHATSAPP_FIELDS: ProviderField[] = [
   { key: "webhook_secret", label: "Webhook Secret", secret: true, section: "webhook", helpText: "Shared secret for verifying inbound MSG91 delivery report callbacks." },
 ];
 
+export const AIRTEL_IQ_SMS_FIELDS: ProviderField[] = [
+  {key:"api_url",label:"API Endpoint",defaultValue:"https://iqsms.airtel.in/api/v1/send-prepaid-sms"},
+  {key:"customer_id",label:"Customer ID",secret:true},
+  {key:"username",label:"Username",secret:true},
+  {key:"password",label:"Password",secret:true},
+  {key:"sender_id",label:"Sender ID",defaultValue:"ASHFNS"},
+  {key:"dlt_template_id",label:"DLT Template ID",defaultValue:"1077151820081508033"},
+  {key:"entity_id",label:"DLT Entity ID",defaultValue:"1001474305342749488"},
+  {key:"authorization_value",label:"Authorization header value (exact, confirmed by Airtel)",secret:true,optional:true},
+  {key:"destination_template",label:"Confirmed destinationAddress JSON array (use {{mobile}})",optional:true},
+  {key:"success_field",label:"Confirmed response success field path",optional:true},
+  {key:"success_value",label:"Confirmed success value (JSON scalar)",optional:true},
+  {key:"contract_confirmed",label:"Account-specific API contract confirmed",toggle:true,optional:true},
+  {key:"message_type",label:"Message Type",optional:true,helpText:"Enter the value confirmed by Airtel for this prepaid account. No default is assumed."},
+];
+
 export function fieldsFor(integrationType: string, provider: string): ProviderField[] {
   if (integrationType === "meta") return META_FIELDS;
   if (integrationType === "whatsapp") return provider === "msg91" ? MSG91_WHATSAPP_FIELDS : WHATSAPP_FIELDS;
+  if (integrationType === "sms" && provider === "airtel_iq") return AIRTEL_IQ_SMS_FIELDS;
   if (integrationType === "sms") return provider === "msg91" ? MSG91_SMS_FIELDS : SMS_FIELDS;
   if (integrationType === "maps") return MAPS_FIELDS;
   if (integrationType === "email") return provider === "smtp" || provider === "msg91" ? EMAIL_SMTP_FIELDS : EMAIL_API_FIELDS;

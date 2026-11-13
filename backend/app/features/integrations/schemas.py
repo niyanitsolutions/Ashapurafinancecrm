@@ -164,3 +164,9 @@ class OAuthConnectRequest(BaseModel):
     page_id: str
     ad_account_id: str | None = None
     selected_forms: list[str] = Field(default_factory=list)
+
+
+class AirtelTestRequest(BaseModel):
+    mobile: str = Field(pattern=r"^[6-9][0-9]{9}$")
+    confirm_send: bool = False
+    request_id: str = Field(min_length=32, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")

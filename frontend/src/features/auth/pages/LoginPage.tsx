@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { useLocation, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { AuthPageLayout } from "@/features/auth/components/AuthPageLayout";
+import { PinAuthPanel } from "@/features/auth/components/PinAuthPanel";
 import { LoginForm } from "@/features/auth/components/LoginForm";
 import { LoginTabs, type LoginTabKey } from "@/features/auth/components/LoginTabs";
 
@@ -19,8 +20,8 @@ const TAB_HEADINGS: Record<LoginTabKey, string> = {
 // somewhere other than HomeRedirect's default role routing after authenticating.
 //
 // Split into two tabs (Employee/Partner vs Customer) purely as a UI/UX distinction — the
-// backend still exposes one `/auth/login` for every role (see LoginForm.tsx for how the
-// tab boundary is enforced client-side). Both tabs' forms are always mounted, just hidden
+// customer tab uses PIN endpoints; internal roles keep password login. The
+// forms are always mounted, just hidden
 // via CSS when inactive, so switching tabs never loses what the user already typed.
 export function LoginPage() {
   const location = useLocation();
@@ -32,6 +33,7 @@ export function LoginPage() {
   // secure application link (/apply/:secureCode) only ever sends a Customer here. Staff
   // switch to "Employee / Partner" once; the tab switcher keeps whatever each form already
   // has typed (hidden via CSS, never unmounted).
+  const [legacyCustomer, setLegacyCustomer] = useState(false);
   const [activeTab, setActiveTab] = useState<LoginTabKey>("customer");
 
   return (
@@ -49,8 +51,17 @@ export function LoginPage() {
         returnTo={returnTo}
         returnQuery={returnQuery}
       />
+      <div hidden={activeTab !== "customer" || legacyCustomer}>
+        <PinAuthPanel returnTo={returnTo} onLegacy={() => setLegacyCustomer(true)} />
+        <p className="mt-4 text-sm text-white/60 text-center">
+          Don't have an account? <Link className="text-primary hover:underline" to={`/create-account${returnQuery}`}>Create New Account</Link>
+        </p>
+      </div>
+      {activeTab === "customer" && legacyCustomer && (
+        <button type="button" className="mb-4 text-primary" onClick={() => setLegacyCustomer(false)}>Use customer PIN sign-in</button>
+      )}
       <LoginForm
-        hidden={activeTab !== "customer"}
+        hidden={activeTab !== "customer" || !legacyCustomer}
         idPrefix="customer"
         expectedRoles={CUSTOMER_ROLES}
         wrongRoleMessage="This account belongs to an internal user. Please use Employee / Partner Login."
