@@ -12,6 +12,8 @@ export function notificationDestination(n: Pick<AppNotification, "entity_type" |
     return fallback;
   }
   const routes: Record<string, string> = {
+    employee_hr: role === "owner" ? `/employees/${id}/onboarding` : "/profile/onboarding",
+    employee_leave: role === "owner" ? `/employees/leave?employee=${id}` : "/profile/leave",
     daily_follow_up: "/daily-operations/follow-ups",
     operational_issue: "/daily-operations/issues",
     lead: `/leads/${id}`, insurance_case: `/insurance-cases/${id}`, loan_case: `/loan-cases/${id}`,

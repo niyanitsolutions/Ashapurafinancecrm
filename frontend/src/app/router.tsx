@@ -1,3 +1,7 @@
+import {EmployeeHrSettingsPage} from "@/features/employee/pages/EmployeeHrSettingsPage";
+import {EmployeeHrReportsPage} from "@/features/employee/pages/EmployeeHrReportsPage";
+import {EmployeeLeavePage} from "@/features/employee/pages/EmployeeLeavePage";
+import {EmployeeOnboardingPage} from "@/features/employee/pages/EmployeeOnboardingPage";
 import { createBrowserRouter, Navigate } from "react-router-dom";
 import { DailyOperationsPage } from "@/features/daily_operations/DailyOperationsPage";
 import { TransferCentre } from "@/features/daily_operations/TransferCentre";
@@ -176,6 +180,12 @@ export const router = createBrowserRouter([
         children: [
           { path: "/dashboard", element: <DashboardPage /> },
           { path: "/profile", element: <EmployeeProfilePage /> },
+            { path: "/profile/onboarding", element: <EmployeeOnboardingPage /> },
+            { path: "/profile/leave", element: <EmployeeLeavePage /> },
+            { path: "/profile/attendance", element: <EmployeeHrReportsPage key="own-attendance" section="attendance" /> },
+            { path: "/profile/edit-request", element: <EmployeeOnboardingPage requestMode /> },
+            { path: "/employees/:employeeId/edit-request", element: <EmployeeOnboardingPage requestMode /> },
+            { path: "/employees/:employeeId/onboarding", element: <EmployeeOnboardingPage /> },
           { path: "/profile/change-password", element: <ChangePasswordPage /> },
           { path: "/profile/sessions", element: <SessionsPage backTo="/profile" /> },
           { path: "/profile/login-history", element: <EmployeeLoginHistoryPage scope="self" /> },
@@ -414,6 +424,13 @@ export const router = createBrowserRouter([
                 children: [
                   { index: true, element: <EmployeeListPage /> },
                   { path: "new", element: <CreateEmployeePage /> },
+                    { path: "onboarding", element: <EmployeeHrReportsPage key="onboarding" section="profile-completion" /> },
+                    { path: "attendance", element: <EmployeeHrReportsPage key="attendance" section="attendance" /> },
+                    { path: "leave", element: <EmployeeLeavePage /> },
+                    { path: "login-logout", element: <DailyOperationsPage key="employee-sessions" area="sessions" /> },
+                    { path: "edit-requests", element: <EmployeeHrReportsPage key="edits" section="edits" /> },
+                    { path: "reports", element: <EmployeeHrReportsPage key="reports" selectable /> },
+                    { path: "settings", element: <EmployeeHrSettingsPage /> },
                   { path: "documents", element: <EmployeeDocumentsOverviewPage /> },
                   { path: "activity", element: <EmployeeActivityOverviewPage /> },
                 ],

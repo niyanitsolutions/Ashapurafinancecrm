@@ -33,6 +33,7 @@ const DEFAULT_EMPLOYMENT_TYPE = "full_time";
 const todayIso = () => todayISTDateString();
 
 export function CreateEmployeePage() {
+  const [onboardingMode,setOnboardingMode]=useState<"account_only"|"owner_complete">("account_only");
   const navigate = useNavigate();
   const [apiError, setApiError] = useState<string | null>(null);
   const [departments, setDepartments] = useState<MasterDataItem[]>([]);
@@ -80,6 +81,7 @@ export function CreateEmployeePage() {
     try {
       const employee = await createEmployee({
         ...values,
+        onboarding_mode:onboardingMode,
         joining_date: todayIso(),
         employment_type: DEFAULT_EMPLOYMENT_TYPE,
         reporting_manager_id: values.reporting_manager_id || undefined,
@@ -97,7 +99,7 @@ export function CreateEmployeePage() {
         await assignRole(role.id, employee.id);
       }
 
-      navigate(`/employees/${employee.id}`);
+      navigate(onboardingMode === "owner_complete" ? `/employees/${employee.id}/onboarding` : `/employees/${employee.id}`);
     } catch (err) {
       setApiError(getErrorMessage(err));
     }
@@ -107,6 +109,7 @@ export function CreateEmployeePage() {
     <SimplePageLayout title="Add Employee" subtitle="Just the essentials — detailed HR information can be added later from their profile." backTo="/employees">
       <form onSubmit={handleSubmit(onSubmit)} noValidate className="max-w-4xl mx-auto space-y-6">
         <ErrorBanner message={apiError} />
+        <label className="block">Creation workflow<select value={onboardingMode} onChange={e=>setOnboardingMode(e.target.value as "account_only"|"owner_complete")} className="ml-3 rounded border border-border p-2"><option value="account_only">Account only ? employee completes profile after login</option><option value="owner_complete">Owner completes profile and documents before activation</option></select></label>
 
         <div className="bg-card border border-border rounded-card shadow-card p-6">
           <h2 className="text-sm font-semibold text-text mb-1">Basic Information</h2>
@@ -166,7 +169,7 @@ export function CreateEmployeePage() {
           <Button type="button" variant="secondary" onClick={() => navigate("/employees")}>
             Cancel
           </Button>
-          <SubmitButton isSubmitting={isSubmitting}>Save Employee</SubmitButton>
+          <SubmitButton isSubmitting={isSubmitting}>{onboardingMode==="owner_complete"?"Next: profile and documents":"Create employee account"}</SubmitButton>
         </div>
       </form>
     </SimplePageLayout>

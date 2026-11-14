@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, expect, it, vi } from "vitest";
+import {LoanTypeField} from "./LoanTypeField";
 import { BankMultiSelect } from "./BankMultiSelect";
 import { RecordForm } from "./RecordForm";
 import { DailyOperationsPage } from "./DailyOperationsPage";
@@ -27,3 +28,26 @@ it("retains historical archived and legacy chips",async()=>{rows[0].is_active=fa
 it("hides management without permission",async()=>{mocks.manage=false;wrap(<Selector/>);await open();expect(screen.queryByRole("button",{name:"Manage Bank Options"})).not.toBeInTheDocument();});
 it.each([false,true])("saves DISBURSE with multiple banks without CRM selection, edit=%s",async(editing)=>{wrap(<RecordForm area="follow-ups" record={editing?{id:"record",version:2,date:"2026-11-12",remarks_date:"2026-11-12",due_date:null,status:"DISBURSE",customer_name:"Customer",customer_number:"9000000000",bank:bank.name,banks:[{option_id:bank.id,name:bank.name}]}:undefined} onSaved={()=>{}} onCancel={()=>{}}/>);await screen.findByRole("option",{name:"DISBURSE"});if(!editing)for(const [label,value]of[["Customer name","Customer"],["Customer number","9000000000"]])fireEvent.change(screen.getByLabelText(label),{target:{value}});fireEvent.change(screen.getByLabelText("Follow-up status"),{target:{value:"DISBURSE"}});await open();if(!editing)fireEvent.click(screen.getByRole("checkbox",{name:bank.name}));fireEvent.click(screen.getByRole("checkbox",{name:"FINNABLE FINANCE"}));expect(screen.queryByLabelText("Verified disbursed loan")).not.toBeInTheDocument();expect(screen.queryByLabelText("Link existing CRM record")).not.toBeInTheDocument();fireEvent.click(screen.getByRole("button",{name:editing?"Save changes":"Save record"}));await waitFor(()=>expect(mocks.save).toHaveBeenCalledWith("follow-ups",expect.objectContaining({status:"DISBURSE",due_date:null,banks:[{option_id:bank.id,name:bank.name},{option_id:"bbbbbbbbbbbbbbbbbbbbbbbb",name:"FINNABLE FINANCE"}]}),editing?"record":undefined));expect(mocks.save.mock.calls[0][1]).not.toHaveProperty("case_id");expect(mocks.save.mock.calls[0][1]).not.toHaveProperty("lead_id");expect(mocks.lookups).toHaveBeenCalledWith("",false);});
 it("shows all banks in the table and keeps export available",async()=>{mocks.list.mockResolvedValue({items:[{id:"record",status:"DISBURSE",customer_name:"Customer",bank:"WERIZE FINANCE, FINNABLE FINANCE",banks:[{option_id:bank.id,name:bank.name},{option_id:"bbbbbbbbbbbbbbbbbbbbbbbb",name:"FINNABLE FINANCE"}]}],total:1});wrap(<DailyOperationsPage area="follow-ups"/>);const customer=await screen.findByText("Customer");const row=customer.closest("tr")!;expect(within(row).getByText("WERIZE FINANCE, FINNABLE FINANCE")).toHaveAttribute("title","WERIZE FINANCE, FINNABLE FINANCE");fireEvent.click(screen.getByText("Export",{exact:true}));fireEvent.click(screen.getByRole("button",{name:"CSV"}));expect(mocks.download).toHaveBeenCalled();});
+
+it("reuses option management for a single loan type and allows replacing it",async()=>{
+ function Loan(){const [value,setValue]=useState("Historic loan");return <LoanTypeField value={value} onChange={setValue}/>;}
+ wrap(<Loan/>);fireEvent.click(screen.getByLabelText("Loan type"));
+ await screen.findByRole("checkbox",{name:bank.name});
+ fireEvent.click(screen.getByRole("checkbox",{name:bank.name}));
+ fireEvent.click(screen.getByRole("checkbox",{name:"FINNABLE FINANCE"}));
+ expect(screen.getByRole("checkbox",{name:bank.name})).not.toBeChecked();
+ expect(screen.getByRole("checkbox",{name:"FINNABLE FINANCE"})).toBeChecked();
+ expect(within(screen.getByLabelText("Selected loan type")).getByText("FINNABLE FINANCE")).toBeVisible();
+ expect(screen.getByRole("button",{name:"Manage Loan Types"})).toBeVisible();
+ expect(mocks.request).toHaveBeenCalledWith("/daily-operations/loan-type-options?include_archived=true");
+});
+it("requests default 200 follow-ups and preserves filters when changing page size",async()=>{
+ mocks.list.mockResolvedValue({items:[{id:"one",customer_name:"One",status:"FOLLOW UP PENDING"}],total:205});
+ wrap(<DailyOperationsPage area="follow-ups"/>);
+ await screen.findByText("One");
+ expect(mocks.list.mock.calls[0][1]).toContain("page_size=200");
+ const size=screen.getByDisplayValue("200 / page");
+ expect(within(size).getAllByRole("option").map(row=>row.getAttribute("value"))).toEqual(["20","50","100","150","200"]);
+ fireEvent.change(size,{target:{value:"50"}});
+ await waitFor(()=>expect(mocks.list.mock.calls.at(-1)?.[1]).toContain("page_size=50"));
+});

@@ -4,6 +4,19 @@ boundaries, and the Auth-reuse actions (reset-password, force-logout, sessions).
 """
 
 
+import pytest
+from types import SimpleNamespace
+
+@pytest.fixture(autouse=True)
+def _private_legacy_upload_storage(monkeypatch, request):
+    if request.path.name != "test_employee.py":
+        return
+    # Legacy CRUD tests mock storage; byte/parser/security checks live in test_employee_hr_documents.
+    from app.features.employee import hr_documents
+    monkeypatch.setattr(hr_documents,"materialize",lambda key,mime,password:(b"checked fixture bytes",mime))
+    monkeypatch.setattr(hr_documents,"get_s3_client",lambda:SimpleNamespace(put_object=lambda **kwargs:None))
+
+
 def _create_payload(master_data, mobile="9111111111", email="jane.doe@example.com"):
     return {
         "mobile": mobile,

@@ -1,0 +1,5 @@
+import {useEffect,useState} from "react";
+import {Link} from "react-router-dom";
+import {useAuth} from "@/features/auth/useAuth";
+import {getHrProfile} from "../hrApi";
+export function ProfileCompletionBanner(){const {role,userId}=useAuth();const [status,setStatus]=useState("");useEffect(()=>{let live=true;if(role!=="employee"){setStatus("");return;}getHrProfile("me").then(row=>{if(live)setStatus(row.onboarding.status);}).catch(()=>{if(live)setStatus("");});return()=>{live=false;};},[role,userId]);if(!status||status==="verified")return null;return <aside className="mx-4 mt-4 rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm" aria-label="Employee profile completion"><Link to="/profile/onboarding" className="text-primary">{status==="pending_verification"?"Your employee profile is awaiting owner verification. View document status.":"Complete your employee profile and required documents."}</Link><span className="ml-2">Your authorized CRM access continues while verification is pending.</span></aside>;}

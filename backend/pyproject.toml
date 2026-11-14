@@ -7,6 +7,7 @@ dependencies = [
     "reportlab>=4.4,<6",
     "qrcode>=8.2,<9",
     "pillow>=11,<13",
+    "pymupdf>=1.26,<2",
     "font-roboto==0.0.1",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
@@ -33,7 +34,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pymupdf>=1.26,<2",
     "pytest>=8.3,<9",
     "pytest-asyncio>=0.24,<1",
     "pytest-xdist>=3.8,<4",

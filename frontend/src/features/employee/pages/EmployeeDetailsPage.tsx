@@ -96,9 +96,7 @@ export function EmployeeDetailsPage() {
       subtitle={`${employee.employee_code} · ${employee.designation_name}, ${employee.department_name}`}
       backTo="/employees"
       actions={
-        <Button size="sm" onClick={() => navigate(`/employees/${employeeId}/edit`)}>
-          Edit
-        </Button>
+        <div className="flex gap-2"><Button size="sm" variant="secondary" onClick={() => navigate(`/employees/${employeeId}/onboarding`)}>Onboarding and verification</Button><Button size="sm" onClick={() => navigate(`/employees/${employeeId}/edit`)}>Edit</Button></div>
       }
     >
       {message && <p className="mb-4 text-sm text-success">{message}</p>}

@@ -364,3 +364,8 @@ def _login_history_entry(doc: dict[str, Any]) -> LoginHistoryEntry:
         metadata=doc.get("metadata"),
         created_at=doc["created_at"],
     )
+
+
+from app.features.employee.hr_router import router as hr_router
+
+router.include_router(hr_router)

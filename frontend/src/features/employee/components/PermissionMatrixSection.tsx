@@ -64,7 +64,7 @@ function ActionHeader() {
   );
 }
 
-export function PermissionMatrixSection({ permissions, checked, onChange }: {
+function BasePermissionMatrixSection({ permissions, checked, onChange }: {
   permissions: Permission[];
   checked: Record<string, Set<string>>;
   onChange: (next: Record<string, Set<string>>) => void;
@@ -223,4 +223,10 @@ export function PermissionMatrixSection({ permissions, checked, onChange }: {
     <div className="flex flex-col gap-4 border-b border-border p-5 sm:flex-row sm:items-start sm:justify-between sm:p-6"><div><h2 id="permissions-heading" className="text-base font-semibold">Permissions</h2><p className="mt-1 text-sm text-text/55">Choose what this employee can access and what actions they can perform.</p></div><label className="relative block w-full sm:w-72"><span className="sr-only">Search permissions</span><Icon name="search" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text/40" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search permissions..." className="w-full rounded-xl border border-border bg-background py-2.5 pl-9 pr-3 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/25" /></label></div>
     <div className="max-h-[36rem] overflow-auto"><div className="min-w-[44rem]"><div className="sticky top-0 z-10 grid grid-cols-[minmax(16rem,1fr)_repeat(3,6.5rem)] border-b border-border bg-card px-4 py-3"><span className="text-xs font-semibold uppercase tracking-wide text-textSecondary">Module / Page</span>{MATRIX_ACTIONS.map((action) => <button key={action} type="button" onClick={() => toggleColumn(action)} className="rounded-lg text-center hover:bg-primary/5"><span className="block text-xs font-semibold uppercase tracking-wide">{ACTION_COPY[action].title}</span><span className="block text-[10px] font-normal text-primary">Select all</span></button>)}</div>{visibleRows.map((row) => { const permission = findRowPermission(permissions, row); return <div key={`${row.module}:${row.resource}`} className="grid grid-cols-[minmax(16rem,1fr)_repeat(3,6.5rem)] items-center border-b border-border/70 px-4 hover:bg-primary/[0.035]"><div className="flex min-h-14 items-center gap-3 font-medium"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary"><Icon name={MODULE_ICONS[row.module] ?? "grid"} className="h-4 w-4" /></span>{row.label}</div>{MATRIX_ACTIONS.map((action) => permission?.actions.includes(action) ? <PermissionCheckbox key={action} label={`${ACTION_COPY[action].help} ${row.label}`} checked={(checked[permission.id] ?? new Set()).has(action)} onChange={() => toggleCell(permission, action)} /> : <span key={action} className="text-center text-lg text-text/20">—</span>)}</div>; })}</div></div>
   </section>;
+}
+
+
+export function PermissionMatrixSection(props:{permissions:Permission[];checked:Record<string,Set<string>>;onChange:(next:Record<string,Set<string>>)=>void}) {
+ const report=props.permissions.find(row=>row.module==="employee_hr"&&row.resource==="reports");
+ return <><BasePermissionMatrixSection {...props}/>{report&&<fieldset className="mt-4 rounded-lg border border-border p-4"><legend>Employee report access</legend><label><input type="checkbox" checked={props.checked[report.id]?.has("export")??false} onChange={event=>{const selected=new Set(props.checked[report.id]??[]);selected.delete("deny:export");if(event.target.checked){selected.add("view");selected.add("export");}else{selected.delete("export");selected.add("deny:export");}props.onChange({...props.checked,[report.id]:selected});}}/> Allow export of this employee's own HR reports</label><p className="mt-1 text-xs">This does not grant access to other employees' private records or owner-only approvals.</p></fieldset>}</>;
 }

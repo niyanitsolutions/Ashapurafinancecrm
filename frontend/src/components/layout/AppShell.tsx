@@ -1,3 +1,4 @@
+import {ProfileCompletionBanner} from "@/features/employee/components/ProfileCompletionBanner";
 import { useEffect, useState } from "react";
 import { Outlet } from "react-router-dom";
 import { Sidebar } from "@/components/layout/Sidebar";
@@ -32,6 +33,7 @@ export function AppShell() {
       <div className={`crm-content transition-[margin] duration-200 ${isCollapsed ? "lg:ml-[76px]" : "lg:ml-[280px]"}`}>
         <Topbar onMenuClick={() => setIsSidebarOpen(true)} />
         <main>
+          <ProfileCompletionBanner/>
           <Outlet />
         </main>
       </div>

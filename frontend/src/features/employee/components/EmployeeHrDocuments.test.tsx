@@ -1,0 +1,20 @@
+import {fireEvent,render,screen} from "@testing-library/react";
+import {beforeEach,expect,it,vi} from "vitest";
+import {EmployeeHrDocuments} from "./EmployeeHrDocuments";
+import {getHrDocuments} from "../hrApi";
+vi.mock("@/features/auth/useAuth",()=>({useAuth:()=>({role:"employee"})}));
+vi.mock("../hrApi",()=>({getHrDocuments:vi.fn(),hrPath:(id:string)=>"/employees/hr/"+id}));
+beforeEach(()=>{vi.resetAllMocks();vi.mocked(getHrDocuments).mockResolvedValue({});});
+it("offers alternative Aadhaar methods, masks transient passwords and requires both image sides",async()=>{
+ render(<EmployeeHrDocuments employeeId="me" fresher onChanged={()=>{}}/>);
+ expect(await screen.findByLabelText("Aadhaar method")).toBeInTheDocument();
+ expect(screen.getByLabelText(/E-Aadhaar PDF password/)).toHaveAttribute("type","password");
+ fireEvent.change(screen.getByLabelText("Aadhaar method"),{target:{value:"images"}});
+ expect(screen.queryByLabelText(/E-Aadhaar PDF password/)).not.toBeInTheDocument();
+ fireEvent.change(screen.getByLabelText("Aadhaar front"),{target:{files:[new File(["image"],"front.png",{type:"image/png"})]}});
+ expect(screen.getAllByRole("button",{name:"Upload document"})[0]).toBeDisabled();
+ fireEvent.change(screen.getByLabelText("Aadhaar back"),{target:{files:[new File(["image"],"back.png",{type:"image/png"})]}});
+ expect(screen.getAllByRole("button",{name:"Upload document"})[0]).toBeEnabled();
+ expect(screen.queryByText(/Relieving Letter —/)).not.toBeInTheDocument();
+ expect(screen.queryByRole("button",{name:/Approve/})).not.toBeInTheDocument();
+});

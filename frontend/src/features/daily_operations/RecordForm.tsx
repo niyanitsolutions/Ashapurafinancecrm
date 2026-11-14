@@ -1,3 +1,4 @@
+import {LoanTypeField} from "./LoanTypeField";
 import { useState, type FormEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/buttons/Button";
@@ -131,7 +132,7 @@ export function RecordForm({ area, record, onSaved, onCancel }: {
         {area !== "issues" && <>
           {field("customer_name", "Customer name", !linked, "text", linked)}
           {field("customer_number", "Customer number", !linked, "tel", linked)}
-          {field("loan_type", "Loan type", false, "text", linked)}{area === "follow-ups"?<BankMultiSelect value={banks} onChange={setBanks}/>:field("bank", "Bank / NBFC", !crmProgress, "text", crmProgress)}
+          {linked?field("loan_type", "Loan type", false, "text", true):<LoanTypeField value={String(values.loan_type??"")} onChange={value=>setValues(prev=>({...prev,loan_type:value}))}/>}{area === "follow-ups"?<BankMultiSelect value={banks} onChange={setBanks}/>:field("bank", "Bank / NBFC", !crmProgress, "text", crmProgress)}
         </>}
       </div>
       {area === "issues" ? <>

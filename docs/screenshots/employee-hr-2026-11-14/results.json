@@ -1,0 +1,66 @@
+[
+  {
+    "width": 1440,
+    "role": "employee",
+    "paths": [
+      "/profile/onboarding",
+      "/profile/leave",
+      "/profile/attendance"
+    ],
+    "checks": [
+      "actual-api-isolated-mongo",
+      "responsive-overflow",
+      "no-browser-runtime-errors"
+    ]
+  },
+  {
+    "width": 1440,
+    "role": "owner",
+    "paths": [
+      "/employees",
+      "/employees/onboarding",
+      "/employees/attendance",
+      "/employees/leave",
+      "/employees/edit-requests",
+      "/employees/reports",
+      "/employees/settings"
+    ],
+    "checks": [
+      "actual-api-isolated-mongo",
+      "responsive-overflow",
+      "no-browser-runtime-errors"
+    ]
+  },
+  {
+    "width": 390,
+    "role": "employee",
+    "paths": [
+      "/profile/onboarding",
+      "/profile/leave",
+      "/profile/attendance"
+    ],
+    "checks": [
+      "actual-api-isolated-mongo",
+      "responsive-overflow",
+      "no-browser-runtime-errors"
+    ]
+  },
+  {
+    "width": 390,
+    "role": "owner",
+    "paths": [
+      "/employees",
+      "/employees/onboarding",
+      "/employees/attendance",
+      "/employees/leave",
+      "/employees/edit-requests",
+      "/employees/reports",
+      "/employees/settings"
+    ],
+    "checks": [
+      "actual-api-isolated-mongo",
+      "responsive-overflow",
+      "no-browser-runtime-errors"
+    ]
+  }
+]

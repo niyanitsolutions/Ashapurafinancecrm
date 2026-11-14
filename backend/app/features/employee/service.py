@@ -146,7 +146,7 @@ class EmployeeService:
         user = User(
             mobile=payload.mobile,
             role=EMPLOYEE,
-            status=ACCOUNT_STATUS_ACTIVE,
+            status=ACCOUNT_STATUS_DISABLED if payload.onboarding_mode == "owner_complete" else ACCOUNT_STATUS_ACTIVE,
             password_hash=hash_password(payload.initial_password),
             is_mobile_verified=True,
             must_change_password=True,
@@ -179,11 +179,13 @@ class EmployeeService:
             employment_type=payload.employment_type,
             reporting_manager_id=payload.reporting_manager_id,
             bank_details=self._encrypt_bank_details(payload.bank_details),
-            status=EmploymentStatus.ACTIVE,
+            status=EmploymentStatus.INACTIVE if payload.onboarding_mode == "owner_complete" else EmploymentStatus.ACTIVE,
             product_ids=payload.product_ids,
             created_by=owner.require_id(),
         )
         employee_id = await self._employees.insert(employee)
+        from bson import ObjectId
+        await self._db.employees.update_one({"_id":ObjectId(employee_id)},{"$set":{"onboarding":{"mode":payload.onboarding_mode,"status":"incomplete","version":0,"history":[]}}})
 
         await write_audit_log(
             self._db,
@@ -237,6 +239,8 @@ class EmployeeService:
                     updates[field] = value
 
         if payload.status is not None and payload.status != employee.status:
+            if payload.status == EmploymentStatus.ACTIVE:
+                await self._validate_initial_hr_activation(employee_id, updates)
             updates["status"] = payload.status
             await self._sync_login_status(employee.user_id, payload.status)
 
@@ -253,6 +257,11 @@ class EmployeeService:
     async def self_update_employee(self, employee_id: str, payload: SelfUpdateEmployeeRequest, actor: User) -> Employee:
         employee = await self._get_or_404(employee_id)
         self._ensure_self(employee, actor)
+
+        from bson import ObjectId
+        raw = await self._db.employees.find_one({"_id":ObjectId(employee_id)})
+        if (raw or {}).get("onboarding",{}).get("ever_verified") or (raw or {}).get("onboarding",{}).get("status") in {"verified", "pending_verification"}:
+            raise ConflictError("Submit an employee edit request to change reviewed information.")
 
         updates: dict[str, Any] = {}
         for field in ("first_name", "last_name", "display_name", "gender", "date_of_birth", "blood_group", "alternative_mobile"):
@@ -276,10 +285,34 @@ class EmployeeService:
         )
         return updated or employee
 
+    async def _validate_initial_hr_activation(self, employee_id: str, changes: dict[str,Any] | None = None) -> None:
+        from bson import ObjectId
+        from app.features.employee.hr_documents import HrDocuments
+        raw = await self._db.employees.find_one({"_id":ObjectId(employee_id),"is_deleted":False})
+        if not raw:
+            raise NotFoundError("Employee not found.")
+        onboarding=raw.get("onboarding",{})
+        if onboarding.get("mode")!="owner_complete" or onboarding.get("account_created_at"):
+            return
+        if onboarding.get("status")!="verified":
+            raise ValidationError("Finish owner-completed onboarding and document verification before activating this account.")
+        await HrDocuments(self).require_approved(raw)
+        roles=sorted([row["role_id"] async for row in self._db.employee_roles.find({"employee_id":employee_id,"is_deleted":False})])
+        organization={key:(changes or {}).get(key,raw[key]) for key in ("department_id","designation_id","branch_id")}
+        access=onboarding.get("access_review",{})
+        if access.get("role_ids")!=roles or access.get("organization")!=organization:
+            raise ValidationError("Review current organization, role and permissions before initial activation.")
+
     async def activate_employee(self, employee_id: str, owner: User) -> Employee:
         employee = await self._get_or_404(employee_id)
+        await self._validate_initial_hr_activation(employee_id)
         await self._sync_login_status(employee.user_id, EmploymentStatus.ACTIVE)
-        updated = await self._employees.update(employee_id, {"status": EmploymentStatus.ACTIVE}, updated_by=owner.require_id())
+        from bson import ObjectId
+        raw=await self._db.employees.find_one({"_id":ObjectId(employee_id)})
+        values:dict[str,Any]={"status":EmploymentStatus.ACTIVE}
+        if (raw or {}).get("onboarding") and not raw["onboarding"].get("account_created_at"):
+            values["onboarding.account_created_at"]=utc_now()
+        updated = await self._employees.update(employee_id, values, updated_by=owner.require_id())
         await write_audit_log(self._db, event_type=AuditEvent.EMPLOYEE_ACTIVATED, user_id=owner.require_id(), metadata={"employee_id": employee_id})
         return updated or employee
 
@@ -319,6 +352,7 @@ class EmployeeService:
         )
 
     async def export_employees_csv(self) -> str:
+        from app.features.employee.hr_reports import safe_csv_cell
         employees, _ = await self._employees.search_and_filter(
             search=None, department_id=None, designation_id=None, branch_id=None, status=None,
             skip=0, limit=10_000, sort=[("employee_code", 1)],
@@ -329,11 +363,11 @@ class EmployeeService:
         writer = csv.writer(buffer)
         writer.writerow(["Employee Code", "First Name", "Last Name", "Email", "Mobile", "Department", "Designation", "Branch", "Status", "Joining Date"])
         for e in employees:
-            writer.writerow([
+            writer.writerow([safe_csv_cell(value) for value in [
                 e.employee_code, e.first_name, e.last_name, e.email, e.mobile,
                 dept_map.get(e.department_id, ""), desig_map.get(e.designation_id, ""),
                 branch_map.get(e.branch_id, ""), e.status, e.joining_date.date().isoformat(),
-            ])
+            ]])
         return buffer.getvalue()
 
     async def resolve_master_data_names(self, employee: Employee) -> tuple[str, str, str]:
@@ -426,6 +460,10 @@ class EmployeeService:
     async def confirm_photo(self, employee_id: str, s3_key: str, actor: User) -> Employee:
         employee = await self._get_or_404(employee_id)
         self._ensure_self(employee, actor)
+        from bson import ObjectId
+        raw = await self._db.employees.find_one({"_id":ObjectId(employee_id)})
+        if (raw or {}).get("onboarding",{}).get("ever_verified"):
+            raise ConflictError("Upload a replacement photograph through document verification.")
         updated = await self._employees.update(employee_id, {"photo_s3_key": s3_key}, updated_by=actor.require_id())
         await write_audit_log(self._db, event_type=AuditEvent.EMPLOYEE_PHOTO_UPDATED, user_id=actor.require_id(), metadata={"employee_id": employee_id})
         return updated or employee
@@ -436,21 +474,24 @@ class EmployeeService:
     # frontend page consumes this yet; see docs/KNOWN_LIMITATIONS.md.
 
     async def get_document_upload_url(self, employee_id: str, document_type: str, file_name: str, owner: User, content_type: str | None) -> tuple[str, str]:
-        employee = await self._get_or_404(employee_id)
-        s3_key = f"employee-documents/{employee.employee_code}/{document_type}/{file_name}"
-        url = generate_presigned_upload_url(s3_key, expires_in=_PHOTO_URL_EXPIRE_SECONDS, content_type=content_type)
-        return url, s3_key
+        from app.features.employee.hr_documents import HrDocuments, UploadInput, MAX_SIZE
+        intent = await HrDocuments(self).upload(employee_id, UploadInput.model_validate({"category":document_type,"file_name":file_name,"content_type":content_type or "application/pdf","size":MAX_SIZE}), owner)
+        saved = await self._db.employee_upload_intents.find_one({"_id":intent["ticket"]})
+        assert saved is not None
+        return intent["upload_url"], saved["key"]
 
-    async def confirm_employee_document(
-        self, employee_id: str, document_type: str, file_name: str, s3_key: str, content_type: str | None, owner: User
-    ) -> EmployeeDocument:
+    async def confirm_employee_document(self, employee_id: str, document_type: str, file_name: str, s3_key: str, content_type: str | None, owner: User) -> EmployeeDocument:
+        from bson import ObjectId
+        from app.features.employee.hr_documents import HrDocuments, ConfirmInput
         await self._get_or_404(employee_id)
-        document = EmployeeDocument(
-            employee_id=employee_id, document_type=document_type, file_name=file_name,
-            s3_key=s3_key, content_type=content_type, created_by=owner.require_id(),
-        )
-        document_id = await self._documents.insert(document)
-        return await self._documents.find_by_id(document_id) or document
+        raw = await self._db.employees.find_one({"_id":ObjectId(employee_id)})
+        intent = await self._db.employee_upload_intents.find_one({"key":s3_key,"employee_id":employee_id,"actor_id":owner.require_id(),"category":document_type,"state":"pending","expires_at":{"$gt":utc_now()}})
+        if not intent:
+            raise ValidationError("Use a current upload URL issued for this employee and document.")
+        result = await HrDocuments(self).confirm(employee_id, ConfirmInput.model_validate({"category":document_type,"version":(raw or {}).get("hr_documents",{}).get(document_type,{}).get("version",0),"tickets":[intent["_id"]]}), owner)
+        document = await self._documents.find_by_id(result[document_type]["id"])
+        assert document is not None
+        return document
 
     async def list_employee_documents(self, employee_id: str, actor: User) -> list[EmployeeDocument]:
         employee = await self._get_or_404(employee_id)

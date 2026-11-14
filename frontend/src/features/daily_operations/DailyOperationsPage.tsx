@@ -42,8 +42,10 @@ export function DailyOperationsPage({ area }: { area: Area }) {
   const filters: Record<string, string> = { sort: "-date", ...Object.fromEntries(FILTER_KEYS.filter(key => area === "sessions" || key !== "month").filter(key => searchParams.has(key)).map(key => [key, searchParams.get(key)!])) };
   const requestedPage = Number(searchParams.get("page") ?? "1");
   const page = Number.isInteger(requestedPage) && requestedPage > 0 && requestedPage <= 100000 ? requestedPage : 1;
+  const requestedSize = Number(searchParams.get("page_size") ?? (area === "follow-ups" ? "200" : "20"));
+  const pageSize = [20, 50, 100, 150, 200].includes(requestedSize) ? requestedSize : (area === "follow-ups" ? 200 : 20);
   const allowed = can(`daily_operations:${area}`, "view");
-  const params = new URLSearchParams({ ...Object.fromEntries(Object.entries(filters).filter(([, value]) => value)), page: String(page), page_size: "20" });
+  const params = new URLSearchParams({ ...Object.fromEntries(Object.entries(filters).filter(([, value]) => value)), page: String(page), page_size: String(pageSize) });
   const query = useQuery({ queryKey: ["daily-operations", userId, area, params.toString()], queryFn: () => listRecords(area, params.toString()), enabled: !loading && allowed, refetchInterval: area === "sessions" || area === "follow-ups" ? 30000 : false });
   const lookup = useQuery({ queryKey: ["daily-lookups", userId, area, ""], queryFn: () => getLookups("", area === "progress"), enabled: !loading && allowed });
   const [editing, setEditing] = useState<Row | null | undefined>(undefined);
@@ -117,7 +119,7 @@ export function DailyOperationsPage({ area }: { area: Area }) {
             </div></Td>
           </TableRow>)}
         </TableBody></Table></TableContainer>
-        {!!query.data?.items.length && <Pagination page={page} pageSize={20} totalItems={query.data.total} totalPages={Math.ceil(query.data.total / 20)} onPageChange={value => { const next = new URLSearchParams(pendingParams.current); next.set("page", String(value)); pendingParams.current = next; setSearchParams(next); }} />}
+        {!!query.data?.items.length && <Pagination pageSizeOptions={[20, 50, 100, 150, 200]} onPageSizeChange={value => { const next = new URLSearchParams(pendingParams.current); next.set("page_size", String(value)); next.delete("page"); pendingParams.current = next; setSearchParams(next); }} page={page} pageSize={pageSize} totalItems={query.data.total} totalPages={Math.ceil(query.data.total / pageSize)} onPageChange={value => { const next = new URLSearchParams(pendingParams.current); next.set("page", String(value)); pendingParams.current = next; setSearchParams(next); }} />}
       </>}
       {area === "sessions" && <p className="mt-3 text-xs text-textSecondary">Eligible session time includes the existing inactivity allowance and is not verified productive work. Times use {query.data?.business_timezone ?? "the business timezone"}.</p>}
       {query.data?.metrics && <details className="mt-4 text-sm"><summary className="cursor-pointer text-textSecondary">Official loan totals</summary><p className="mt-2">Approved offers: {money(query.data.metrics.approved_amount)} · Verified disbursed: {money(query.data.metrics.disbursed_amount)}. Manual daily entries do not change these totals.</p></details>}

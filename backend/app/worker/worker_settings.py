@@ -22,6 +22,7 @@ from app.worker.tasks.communication import (
     process_retry_queue,
 )
 from app.worker.tasks.daily_operations import check_daily_operations_notifications
+from app.worker.tasks.employee_hr import retry_employee_hr_notifications
 from app.worker.tasks.lead_capture import retry_capture_failures
 from app.worker.tasks.meta_token_refresh import refresh_meta_tokens
 from app.worker.tasks.referral_partner import check_commission_triggers
@@ -73,6 +74,7 @@ class WorkerSettings:
     # 1-15 minutes specifically so their own trigger-hour precision never matters; what
     # they decide is "due" is instant-based for the same reason.
     cron_jobs: ClassVar[list[Any]] = [
+        cron(retry_employee_hr_notifications, minute=set(range(60)), unique=True),
         cron(check_daily_operations_notifications, minute=set(range(60)), run_at_startup=True),  # type: ignore[arg-type]
         cron(review_voice_callbacks, second={10, 40}, run_at_startup=True),
         cron(verify_local_voice_speech, second={5, 20, 35, 50}, run_at_startup=True),

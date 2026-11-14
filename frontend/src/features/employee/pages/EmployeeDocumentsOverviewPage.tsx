@@ -1,3 +1,4 @@
+import {Link} from "react-router-dom";
 import { useEffect, useState } from "react";
 import { EmptyState } from "@/components/layout/EmptyState";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
@@ -33,7 +34,7 @@ export function EmployeeDocumentsOverviewPage() {
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
-    <SimplePageLayout title="Employee Documents" subtitle="Every document uploaded across all employees, in one place.">
+    <SimplePageLayout actions={<Link className="text-primary" to="/employees/reports?report=pending-documents">Pending document approvals</Link>} title="Employee Documents" subtitle="Every document uploaded across all employees, in one place.">
       {error && <p className="mb-4 text-sm text-danger">{error}</p>}
 
       <div className="mb-4 flex items-center gap-4">

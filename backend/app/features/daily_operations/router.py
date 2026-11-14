@@ -15,6 +15,7 @@ from app.features.auth.models import User
 from app.features.bulk_import.files import MAX_BYTES
 from app.features.daily_operations import entries, transfers, views
 from app.features.daily_operations.bank_options import BankEdit, BankName, BankOptions
+from app.features.daily_operations.loan_options import LoanOptions
 from app.features.daily_operations.schemas import (
     DeleteRecord,
     FollowUpInput,
@@ -41,7 +42,7 @@ Kind = Literal["follow-ups", "issues"]
 
 class Filters(BaseModel):
     page: int = 1
-    page_size: int = 20
+    page_size: int = 200
     search: str = ""
     status: str = ""
     employee: str = ""
@@ -58,7 +59,7 @@ class Filters(BaseModel):
 
 def filters(
     page: Annotated[int, Query(ge=1, le=100000)] = 1,
-    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+    page_size: Annotated[int, Query(ge=1, le=200)] = 200,
     search: Annotated[str, Query(max_length=200)] = "",
     status: Annotated[str, Query(max_length=100)] = "",
     employee: Annotated[str, Query(max_length=24)] = "",
@@ -452,6 +453,53 @@ async def restore_bank_option(
 ) -> ApiResponse[Any]:
     return ApiResponse.ok(
         await BankOptions(DailyOperationsService(db)).change(
+            actor, option_id=option_id, version=payload.version, active=True
+        )
+    )
+
+
+@router.get("/loan-type-options")
+async def loan_type_options(actor: Actor, db: Db, include_archived: bool = False) -> ApiResponse[Any]:
+    return ApiResponse.ok(
+        await LoanOptions(DailyOperationsService(db)).list(actor, include_archived)
+    )
+
+
+@router.post("/loan-type-options")
+async def create_loan_type_option(payload: BankName, actor: Actor, db: Db) -> ApiResponse[Any]:
+    return ApiResponse.ok(
+        await LoanOptions(DailyOperationsService(db)).change(actor, name=payload.name)
+    )
+
+
+@router.patch("/loan-type-options/{option_id}")
+async def edit_loan_type_option(
+    option_id: str, payload: BankEdit, actor: Actor, db: Db
+) -> ApiResponse[Any]:
+    return ApiResponse.ok(
+        await LoanOptions(DailyOperationsService(db)).change(
+            actor, name=payload.name, option_id=option_id, version=payload.version
+        )
+    )
+
+
+@router.post("/loan-type-options/{option_id}/archive")
+async def archive_loan_type_option(
+    option_id: str, payload: OptionVersion, actor: Actor, db: Db
+) -> ApiResponse[Any]:
+    return ApiResponse.ok(
+        await LoanOptions(DailyOperationsService(db)).change(
+            actor, option_id=option_id, version=payload.version, active=False
+        )
+    )
+
+
+@router.post("/loan-type-options/{option_id}/restore")
+async def restore_loan_type_option(
+    option_id: str, payload: OptionVersion, actor: Actor, db: Db
+) -> ApiResponse[Any]:
+    return ApiResponse.ok(
+        await LoanOptions(DailyOperationsService(db)).change(
             actor, option_id=option_id, version=payload.version, active=True
         )
     )

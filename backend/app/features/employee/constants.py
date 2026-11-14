@@ -45,7 +45,13 @@ class DocumentType:
     EXPERIENCE_CERTIFICATE = "experience_certificate"
     OTHER = "other"
 
-    ALL = (PAN, AADHAAR, OFFER_LETTER, JOINING_LETTER, EXPERIENCE_CERTIFICATE, OTHER)
+    BANK_PASSBOOK = "bank_passbook"
+    RENTAL_AGREEMENT = "rental_agreement"
+    PVC_CERTIFICATE = "pvc_certificate"
+    PHOTO = "photo"
+    RELIEVING_LETTER = "relieving_letter"
+    EXPERIENCE_LETTER = "experience_letter"
+    ALL = (PAN, AADHAAR, OFFER_LETTER, JOINING_LETTER, EXPERIENCE_CERTIFICATE, OTHER, BANK_PASSBOOK, RENTAL_AGREEMENT, PVC_CERTIFICATE, PHOTO, RELIEVING_LETTER, EXPERIENCE_LETTER)
 
 
 class AuditEvent:

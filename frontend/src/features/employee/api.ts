@@ -60,6 +60,7 @@ export interface EmployeeDetail extends EmployeeListItem {
 }
 
 export interface CreateEmployeeInput {
+  onboarding_mode?: "account_only"|"owner_complete";
   mobile: string;
   initial_password: string;
   first_name: string;

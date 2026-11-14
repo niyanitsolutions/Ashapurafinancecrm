@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Button, type ButtonVariant } from "@/components/buttons/Button";
 import { Modal } from "@/components/overlays/Modal";
 
@@ -12,6 +12,8 @@ export function ConfirmDialog({
   confirmVariant = "primary",
   onConfirm,
   onClose,
+  children,
+  confirmDisabled = false,
 }: {
   open: boolean;
   title: string;
@@ -20,6 +22,8 @@ export function ConfirmDialog({
   confirmVariant?: ButtonVariant;
   onConfirm: () => Promise<void> | void;
   onClose: () => void;
+  children?: ReactNode;
+  confirmDisabled?: boolean;
 }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -45,13 +49,14 @@ export function ConfirmDialog({
           <Button variant="secondary" size="sm" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant={confirmVariant} size="sm" loading={isSubmitting} onClick={handleConfirm}>
+          <Button disabled={confirmDisabled} variant={confirmVariant} size="sm" loading={isSubmitting} onClick={handleConfirm}>
             {confirmLabel}
           </Button>
         </>
       }
     >
       <p className="text-sm text-textSecondary">{message}</p>
+      {children}
     </Modal>
   );
 }

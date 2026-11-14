@@ -23,6 +23,7 @@ export function Pagination({
   itemLabel = "items",
   onPageChange,
   onPageSizeChange,
+  pageSizeOptions = PAGE_SIZE_OPTIONS,
 }: {
   page: number;
   totalPages: number;
@@ -31,6 +32,7 @@ export function Pagination({
   itemLabel?: string;
   onPageChange: (page: number) => void;
   onPageSizeChange?: (size: number) => void;
+  pageSizeOptions?: readonly number[];
 }) {
   const rangeStart = totalItems === 0 ? 0 : (page - 1) * pageSize + 1;
   const rangeEnd = Math.min(page * pageSize, totalItems);
@@ -90,7 +92,7 @@ export function Pagination({
             onChange={(e) => onPageSizeChange(Number(e.target.value))}
             className="rounded-lg border border-border bg-card px-2.5 py-2 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
           >
-            {PAGE_SIZE_OPTIONS.map((size) => (
+            {pageSizeOptions.map((size) => (
               <option key={size} value={size}>
                 {size} / page
               </option>

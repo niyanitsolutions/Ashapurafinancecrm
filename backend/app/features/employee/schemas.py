@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -39,6 +39,7 @@ class BankDetailsResponse(BaseModel):
 
 
 class CreateEmployeeRequest(BaseModel):
+    onboarding_mode: Literal["account_only", "owner_complete"] = "account_only"
     mobile: str = Field(pattern=r"^[6-9]\d{9}$")
     initial_password: PasswordStr
     first_name: str

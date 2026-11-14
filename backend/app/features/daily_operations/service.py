@@ -600,6 +600,9 @@ async def ensure_daily_operations_indexes(db: AsyncIOMotorDatabase[Any]) -> None
     from app.features.daily_operations.bank_options import install as install_banks
 
     await install_banks(db)
+    from app.features.daily_operations.loan_options import install as install_loans
+
+    await install_loans(db)
     for name in COLLECTIONS.values():
         if name == "daily_progress_entries":
             await db[name].create_index("import_key", unique=True, sparse=True)

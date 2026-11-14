@@ -1,3 +1,4 @@
+import {apiBlob} from "@/shared/api/client";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { BUTTON_BASE_CLASSES, BUTTON_SIZE_CLASSES, BUTTON_VARIANT_CLASSES } from "@/components/buttons/Button";
@@ -9,7 +10,6 @@ import { Pagination } from "@/components/tables/Pagination";
 import {
   activateEmployee,
   deactivateEmployee,
-  exportEmployeesCsvUrl,
   listDepartments,
   listDesignations,
   listEmployees,
@@ -105,13 +105,11 @@ export function EmployeeListPage() {
 
   return (
     <SimplePageLayout
-      title="Employees"
+      title="Employee Directory"
       subtitle="Your team — who they are, what they do, and what they can access."
       actions={
         <>
-          <a href={exportEmployeesCsvUrl()} className={`${BUTTON_BASE_CLASSES} ${BUTTON_VARIANT_CLASSES.secondary} ${BUTTON_SIZE_CLASSES.sm}`}>
-            Export
-          </a>
+          <button type="button" className={`${BUTTON_BASE_CLASSES} ${BUTTON_VARIANT_CLASSES.secondary} ${BUTTON_SIZE_CLASSES.sm}`} onClick={async()=>{try{const blob=await apiBlob("/employees/export");const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="employees.csv";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(err){setError(getErrorMessage(err));}}}>Export</button>
           <Link to="/employees/new" className={`${BUTTON_BASE_CLASSES} ${BUTTON_VARIANT_CLASSES.primary} ${BUTTON_SIZE_CLASSES.sm}`}>
             + Add Employee
           </Link>

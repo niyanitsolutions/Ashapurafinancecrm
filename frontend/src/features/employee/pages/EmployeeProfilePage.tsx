@@ -71,6 +71,8 @@ export function EmployeeProfilePage() {
       title="My Profile"
       actions={
         <>
+          <Link to="/profile/leave" className="text-sm text-primary hover:underline">My Leave</Link>
+          <Link to="/profile/attendance" className="text-sm text-primary hover:underline">My Attendance</Link>
           <Link to="/profile/sessions" className="text-sm text-primary hover:underline">
             My Sessions
           </Link>
@@ -86,7 +88,8 @@ export function EmployeeProfilePage() {
           <StatusBadge status={employee.status} />
         </div>
 
-        <form onSubmit={handleSubmit(onSubmit)} noValidate>
+        <Link className="mb-4 block rounded border border-border bg-card p-4 text-primary" to="/profile/onboarding">Complete profile, upload documents and view verification status</Link>
+      <form onSubmit={handleSubmit(onSubmit)} noValidate>
           <ErrorBanner message={apiError} />
           {successMessage && <p className="mb-4 text-sm text-success">{successMessage}</p>}
 
