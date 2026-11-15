@@ -1,0 +1,31 @@
+import assert from 'node:assert/strict';
+import {mkdir,writeFile,readFile} from 'node:fs/promises';
+import {createInterface} from 'node:readline/promises';
+import {chromium} from '../frontend/node_modules/.cache/voice-ui-audit/node_modules/playwright/index.mjs';
+const origin='http://127.0.0.1:5175';const actors=JSON.parse(process.env.AFS_TEST_ACTORS||'[]');
+const output='docs/screenshots/daily-reeligible-2026-11-15';await mkdir(output,{recursive:true});
+const input=createInterface({input:process.stdin,terminal:false});
+const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});const results=[];
+try {for(const width of [1440,390]) {
+ const authorization=actors[0];const context=await browser.newContext({viewport:{width,height:1000},acceptDownloads:true,reducedMotion:'reduce'});
+ await context.addInitScript(()=>localStorage.setItem('afs_refresh_token','isolated-reeligible-browser'));
+ await context.route('**/*',async route=>{const req=route.request();const url=new URL(req.url());if(!url.pathname.startsWith('/api/v1/'))return url.origin===origin?route.continue():route.abort();if(url.pathname==='/api/v1/auth/refresh')return route.fulfill({json:{success:true,data:{access_token:authorization.slice(7),refresh_token:'isolated-reeligible-browser'},error:null,meta:null}});const response=await route.fetch({url:'http://127.0.0.1:18767'+url.pathname+url.search,headers:{...req.headers(),authorization}});await route.fulfill({response});});
+ const page=await context.newPage();const errors=[];page.on('pageerror',error=>errors.push(error.message));
+ await page.goto(origin+'/daily-operations/follow-ups',{waitUntil:'domcontentloaded',timeout:60000});await page.getByRole('heading',{name:'Daily Follow-up Data',exact:true}).waitFor();
+ await page.getByRole('button',{name:'+ Add record',exact:true}).click();const dialog=page.getByRole('dialog');
+ await dialog.getByLabel('Customer name',{exact:true}).fill('Reeligible Synthetic '+width);await dialog.getByLabel('Customer number',{exact:true}).fill('9000000000');
+ await dialog.getByLabel('Bank / NBFC',{exact:true}).click();await dialog.getByRole('button',{name:'Add Custom Bank / NBFC',exact:true}).click();await dialog.getByLabel('Bank / NBFC name',{exact:true}).fill('Eligible Bank '+width);await dialog.getByRole('button',{name:'Save bank option',exact:true}).click();await dialog.getByText('Bank / NBFC option saved.',{exact:true}).waitFor();await dialog.getByLabel('Bank / NBFC',{exact:true}).click();
+ await dialog.getByLabel('Follow-up status',{exact:true}).selectOption({label:'Re-Eligible'});
+ const date=dialog.getByLabel('Re-Eligible Date',{exact:true});assert.equal(await date.evaluate(node=>node.required),true);assert.equal(await date.evaluate(node=>node.checkValidity()),false);
+ await date.fill('2026-11-20');await dialog.getByLabel("Today's case status / remarks",{exact:true}).fill('Customer eligible later');await dialog.getByRole('button',{name:'Save record',exact:true}).click();await dialog.waitFor({state:'hidden'});
+ const row=page.getByRole('row').filter({hasText:'Reeligible Synthetic '+width});await row.waitFor();assert.equal(await row.getByRole('button',{name:'Delete',exact:true}).count(),0);
+ await page.screenshot({path:`${output}/normal-${width}.png`,fullPage:true});
+ console.log('READY_FOR_WORKER '+width);await new Promise(resolve=>input.once('line',resolve));
+ await page.reload();await page.getByRole('button',{name:'Re-Eligible',exact:true}).click();await row.waitFor();await page.getByRole('columnheader',{name:'RE-ELIGIBLE DATE',exact:true}).waitFor();
+ await row.getByRole('button',{name:'History',exact:true}).click();await page.getByRole('dialog').getByText(/Automatic transition/).waitFor();await page.getByRole('button',{name:'Close',exact:true}).click();
+ await page.screenshot({path:`${output}/ready-${width}.png`,fullPage:true});
+ await page.getByText('Export',{exact:true}).click();const downloaded=page.waitForEvent('download');await page.getByRole('button',{name:'CSV',exact:true}).click();const download=await downloaded;assert.ok((await readFile(await download.path(),'utf8')).includes('Reeligible Synthetic '+width));
+ await row.getByRole('button',{name:'Edit',exact:true}).click();await dialog.getByLabel('Follow-up status',{exact:true}).selectOption('DISBURSE');assert.equal(await dialog.getByLabel('Re-Eligible Date',{exact:true}).count(),0);await dialog.getByRole('button',{name:'Save changes',exact:true}).click();await dialog.waitFor({state:'hidden'});await row.waitFor({state:'hidden'});
+ await page.getByRole('button',{name:'Daily Follow-up Data',exact:true}).click();await row.waitFor();assert.ok((await row.innerText()).includes('DISBURSE'));
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);assert.deepEqual(errors,[]);results.push({width,result:'passed',checks:['required-date','future-normal','actual-worker-callback-twice','ready-only','automatic-history','scoped-export','resume-same-id','employee-no-delete','responsive-no-runtime-errors']});await context.close();
+}await writeFile(output+'/results.json',JSON.stringify(results,null,2));console.log(JSON.stringify(results));}finally{input.close();await browser.close();}

@@ -22,7 +22,7 @@ import { EmployeeNameField } from "./EmployeeNameField";
 
 const FILTER_KEYS = ["month", "sort", "search", "status", "date_from", "date_to", "employee_name", "bank", "loan_type", "overdue", "old_days"];
 const columns: Record<Area, [string, string][]> = {
-  "follow-ups": [["date", "DATE"], ["loan_type", "LOAN TYPE"], ["bank", "BANK / NBFCs"], ["customer_name", "CX NAME"], ["customer_number", "CX NUMBER"], ["remarks", "TODAY CASE STATUS"], ["remarks_date", "REMARKS DATE"], ["status", "FOLLOW PENDING"], ["due_date", "NEXT FOLLOW-UP"], ["employee_name", "EMPLOYEE NAME"]],
+  "follow-ups": [["date", "DATE"], ["loan_type", "LOAN TYPE"], ["bank", "BANK / NBFCs"], ["customer_name", "CX NAME"], ["customer_number", "CX NUMBER"], ["remarks", "TODAY CASE STATUS"], ["remarks_date", "REMARKS DATE"], ["status", "FOLLOW PENDING"], ["due_date", "NEXT FOLLOW-UP"], ["reeligible_date", "RE-ELIGIBLE DATE"], ["employee_name", "EMPLOYEE NAME"]],
   progress: [["date", "DATE"], ["customer_name", "CX NAME"], ["customer_number", "CX NUMBER"], ["bank", "BANK / NBFC"], ["status", "TODAY CASE STAGE"], ["next_action", "WHAT'S NEXT?"], ["due_date", "NEXT FOLLOW-UP"], ["approved_amount", "APPROVED AMOUNT"], ["employee_name", "EMPLOYEE NAME"]],
   sessions: [["date", "DATE"], ["employee_name", "EMPLOYEE NAME"], ["login_at", "LOGIN TIME"], ["logout_at", "LOGOUT TIME"], ["recorded_seconds", "DURATION"], ["status", "STATUS"]],
   issues: [["date", "DATE"], ["employee_name", "EMPLOYEE NAME"], ["inquiry", "INQUIRY OR ISSUE"], ["assigned_to_name", "ASSIGNED TO"], ["priority", "PRIORITY"], ["status", "STATUS"], ["resolution_notes", "RESOLUTION NOTES"]],
@@ -38,8 +38,11 @@ export function DailyOperationsPage({ area }: { area: Area }) {
   const [searchParams, setSearchParams] = useSearchParams();
   // Keep consecutive filter interactions together while router transitions commit.
   const pendingParams = useRef(searchParams);
+  const exportMenu = useRef<HTMLDetailsElement>(null);
   useEffect(() => { pendingParams.current = searchParams; }, [searchParams]);
   const filters: Record<string, string> = { sort: "-date", ...Object.fromEntries(FILTER_KEYS.filter(key => area === "sessions" || key !== "month").filter(key => searchParams.has(key)).map(key => [key, searchParams.get(key)!])) };
+  const reeligibleView = area === "follow-ups" && searchParams.get("workflow") === "reeligible";
+  if (area === "follow-ups") filters.workflow = reeligibleView ? "reeligible" : "normal";
   const requestedPage = Number(searchParams.get("page") ?? "1");
   const page = Number.isInteger(requestedPage) && requestedPage > 0 && requestedPage <= 100000 ? requestedPage : 1;
   const requestedSize = Number(searchParams.get("page_size") ?? (area === "follow-ups" ? "200" : "20"));
@@ -71,23 +74,26 @@ export function DailyOperationsPage({ area }: { area: Area }) {
     } catch (err) { setError(err instanceof Error ? err.message : "Unable to open this row."); }
   }
   async function exportFile(format: "csv" | "xlsx") {
+    if (exportMenu.current) exportMenu.current.open = false;
     try { await download(`${base}/${area}/export?${params}&format=${format}`, `${area}.${format}`); }
     catch (err) { setError(err instanceof Error ? err.message : "Export failed."); }
   }
-  const visibleColumns = [...columns[area], ...(area === "progress" && extraColumns ? [["login_date", "DATE OF LOGIN"], ["age_days", "AGE (DAYS)"], ["disbursed_at", "DATE OF DISBURSE"], ["disbursed_amount", "DISBURSED AMOUNT"], ["updated_at", "UPDATE DATE"]] : [])];
+  const visibleColumns = [...(reeligibleView ? columns["follow-ups"].filter(([key]) => !["remarks_date", "status", "due_date", "reeligible_date", "employee_name"].includes(key)).concat([["reeligible_date", "RE-ELIGIBLE DATE"], ["employee_name", "EMPLOYEE NAME"]]) : columns[area]), ...(area === "progress" && extraColumns ? [["login_date", "DATE OF LOGIN"], ["age_days", "AGE (DAYS)"], ["disbursed_at", "DATE OF DISBURSE"], ["disbursed_amount", "DISBURSED AMOUNT"], ["updated_at", "UPDATE DATE"]] : [])];
   function cell(key: string, value: unknown) {
     if (key === "banks") return Array.isArray(value)?value.map(bank=>String((bank as {name:string}).name)).join(", "):text(value);
     if (key === "bank" && Array.isArray(value)) return value.map(bank=>String((bank as {name:string}).name)).join(", ");
     if (key === "approved_amount" || key === "disbursed_amount") return money(value);
     if (key === "recorded_seconds") return value == null ? "Open session" : `${Math.floor(Number(value) / 3600)}h ${Math.floor(Number(value) % 3600 / 60)}m`;
     if (["login_at", "logout_at", "updated_at"].includes(key)) return businessTime(value);
-    if (["date", "remarks_date", "due_date", "login_date", "disbursed_at"].includes(key)) return value ? formatISTDate(String(value)) : "—";
+    if (["date", "remarks_date", "due_date", "reeligible_date", "login_date", "disbursed_at"].includes(key)) return value ? formatISTDate(String(value)) : "—";
     if (key === "status" && area === "follow-ups") return text(value);
     if (key === "status" || key === "priority") return pretty(value);
     return text(value);
   }
-  return <SimplePageLayout title={areas[area]} subtitle={area === "sessions" ? "Login and logout are recorded automatically. Request a correction if something is missing." : "Add a row, update it as work progresses, and keep your daily notes together."} actions={<>
-    {can(`daily_operations:${area}`, "export") && <details className="relative"><summary className="cursor-pointer rounded-lg border border-border bg-card px-4 py-2.5 text-sm">Export</summary><div className="absolute right-0 z-10 mt-1 grid rounded-lg border border-border bg-card shadow-card p-1"><Button variant="ghost" onClick={() => void exportFile("xlsx")}>Excel</Button><Button variant="ghost" onClick={() => void exportFile("csv")}>CSV</Button></div></details>}
+  return <SimplePageLayout title={reeligibleView ? "Re-Eligible" : areas[area]} subtitle={area === "sessions" ? "Login and logout are recorded automatically. Request a correction if something is missing." : "Add a row, update it as work progresses, and keep your daily notes together."} actions={<>
+    {can(`daily_operations:${area}`, "export") && <details ref={exportMenu} className="relative"><summary className="cursor-pointer rounded-lg border border-border bg-card px-4 py-2.5 text-sm">Export</summary><div className="absolute right-0 z-10 mt-1 grid rounded-lg border border-border bg-card shadow-card p-1"><Button variant="ghost" onClick={() => void exportFile("xlsx")}>Excel</Button><Button variant="ghost" onClick={() => void exportFile("csv")}>CSV</Button></div></details>}
+    {area === "follow-ups" && allowed && <Button variant={reeligibleView ? "primary" : "secondary"} aria-pressed={reeligibleView} onClick={() => filter("workflow", "reeligible")}>Re-Eligible</Button>}
+    {reeligibleView && <Button variant="secondary" onClick={() => filter("workflow", "")}>Daily Follow-up Data</Button>}
     {area !== "sessions" && can(`daily_operations:${area}`, "create") && <Button onClick={() => { setNotice(""); setEditing(null); }}>+ Add record</Button>}
   </>}>
     {!loading && !allowed ? <p role="alert">You do not have permission to view this work area.</p> : <>
@@ -134,7 +140,7 @@ export function DailyOperationsPage({ area }: { area: Area }) {
         <p>{cell("recorded_seconds", session.recorded_seconds)} ? {pretty(session.status)} ? {pretty(session.end_reason)}</p>
         {isOwner && can("daily_operations:sessions", "edit") && <Button variant="ghost" size="sm" onClick={() => { setEditing(session); setHistory(null); }}>Correct session</Button>}
       </div>)}</div>}
-      <ol className="space-y-4">{(history?.history as { at: string; before?: Record<string, unknown>; after?: Record<string, unknown> }[] ?? []).map((event, index) => <li key={index} className="border-b border-border pb-3"><p className="text-sm font-medium">{businessTime(event.at)}</p><dl className="mt-2 text-sm">{Object.entries(event.after ?? {}).filter(([key, value]) => !["lead_id", "case_id", "assigned_to", "source", "status_label", "customer_interest_option_id", "customer_interest_status_snapshot"].includes(key) && value !== event.before?.[key]).map(([key, value]) => <div key={key} className="grid grid-cols-2 gap-3"><dt className="text-textSecondary">{pretty(key)}</dt><dd className="break-words">{event.before ? `${text(key==="status"?(event.before.status_label||event.before[key]):event.before[key])} → ` : ""}{cell(key, key==="status"?(event.after?.status_label||value):value)}</dd></div>)}</dl></li>)}</ol>
+      <ol className="space-y-4">{(history?.history as { at: string; source?: string; before?: Record<string, unknown>; after?: Record<string, unknown> }[] ?? []).map((event, index) => <li key={index} className="border-b border-border pb-3"><p className="text-sm font-medium">{businessTime(event.at)}{event.source === "automatic" && " - Automatic transition"}</p><dl className="mt-2 text-sm">{Object.entries(event.after ?? {}).filter(([key, value]) => !["lead_id", "case_id", "assigned_to", "source", "status_label", "customer_interest_option_id", "customer_interest_status_snapshot"].includes(key) && value !== event.before?.[key]).map(([key, value]) => <div key={key} className="grid grid-cols-2 gap-3"><dt className="text-textSecondary">{pretty(key)}</dt><dd className="break-words">{event.before ? `${text(key==="status"?(event.before.status_label||event.before[key]):event.before[key])} → ` : ""}{cell(key, key==="status"?(event.after?.status_label||value):value)}</dd></div>)}</dl></li>)}</ol>
     </Modal>
     <ConfirmDialog open={!!removing} title="Delete this daily record?" message="This removes the row from Daily Update and keeps its history. Linked loans and original sign-in records are retained." confirmLabel="Delete record" confirmVariant="danger" onClose={() => setRemoving(null)} onConfirm={async () => {
       if (!removing) return;

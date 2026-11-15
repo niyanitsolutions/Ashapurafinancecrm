@@ -29,6 +29,8 @@ async def test_defaults_colors_shared_and_removal_of_interest(
         ("NEXT FOLLOW UP", "#DCEBFF"),
         ("DISBURSE", "#D9F5E3"),
         ("REJECTED WITH REASON", "#FFE0E0"),
+        ("CASE ON HOLD WITH REASON", "#F3E8FF"),
+        ("Re-Eligible", "#E0F2FE"),
     ]
     a = await option(client, staff[1], "  Need   documents  ", "#abcdef")
     b = await option(client, staff[3], "Ready tomorrow")

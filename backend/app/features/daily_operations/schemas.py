@@ -43,11 +43,16 @@ class FollowUpInput(BaseModel):
     remarks_date: CalendarDate
     next_action: str = Field(default="", max_length=1000)
     due_date: CalendarDate | None = None
+    reeligible_date: CalendarDate | None = None
     rejection_reason: str = Field(default="", max_length=2000)
     _phone = field_validator("customer_number")(phone_number)
 
     @model_validator(mode="after")
     def validate_status(self) -> Self:
+        from app.features.daily_operations.reeligible import is_reeligible
+
+        if is_reeligible(self.status) and not self.reeligible_date:
+            raise ValueError("Re-Eligible Date is required for Re-Eligible status.")
         if self.due_date and self.due_date < self.date:
             raise ValueError("FOLLOW PENDING cannot be before DATE.")
         if self.status in {"FOLLOW UP PENDING", "NEXT FOLLOW UP"} and (

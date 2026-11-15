@@ -52,6 +52,7 @@ class Filters(BaseModel):
     date_from: date | None = None
     date_to: date | None = None
     overdue: bool = False
+    workflow: Literal["normal", "reeligible"] = "normal"
     sort: str = "-date"
     old_days: int = 0
     month: str | None = None
@@ -69,6 +70,7 @@ def filters(
     date_from: date | None = None,
     date_to: date | None = None,
     overdue: bool = False,
+    workflow: Literal["normal", "reeligible"] = "normal",
     sort: Annotated[str, Query(max_length=30)] = "-date",
     old_days: Annotated[int, Query(ge=0, le=36500)] = 0,
     month: Annotated[str | None, Query(pattern=r"^[0-9]{4}-(0[1-9]|1[0-2])$")] = None,
@@ -101,6 +103,7 @@ async def list_area(
         )
     values.pop("month")
     if kind == "progress":
+        values.pop("workflow")
         values.pop("overdue")
         if values["sort"] == "-date":
             values["sort"] = "-updated_at"
@@ -330,7 +333,7 @@ async def progress(
     db: Db,
     criteria: Annotated[Filters, Depends(filters)],
 ) -> ApiResponse[dict[str, Any]]:
-    values = criteria.model_dump(exclude={"overdue", "month"})
+    values = criteria.model_dump(exclude={"overdue", "month", "workflow"})
     if values["sort"] == "-date":
         values["sort"] = "-updated_at"
     return ApiResponse[dict[str, Any]].ok(
@@ -459,7 +462,9 @@ async def restore_bank_option(
 
 
 @router.get("/loan-type-options")
-async def loan_type_options(actor: Actor, db: Db, include_archived: bool = False) -> ApiResponse[Any]:
+async def loan_type_options(
+    actor: Actor, db: Db, include_archived: bool = False
+) -> ApiResponse[Any]:
     return ApiResponse.ok(
         await LoanOptions(DailyOperationsService(db)).list(actor, include_archived)
     )

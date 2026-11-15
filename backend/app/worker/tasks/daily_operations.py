@@ -9,6 +9,9 @@ async def check_daily_operations_notifications(_ctx: dict[Any, Any]) -> dict[str
     from app.features.daily_operations.follow_status import reconcile_statuses
 
     db = get_database()
+    from app.features.daily_operations.reeligible import reconcile_reeligible
+
     await reconcile_statuses(db)
+    await reconcile_reeligible(db)
     await expire_sessions(db)
     return await deliver_notifications(db)

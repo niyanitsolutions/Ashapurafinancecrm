@@ -449,6 +449,8 @@ class VoiceService:
 
     async def act(self, record_id: str, payload: CallAction, actor: User) -> dict[str, Any]:
         doc = await self.call(record_id, actor)
+        if doc.get("provider") != "mock":
+            raise ForbiddenError("Simulation controls only apply to mock calls.")
         if doc["version"] != payload.version:
             raise ConflictError("Call changed. Refresh before retrying.")
         if doc["status"] in TERMINAL:
@@ -498,7 +500,7 @@ class VoiceService:
         now = utc_now()
         cfg = await self.settings()
         processed = 0
-        due: dict[str, Any] = {"status": {"$nin": list(TERMINAL)}}
+        due: dict[str, Any] = {"provider": "mock", "status": {"$nin": list(TERMINAL)}}
         if cfg.mode == "mock":
             due["deadline_at"] = {"$lte": now}
         async for doc in self.db.voice_calls.find(due).limit(200):

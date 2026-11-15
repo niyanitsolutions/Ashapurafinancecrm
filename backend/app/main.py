@@ -75,6 +75,7 @@ from app.features.support.indexes import ensure_support_indexes
 from app.features.support.router import router as support_router
 from app.features.system_settings.indexes import ensure_system_settings_indexes
 from app.features.system_settings.router import router as system_settings_router
+from app.features.voice_assistant.airtel_router import router as airtel_voice_router
 from app.features.voice_assistant.callback_router import router as callback_router
 from app.features.voice_assistant.campaign_router import router as campaign_router
 from app.features.voice_assistant.catalog import initialize_voice_module
@@ -158,6 +159,7 @@ def create_app() -> FastAPI:
     app.include_router(voice_platform_router, prefix=settings.api_v1_prefix)
     app.include_router(self_hosted_router, prefix=settings.api_v1_prefix)
     app.include_router(smartflo_router, prefix=settings.api_v1_prefix)
+    app.include_router(airtel_voice_router, prefix=settings.api_v1_prefix)
     app.include_router(recording_router, prefix=settings.api_v1_prefix)
     app.include_router(campaign_router, prefix=settings.api_v1_prefix)
     app.include_router(auth_router, prefix=settings.api_v1_prefix)

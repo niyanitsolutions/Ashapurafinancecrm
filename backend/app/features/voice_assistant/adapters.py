@@ -60,7 +60,7 @@ def readiness() -> dict[str, Any]:
     return {
         "selected_provider": "not_configured",
         "preferred_integration": "native_pbx",
-        "optional_adapters": ["smartflo"],
+        "optional_adapters": ["smartflo", "airtel_iq_voice"],
         "sandbox": "not_configured",
         "telephony": "not_configured",
         "conversation_ai": "not_configured",

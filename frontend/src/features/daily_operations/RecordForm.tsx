@@ -1,3 +1,4 @@
+import {useStatusOptions} from "./statusOptions";
 import {LoanTypeField} from "./LoanTypeField";
 import { useState, type FormEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -23,6 +24,7 @@ export function RecordForm({ area, record, onSaved, onCancel }: {
 }) {
   const { userId } = useAuth();
   const { isOwner } = usePermissions();
+  const statusOptions = useStatusOptions(area === "follow-ups", true);
   const [values, setValues] = useState<Record<string, string>>(() => {
     const today = todayISTDateString();
     const defaults: Record<string, string> = {
@@ -32,7 +34,7 @@ export function RecordForm({ area, record, onSaved, onCancel }: {
     for (const [key, value] of Object.entries(record ?? {})) {
       if (value != null && typeof value !== "object") defaults[key] = String(value);
     }
-    for (const key of ["date", "remarks_date", "due_date", "login_date", "disbursed_at"]) {
+    for (const key of ["date", "remarks_date", "due_date", "reeligible_date", "login_date", "disbursed_at"]) {
       if (record && key in record) defaults[key] = dateValue(record[key]);
     }
     if (area === "sessions") {
@@ -63,7 +65,9 @@ export function RecordForm({ area, record, onSaved, onCancel }: {
   const linked = area === "progress" && (!!values.case_id || !!values.lead_id);
   const crmProgress = area === "progress" && !!values.case_id;
   const openFollowUp = followStatuses.slice(0, 2).includes(values.status);
-  const showFollowUpDate = openFollowUp || !followStatuses.includes(values.status);
+  const statusLabel = statusOptions.data?.find(option => option.value === values.status)?.name ?? (values.status === record?.status ? String(record.status_display ?? values.status) : values.status);
+  const reeligible = statusLabel.trim().toLowerCase().replaceAll("-", " ") === "re eligible";
+  const showFollowUpDate = !reeligible && (openFollowUp || !followStatuses.includes(values.status));
 
   async function submit(event: FormEvent) {
     event.preventDefault(); setSaving(true); setError(null);
@@ -84,9 +88,11 @@ export function RecordForm({ area, record, onSaved, onCancel }: {
             status: values.status, resolution_notes: values.status === "RESOLVED" ? values.resolution_notes : "" };
         } else if (area === "follow-ups") {
           if(!banks.length)throw new Error("Select at least one Bank / NBFC.");
+          if(reeligible && !values.reeligible_date)throw new Error("Re-Eligible Date is required.");
           payload = { ...payload, banks,
             customer_name: values.customer_name ?? "", customer_number: values.customer_number ?? "",
             loan_type: values.loan_type ?? "", status: values.status,
+            reeligible_date: values.reeligible_date || null,
             remarks: values.remarks ?? "", remarks_date: values.remarks_date || values.date,
             next_action: values.next_action || values.remarks || "Follow up with customer",
             due_date: showFollowUpDate ? values.due_date || values.date : null,
@@ -145,6 +151,7 @@ export function RecordForm({ area, record, onSaved, onCancel }: {
           <TextareaField label="Today's case status / remarks" rows={2} value={values.remarks ?? ""} maxLength={4000} placeholder="What happened today?" onChange={event => change("remarks", event.target.value)} />
           <div className="grid sm:grid-cols-2 gap-x-4">
             <FollowUpStatusField value={values.status} onChange={value=>change("status",value)} historicalValue={record?.status?String(record.status):undefined} historicalLabel={record?.status_display?String(record.status_display):undefined}/>
+            {reeligible && field("reeligible_date", "Re-Eligible Date", true, "date")}
             {showFollowUpDate && field("due_date", "Next follow-up date", openFollowUp, "date")}
           </div>
           {values.status === "REJECTED WITH REASON" && field("rejection_reason", "Rejection reason", true)}

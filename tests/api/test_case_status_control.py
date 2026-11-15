@@ -239,7 +239,8 @@ async def _insurance_case(client, mock_db, owner_headers, master_data, *, mobile
     r = await client.post(
         "/api/v1/insurance-cases/manual",
         json={
-            "full_name": "Portal Reuse", "mobile": f"96{mobile_suffix}", "age": 30,
+            # Reuse the seeded identity without bypassing the customer-name guard.
+            "full_name": "Status Control Test Customer", "mobile": f"96{mobile_suffix}", "age": 30,
             "insurance_category_id": cat_id, "product_id": product["product_id"], "stage": "fresh_lead",
         },
         headers=employee_headers,

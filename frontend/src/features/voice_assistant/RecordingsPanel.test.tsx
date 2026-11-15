@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RecordingsPanel } from "./RecordingsPanel";
 import { ApiError } from "@/shared/api/client";
 import { deleteRecording, getRecordingAudio, getRecordings, getTranscript } from "./api";
@@ -14,11 +14,13 @@ function mount() { return render(<QueryClientProvider client={new QueryClient({ 
 describe("Private imported recording library", () => {
   beforeEach(() => {
     vi.clearAllMocks(); permissions.view = true; permissions.download = false;
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-15T00:00:00Z"));
     vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: vi.fn(() => "blob:test-artifact"), revokeObjectURL: vi.fn() }));
     vi.mocked(getRecordings).mockResolvedValue({ items: [record], total: 1, page: 1, storage: "configured_not_externally_verified", live_capture: "blocked", transcription_engine: "not_approved" });
     vi.mocked(getRecordingAudio).mockResolvedValue(new Blob(["test-only-WAV-fixture"], { type: "audio/wav" }));
     vi.mocked(getTranscript).mockResolvedValue({ language: "en", recognizer_label: "Test recognizer", provenance: "operator_supplied_recognition_not_independently_verified", summary: null, summary_status: "not_generated", segments: [{ speaker: "caller", start_seconds: 0.4, end_seconds: 0.8, text: "Actual test recognition fixture" }] });
   });
+  afterEach(() => { vi.restoreAllMocks(); });
   it("does not fetch artifacts without dedicated View permission", () => {
     permissions.view = false; mount(); expect(screen.getByText(/recordings View permission/)).toBeInTheDocument(); expect(getRecordings).not.toHaveBeenCalled();
   });
@@ -40,6 +42,12 @@ describe("Private imported recording library", () => {
   it("shows playback failures instead of fake audio", async () => {
     vi.mocked(getRecordingAudio).mockRejectedValue(new ApiError("artifact_unavailable", "Artifact unavailable")); mount(); fireEvent.click(await screen.findByRole("button", { name: "Open audio and transcript" })); fireEvent.click(screen.getByRole("button", { name: "Load authorized audio" }));
     expect(await screen.findByText("Artifact unavailable")).toBeInTheDocument(); expect(screen.queryByLabelText("Authorized recording playback")).not.toBeInTheDocument();
+  });
+  it("does not open playback after the artifact expires", async () => {
+    vi.mocked(Date.now).mockReturnValue(Date.parse("2026-11-15T00:00:00Z"));
+    mount(); fireEvent.click(await screen.findByRole("button", { name: "Open audio and transcript" }));
+    expect(screen.queryByRole("button", { name: "Load authorized audio" })).not.toBeInTheDocument();
+    expect(getRecordingAudio).not.toHaveBeenCalled();
   });
   it("requires explicit deletion confirmation", async () => {
     vi.mocked(deleteRecording).mockResolvedValue({ status: "deleted" }); mount(); fireEvent.click(await screen.findByRole("button", { name: "Delete artifact and transcript" }));

@@ -1,0 +1,32 @@
+[
+  {
+    "width": 1440,
+    "result": "passed",
+    "checks": [
+      "required-date",
+      "future-normal",
+      "actual-worker-callback-twice",
+      "ready-only",
+      "automatic-history",
+      "scoped-export",
+      "resume-same-id",
+      "employee-no-delete",
+      "responsive-no-runtime-errors"
+    ]
+  },
+  {
+    "width": 390,
+    "result": "passed",
+    "checks": [
+      "required-date",
+      "future-normal",
+      "actual-worker-callback-twice",
+      "ready-only",
+      "automatic-history",
+      "scoped-export",
+      "resume-same-id",
+      "employee-no-delete",
+      "responsive-no-runtime-errors"
+    ]
+  }
+]

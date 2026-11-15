@@ -27,7 +27,8 @@ OPEN_STATUSES = ["FOLLOW UP PENDING", "NEXT FOLLOW UP"]
 def calendar_values(values: dict[str, Any]) -> dict[str, Any]:
     return {
         key: to_ist(value).date().isoformat()
-        if key in {"date", "remarks_date", "due_date"} and isinstance(value, datetime)
+        if key in {"date", "remarks_date", "due_date", "reeligible_date"}
+        and isinstance(value, datetime)
         else value
         for key, value in values.items()
     }
@@ -250,6 +251,24 @@ class DailyOperationsService:
             from app.features.daily_operations.status_options import StatusOptions
 
             data.update(await StatusOptions(self).record_value(payload.status, old))
+            from app.features.daily_operations.reeligible import is_reeligible
+
+            eligible = is_reeligible(data["status"], data.get("status_label"))
+            if eligible and not payload.reeligible_date:
+                raise ValidationError("Re-Eligible Date is required for Re-Eligible status.")
+            if not eligible and old and not payload.reeligible_date:
+                data["reeligible_date"] = old.get("reeligible_date")
+            unchanged = (
+                old
+                and old.get("status") == data["status"]
+                and old.get("reeligible_date") == data.get("reeligible_date")
+            )
+            data["reeligible_state"] = (
+                ((old or {}).get("reeligible_state", "waiting") if unchanged else "waiting")
+                if eligible
+                else "inactive"
+            )
+
         else:
             data = await self.validate_issue(payload, actor, old)
         now = utc_now()
@@ -329,6 +348,7 @@ class DailyOperationsService:
         page: int = 1,
         page_size: int = 20,
         sort: str = "-date",
+        workflow: str = "normal",
     ) -> dict[str, Any]:
         await self.authorize(actor, kind)
         now = utc_now()
@@ -410,9 +430,13 @@ class DailyOperationsService:
             raise ValidationError("Unsupported sort column.")
         pipeline: list[dict[str, Any]] = [{"$project": {"history": 0}}]
         if kind == "follow-ups":
+            from app.features.daily_operations.reeligible import priority_stage
+
+            query["reeligible_state"] = "ready" if workflow == "reeligible" else {"$ne": "ready"}
             from app.features.daily_operations.follow_status import status_stage
 
             pipeline.append(status_stage(now))
+            pipeline.append(priority_stage())
             if actor.role != OWNER:
                 # Old linked rows predate case_oid. Fail closed on their case ownership;
                 # new rows use the live indexed case lookup below, including reassignment.
@@ -499,11 +523,15 @@ class DailyOperationsService:
                 {
                     "$facet": {
                         "items": [
-                            {"$sort": {field: -1 if sort.startswith("-") else 1, "_id": 1}},
+                            {
+                                "$sort": ({"_status_priority": 1} if kind == "follow-ups" else {})
+                                | {field: -1 if sort.startswith("-") else 1, "_id": 1}
+                            },
                             {"$skip": (page - 1) * page_size},
                             {"$limit": page_size},
                             {
                                 "$project": {
+                                    "_status_priority": 0,
                                     "history": 0,
                                     "lead": 0,
                                     "lead_oid": 0,
@@ -610,6 +638,9 @@ async def ensure_daily_operations_indexes(db: AsyncIOMotorDatabase[Any]) -> None
             await db[name].create_index("import_key", unique=True)
         await db[name].create_index([("is_deleted", 1), ("assigned_to", 1), ("date", -1)])
         await db[name].create_index([("is_deleted", 1), ("status", 1), ("due_date", 1)])
+    await db.daily_follow_ups.create_index(
+        [("is_deleted", 1), ("reeligible_state", 1), ("reeligible_date", 1)]
+    )
     await db.daily_follow_ups.create_index("lead_oid")
     await db.daily_follow_ups.create_index([("case_id", 1), ("updated_at", -1)])
     await db.daily_follow_ups.create_index([("is_deleted", 1), ("bank", 1), ("date", -1)])

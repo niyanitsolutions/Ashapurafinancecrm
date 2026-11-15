@@ -18,7 +18,7 @@ let rows:typeof bank[];
 function wrap(child:React.ReactNode){return render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><MemoryRouter>{child}</MemoryRouter></QueryClientProvider>);}
 function Selector({initial=[]}:{initial?:BankSelection[]}){const [value,setValue]=useState(initial);return <BankMultiSelect value={value} onChange={setValue}/>;}
 async function open(){fireEvent.click(screen.getByLabelText("Bank / NBFC"));await screen.findByRole("checkbox",{name:bank.name});}
-beforeEach(()=>{vi.clearAllMocks();mocks.manage=true;rows=[{...bank},{...bank,id:"bbbbbbbbbbbbbbbbbbbbbbbb",name:"FINNABLE FINANCE"}];mocks.request.mockImplementation(async(path:string,init?:RequestInit)=>{if(path.includes("follow-up-status-options"))return ["FOLLOW UP PENDING","NEXT FOLLOW UP","DISBURSE","REJECTED WITH REASON"].map((name,index)=>({id:String(index),name,value:name,is_active:true,color:"#D9F5E3"}));if(!init)return rows;const body=JSON.parse(String(init.body));if(path.endsWith("bank-options")){const added={...bank,id:"cccccccccccccccccccccccc",name:body.name};rows=[...rows,added];return added;}rows=rows.map(r=>r.id===bank.id?{...r,...(body.name?{name:body.name}:{}),is_active:!path.endsWith("/archive"),version:r.version+1}:r);return rows[0];});mocks.lookups.mockResolvedValue({self_id:"employee-a",self_name:"Employee A",employees:[],leads:[],cases:[]});mocks.save.mockResolvedValue({id:"record"});mocks.list.mockResolvedValue({items:[],total:0});});
+beforeEach(()=>{vi.clearAllMocks();mocks.manage=true;rows=[{...bank},{...bank,id:"bbbbbbbbbbbbbbbbbbbbbbbb",name:"FINNABLE FINANCE"}];mocks.request.mockImplementation(async(path:string,init?:RequestInit)=>{if(path.includes("follow-up-status-options"))return ["FOLLOW UP PENDING","NEXT FOLLOW UP","DISBURSE","REJECTED WITH REASON","CASE ON HOLD WITH REASON","Re-Eligible"].map((name,index)=>({id:String(index),name,value:name,is_active:true,color:"#D9F5E3"}));if(!init)return rows;const body=JSON.parse(String(init.body));if(path.endsWith("bank-options")){const added={...bank,id:"cccccccccccccccccccccccc",name:body.name};rows=[...rows,added];return added;}rows=rows.map(r=>r.id===bank.id?{...r,...(body.name?{name:body.name}:{}),is_active:!path.endsWith("/archive"),version:r.version+1}:r);return rows[0];});mocks.lookups.mockResolvedValue({self_id:"employee-a",self_name:"Employee A",employees:[],leads:[],cases:[]});mocks.save.mockResolvedValue({id:"record"});mocks.list.mockResolvedValue({items:[],total:0});});
 it("selects multiple banks as chips and removes one independently",async()=>{wrap(<Selector/>);await open();fireEvent.click(screen.getByRole("checkbox",{name:bank.name}));fireEvent.click(screen.getByRole("checkbox",{name:"FINNABLE FINANCE"}));expect(within(screen.getByLabelText("Selected banks")).getByText(bank.name)).toBeVisible();fireEvent.click(screen.getByRole("button",{name:`Remove selected bank ${bank.name}`}));expect(screen.getByRole("checkbox",{name:bank.name})).not.toBeChecked();expect(screen.getByRole("checkbox",{name:"FINNABLE FINANCE"})).toBeChecked();});
 it("searches and shows a useful no-match state",async()=>{wrap(<Selector/>);await open();fireEvent.change(screen.getByLabelText("Search banks / NBFCs"),{target:{value:"missing"}});expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();expect(screen.getByText(/No matching banks/)).toBeVisible();});
 it("creates a custom option and selects it immediately",async()=>{wrap(<Selector/>);await open();fireEvent.click(screen.getByRole("button",{name:"Add Custom Bank / NBFC"}));fireEvent.change(screen.getByLabelText("Bank / NBFC name"),{target:{value:"INCRED FINANCE"}});fireEvent.click(screen.getByRole("button",{name:"Save bank option"}));expect(await screen.findByRole("button",{name:"Remove selected bank INCRED FINANCE"})).toBeVisible();});
@@ -50,4 +50,31 @@ it("requests default 200 follow-ups and preserves filters when changing page siz
  expect(within(size).getAllByRole("option").map(row=>row.getAttribute("value"))).toEqual(["20","50","100","150","200"]);
  fireEvent.change(size,{target:{value:"50"}});
  await waitFor(()=>expect(mocks.list.mock.calls.at(-1)?.[1]).toContain("page_size=50"));
+});
+
+it.each([false,true])("requires an eligibility date for add/edit without changing dropdown order, edit=%s",async editing=>{
+ const record=editing?{id:"record",version:1,status:"Re-Eligible",status_display:"Re-Eligible",customer_name:"Eligible",customer_number:"9000000000",date:"2026-11-15",remarks_date:"2026-11-15",banks:[{option_id:bank.id,name:bank.name}]}:undefined;
+ wrap(<RecordForm area="follow-ups" record={record} onSaved={vi.fn()} onCancel={vi.fn()}/>);
+ const select=await screen.findByLabelText("Follow-up status");
+ await waitFor(()=>expect(within(select).getAllByRole("option").map(option=>option.textContent)).toContain("Re-Eligible"));
+ fireEvent.change(select,{target:{value:"Re-Eligible"}});
+ expect(screen.getByLabelText("Re-Eligible Date")).toBeRequired();
+ expect(screen.queryByLabelText("Next follow-up date")).not.toBeInTheDocument();
+ fireEvent.change(screen.getByLabelText("Re-Eligible Date"),{target:{value:"2026-11-20"}});
+ fireEvent.change(select,{target:{value:"DISBURSE"}});
+ expect(screen.queryByLabelText("Re-Eligible Date")).not.toBeInTheDocument();
+ fireEvent.change(select,{target:{value:"Re-Eligible"}});
+ expect(screen.getByLabelText("Re-Eligible Date")).toHaveValue("2026-11-20");
+ expect(within(select).getAllByRole("option").map(option=>option.textContent).filter(value=>value)).toEqual(expect.arrayContaining(["FOLLOW UP PENDING","NEXT FOLLOW UP","DISBURSE","REJECTED WITH REASON"]));
+});
+it("uses the selected workflow for list queries and export, and resets pagination",async()=>{
+ wrap(<DailyOperationsPage area="follow-ups"/>);
+ await screen.findByRole("button",{name:/^Re-Eligible$/});
+ fireEvent.click(screen.getByRole("button",{name:/^Re-Eligible$/}));
+ await waitFor(()=>expect(mocks.list.mock.calls.at(-1)?.[1]).toContain("workflow=reeligible"));
+ expect(screen.getByRole("button",{name:/^Re-Eligible$/})).toHaveAttribute("aria-pressed","true");
+ fireEvent.click(screen.getByText("Export",{exact:true}));fireEvent.click(screen.getByRole("button",{name:"CSV"}));
+ expect(mocks.download.mock.calls.at(-1)?.[0]).toContain("workflow=reeligible");
+ fireEvent.click(screen.getByRole("button",{name:/^Daily Follow-up Data$/}));
+ await waitFor(()=>expect(mocks.list.mock.calls.at(-1)?.[1]).toContain("workflow=normal"));
 });

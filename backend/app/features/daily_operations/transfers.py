@@ -36,6 +36,7 @@ FOLLOW_COLUMNS = {
     "remarks_date": "REMARKS DATE",
     "next_action": "NEXT ACTION",
     "due_date": "FOLLOW PENDING",
+    "reeligible_date": "RE-ELIGIBLE DATE",
     "rejection_reason": "REJECTION REASON",
 }
 ISSUE_COLUMNS = {
@@ -261,7 +262,14 @@ async def validate_row(
         await BankOptions(service).selections(model.banks, model.bank, old)
         from app.features.daily_operations.status_options import StatusOptions
 
-        await StatusOptions(service).record_value(model.status, old)
+        status_value = await StatusOptions(service).record_value(model.status, old)
+        from app.features.daily_operations.reeligible import is_reeligible
+
+        if (
+            is_reeligible(model.status, status_value.get("status_label"))
+            and not model.reeligible_date
+        ):
+            raise ValidationError("Re-Eligible Date is required for Re-Eligible status.")
         if isinstance(model, FollowUpRow) and (model.lead_id or model.case_id):
             for field in READ_ONLY - {"employee_name"}:
                 if getattr(model, field) and getattr(model, field) != derived[field]:

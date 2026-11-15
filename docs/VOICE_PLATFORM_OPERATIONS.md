@@ -1,5 +1,14 @@
 # Voice platform operations — 16 October 2026
 
+15 November continuation: [Airtel VoiceBOT architecture](AIRTEL_IQ_INTEGRATION_ARCHITECTURE.md),
+[actual feature audit](AI_VOICE_ASSISTANT_EXISTING_IMPLEMENTATION_AUDIT.md),
+[test results](AI_VOICE_ASSISTANT_TEST_REPORT.md) and
+[production onboarding gates](AIRTEL_IQ_PRODUCTION_ONBOARDING_CHECKLIST.md).
+The existing Provider Connections screen now includes Owner-only Airtel VoiceBOT
+settings and local contract validation, separate from Airtel SMS/OTP. Live media,
+callbacks and calling remain blocked. Native/Smartflo options and the sidebar remain
+available. No remote server, trunk or AI service was installed or activated.
+
 17 October update: [current safety/test operations](VOICE_INTEGRATION_OPERATIONS_2026_10_17.md)
 and [12-feature execution/acceptance report](VOICE_INTEGRATION_EXECUTION_2026_10_17.md).
 Policy/schema changes invalidate local inference/pipeline evidence; existing test
