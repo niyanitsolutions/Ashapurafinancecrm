@@ -55,6 +55,7 @@ export function AirtelTestPanel({ configId, onChanged }: {
       setBusy(false);
     }
   }
+  if (role !== "owner") return null;
   return (
     <section className="mb-4 space-y-3 rounded-lg border border-border p-4">
       <h3 className="font-semibold">Explicit Airtel test SMS</h3>

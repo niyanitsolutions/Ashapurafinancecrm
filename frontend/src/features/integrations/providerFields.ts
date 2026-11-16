@@ -101,13 +101,11 @@ export const AIRTEL_IQ_SMS_FIELDS: ProviderField[] = [
   {key:"customer_id",label:"Customer ID",secret:true},
   {key:"sender_id",label:"Sender ID",defaultValue:"ASHFNS"},
   {key:"dlt_template_id",label:"DLT Template ID",defaultValue:"1077151820081508033"},
-  {key:"entity_id",label:"DLT Entity ID",defaultValue:"1001474305342749488"},
-  {key:"authorization_value",label:"Authorization header value (exact, confirmed by Airtel)",secret:true,optional:true,helpText:"Complete header value confirmed by Airtel. No authorization scheme is inferred."},
-  {key:"destination_template",label:"Confirmed destinationAddress JSON array (use {{mobile}})",optional:true,helpText:"One string recipient containing {{mobile}}. Confirm the required mobile format with Airtel; no country prefix is added automatically."},
-  {key:"success_field",label:"Confirmed response success field path",optional:true,helpText:"Internal response parsing rule; not sent to Airtel. Enter only an Airtel-confirmed path."},
-  {key:"success_value",label:"Confirmed success value (JSON scalar)",optional:true},
-  {key:"contract_confirmed",label:"Account-specific API contract confirmed",toggle:true,optional:true},
-  {key:"message_type",label:"Message Type",optional:true,helpText:"Enter the value confirmed by Airtel for this prepaid account. No default is assumed."},
+  {key:"entity_id",label:"DLT Entity ID",defaultValue:"AIR7316372024",helpText:"Airtel API entity reference. The DLT registration ID is a different identifier."},
+  {key:"authorization_value",label:"Authorization header value (exact, confirmed by Airtel)",secret:true,defaultValue:"ASHFNS",helpText:"Airtel confirmed ASHFNS exactly. Do not add Bearer or Basic. Stored encrypted and write-only after saving."},
+  {key:"destination_template",label:"Confirmed destinationAddress JSON array (use {{mobile}})",defaultValue:'["{{mobile}}"]',helpText:"One 10-digit mobile number; no country prefix is added."},
+  {key:"contract_confirmed",label:"Account-specific API contract confirmed",toggle:true,optional:true,helpText:"Save all required settings, run Validate Configuration (no SMS), then confirm here. Activation still requires an explicit test submission."},
+  {key:"message_type",label:"Message Type",defaultValue:"TRANSACTIONAL",helpText:"HTTP 200 confirms API submission only. No JSON success fields are required; handset delivery is unverified."},
 ];
 
 export function fieldsFor(integrationType: string, provider: string): ProviderField[] {

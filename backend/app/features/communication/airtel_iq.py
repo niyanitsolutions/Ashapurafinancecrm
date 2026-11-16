@@ -1,6 +1,6 @@
 """Airtel prepaid transport. Unknown account-specific rules are explicit configuration.
 
-No Basic/Bearer scheme, destination structure, message type or success code is assumed.
+The account-confirmed contract uses an exact header, ten-digit recipient and HTTP 200.
 Timeout/ambiguous responses are never automatically retried (provider idempotency unknown).
 """
 
@@ -23,22 +23,6 @@ from app.features.integrations.airtel_iq import (
 from app.utils.datetime import utc_now
 
 
-def field(payload: Any, path: str) -> Any:
-    for key in path.split("."):
-        if isinstance(payload, dict):
-            payload = payload.get(key)
-        elif (
-            isinstance(payload, list)
-            and key.isascii()
-            and key.isdigit()
-            and int(key) < len(payload)
-        ):
-            payload = payload[int(key)]
-        else:
-            return None
-    return payload
-
-
 async def request(body: dict[str, Any], authorization: str) -> tuple[int, Any]:
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(15, connect=5, write=10, pool=5), follow_redirects=False
@@ -52,10 +36,7 @@ async def request(body: dict[str, Any], authorization: str) -> tuple[int, Any]:
             },
             json=body,
         )
-    try:
-        return response.status_code, response.json()
-    except ValueError:
-        return response.status_code, None
+    return response.status_code, None
 
 
 async def submit(
@@ -70,9 +51,7 @@ async def submit(
     )
     if not confirmed_contract(config):
         return {"success": False, "status": "unconfigured", "error": BLOCKED}
-    key = hashlib.sha256(
-        (reference + ":" + json.dumps(config, sort_keys=True)).encode()
-    ).hexdigest()
+    key = hashlib.sha256(("airtel_iq:" + reference).encode()).hexdigest()
     stamp = utc_now()
     try:
         await db.sms_submissions.insert_one(
@@ -98,7 +77,7 @@ async def submit(
         ),
         "dltTemplateId": config["dlt_template_id"],
         "entityId": config["entity_id"],
-        "message": APPROVED_MESSAGE.replace("{#numeric#}", otp),
+        "message": APPROVED_MESSAGE.replace("{OTP}", otp),
         "messageType": config["message_type"],
         "sourceAddress": config["sender_id"],
     }
@@ -106,11 +85,9 @@ async def submit(
     code = None
     started = perf_counter()
     try:
-        code, payload = await request(body, config["authorization_value"])
-        expected = json.loads(config["success_value"])
-        actual = field(payload, config["success_field"])
-        accepted = 200 <= code < 300 and type(actual) is type(expected) and actual == expected
-        status = "accepted" if accepted else "rejected" if code >= 400 else "unknown"
+        code, _payload = await request(body, config["authorization_value"])
+        # HTTP 200 confirms submission only. No JSON schema or handset delivery is inferred.
+        status = "accepted" if code == 200 else "rejected"
     except httpx.HTTPError:
         # Never persist exception text, request body, authentication or provider payload.
         status = "unknown"
@@ -130,5 +107,5 @@ async def submit(
         "status": status,
         "error": None
         if status == "accepted"
-        else "SMS submission was not confirmed. No automatic retry was performed.",
+        else "SMS submission was not confirmed. Check the Airtel IQ portal. No automatic retry was performed.",
     }

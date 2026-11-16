@@ -560,7 +560,7 @@ export function IntegrationDetailsPage() {
               <label key={field.key} className="text-xs text-text/60">
                 {field.label} {field.secret && <span className="text-text/40">(current: {config.config[field.key] || "not set"})</span>}
                 {config.provider === "airtel_iq" && field.toggle ? (
-                  <select value={fieldValues[field.key] ?? config.config[field.key] ?? "false"}
+                  <select aria-label={field.label} disabled={!config.last_tested_at || Object.keys(fieldValues).some(key => key !== "contract_confirmed")} value={fieldValues[field.key] ?? config.config[field.key] ?? "false"}
                     onChange={(e) => setFieldValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
                     className="mt-1 block w-full rounded border border-border px-3 py-2 text-sm">
                     <option value="false">Not confirmed</option><option value="true">Confirmed with Airtel</option>

@@ -10,8 +10,8 @@ from app.features.integrations.airtel_iq import DEFAULTS, ENDPOINT
 
 CONFIG = DEFAULTS | {
     "customer_id": "fixture-customer",
-    "authorization_value": "Fixture account secret",
-    "message_type": "fixture-type",
+    "authorization_value": "ASHFNS",
+    "message_type": "TRANSACTIONAL",
     "destination_template": '["{{mobile}}"]',
     "success_field": "result.accepted",
     "success_value": "true",
@@ -26,6 +26,7 @@ CONFIG = DEFAULTS | {
         '[{"mobile":"{{mobile}}"}]',
         '["{{mobile}}","other"]',
         '["literal-mobile"]',
+        '["91{{mobile}}"]',
     ],
 )
 async def test_invalid_destination_shape_never_sends(mock_db, monkeypatch, destination):
@@ -35,7 +36,7 @@ async def test_invalid_destination_shape_never_sends(mock_db, monkeypatch, desti
     monkeypatch.setattr(adapter, "request", forbidden)
     result = await adapter.submit(
         mock_db,
-        CONFIG | {"destination_template": destination},
+        CONFIG | {"destination_template": destination, "contract_confirmed": "false"},
         "9000000001",
         "0472",
         "invalid-destination",
@@ -74,7 +75,7 @@ async def test_exact_post_headers_body_and_no_secret_persistence(mock_db, monkey
     assert call["headers"] == {
         "accept": "application/json",
         "content-type": "application/json",
-        "Authorization": "Fixture account secret",
+        "Authorization": "ASHFNS",
     }
     assert call["json"] == {
         "customerId": "fixture-customer",
@@ -82,7 +83,7 @@ async def test_exact_post_headers_body_and_no_secret_persistence(mock_db, monkey
         "dltTemplateId": DEFAULTS["dlt_template_id"],
         "entityId": DEFAULTS["entity_id"],
         "message": "Your OTP for mobile verification with Ashapura Financial Services is 0472. It is valid for 10 minutes. Do not share this OTP with anyone.",
-        "messageType": "fixture-type",
+        "messageType": "TRANSACTIONAL",
         "sourceAddress": "ASHFNS",
     }
     assert (
@@ -107,9 +108,9 @@ async def test_exact_post_headers_body_and_no_secret_persistence(mock_db, monkey
         (401, {"error": "secret failure"}, "rejected"),
         (429, {}, "rejected"),
         (500, {}, "rejected"),
-        (200, None, "unknown"),
-        (200, {"result": {"accepted": "true"}}, "unknown"),
-        (302, {}, "unknown"),
+        (201, None, "rejected"),
+        (204, {}, "rejected"),
+        (302, {}, "rejected"),
     ],
 )
 async def test_unconfirmed_success_never_accepted_or_retried(
@@ -153,10 +154,6 @@ async def test_timeout_and_concurrent_duplicate_no_retry(mock_db, monkeypatch):
     [
         "customer_id",
         "authorization_value",
-        "message_type",
-        "destination_template",
-        "success_field",
-        "success_value",
         "contract_confirmed",
     ],
 )
@@ -166,7 +163,63 @@ async def test_missing_contract_rule_fails_closed(mock_db, monkeypatch, key):
 
     monkeypatch.setattr(adapter, "request", forbidden)
     result = await adapter.submit(
-        mock_db, CONFIG | {key: ""}, "9000000001", "0472", "missing"
+        mock_db,
+        CONFIG | {key: "", "contract_confirmed": "false"},
+        "9000000001",
+        "0472",
+        "missing",
     )
     assert result["status"] == "unconfigured"
     assert await mock_db.sms_submissions.count_documents({}) == 0
+
+
+@pytest.mark.parametrize(
+    "payload", [None, {}, "unexpected", {"error": "unconfirmed provider text"}]
+)
+async def test_http_200_is_submission_without_json_rule_or_delivery_claim(
+    mock_db, monkeypatch, payload, caplog
+):
+    async def request(*args):
+        return 200, payload
+
+    monkeypatch.setattr(adapter, "request", request)
+    config = {
+        k: v for k, v in CONFIG.items() if k not in {"success_field", "success_value"}
+    }
+    result = await adapter.submit(mock_db, config, "9000000001", "0472", "http-only")
+    assert result == {"success": True, "status": "accepted", "error": None}
+    assert "delivered" not in str(result)
+    assert all(
+        secret not in caplog.text for secret in ["0472", "fixture-customer", "ASHFNS"]
+    )
+
+
+async def test_timeout_remains_deduplicated_after_config_edit(mock_db, monkeypatch):
+    calls = []
+
+    async def request(*args):
+        calls.append(True)
+        raise httpx.ReadTimeout("sensitive exception")
+
+    monkeypatch.setattr(adapter, "request", request)
+    await adapter.submit(mock_db, CONFIG, "9000000001", "0472", "stable-id")
+    result = await adapter.submit(
+        mock_db,
+        CONFIG | {"customer_id": "rotated-account"},
+        "9000000001",
+        "0472",
+        "stable-id",
+    )
+    assert result["status"] == "unknown" and len(calls) == 1
+
+
+async def test_connection_failure_unknown_without_provider_schema(mock_db, monkeypatch):
+    async def request(*args):
+        raise httpx.ConnectError("private details")
+
+    monkeypatch.setattr(adapter, "request", request)
+    result = await adapter.submit(
+        mock_db, CONFIG, "9000000001", "0472", "connection-failure"
+    )
+    assert result["status"] == "unknown" and not result["success"]
+    assert "private details" not in str(result)

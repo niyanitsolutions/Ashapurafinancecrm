@@ -270,9 +270,9 @@ async def test_whatsapp(config: dict[str, str]) -> ConnectionCheckResult:
 
 async def test_sms(config: dict[str, str]) -> ConnectionCheckResult:
     if config.get("provider") == "airtel_iq":
-        from app.features.integrations.airtel_iq import BLOCKED, confirmed_contract, validate_config
-        validate_config({key: value for key, value in config.items() if key not in {"provider", "_provider"}})
-        message = "Configuration rules are present; authentication and delivery remain unverified. No SMS was sent. Use the explicit test mobile and send confirmation on this saved configuration." if confirmed_contract(config) else BLOCKED
+        from app.features.integrations.airtel_iq import BLOCKED, contract_ready, validate_config
+        checked = validate_config({key: value for key, value in config.items() if key not in {"provider", "_provider"}})
+        message = "Configuration rules are present; authentication and delivery remain unverified. No SMS was sent. Use the explicit test mobile and send confirmation on this saved configuration." if contract_ready(checked) else BLOCKED
         return ConnectionCheckResult(False, 0, message)
     if config.get("provider") == "msg91":
         auth_key = config.get("auth_key")

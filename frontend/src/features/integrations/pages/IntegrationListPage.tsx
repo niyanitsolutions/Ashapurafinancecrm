@@ -279,8 +279,8 @@ export function CreateConfigForm({
                 <label key={field.key} className="text-xs text-text/60">
                   {field.label}
                   {field.toggle ? (
-                    <select
-                      value={fieldValues[field.key] || "false"}
+                    <select aria-label={field.label}
+                      disabled={isAirtel} title="Save configuration, then validate it on its details page before confirming." value={fieldValues[field.key] || "false"}
                       onChange={(e) => { setFieldValues((prev) => ({ ...prev, [field.key]: e.target.value })); resetTestState(); }}
                       className="mt-1 block w-full rounded border border-border px-3 py-2 text-sm"
                     >

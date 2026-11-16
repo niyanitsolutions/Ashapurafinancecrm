@@ -1,8 +1,8 @@
-"""Airtel prepaid configuration stage. Unconfirmed account rules remain explicit configuration."""
+"""Account-confirmed Airtel prepaid contract, stored through encrypted API Connections."""
 
 from typing import Any
 
-from app.core.exceptions import ValidationError
+from app.core.exceptions import ForbiddenError, ValidationError
 from app.features.integrations.models import IntegrationProvider
 
 PROVIDER = "airtel_iq"
@@ -11,14 +11,16 @@ DEFAULTS = {
     "api_url": ENDPOINT,
     "sender_id": "ASHFNS",
     "dlt_template_id": "1077151820081508033",
-    "entity_id": "1001474305342749488",
+    "entity_id": "AIR7316372024",
+    "message_type": "TRANSACTIONAL",
+    "destination_template": '["{{mobile}}"]',
 }
 # username/password and message_id_field remain accepted for saved-config compatibility;
 # they are never used to infer authentication or sent in the Airtel request.
 SENSITIVE = frozenset({"customer_id", "username", "password", "authorization_value"})
 MASK = "********"
-BLOCKED = "Airtel IQ prepaid API contract is awaiting confirmation. No SMS was sent; activation is unavailable."
-APPROVED_MESSAGE = "Your OTP for mobile verification with Ashapura Financial Services is {#numeric#}. It is valid for 10 minutes. Do not share this OTP with anyone."
+BLOCKED = "Save and validate the complete Airtel IQ configuration, then confirm the account contract. No SMS was sent; activation is unavailable."
+APPROVED_MESSAGE = "Your OTP for mobile verification with Ashapura Financial Services is {OTP}. It is valid for 10 minutes. Do not share this OTP with anyone."
 ALLOWED = frozenset(
     {
         *DEFAULTS,
@@ -37,13 +39,20 @@ def validate_config(values: dict[str, str]) -> dict[str, str]:
     if values.keys() - ALLOWED:
         raise ValidationError("Unsupported Airtel IQ configuration fields.")
     data = DEFAULTS | values
-    if any(data[key] != value for key, value in DEFAULTS.items()):
+    if any(data[key] != value for key, value in DEFAULTS.items() if key != "destination_template"):
         raise ValidationError(
             "Use the supplied Airtel IQ prepaid endpoint and approved sender/DLT identifiers."
         )
     if any(len(value) > 2000 or "\r" in value or "\n" in value for value in data.values()):
         raise ValidationError("Invalid Airtel IQ configuration value.")
-    # No guessed messageType or authentication mode is supplied by this stage.
+    if data.get("authorization_value") and data["authorization_value"] != "ASHFNS":
+        raise ValidationError(
+            "Use the exact Airtel-confirmed Authorization value without a scheme."
+        )
+    if data.get("contract_confirmed", "false") not in {"true", "false"}:
+        raise ValidationError("Invalid Airtel contract confirmation.")
+    if data.get("contract_confirmed") == "true" and not contract_ready(data):
+        raise ValidationError("Complete and validate the confirmed Airtel configuration first.")
     return data
 
 
@@ -56,34 +65,30 @@ async def ensure_provider(db: Any) -> None:
     )
 
 
-CONTRACT_KEYS = (
-    "customer_id",
-    "authorization_value",
-    "message_type",
-    "destination_template",
-    "success_field",
-    "success_value",
-)
-
-
-def confirmed_contract(config: dict[str, str]) -> bool:
+def contract_ready(config: dict[str, str]) -> bool:
+    """Local consistency only; never authenticates or sends an SMS."""
     import json
 
-    if config.get("contract_confirmed") != "true" or any(
-        not config.get(key, "").strip() for key in CONTRACT_KEYS
-    ):
-        return False
     try:
-        target = json.loads(config["destination_template"].replace("{{mobile}}", "9000000000"))
-        expected = json.loads(config["success_value"])
         return (
-            isinstance(target, list)
-            and len(target) == 1
-            and isinstance(target[0], str)
-            and bool(target[0].strip())
-            and config["destination_template"].count("{{mobile}}") == 1
-            and type(expected) in (str, int, bool)
-            and bool(config["success_field"].strip())
+            all(
+                config.get(key) == value
+                for key, value in DEFAULTS.items()
+                if key != "destination_template"
+            )
+            and bool(config.get("customer_id", "").strip())
+            and config.get("customer_id") != MASK
+            and config.get("authorization_value") == "ASHFNS"
+            and json.loads(config.get("destination_template", "")) == ["{{mobile}}"]
         )
     except (ValueError, TypeError):
         return False
+
+
+def confirmed_contract(config: dict[str, str]) -> bool:
+    return config.get("contract_confirmed") == "true" and contract_ready(config)
+
+
+def require_owner(actor: Any) -> None:
+    if actor.role != "owner":
+        raise ForbiddenError("Only the Owner can configure or test Airtel SMS.")

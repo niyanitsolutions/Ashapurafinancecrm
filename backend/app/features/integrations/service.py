@@ -92,10 +92,13 @@ class IntegrationsService:
 
         config_values = dict(payload.config)
         if payload.provider == "airtel_iq":
-            from app.features.integrations.airtel_iq import validate_config
+            from app.features.integrations.airtel_iq import require_owner, validate_config
+            require_owner(actor)
             if payload.integration_type != IntegrationType.SMS:
                 raise ValidationError("Airtel IQ is an SMS provider.")
             config_values = validate_config(config_values)
+            if config_values.get("contract_confirmed") == "true":
+                raise ValidationError("Save configuration first, run no-SMS validation, then confirm the account contract.")
         generated: dict[str, str] = {}
         if payload.integration_type == IntegrationType.META:
             # No reason to make an Owner hand-type random tokens — generated once here and
@@ -129,6 +132,9 @@ class IntegrationsService:
 
     async def update_config(self, config_id: str, payload: UpdateIntegrationConfigRequest, actor: User) -> IntegrationConfig:
         config = await self.get_config(config_id)
+        if config.provider == "airtel_iq":
+            from app.features.integrations.airtel_iq import require_owner
+            require_owner(actor)
         updates: dict[str, Any] = {}
         if payload.name is not None:
             updates["name"] = payload.name
@@ -145,6 +151,13 @@ class IntegrationsService:
                 if not ((is_secret_key(k) or (config.provider == "airtel_iq" and k in {"customer_id", "username", "password", "authorization_value"})) and k in current and v == mappers.mask_provider_value(config.provider, k, str(current[k])))
             }
             credentials_changed = any(current.get(k) != v for k, v in incoming.items())
+            if config.provider == "airtel_iq":
+                changed_rules = any(current.get(k) != v for k, v in incoming.items() if k != "contract_confirmed")
+                if incoming.get("contract_confirmed") == "true" and (changed_rules or config.last_tested_at is None):
+                    raise ValidationError("Save the required configuration and validate it before confirming the contract.")
+                if changed_rules:
+                    incoming["contract_confirmed"] = "false"
+                    updates["last_tested_at"] = None
             current.update(incoming)
             if config.provider == "airtel_iq":
                 from app.features.integrations.airtel_iq import validate_config
@@ -163,7 +176,10 @@ class IntegrationsService:
         return updated
 
     async def set_enabled(self, config_id: str, *, enabled: bool, actor: User) -> IntegrationConfig:
-        await self.get_config(config_id)
+        config = await self.get_config(config_id)
+        if config.provider == "airtel_iq":
+            from app.features.integrations.airtel_iq import require_owner
+            require_owner(actor)
         updates: dict[str, Any] = {"is_enabled": enabled}
         if not enabled:
             updates["is_active"] = False  # an active config must be enabled — disabling one clears active too
@@ -175,6 +191,9 @@ class IntegrationsService:
 
     async def activate_config(self, config_id: str, actor: User) -> IntegrationConfig:
         config = await self.get_config(config_id)
+        if config.provider == "airtel_iq":
+            from app.features.integrations.airtel_iq import require_owner
+            require_owner(actor)
         if config.provider == "airtel_iq":
             from app.features.integrations.airtel_iq import BLOCKED, confirmed_contract
             values = json.loads(decrypt(config.config_encrypted))
@@ -195,6 +214,9 @@ class IntegrationsService:
 
     async def test_connection(self, config_id: str, actor: User, *, ip_address: str | None = None) -> TestConnectionResponse:
         config = await self.get_config(config_id)
+        if config.provider == "airtel_iq":
+            from app.features.integrations.airtel_iq import require_owner
+            require_owner(actor)
         decrypted = json.loads(decrypt(config.config_encrypted)) if config.config_encrypted else {}
         decrypted["provider"] = config.provider
 
@@ -215,6 +237,9 @@ class IntegrationsService:
             integration_type=config.integration_type, last_success_at=tentative_success_at,
             last_failure_at=tentative_failure_at, webhook_verified_at=config.webhook_verified_at,
         )
+        if config.provider == "airtel_iq":
+            # Local validation is neither a submission failure nor a successful send.
+            updates = {"last_tested_at": tested_at}
         await self._configs.update(config_id, updates, updated_by=actor.require_id())
 
         graph_api_version = GRAPH_API_VERSION if config.integration_type in (IntegrationType.META, IntegrationType.MAPS) else None

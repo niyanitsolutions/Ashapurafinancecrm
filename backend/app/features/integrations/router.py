@@ -22,7 +22,6 @@ from app.config.settings import get_settings
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.pagination import PageParams, page_params
 from app.core.response import ApiResponse, ResponseMeta
-from app.middleware.rate_limit import rate_limited
 from app.features.access_control.permission_engine import require_permission
 from app.features.auth.dependencies import get_request_context
 from app.features.auth.models import User
@@ -45,6 +44,7 @@ from app.features.integrations.schemas import (
     UpdateIntegrationConfigRequest,
 )
 from app.features.integrations.service import IntegrationsService
+from app.middleware.rate_limit import rate_limited
 from app.security.encryption import decrypt
 
 router = APIRouter(tags=["integrations"])
@@ -130,6 +130,9 @@ async def test_connection(
 async def test_draft_connection(
     payload: TestDraftConnectionRequest, service: ServiceDep, _actor: Annotated[User, _perm("create")]
 ) -> ApiResponse[TestConnectionResponse]:
+    if payload.provider == "airtel_iq":
+        from app.features.integrations.airtel_iq import require_owner
+        require_owner(_actor)
     result = await service.test_draft_connection(payload)
     return ApiResponse[TestConnectionResponse].ok(result)
 
@@ -244,11 +247,12 @@ async def airtel_test_sms(
 
     from app.core.exceptions import ValidationError
     from app.features.communication.airtel_iq import submit
+    from app.features.integrations.airtel_iq import require_owner
     from app.features.integrations.models import IntegrationTestLog
     from app.security.encryption import decrypt
     from app.shared.audit_log import write_audit_log
     from app.utils.datetime import utc_now
-
+    require_owner(actor)
     config = await service.get_config(config_id)
     if config.provider != "airtel_iq" or not config.is_enabled or not payload.confirm_send:
         raise ValidationError("Enable Airtel and explicitly confirm sending to the test mobile.")

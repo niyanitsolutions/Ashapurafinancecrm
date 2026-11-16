@@ -42,4 +42,5 @@ it("does not present company cutover to other roles", () => {
   state.role = "employee";
   render(<AirtelTestPanel configId="fixture" onChanged={vi.fn()} />);
   expect(screen.queryByRole("button", { name: "Enable customer PIN-only sign-in" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Send test SMS" })).not.toBeInTheDocument();
 });

@@ -50,7 +50,7 @@ async def test_explicit_sms_confirmation_success_activation_and_edit_reset(
     updated = await client.patch(
         url,
         headers=owner_headers,
-        json={"config": {"authorization_value": "rotated dummy credential"}},
+        json={"config": {"customer_id": "rotated dummy customer"}},
     )
     assert (
         updated.status_code == 200 and updated.json()["data"]["last_success_at"] is None
@@ -67,11 +67,26 @@ async def create(client, db, headers, config=None):
             "integration_type": "sms",
             "provider": "airtel_iq",
             "name": "Airtel draft",
-            "config": SECRETS if config is None else config,
+            "config": SECRETS
+            if config is None
+            else config | {"contract_confirmed": "false"},
         },
     )
     assert response.status_code == 200, response.text
-    return response.json()["data"]
+    row = response.json()["data"]
+    if config and config.get("contract_confirmed") == "true":
+        validated = await client.post(
+            BASE + "/" + row["id"] + "/test", headers=headers, json={}
+        )
+        assert validated.status_code == 200, validated.text
+        confirmed = await client.patch(
+            BASE + "/" + row["id"],
+            headers=headers,
+            json={"config": {"contract_confirmed": "true"}},
+        )
+        assert confirmed.status_code == 200, confirmed.text
+        row = confirmed.json()["data"]
+    return row
 
 
 async def test_encryption_full_masking_edit_preserves_credentials(
@@ -117,6 +132,8 @@ async def test_encryption_full_masking_edit_preserves_credentials(
         {"dlt_template_id": "other"},
         {"entity_id": "other"},
         {"authorization": "guessed"},
+        {"authorization_value": "Bearer ASHFNS"},
+        {"message_type": "transactional"},
         {"password": "newline\nsecret"},
     ],
 )
@@ -153,7 +170,7 @@ async def test_test_connection_never_sends_or_claims_success(
     assert result.status_code == 200 and result.json()["data"]["success"] is False
     assert result.json()["data"]["error_message"] == BLOCKED
     raw = await mock_db.integration_configs.find_one({"_id": ObjectId(row["id"])})
-    assert raw["last_success_at"] is None and raw["last_failure_at"]
+    assert raw["last_success_at"] is None and raw["last_failure_at"] is None
     assert (
         await mock_db.integration_test_logs.count_documents(
             {"config_id": row["id"], "success": False}
@@ -224,3 +241,90 @@ async def test_provider_catalog_idempotence_and_no_generic_sms_fallback(
         },
     )
     assert not result.success and not result.is_transient and result.error == BLOCKED
+
+
+async def test_no_sms_validation_and_confirmation_gate(
+    client, mock_db, owner_headers, monkeypatch
+):
+    from app.features.communication import airtel_iq
+    from test_airtel_transport import CONFIG
+
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("No SMS allowed")
+
+    monkeypatch.setattr(airtel_iq, "request", forbidden)
+    await ensure_provider(mock_db)
+    premature = await client.post(
+        BASE,
+        headers=owner_headers,
+        json={
+            "integration_type": "sms",
+            "provider": "airtel_iq",
+            "name": "Premature",
+            "config": CONFIG,
+        },
+    )
+    assert premature.status_code == 422
+    row = await create(
+        client, mock_db, owner_headers, CONFIG | {"contract_confirmed": "false"}
+    )
+    url = BASE + "/" + row["id"]
+    assert (
+        row["config"]["customer_id"] == "********"
+        and row["config"]["authorization_value"] == "********"
+    )
+    assert (
+        await client.patch(
+            url, headers=owner_headers, json={"config": {"contract_confirmed": "true"}}
+        )
+    ).status_code == 422
+    checked = await client.post(url + "/test", headers=owner_headers, json={})
+    assert (
+        checked.status_code == 200
+        and "No SMS was sent" in checked.json()["data"]["error_message"]
+    )
+    confirmed = await client.patch(
+        url, headers=owner_headers, json={"config": {"contract_confirmed": "true"}}
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.json()["data"]["last_success_at"] is None
+    changed = await client.patch(
+        url,
+        headers=owner_headers,
+        json={"config": {"customer_id": "updated-owner-value"}},
+    )
+    assert (
+        changed.status_code == 200
+        and changed.json()["data"]["config"]["contract_confirmed"] == "false"
+    )
+    assert changed.json()["data"]["last_tested_at"] is None
+
+
+async def test_registration_id_not_silently_used_as_entity(
+    client, mock_db, owner_headers
+):
+    from test_airtel_transport import CONFIG
+
+    await ensure_provider(mock_db)
+    result = await client.post(
+        BASE,
+        headers=owner_headers,
+        json={
+            "integration_type": "sms",
+            "provider": "airtel_iq",
+            "name": "Wrong entity",
+            "config": CONFIG
+            | {"contract_confirmed": "false", "entity_id": "1001474305342749488"},
+        },
+    )
+    assert result.status_code == 422
+
+
+def test_delegated_permissions_do_not_authorize_airtel_owner_action():
+    from types import SimpleNamespace
+
+    from app.core.exceptions import ForbiddenError
+    from app.features.integrations.airtel_iq import require_owner
+
+    with pytest.raises(ForbiddenError):
+        require_owner(SimpleNamespace(role="employee"))
