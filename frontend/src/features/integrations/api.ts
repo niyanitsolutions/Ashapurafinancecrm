@@ -50,6 +50,7 @@ export interface TestConnectionResult {
 }
 
 export interface IntegrationTestLog {
+  diagnostics?: {http_status: number | null; outcome_type: string; response_format: string; response_excerpt: string | null} | null;
   submission_status?: string | null;
   kind?: string;
   id: string;

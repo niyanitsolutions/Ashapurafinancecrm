@@ -608,7 +608,7 @@ export function IntegrationDetailsPage() {
                 <tr key={log.id} className="border-b border-border last:border-0">
                   <td className="px-4 py-3">{log.submission_status === "unknown" ? <span>Unknown submission</span> : log.kind === "configuration_validation" || (isAirtel && log.error_message?.includes("No SMS was sent")) ? <span>{log.success ? "Configuration valid" : "Configuration validation"}</span> : log.kind === "otp_verification" ? <span className="text-success">OTP verified</span> : log.success ? <span className="text-success">{isAirtel ? "Submitted" : "Success"}</span> : <span className="text-danger">Failure</span>}</td>
                   <td className="px-4 py-3">{log.response_time_ms}ms</td>
-                  <td className="px-4 py-3">{log.error_message || "—"}</td>
+                  <td className="px-4 py-3">{log.error_message || "—"}{isAirtel && log.diagnostics && <div className="mt-2 space-y-1 text-xs"><p>HTTP: {log.diagnostics.http_status ?? "No HTTP response"} - Outcome: {log.diagnostics.outcome_type}</p><p>Response format: {log.diagnostics.response_format}</p>{log.diagnostics.response_excerpt && <details><summary className="cursor-pointer">Sanitized Airtel response</summary><pre className="max-w-md whitespace-pre-wrap break-all">{log.diagnostics.response_excerpt}</pre><p>Unknown text, numbers and identifiers are redacted. Raw provider replies are not stored.</p></details>}</div>}</td>
                   <td className="px-4 py-3">{log.graph_api_version || "—"}</td>
                   <td className="px-4 py-3">{formatISTDateTime(log.tested_at)}</td>
                 </tr>

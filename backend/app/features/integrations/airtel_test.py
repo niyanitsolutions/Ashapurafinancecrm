@@ -111,6 +111,7 @@ async def send_test(service: Any, config_id: str, payload: Any, actor: Any) -> d
         IntegrationTestLog(
             kind="sms_submission",
             submission_status=outcome["status"],
+            diagnostics=outcome.get("diagnostics"),
             config_id=config_id,
             integration_type="sms",
             provider="airtel_iq",

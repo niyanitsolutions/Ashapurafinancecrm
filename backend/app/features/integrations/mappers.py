@@ -68,7 +68,7 @@ def config_to_response(config: IntegrationConfig, *, reveal: dict[str, str] | No
 
 def test_log_to_response(log: IntegrationTestLog) -> IntegrationTestLogResponse:
     return IntegrationTestLogResponse(
-        submission_status=log.submission_status, kind=log.kind, id=log.require_id(), success=log.success, response_time_ms=log.response_time_ms, error_message=log.error_message,
+        diagnostics=log.diagnostics, submission_status=log.submission_status, kind=log.kind, id=log.require_id(), success=log.success, response_time_ms=log.response_time_ms, error_message=log.error_message,
         tested_at=log.tested_at, graph_api_version=log.graph_api_version, tested_ip=log.tested_ip,
     )
 

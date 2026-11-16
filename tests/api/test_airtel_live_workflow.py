@@ -208,6 +208,12 @@ async def test_failed_or_ambiguous_send_records_failure_without_retry(
     )
     assert duplicate.status_code == 409 and len(calls) == 1
     assert "private" not in str(sent)
+    assert sent["diagnostics"]["outcome_type"] == ("timeout" if mode == "unknown" else "http_non_200")
+    logs=(await client.get(url+"/test-logs",headers=owner_headers)).json()["data"]
+    submission=next(log for log in logs if log["kind"]=="sms_submission")
+    assert submission["diagnostics"]["http_status"] == (None if mode=="unknown" else 401)
+    assert "private" not in str(submission)
+
 
 
 async def test_explicit_repair_of_legacy_bad_endpoint_retains_customer_id(

@@ -36,7 +36,12 @@ async def request(body: dict[str, Any], authorization: str) -> tuple[int, Any]:
             },
             json=body,
         )
-    return response.status_code, None
+    from app.features.communication.airtel_diagnostics import MAX_BODY, ProviderBody
+
+    return response.status_code, ProviderBody(
+        response.content[: MAX_BODY + 1],
+        response.headers.get("content-type", "").lower().startswith("application/json"),
+    )
 
 
 async def submit(
@@ -51,6 +56,8 @@ async def submit(
     )
     if not confirmed_contract(config):
         return {"success": False, "status": "unconfigured", "error": BLOCKED}
+    from app.features.communication.airtel_diagnostics import failure_message, response_details
+
     key = hashlib.sha256(("airtel_iq:" + reference).encode()).hexdigest()
     stamp = utc_now()
     try:
@@ -69,6 +76,15 @@ async def submit(
             "success": bool(prior and prior["status"] == "accepted"),
             "status": (prior or {}).get("status", "unknown"),
             "error": "Submission already recorded; it was not sent again.",
+            "diagnostics": (prior or {}).get(
+                "diagnostics",
+                {
+                    "http_status": (prior or {}).get("http_status"),
+                    "outcome_type": "previous_submission",
+                    "response_format": "unavailable",
+                    "response_excerpt": None,
+                },
+            ),
         }
     body = {
         "customerId": config.get("customer_id", ""),
@@ -84,18 +100,39 @@ async def submit(
     status = "unknown"
     code = None
     started = perf_counter()
+    category = "unexpected_response"
+    details = {"response_format": "unavailable", "response_excerpt": None}
     try:
-        code, _payload = await request(body, config["authorization_value"])
-        # HTTP 200 confirms submission only. No JSON schema or handset delivery is inferred.
-        status = "accepted" if code == 200 else "rejected"
+        code, payload = await request(body, config["authorization_value"])
+        if type(code) is not int or not 100 <= code <= 599:
+            code = None
+        else:
+            # HTTP 200 is submission regardless of body shape or JSON validity.
+            status = "accepted" if code == 200 else "rejected"
+            category = "http_200" if code == 200 else "http_non_200"
+            try:
+                details = response_details(
+                    payload, [mobile, otp, *config.values(), body["message"]]
+                )
+            except (TypeError, ValueError, RecursionError):
+                details = {"response_format": "unreadable", "response_excerpt": None}
+    except httpx.TimeoutException:
+        category = "timeout"
+    except httpx.NetworkError:
+        category = "connection_error"
+    except (httpx.ProtocolError, httpx.DecodingError):
+        category = "unexpected_response"
     except httpx.HTTPError:
-        # Never persist exception text, request body, authentication or provider payload.
-        status = "unknown"
+        category = "transport_error"
+    except (TypeError, ValueError):
+        category = "unexpected_response"
+    diagnostics = {"http_status": code, "outcome_type": category, **details}
     await db.sms_submissions.update_one(
         {"_id": key},
         {
             "$set": {
                 "status": status,
+                "diagnostics": diagnostics,
                 "http_status": code,
                 "response_time_ms": round((perf_counter() - started) * 1000),
                 "updated_at": utc_now(),
@@ -105,7 +142,6 @@ async def submit(
     return {
         "success": status == "accepted",
         "status": status,
-        "error": None
-        if status == "accepted"
-        else "SMS submission was not confirmed. Check the Airtel IQ portal. No automatic retry was performed.",
+        "diagnostics": diagnostics,
+        "error": None if status == "accepted" else failure_message(code, category),
     }

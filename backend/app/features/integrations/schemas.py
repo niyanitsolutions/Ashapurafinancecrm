@@ -84,6 +84,7 @@ class TestDraftConnectionRequest(BaseModel):
 
 
 class IntegrationTestLogResponse(BaseModel):
+    diagnostics: dict[str, str | int | None] | None = None
     submission_status: str | None = None
     kind: str = "connection"
     id: str

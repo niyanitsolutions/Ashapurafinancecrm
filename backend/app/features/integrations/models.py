@@ -73,6 +73,7 @@ class IntegrationTestLog(BaseDocument):
     keeps every one, for an Integration Details page's test history."""
 
     kind: str = "connection"
+    diagnostics: dict[str, str | int | None] | None = None
     submission_status: str | None = None
     config_id: str
     integration_type: str

@@ -187,7 +187,12 @@ async def test_http_200_is_submission_without_json_rule_or_delivery_claim(
         k: v for k, v in CONFIG.items() if k not in {"success_field", "success_value"}
     }
     result = await adapter.submit(mock_db, config, "9000000001", "0472", "http-only")
-    assert result == {"success": True, "status": "accepted", "error": None}
+    assert {key: result[key] for key in ("success", "status", "error")} == {
+        "success": True,
+        "status": "accepted",
+        "error": None,
+    }
+    assert result["diagnostics"]["http_status"] == 200
     assert "delivered" not in str(result)
     assert all(
         secret not in caplog.text for secret in ["0472", "fixture-customer", "ASHFNS"]
