@@ -8,6 +8,7 @@ export interface IntegrationProvider {
 }
 
 export interface IntegrationConfig {
+  airtel_workflow?: {submission_status?: string | null; expected_endpoint: string; validated_at: string | null; verified_at: string | null; challenge_id: string | null} | null;
   id: string;
   integration_code: string;
   integration_type: string;
@@ -40,6 +41,7 @@ export interface ConnectionCheckItem {
 }
 
 export interface TestConnectionResult {
+  kind?: string;
   success: boolean;
   response_time_ms: number;
   error_message: string | null;
@@ -48,6 +50,8 @@ export interface TestConnectionResult {
 }
 
 export interface IntegrationTestLog {
+  submission_status?: string | null;
+  kind?: string;
   id: string;
   success: boolean;
   response_time_ms: number;

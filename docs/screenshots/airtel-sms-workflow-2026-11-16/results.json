@@ -1,0 +1,36 @@
+[
+  {
+    "width": 1440,
+    "result": "passed",
+    "provider": "mocked; no SMS",
+    "checks": [
+      "endpoint-readonly-reload",
+      "customer-independent",
+      "local-validation",
+      "explicit-contract-save",
+      "enable",
+      "explicit-mocked-submit",
+      "otp-verify",
+      "set-active",
+      "no-auto-cutover",
+      "no-runtime-errors-or-overflow"
+    ]
+  },
+  {
+    "width": 390,
+    "result": "passed",
+    "provider": "mocked; no SMS",
+    "checks": [
+      "endpoint-readonly-reload",
+      "customer-independent",
+      "local-validation",
+      "explicit-contract-save",
+      "enable",
+      "explicit-mocked-submit",
+      "otp-verify",
+      "set-active",
+      "no-auto-cutover",
+      "no-runtime-errors-or-overflow"
+    ]
+  }
+]

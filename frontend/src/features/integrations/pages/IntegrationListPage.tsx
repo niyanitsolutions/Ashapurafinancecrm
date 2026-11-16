@@ -107,6 +107,8 @@ export function IntegrationListPage() {
                     configId: created.id, callbackPath: created.webhook_callback_path,
                     verifyToken: created.config.webhook_verify_token, secret: created.config.webhook_secret,
                   });
+                } else if (payload.provider === "airtel_iq") {
+                  setMessage("Configuration saved. Run Validate Configuration (no SMS) on its details page.");
                 } else {
                   // Re-runs the real (persisted) test once against the new config so its
                   // last_success_at/IntegrationTestLog history is populated exactly like any
@@ -289,7 +291,7 @@ export function CreateConfigForm({
                     </select>
                   ) : (
                     <input
-                      aria-label={isAirtel ? field.label : undefined} type={field.secret ? "password" : "text"} value={fieldValues[field.key] || ""}
+                      name={`${provider}-${field.key}`} autoComplete={field.secret ? "new-password" : "off"} readOnly={isAirtel && field.key === "api_url"} aria-label={isAirtel ? field.label : undefined} type={field.secret ? "password" : "text"} value={fieldValues[field.key] || ""}
                       onChange={(e) => { setFieldValues((prev) => ({ ...prev, [field.key]: e.target.value })); resetTestState(); }}
                       className="mt-1 block w-full rounded border border-border px-3 py-2 text-sm"
                     />
@@ -322,7 +324,7 @@ export function CreateConfigForm({
                   <ConnectionCheckList checks={testResult.checks} />
                 ) : (
                   <p className={`text-sm ${testResult.success ? "text-success" : "text-danger"}`}>
-                    {testResult.success ? "Connected successfully." : testResult.error_message || "Connection failed."}
+                    {testResult.success ? (isAirtel ? "Configuration validation successful. No SMS was sent." : "Connected successfully.") : testResult.error_message || "Connection failed."}
                   </p>
                 )}
                 {missingPermissions && (

@@ -60,6 +60,11 @@ class IntegrationConfig(BaseDocument):
     # a slot" posture as ReferralPartner.parent_partner_id (decision 080)/ScheduledReport
     # (decision 085) — just now with a real, additive computation, no schema change.
     health_status: str | None = None
+    airtel_config_validated_at: datetime | None = None
+    airtel_validated_fingerprint: str | None = None
+    airtel_test_verified_at: datetime | None = None
+    airtel_test_challenge_id: str | None = None
+    airtel_last_submission_status: str | None = None
 
 
 class IntegrationTestLog(BaseDocument):
@@ -67,6 +72,8 @@ class IntegrationTestLog(BaseDocument):
     `last_tested_at`/etc. fields only ever show the *latest* attempt; this collection
     keeps every one, for an Integration Details page's test history."""
 
+    kind: str = "connection"
+    submission_status: str | None = None
     config_id: str
     integration_type: str
     provider: str

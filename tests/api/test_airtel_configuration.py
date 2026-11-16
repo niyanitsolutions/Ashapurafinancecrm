@@ -46,7 +46,7 @@ async def test_explicit_sms_confirmation_success_activation_and_edit_reset(
     assert len(calls) == 1
     assert (
         await client.post(url + "/activate", headers=owner_headers)
-    ).status_code == 200
+    ).status_code == 422
     updated = await client.patch(
         url,
         headers=owner_headers,
@@ -168,7 +168,8 @@ async def test_test_connection_never_sends_or_claims_success(
         BASE + "/" + row["id"] + "/test", headers=owner_headers, json={}
     )
     assert result.status_code == 200 and result.json()["data"]["success"] is False
-    assert result.json()["data"]["error_message"] == BLOCKED
+    assert "customer_id" not in result.json()["data"]["error_message"]
+    assert "authorization_value" in result.json()["data"]["error_message"]
     raw = await mock_db.integration_configs.find_one({"_id": ObjectId(row["id"])})
     assert raw["last_success_at"] is None and raw["last_failure_at"] is None
     assert (

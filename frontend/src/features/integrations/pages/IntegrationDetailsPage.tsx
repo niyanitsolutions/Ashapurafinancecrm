@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import {editValues, changedValues, airtelSendReason} from "../configForm";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/buttons/Button";
 import { SubmitButton } from "@/components/forms/SubmitButton";
@@ -381,6 +382,7 @@ export function IntegrationDetailsPage() {
   const [testResult, setTestResult] = useState<TestConnectionResult | null>(null);
   const [isTesting, setIsTesting] = useState(false);
   const [configJustChanged, setConfigJustChanged] = useState(false);
+  const loadedConfigId = useRef<string | null>(null);
 
   const oauthSessionId = searchParams.get("oauth_session");
   const oauthError = searchParams.get("oauth_error");
@@ -390,11 +392,12 @@ export function IntegrationDetailsPage() {
 
   const load = () => {
     if (!configId) return;
-    setIsLoading(true);
+    if (loadedConfigId.current !== configId) setIsLoading(true);
     getIntegrationConfig(configId)
       .then((c) => {
+        loadedConfigId.current=c.id;
         setConfig(c);
-        setFieldValues({});
+        setFieldValues(c.provider === "airtel_iq" ? editValues(c) : {});
         if (c.integration_type === "meta") {
           getMetaStatus(configId).then(setMetaStatus).catch(() => setMetaStatus(null));
         }
@@ -444,6 +447,10 @@ export function IntegrationDetailsPage() {
 
   const fields = fieldsFor(config.integration_type, config.provider);
   const needsRetest = config.last_success_at === null;
+  const isAirtel = config.provider === "airtel_iq";
+  const pendingChanges = changedValues(config,fieldValues);
+  const sendReason = isAirtel ? airtelSendReason(config) : null;
+  const activateReason = isAirtel ? sendReason ?? (config.airtel_workflow?.submission_status === "unknown" ? "Submission outcome is unknown. Check the Airtel IQ portal before another test." : !config.last_success_at ? "Submit a test SMS first." : !config.airtel_workflow?.verified_at ? "Verify the received test OTP first." : null) : needsRetest ? "Test the connection successfully first." : null;
 
   return (
     <SimplePageLayout title={config.name}>
@@ -478,8 +485,9 @@ export function IntegrationDetailsPage() {
           <div><span className="text-text/50">Last Success</span><div>{formatDate(config.last_success_at)}</div></div>
           <div><span className="text-text/50">Last Failure</span><div>{formatDate(config.last_failure_at)}</div></div>
         </div>
-        {config.provider === "airtel_iq" && <AirtelTestPanel configId={config.id} onChanged={(notice) => { setMessage(notice); load(); }}/>}
-        {config.provider === "airtel_iq" && <p role="status" className="mb-4 text-sm">Confirm the account-specific contract before sending. Test Connection sends no SMS; use the explicit test below. Accepted submission is not proof of delivery.</p>}
+        {config.provider === "airtel_iq" && <AirtelTestPanel active={config.is_active} configId={config.id} disabledReason={sendReason} savedChallengeId={config.airtel_workflow?.challenge_id} alreadyVerified={Boolean(config.airtel_workflow?.verified_at)} onChanged={(notice) => { setMessage(notice); load(); }}/>}
+        {isAirtel && <ol className="mb-4 text-sm space-y-1"><li>1. Configuration saved</li><li>2. Configuration {config.airtel_workflow?.validated_at ? "validated" : "not yet validated"}</li><li>3. Contract {config.config.contract_confirmed === "true" ? "confirmed" : "not confirmed"}</li><li>4. Test SMS {config.airtel_workflow?.submission_status ?? (config.last_success_at ? "submitted" : "not yet submitted")}</li><li>5. Test OTP {config.airtel_workflow?.verified_at ? "verified" : "not yet verified"}</li><li>6. Integration {config.is_active ? "active" : "inactive"}</li></ol>}
+        {config.provider === "airtel_iq" && <p role="status" className="mb-4 text-sm">Complete the steps above. Configuration validation sends no SMS. An explicit test submits the OTP; verify the received code separately.</p>}
         {config.last_error_message && <p className="mb-4 text-sm text-danger">Last error: {config.last_error_message}</p>}
         {configJustChanged && (
           <div className="mb-4 rounded border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
@@ -495,6 +503,8 @@ export function IntegrationDetailsPage() {
           ) : (
             <Button
               variant="secondary" size="sm" className="border-success text-success"
+              disabled={isAirtel && (!config.airtel_workflow?.validated_at || config.config.contract_confirmed !== "true")}
+              title={isAirtel ? "Save, validate and confirm the Airtel settings before enabling." : undefined}
               onClick={() => run(() => enableIntegrationConfig(config.id), "Enabled.")}
             >
               Enable
@@ -511,10 +521,10 @@ export function IntegrationDetailsPage() {
           />
           {!config.is_active && (
             <div>
-              <Button size="sm" disabled={needsRetest} onClick={() => run(() => activateIntegrationConfig(config.id), "Set as the active configuration.")}>
+              <Button size="sm" disabled={Boolean(activateReason)} onClick={() => run(() => activateIntegrationConfig(config.id), "Set as the active configuration.")}>
                 Set Active
               </Button>
-              {needsRetest && <p className="mt-1 text-xs text-text/50">Test the connection successfully first.</p>}
+              {activateReason && <p className="mt-1 text-xs text-text/50">{activateReason}</p>}
             </div>
           )}
           <Button variant="secondary" size="sm" disabled={isTesting} onClick={handleTest}>
@@ -536,7 +546,7 @@ export function IntegrationDetailsPage() {
               </>
             ) : (
               <p className={`text-sm ${testResult.success ? "text-success" : "text-danger"}`}>
-                {testResult.success ? "Connected successfully." : testResult.error_message || "Connection failed."}
+                {testResult.kind === "configuration_validation" ? testResult.error_message : testResult.success ? "Connected successfully." : testResult.error_message || "Connection failed."}
               </p>
             )}
           </div>
@@ -545,10 +555,10 @@ export function IntegrationDetailsPage() {
 
       <div className="mb-6 bg-card border border-border rounded-card shadow-card p-6">
         <h3 className="text-sm font-semibold text-text/70 mb-3">Configuration</h3>
-        <form
+        <form autoComplete="off"
           onSubmit={(e) => {
             e.preventDefault();
-            const changed = Object.fromEntries(Object.entries(fieldValues).filter(([, v]) => v !== ""));
+            const changed = isAirtel ? changedValues(config,fieldValues) : Object.fromEntries(Object.entries(fieldValues).filter(([, v]) => v !== ""));
             if (Object.keys(changed).length === 0) return;
             setConfigJustChanged(true);
             setTestResult(null);
@@ -560,13 +570,13 @@ export function IntegrationDetailsPage() {
               <label key={field.key} className="text-xs text-text/60">
                 {field.label} {field.secret && <span className="text-text/40">(current: {config.config[field.key] || "not set"})</span>}
                 {config.provider === "airtel_iq" && field.toggle ? (
-                  <select aria-label={field.label} disabled={!config.last_tested_at || Object.keys(fieldValues).some(key => key !== "contract_confirmed")} value={fieldValues[field.key] ?? config.config[field.key] ?? "false"}
+                  <select aria-label={field.label} disabled={!config.airtel_workflow?.validated_at || Object.keys(pendingChanges).some(key => key !== "contract_confirmed")} value={fieldValues[field.key] ?? config.config[field.key] ?? "false"}
                     onChange={(e) => setFieldValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
                     className="mt-1 block w-full rounded border border-border px-3 py-2 text-sm">
                     <option value="false">Not confirmed</option><option value="true">Confirmed with Airtel</option>
                   </select>
                 ) : <input
-                  aria-label={config.provider === "airtel_iq" ? field.label : undefined} type={field.secret ? "password" : "text"} placeholder={field.secret ? "Leave blank to keep current value" : config.config[field.key] || ""}
+                  aria-label={config.provider === "airtel_iq" ? field.label : undefined} name={`${config.provider}-${field.key}`} autoComplete={field.secret ? "new-password" : "off"} readOnly={isAirtel && field.key === "api_url"} type={field.secret ? "password" : isAirtel && field.key === "api_url" ? "url" : "text"} placeholder={field.secret ? "Leave blank to keep current value" : config.config[field.key] || ""}
                   value={fieldValues[field.key] || ""} onChange={(e) => setFieldValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
                   className="mt-1 block w-full rounded border border-border px-3 py-2 text-sm"
                 />}
@@ -574,19 +584,20 @@ export function IntegrationDetailsPage() {
               </label>
             ))}
           </div>
+          {isAirtel && config.airtel_workflow?.expected_endpoint && fieldValues.api_url !== config.airtel_workflow.expected_endpoint && <Button variant="secondary" onClick={()=>setFieldValues(old=>({...old,api_url:config.airtel_workflow!.expected_endpoint}))}>Restore confirmed Airtel endpoint</Button>}
           <SubmitButton>Save Changes</SubmitButton>
         </form>
       </div>
 
       <div className="bg-card border border-border rounded-card shadow-card">
-        <div className="px-4 py-3 border-b border-border text-sm font-semibold text-text/70">Test History</div>
+        <div className="px-4 py-3 border-b border-border text-sm font-semibold text-text/70">{isAirtel ? "Validation and Test History" : "Test History"}</div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-text/60">
                 <th className="px-4 py-3">Result</th>
                 <th className="px-4 py-3">Response Time</th>
-                <th className="px-4 py-3">Error</th>
+                <th className="px-4 py-3">{isAirtel ? "Details" : "Error"}</th>
                 <th className="px-4 py-3">API Version</th>
                 <th className="px-4 py-3">Tested At</th>
               </tr>
@@ -595,7 +606,7 @@ export function IntegrationDetailsPage() {
               {logs.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-center text-text/50">No test attempts yet.</td></tr>}
               {logs.slice((logsPage - 1) * logsPageSize, (logsPage - 1) * logsPageSize + logsPageSize).map((log) => (
                 <tr key={log.id} className="border-b border-border last:border-0">
-                  <td className="px-4 py-3">{log.success ? <span className="text-success">Success</span> : <span className="text-danger">Failure</span>}</td>
+                  <td className="px-4 py-3">{log.submission_status === "unknown" ? <span>Unknown submission</span> : log.kind === "configuration_validation" || (isAirtel && log.error_message?.includes("No SMS was sent")) ? <span>{log.success ? "Configuration valid" : "Configuration validation"}</span> : log.kind === "otp_verification" ? <span className="text-success">OTP verified</span> : log.success ? <span className="text-success">{isAirtel ? "Submitted" : "Success"}</span> : <span className="text-danger">Failure</span>}</td>
                   <td className="px-4 py-3">{log.response_time_ms}ms</td>
                   <td className="px-4 py-3">{log.error_message || "—"}</td>
                   <td className="px-4 py-3">{log.graph_api_version || "—"}</td>

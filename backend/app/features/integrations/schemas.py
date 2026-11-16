@@ -34,6 +34,7 @@ class IntegrationConfigResponse(BaseModel):
     # Secret-looking keys (decision — see constants.py:is_secret_key) are masked to
     # their last 4 characters, same convention as Employee's bank account masking.
     # Never the raw decrypted value.
+    airtel_workflow: dict[str, str | bool | None] | None = None
     config: dict[str, str]
     is_enabled: bool
     is_active: bool
@@ -62,6 +63,7 @@ class ConnectionCheckItemResponse(BaseModel):
 
 
 class TestConnectionResponse(BaseModel):
+    kind: str = "connection"
     success: bool
     response_time_ms: int
     error_message: str | None
@@ -82,6 +84,8 @@ class TestDraftConnectionRequest(BaseModel):
 
 
 class IntegrationTestLogResponse(BaseModel):
+    submission_status: str | None = None
+    kind: str = "connection"
     id: str
     success: bool
     response_time_ms: int
@@ -170,3 +174,9 @@ class AirtelTestRequest(BaseModel):
     mobile: str = Field(pattern=r"^[6-9][0-9]{9}$")
     confirm_send: bool = False
     request_id: str = Field(min_length=32, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+class AirtelVerifyTestRequest(BaseModel):
+    mobile: str = Field(pattern=r"^[6-9][0-9]{9}$")
+    challenge_id: str = Field(pattern=r"^[a-f0-9]{64}$")
+    otp: str = Field(pattern=r"^[0-9]{4}$", repr=False)

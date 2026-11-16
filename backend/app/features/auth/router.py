@@ -212,6 +212,7 @@ async def pin_cutover(auth: AuthServiceDep, actor: CurrentUserDep) -> ApiRespons
             "is_enabled": True,
             "is_deleted": False,
             "last_success_at": {"$ne": None},
+            "airtel_test_verified_at": {"$ne": None},
         }
     )
     if outstanding or not ready:

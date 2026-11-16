@@ -153,11 +153,13 @@ class IntegrationsService:
             credentials_changed = any(current.get(k) != v for k, v in incoming.items())
             if config.provider == "airtel_iq":
                 changed_rules = any(current.get(k) != v for k, v in incoming.items() if k != "contract_confirmed")
-                if incoming.get("contract_confirmed") == "true" and (changed_rules or config.last_tested_at is None):
+                if incoming.get("contract_confirmed") == "true" and (changed_rules or config.airtel_config_validated_at is None):
                     raise ValidationError("Save the required configuration and validate it before confirming the contract.")
                 if changed_rules:
                     incoming["contract_confirmed"] = "false"
                     updates["last_tested_at"] = None
+                    updates["airtel_config_validated_at"] = None
+                    updates["airtel_validated_fingerprint"] = None
             current.update(incoming)
             if config.provider == "airtel_iq":
                 from app.features.integrations.airtel_iq import validate_config
@@ -169,6 +171,10 @@ class IntegrationsService:
                 updates["last_success_at"] = None
                 updates["is_active"] = False
                 updates["health_status"] = None
+                if config.provider == "airtel_iq":
+                    updates["airtel_test_verified_at"] = None
+                    updates["airtel_test_challenge_id"] = None
+                    updates["airtel_last_submission_status"] = None
 
         updated = await self._configs.update(config_id, updates, updated_by=actor.require_id()) if updates else config
         assert updated is not None
@@ -180,6 +186,9 @@ class IntegrationsService:
         if config.provider == "airtel_iq":
             from app.features.integrations.airtel_iq import require_owner
             require_owner(actor)
+        if config.provider == "airtel_iq" and enabled:
+            from app.features.integrations.airtel_iq import require_validated
+            require_validated(config, json.loads(decrypt(config.config_encrypted)))
         updates: dict[str, Any] = {"is_enabled": enabled}
         if not enabled:
             updates["is_active"] = False  # an active config must be enabled — disabling one clears active too
@@ -199,6 +208,11 @@ class IntegrationsService:
             values = json.loads(decrypt(config.config_encrypted))
             if not confirmed_contract(values):
                 raise ValidationError(BLOCKED)
+        if config.provider == "airtel_iq":
+            from app.features.integrations.airtel_iq import require_validated
+            require_validated(config, values)
+            if not config.airtel_test_verified_at:
+                raise ValidationError("Send a test SMS and verify the received OTP before activating Airtel.")
         if not config.is_enabled:
             raise ValidationError("Only an enabled configuration can be made active. Enable it first.")
         if config.last_success_at is None:
@@ -207,7 +221,16 @@ class IntegrationsService:
         updates: dict[str, Any] = {"is_active": True}
         if config.activated_at is None:
             updates["activated_at"] = utc_now()  # first activation only — never overwritten later
-        updated = await self._configs.update(config_id, updates, updated_by=actor.require_id())
+        if config.provider == "airtel_iq":
+            from bson import ObjectId
+
+            from app.core.exceptions import ConflictError
+            result=await self._db.integration_configs.update_one({"_id":ObjectId(config_id),"config_encrypted":config.config_encrypted,"airtel_test_verified_at":config.airtel_test_verified_at,"airtel_test_challenge_id":config.airtel_test_challenge_id,"is_enabled":True,"is_deleted":False},{"$set":updates|{"updated_by":actor.require_id(),"updated_at":utc_now()}})
+            if not result.matched_count:
+                raise ConflictError("Airtel settings or verification changed. Reload before activation.")
+            updated=await self.get_config(config_id)
+        else:
+            updated = await self._configs.update(config_id, updates, updated_by=actor.require_id())
         assert updated is not None
         await write_audit_log(self._db, event_type=AuditEvent.CONFIG_ACTIVATED, user_id=actor.require_id(), metadata={"config_id": config_id})
         return updated
@@ -239,12 +262,22 @@ class IntegrationsService:
         )
         if config.provider == "airtel_iq":
             # Local validation is neither a submission failure nor a successful send.
-            updates = {"last_tested_at": tested_at}
-        await self._configs.update(config_id, updates, updated_by=actor.require_id())
+            from app.features.integrations.airtel_iq import config_fingerprint
+            updates = {"last_tested_at": tested_at, "airtel_config_validated_at": tested_at if outcome.success else None,
+                       "airtel_validated_fingerprint": config_fingerprint(decrypted) if outcome.success else None}
+        if config.provider == "airtel_iq":
+            from bson import ObjectId
+
+            from app.core.exceptions import ConflictError
+            result=await self._db.integration_configs.update_one({"_id":ObjectId(config_id),"config_encrypted":config.config_encrypted,"is_deleted":False},{"$set":updates})
+            if not result.matched_count:
+                raise ConflictError("Configuration changed during validation. Reload and validate again.")
+        else:
+            await self._configs.update(config_id, updates, updated_by=actor.require_id())
 
         graph_api_version = GRAPH_API_VERSION if config.integration_type in (IntegrationType.META, IntegrationType.MAPS) else None
         log = IntegrationTestLog(
-            config_id=config_id, integration_type=config.integration_type, provider=config.provider, success=outcome.success,
+            kind=outcome.kind, config_id=config_id, integration_type=config.integration_type, provider=config.provider, success=outcome.success,
             response_time_ms=outcome.response_time_ms, error_message=outcome.error_message, tested_at=tested_at,
             graph_api_version=graph_api_version, tested_ip=ip_address, created_by=actor.require_id(),
         )

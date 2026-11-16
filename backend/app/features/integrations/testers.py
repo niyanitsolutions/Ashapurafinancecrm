@@ -99,6 +99,7 @@ class ConnectionCheckResult:
     error_message: str | None
     # Populated by `test_meta` only — every other tester leaves this `None`, unaffected.
     checks: list[ConnectionCheckItem] | None = None
+    kind: str = "connection"
 
 
 def _missing_field(field_name: str) -> ConnectionCheckResult:
@@ -270,10 +271,10 @@ async def test_whatsapp(config: dict[str, str]) -> ConnectionCheckResult:
 
 async def test_sms(config: dict[str, str]) -> ConnectionCheckResult:
     if config.get("provider") == "airtel_iq":
-        from app.features.integrations.airtel_iq import BLOCKED, contract_ready, validate_config
-        checked = validate_config({key: value for key, value in config.items() if key not in {"provider", "_provider"}})
-        message = "Configuration rules are present; authentication and delivery remain unverified. No SMS was sent. Use the explicit test mobile and send confirmation on this saved configuration." if contract_ready(checked) else BLOCKED
-        return ConnectionCheckResult(False, 0, message)
+        from app.features.integrations.airtel_iq import validation_errors
+        errors=validation_errors(config)
+        message="; ".join(errors) if errors else "Configuration validation successful. No SMS was sent. Airtel authentication and delivery are not yet verified."
+        return ConnectionCheckResult(not errors, 0, message, kind="configuration_validation")
     if config.get("provider") == "msg91":
         auth_key = config.get("auth_key")
         if not auth_key:

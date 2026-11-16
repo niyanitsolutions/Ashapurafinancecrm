@@ -29,7 +29,7 @@ it("does not send until an administrator supplies a mobile and confirms", async 
 
 it("requires separate explicit confirmation for owner cutover", async () => {
   vi.mocked(apiRequest).mockResolvedValue({ mode: "pin_only" });
-  render(<AirtelTestPanel configId="fixture" onChanged={vi.fn()} />);
+  render(<AirtelTestPanel active alreadyVerified configId="fixture" onChanged={vi.fn()} />);
   const button = screen.getByRole("button", { name: "Enable customer PIN-only sign-in" });
   expect(button).toBeDisabled();
   fireEvent.click(screen.getByLabelText(/I confirm all active customers/));
@@ -43,4 +43,19 @@ it("does not present company cutover to other roles", () => {
   render(<AirtelTestPanel configId="fixture" onChanged={vi.fn()} />);
   expect(screen.queryByRole("button", { name: "Enable customer PIN-only sign-in" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Send test SMS" })).not.toBeInTheDocument();
+});
+
+it("verifies only an explicitly entered received OTP without exposing a generated code",async()=>{
+ vi.mocked(apiRequest).mockResolvedValueOnce({success:true,status:"accepted",challenge_id:"a".repeat(64)}).mockResolvedValueOnce({verified:true});
+ render(<AirtelTestPanel configId="fixture" onChanged={vi.fn()}/>);
+ fireEvent.change(screen.getByLabelText("Test mobile number"),{target:{value:"9000000077"}});
+ fireEvent.click(screen.getByLabelText(/I authorize sending/));fireEvent.click(screen.getByRole("button",{name:"Send test SMS"}));
+ const otp=await screen.findByLabelText("Received test OTP");expect(otp).toHaveValue("");
+ fireEvent.change(otp,{target:{value:"0472"}});fireEvent.click(screen.getByRole("button",{name:"Verify test OTP"}));
+ await waitFor(()=>expect(apiRequest).toHaveBeenLastCalledWith("/integration-configs/fixture/airtel-verify-test-otp",expect.objectContaining({body:JSON.stringify({mobile:"9000000077",challenge_id:"a".repeat(64),otp:"0472"})})));
+ expect(await screen.findByText(/Test OTP received and verified. You can now/)).toBeVisible();
+});
+it("shows an exact prerequisite and sends nothing while settings are disabled",()=>{
+ render(<AirtelTestPanel configId="fixture" disabledReason="Enable this integration before sending a test SMS." onChanged={vi.fn()}/>);
+ expect(screen.getByText("Enable this integration before sending a test SMS.")).toBeVisible();expect(screen.getByRole("button",{name:"Send test SMS"})).toBeDisabled();expect(apiRequest).not.toHaveBeenCalled();
 });

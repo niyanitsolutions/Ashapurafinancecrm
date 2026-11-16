@@ -241,67 +241,14 @@ async def airtel_test_sms(
     service: ServiceDep,
     actor: Annotated[User, _perm("edit")],
 ) -> ApiResponse[dict[str, Any]]:
-    import json
-    import secrets
-    from time import perf_counter
+    from app.features.integrations.airtel_test import send_test
+    return ApiResponse.ok(await send_test(service, config_id, payload, actor))
 
-    from app.core.exceptions import ValidationError
-    from app.features.communication.airtel_iq import submit
-    from app.features.integrations.airtel_iq import require_owner
-    from app.features.integrations.models import IntegrationTestLog
-    from app.security.encryption import decrypt
-    from app.shared.audit_log import write_audit_log
-    from app.utils.datetime import utc_now
-    require_owner(actor)
-    config = await service.get_config(config_id)
-    if config.provider != "airtel_iq" or not config.is_enabled or not payload.confirm_send:
-        raise ValidationError("Enable Airtel and explicitly confirm sending to the test mobile.")
-    started = perf_counter()
-    outcome = await submit(
-        service._db,
-        json.loads(decrypt(config.config_encrypted)),
-        payload.mobile,
-        str(secrets.randbelow(10000)).zfill(4),
-        "admin-test:" + config_id + ":" + payload.request_id,
-    )
-    now = utc_now()
-    from bson import ObjectId
 
-    await service._db.integration_configs.update_one(
-        {
-            "_id": ObjectId(config_id),
-            "config_encrypted": config.config_encrypted,
-            "is_enabled": True,
-            "is_deleted": False,
-        },
-        {
-            "$set": {
-                "last_tested_at": now,
-                "last_success_at": now if outcome["success"] else None,
-                "last_failure_at": None if outcome["success"] else now,
-                "last_error_message": outcome["error"],
-                "health_status": "healthy" if outcome["success"] else "error",
-                "updated_by": actor.require_id(),
-                "updated_at": now,
-            }
-        },
-    )
-    await service._test_logs.insert(
-        IntegrationTestLog(
-            config_id=config_id,
-            integration_type="sms",
-            provider="airtel_iq",
-            success=outcome["success"],
-            response_time_ms=round((perf_counter()-started)*1000),
-            error_message=outcome["error"],
-            tested_at=now,
-            created_by=actor.require_id(),
-        )
-    )
-    await write_audit_log(
-        service._db,
-        event_type="airtel_test_submission",
-        user_id=actor.require_id(),
-        metadata={"config_id": config_id, "status": outcome["status"]},
-    )
-    return ApiResponse.ok(outcome)
+from app.features.integrations.schemas import AirtelVerifyTestRequest
+
+
+@router.post("/integration-configs/{config_id}/airtel-verify-test-otp", dependencies=[rate_limited(limit=10)])
+async def airtel_verify_test_otp(config_id: str, payload: AirtelVerifyTestRequest, service: ServiceDep, actor: Annotated[User, _perm("edit")]) -> ApiResponse[dict[str,bool]]:
+    from app.features.integrations.airtel_test import verify_test
+    return ApiResponse.ok(await verify_test(service,config_id,payload,actor))

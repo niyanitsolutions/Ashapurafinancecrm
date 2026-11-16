@@ -92,3 +92,62 @@ def confirmed_contract(config: dict[str, str]) -> bool:
 def require_owner(actor: Any) -> None:
     if actor.role != "owner":
         raise ForbiddenError("Only the Owner can configure or test Airtel SMS.")
+
+
+def config_fingerprint(config: dict[str, str]) -> str:
+    import json
+
+    from app.features.auth.pin_service import otp_digest
+
+    return otp_digest(
+        "airtel-config",
+        json.dumps(
+            {
+                k: v
+                for k, v in config.items()
+                if k
+                not in {
+                    "contract_confirmed",
+                    "success_field",
+                    "success_value",
+                    "provider",
+                    "_provider",
+                }
+            },
+            sort_keys=True,
+        ),
+    )
+
+
+def validation_errors(config: dict[str, str]) -> list[str]:
+    import json
+
+    errors = []
+    for key, value in DEFAULTS.items():
+        if key != "destination_template" and config.get(key) != value:
+            errors.append(key + ": use the confirmed Airtel value.")
+    if not config.get("customer_id", "").strip() or config.get("customer_id") == MASK:
+        errors.append("customer_id: saved Customer ID is required.")
+    if config.get("authorization_value") != "ASHFNS":
+        errors.append("authorization_value: save the exact confirmed credential.")
+    try:
+        valid = json.loads(config.get("destination_template", "")) == ["{{mobile}}"]
+    except (ValueError, TypeError):
+        valid = False
+    if not valid:
+        errors.append("destination_template: use one {{mobile}} string in a JSON array.")
+    if config.get("contract_confirmed", "false") not in {"false", "true"}:
+        errors.append("contract_confirmed: invalid confirmation state.")
+    return errors
+
+
+def require_validated(config: Any, values: dict[str, str]) -> None:
+    if (
+        not config.airtel_config_validated_at
+        or config.airtel_validated_fingerprint != config_fingerprint(values)
+    ):
+        raise ValidationError(
+            "Run successful Validate Configuration (no SMS) on the saved settings first."
+        )
+    if not confirmed_contract(values):
+        raise ValidationError("Confirm and save the account-specific Airtel contract first.")

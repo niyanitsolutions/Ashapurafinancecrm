@@ -50,7 +50,14 @@ def config_to_response(config: IntegrationConfig, *, reveal: dict[str, str] | No
     # keys stay masked like any other secret.
     if reveal:
         masked = {**masked, **reveal}
+    workflow = None
+    if config.provider == "airtel_iq":
+        from app.features.integrations.airtel_iq import ENDPOINT
+        workflow = {"expected_endpoint": ENDPOINT, "validated_at": config.airtel_config_validated_at.isoformat() if config.airtel_config_validated_at else None,
+                    "verified_at": config.airtel_test_verified_at.isoformat() if config.airtel_test_verified_at else None,
+                    "challenge_id": config.airtel_test_challenge_id, "submission_status": config.airtel_last_submission_status}
     return IntegrationConfigResponse(
+        airtel_workflow=workflow,
         id=config.require_id(), integration_code=config.integration_code, integration_type=config.integration_type, provider=config.provider,
         name=config.name, config=masked, is_enabled=config.is_enabled, is_active=config.is_active,
         last_tested_at=config.last_tested_at, last_success_at=config.last_success_at, last_failure_at=config.last_failure_at,
@@ -61,7 +68,7 @@ def config_to_response(config: IntegrationConfig, *, reveal: dict[str, str] | No
 
 def test_log_to_response(log: IntegrationTestLog) -> IntegrationTestLogResponse:
     return IntegrationTestLogResponse(
-        id=log.require_id(), success=log.success, response_time_ms=log.response_time_ms, error_message=log.error_message,
+        submission_status=log.submission_status, kind=log.kind, id=log.require_id(), success=log.success, response_time_ms=log.response_time_ms, error_message=log.error_message,
         tested_at=log.tested_at, graph_api_version=log.graph_api_version, tested_ip=log.tested_ip,
     )
 
@@ -73,6 +80,6 @@ def test_result_to_response(outcome: ConnectionCheckResult, tested_at: datetime)
         else None
     )
     return TestConnectionResponse(
-        success=outcome.success, response_time_ms=outcome.response_time_ms, error_message=outcome.error_message,
+        kind=outcome.kind, success=outcome.success, response_time_ms=outcome.response_time_ms, error_message=outcome.error_message,
         tested_at=tested_at, checks=checks,
     )

@@ -320,7 +320,7 @@ async def test_owner_cutover_requires_enrollment_and_ready_provider(
         await client.post(BASE + "/cutover", headers=owner_headers)
     ).status_code == 409
     await mock_db.integration_configs.update_many(
-        {}, {"$set": {"last_success_at": utc_now()}}
+        {}, {"$set": {"last_success_at": utc_now(), "airtel_test_verified_at": utc_now()}}
     )
     assert (
         await client.post(BASE + "/cutover", headers=owner_headers)

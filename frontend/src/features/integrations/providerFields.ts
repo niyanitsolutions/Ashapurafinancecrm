@@ -105,7 +105,7 @@ export const AIRTEL_IQ_SMS_FIELDS: ProviderField[] = [
   {key:"authorization_value",label:"Authorization header value (exact, confirmed by Airtel)",secret:true,defaultValue:"ASHFNS",helpText:"Airtel confirmed ASHFNS exactly. Do not add Bearer or Basic. Stored encrypted and write-only after saving."},
   {key:"destination_template",label:"Confirmed destinationAddress JSON array (use {{mobile}})",defaultValue:'["{{mobile}}"]',helpText:"One 10-digit mobile number; no country prefix is added."},
   {key:"contract_confirmed",label:"Account-specific API contract confirmed",toggle:true,optional:true,helpText:"Save all required settings, run Validate Configuration (no SMS), then confirm here. Activation still requires an explicit test submission."},
-  {key:"message_type",label:"Message Type",defaultValue:"TRANSACTIONAL",helpText:"HTTP 200 confirms API submission only. No JSON success fields are required; handset delivery is unverified."},
+  {key:"message_type",label:"Message Type",defaultValue:"TRANSACTIONAL",helpText:"HTTP 200 confirms API submission only. Verify the received test OTP separately; no JSON success fields are required."},
 ];
 
 export function fieldsFor(integrationType: string, provider: string): ProviderField[] {

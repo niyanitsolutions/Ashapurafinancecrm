@@ -8,7 +8,7 @@ vi.mock("./api", () => ({ listIntegrationConfigs: mocks.list, listIntegrationPro
 beforeEach(() => { vi.clearAllMocks(); mocks.list.mockResolvedValue([]); mocks.create.mockResolvedValue({ id: "draft", webhook_callback_path: null }); mocks.draft.mockResolvedValue({ success: false, error_message: "Contract pending. No SMS was sent.", checks: null }); });
 async function form() {
   render(<MemoryRouter><IntegrationListPage /></MemoryRouter>); fireEvent.click(screen.getByRole("button", { name: "+ Add Configuration" }));
-  const dialog = within(screen.getByRole("dialog")); await waitFor(() => expect(dialog.getAllByRole("combobox")[0]).not.toBeDisabled()); fireEvent.change(dialog.getAllByRole("combobox")[0], { target: { value: "sms" } }); fireEvent.change(dialog.getAllByRole("combobox")[1], { target: { value: "airtel_iq" } });
+  const dialog = within(screen.getByRole("dialog")); await waitFor(() => expect(dialog.getByRole("option", {name:/^SMS$/})).toBeInTheDocument()); fireEvent.change(dialog.getAllByRole("combobox")[0], { target: { value: "sms" } }); await waitFor(() => expect(dialog.getByRole("option", {name:"Airtel IQ"})).toBeInTheDocument()); fireEvent.change(dialog.getAllByRole("combobox")[1], { target: { value: "airtel_iq" } });
   return dialog;
 }
 it("shows approved defaults and fully sensitive credential inputs", async () => {
