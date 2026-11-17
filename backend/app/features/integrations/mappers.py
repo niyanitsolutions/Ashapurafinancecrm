@@ -52,8 +52,12 @@ def config_to_response(config: IntegrationConfig, *, reveal: dict[str, str] | No
         masked = {**masked, **reveal}
     workflow = None
     if config.provider == "airtel_iq":
-        from app.features.integrations.airtel_iq import ENDPOINT
-        workflow = {"expected_endpoint": ENDPOINT, "validated_at": config.airtel_config_validated_at.isoformat() if config.airtel_config_validated_at else None,
+        from app.features.integrations.airtel_iq import (
+            AUTHENTICATION_PENDING,
+            ENDPOINT,
+            authentication_ready,
+        )
+        workflow = {"authentication_ready": authentication_ready(decrypted), "authentication_message": None if authentication_ready(decrypted) else AUTHENTICATION_PENDING, "expected_endpoint": ENDPOINT, "validated_at": config.airtel_config_validated_at.isoformat() if config.airtel_config_validated_at else None,
                     "verified_at": config.airtel_test_verified_at.isoformat() if config.airtel_test_verified_at else None,
                     "challenge_id": config.airtel_test_challenge_id, "submission_status": config.airtel_last_submission_status}
     return IntegrationConfigResponse(

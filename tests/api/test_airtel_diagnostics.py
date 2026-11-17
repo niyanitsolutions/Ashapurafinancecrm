@@ -1,3 +1,5 @@
+from test_airtel_transport import confirmed_auth_stub  # noqa: F401
+
 """Untrusted provider replies must never leak echoed SMS/PII or trigger retries."""
 
 import json
@@ -20,6 +22,7 @@ from test_airtel_transport import CONFIG
             "http_non_200",
             "json",
         ),
+        (400, b'{"message":"Invalid request"}', "http_non_200", "json"),
         (403, b"Forbidden account access", "http_non_200", "text"),
         (429, b'{"error":"Rate limit exceeded"}', "http_non_200", "json"),
         (500, b"{broken", "http_non_200", "malformed_json"),

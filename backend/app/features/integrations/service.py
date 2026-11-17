@@ -94,6 +94,8 @@ class IntegrationsService:
         if payload.provider == "airtel_iq":
             from app.features.integrations.airtel_iq import require_owner, validate_config
             require_owner(actor)
+            from app.features.owner.dependencies import require_primary_owner
+            await require_primary_owner(actor,self._db)
             if payload.integration_type != IntegrationType.SMS:
                 raise ValidationError("Airtel IQ is an SMS provider.")
             config_values = validate_config(config_values)
@@ -135,6 +137,9 @@ class IntegrationsService:
         if config.provider == "airtel_iq":
             from app.features.integrations.airtel_iq import require_owner
             require_owner(actor)
+        if config.provider == "airtel_iq":
+            from app.features.owner.dependencies import require_primary_owner
+            await require_primary_owner(actor,self._db)
         updates: dict[str, Any] = {}
         if payload.name is not None:
             updates["name"] = payload.name
@@ -150,6 +155,8 @@ class IntegrationsService:
                 k: v for k, v in payload.config.items()
                 if not ((is_secret_key(k) or (config.provider == "airtel_iq" and k in {"customer_id", "username", "password", "authorization_value"})) and k in current and v == mappers.mask_provider_value(config.provider, k, str(current[k])))
             }
+            if config.provider == "airtel_iq":
+                incoming = {key:value for key,value in incoming.items() if key not in {"customer_id","username","password","authorization_value"} or value.strip()}
             credentials_changed = any(current.get(k) != v for k, v in incoming.items())
             if config.provider == "airtel_iq":
                 changed_rules = any(current.get(k) != v for k, v in incoming.items() if k != "contract_confirmed")
@@ -188,7 +195,7 @@ class IntegrationsService:
             require_owner(actor)
         if config.provider == "airtel_iq" and enabled:
             from app.features.integrations.airtel_iq import require_validated
-            require_validated(config, json.loads(decrypt(config.config_encrypted)))
+            require_validated(config, json.loads(decrypt(config.config_encrypted)), require_authentication=False)
         updates: dict[str, Any] = {"is_enabled": enabled}
         if not enabled:
             updates["is_active"] = False  # an active config must be enabled — disabling one clears active too
@@ -204,8 +211,15 @@ class IntegrationsService:
             from app.features.integrations.airtel_iq import require_owner
             require_owner(actor)
         if config.provider == "airtel_iq":
-            from app.features.integrations.airtel_iq import BLOCKED, confirmed_contract
+            from app.features.integrations.airtel_iq import (
+                AUTHENTICATION_PENDING,
+                BLOCKED,
+                authentication_ready,
+                confirmed_contract,
+            )
             values = json.loads(decrypt(config.config_encrypted))
+            if not authentication_ready(values):
+                raise ValidationError(AUTHENTICATION_PENDING)
             if not confirmed_contract(values):
                 raise ValidationError(BLOCKED)
         if config.provider == "airtel_iq":

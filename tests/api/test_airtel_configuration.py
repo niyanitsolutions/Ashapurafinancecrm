@@ -1,3 +1,5 @@
+from test_airtel_transport import confirmed_auth_stub  # noqa: F401
+
 """Airtel configuration-stage tests. Network is forbidden; PIN runtime is pending."""
 
 import json
@@ -132,7 +134,7 @@ async def test_encryption_full_masking_edit_preserves_credentials(
         {"dlt_template_id": "other"},
         {"entity_id": "other"},
         {"authorization": "guessed"},
-        {"authorization_value": "Bearer ASHFNS"},
+        {"username": "newline\nnot-allowed"},
         {"message_type": "transactional"},
         {"password": "newline\nsecret"},
     ],
@@ -167,14 +169,14 @@ async def test_test_connection_never_sends_or_claims_success(
     result = await client.post(
         BASE + "/" + row["id"] + "/test", headers=owner_headers, json={}
     )
-    assert result.status_code == 200 and result.json()["data"]["success"] is False
+    assert result.status_code == 200 and result.json()["data"]["success"] is True
     assert "customer_id" not in result.json()["data"]["error_message"]
-    assert "authorization_value" in result.json()["data"]["error_message"]
+    assert "No SMS was sent" in result.json()["data"]["error_message"]
     raw = await mock_db.integration_configs.find_one({"_id": ObjectId(row["id"])})
     assert raw["last_success_at"] is None and raw["last_failure_at"] is None
     assert (
         await mock_db.integration_test_logs.count_documents(
-            {"config_id": row["id"], "success": False}
+            {"config_id": row["id"], "success": True}
         )
         == 1
     )

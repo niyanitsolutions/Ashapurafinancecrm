@@ -1,0 +1,32 @@
+[
+  {
+    "width": 1440,
+    "result": "passed",
+    "auth": "unconfirmed; sends blocked",
+    "checks": [
+      "primary-owner-entry",
+      "password-show-hide",
+      "save-reload-masked",
+      "endpoint-preserved",
+      "no-manual-authorization",
+      "local-validation-only",
+      "no-send-no-activation",
+      "responsive-no-runtime-errors"
+    ]
+  },
+  {
+    "width": 390,
+    "result": "passed",
+    "auth": "unconfirmed; sends blocked",
+    "checks": [
+      "primary-owner-entry",
+      "password-show-hide",
+      "save-reload-masked",
+      "endpoint-preserved",
+      "no-manual-authorization",
+      "local-validation-only",
+      "no-send-no-activation",
+      "responsive-no-runtime-errors"
+    ]
+  }
+]

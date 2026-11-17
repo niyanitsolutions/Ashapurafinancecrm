@@ -1,4 +1,4 @@
-"""Account-confirmed Airtel prepaid contract, stored through encrypted API Connections."""
+"""Confirmed Airtel payload fields; three-credential authentication remains undocumented."""
 
 from typing import Any
 
@@ -15,8 +15,8 @@ DEFAULTS = {
     "message_type": "TRANSACTIONAL",
     "destination_template": '["{{mobile}}"]',
 }
-# username/password and message_id_field remain accepted for saved-config compatibility;
-# they are never used to infer authentication or sent in the Airtel request.
+# Credentials are collected securely. Their wire authentication format is not known.
+# Legacy header/message parsing values are retained encrypted but cannot authorize a send.
 SENSITIVE = frozenset({"customer_id", "username", "password", "authorization_value"})
 MASK = "********"
 BLOCKED = "Save and validate the complete Airtel IQ configuration, then confirm the account contract. No SMS was sent; activation is unavailable."
@@ -45,10 +45,6 @@ def validate_config(values: dict[str, str]) -> dict[str, str]:
         )
     if any(len(value) > 2000 or "\r" in value or "\n" in value for value in data.values()):
         raise ValidationError("Invalid Airtel IQ configuration value.")
-    if data.get("authorization_value") and data["authorization_value"] != "ASHFNS":
-        raise ValidationError(
-            "Use the exact Airtel-confirmed Authorization value without a scheme."
-        )
     if data.get("contract_confirmed", "false") not in {"true", "false"}:
         raise ValidationError("Invalid Airtel contract confirmation.")
     if data.get("contract_confirmed") == "true" and not contract_ready(data):
@@ -78,7 +74,10 @@ def contract_ready(config: dict[str, str]) -> bool:
             )
             and bool(config.get("customer_id", "").strip())
             and config.get("customer_id") != MASK
-            and config.get("authorization_value") == "ASHFNS"
+            and all(
+                config.get(key, "").strip() and config.get(key) != MASK
+                for key in ("username", "password")
+            )
             and json.loads(config.get("destination_template", "")) == ["{{mobile}}"]
         )
     except (ValueError, TypeError):
@@ -86,7 +85,11 @@ def contract_ready(config: dict[str, str]) -> bool:
 
 
 def confirmed_contract(config: dict[str, str]) -> bool:
-    return config.get("contract_confirmed") == "true" and contract_ready(config)
+    return (
+        config.get("contract_confirmed") == "true"
+        and contract_ready(config)
+        and authentication_ready(config)
+    )
 
 
 def require_owner(actor: Any) -> None:
@@ -128,8 +131,9 @@ def validation_errors(config: dict[str, str]) -> list[str]:
             errors.append(key + ": use the confirmed Airtel value.")
     if not config.get("customer_id", "").strip() or config.get("customer_id") == MASK:
         errors.append("customer_id: saved Customer ID is required.")
-    if config.get("authorization_value") != "ASHFNS":
-        errors.append("authorization_value: save the exact confirmed credential.")
+    for key in ("username", "password"):
+        if not config.get(key, "").strip() or config.get(key) == MASK:
+            errors.append(key + ": a saved credential is required.")
     try:
         valid = json.loads(config.get("destination_template", "")) == ["{{mobile}}"]
     except (ValueError, TypeError):
@@ -141,7 +145,9 @@ def validation_errors(config: dict[str, str]) -> list[str]:
     return errors
 
 
-def require_validated(config: Any, values: dict[str, str]) -> None:
+def require_validated(
+    config: Any, values: dict[str, str], *, require_authentication: bool = True
+) -> None:
     if (
         not config.airtel_config_validated_at
         or config.airtel_validated_fingerprint != config_fingerprint(values)
@@ -149,5 +155,15 @@ def require_validated(config: Any, values: dict[str, str]) -> None:
         raise ValidationError(
             "Run successful Validate Configuration (no SMS) on the saved settings first."
         )
-    if not confirmed_contract(values):
+    if require_authentication and not authentication_ready(values):
+        raise ValidationError(AUTHENTICATION_PENDING)
+    if values.get("contract_confirmed") != "true" or not contract_ready(values):
         raise ValidationError("Confirm and save the account-specific Airtel contract first.")
+
+
+AUTHENTICATION_PENDING = "Airtel authentication is not documented for this prepaid endpoint. Customer ID, Username and Password can be saved securely, but SMS submission and activation are blocked until Airtel confirms the exact authentication mechanism. No SMS was sent."
+
+
+def authentication_ready(_config: dict[str, str]) -> bool:
+    """No runtime flag, guessed scheme or owner-entered header can bypass missing docs."""
+    return False

@@ -1,6 +1,7 @@
 """Airtel prepaid transport. Unknown account-specific rules are explicit configuration.
 
-The account-confirmed contract uses an exact header, ten-digit recipient and HTTP 200.
+The payload uses a ten-digit recipient and HTTP 200 submission success.
+Authentication is unconfirmed; default submission is blocked before provider I/O.
 Timeout/ambiguous responses are never automatically retried (provider idempotency unknown).
 """
 
@@ -15,8 +16,10 @@ from pymongo.errors import DuplicateKeyError
 from app.core.exceptions import ValidationError
 from app.features.integrations.airtel_iq import (
     APPROVED_MESSAGE,
+    AUTHENTICATION_PENDING,
     BLOCKED,
     ENDPOINT,
+    authentication_ready,
     confirmed_contract,
     validate_config,
 )
@@ -51,6 +54,8 @@ async def submit(
         raise ValidationError("Airtel OTP must contain exactly four numeric digits.")
     if len(mobile) != 10 or not mobile.isascii() or not mobile.isdigit():
         raise ValidationError("Use the registered ten-digit mobile number.")
+    if not authentication_ready(config):
+        return {"success": False, "status": "unconfigured", "error": AUTHENTICATION_PENDING}
     config = validate_config(
         {k: v for k, v in config.items() if k not in {"provider", "_provider"}}
     )

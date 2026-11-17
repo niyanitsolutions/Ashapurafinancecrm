@@ -1,3 +1,5 @@
+from test_airtel_transport import confirmed_auth_stub  # noqa: F401
+
 """All provider calls are mocked; no production SMS or deployment."""
 
 import json

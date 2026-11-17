@@ -1,3 +1,5 @@
+import {AIRTEL_CREDENTIAL_KEYS} from "../configForm";
+import {AirtelCredentialFields} from "../components/AirtelCredentialFields";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/buttons/Button";
@@ -241,7 +243,7 @@ export function CreateConfigForm({
         onSubmit({ integration_type: integrationType, provider, name, config: fieldValues });
       }}
     >
-      {isAirtel && <p role="status" className="mb-4 text-sm">Airtel IQ can be saved as a draft. Confirm account-specific request and response rules before explicitly sending a test SMS from the saved configuration. Activation requires a successful submission test.</p>}
+      {isAirtel && <p role="status" className="mb-4 text-sm">Customer ID, Username and Password can be saved securely. Authentication is awaiting Airtel documentation. SMS submission and activation remain blocked; no Basic/Bearer scheme or token endpoint is assumed.</p>}
       <ol className="space-y-5">
         <li>
           <StepHeading step={1} title="Choose Provider" />
@@ -277,7 +279,8 @@ export function CreateConfigForm({
           <li>
             <StepHeading step={2} title="Enter Credentials" />
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {fields.map((field) => (
+              {isAirtel && <AirtelCredentialFields values={fieldValues} onChange={(key,value)=>{setFieldValues(old=>({...old,[key]:value}));resetTestState();}}/>}
+              {fields.filter(field=>!isAirtel || !AIRTEL_CREDENTIAL_KEYS.includes(field.key)).map((field) => (
                 <label key={field.key} className="text-xs text-text/60">
                   {field.label}
                   {field.toggle ? (

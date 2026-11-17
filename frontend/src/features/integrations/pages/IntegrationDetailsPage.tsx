@@ -1,4 +1,5 @@
-import {editValues, changedValues, airtelSendReason} from "../configForm";
+import {AirtelCredentialFields} from "../components/AirtelCredentialFields";
+import {editValues, changedValues, airtelSendReason,AIRTEL_CREDENTIAL_KEYS} from "../configForm";
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/buttons/Button";
@@ -485,8 +486,9 @@ export function IntegrationDetailsPage() {
           <div><span className="text-text/50">Last Success</span><div>{formatDate(config.last_success_at)}</div></div>
           <div><span className="text-text/50">Last Failure</span><div>{formatDate(config.last_failure_at)}</div></div>
         </div>
-        {config.provider === "airtel_iq" && <AirtelTestPanel active={config.is_active} configId={config.id} disabledReason={sendReason} savedChallengeId={config.airtel_workflow?.challenge_id} alreadyVerified={Boolean(config.airtel_workflow?.verified_at)} onChanged={(notice) => { setMessage(notice); load(); }}/>}
-        {isAirtel && <ol className="mb-4 text-sm space-y-1"><li>1. Configuration saved</li><li>2. Configuration {config.airtel_workflow?.validated_at ? "validated" : "not yet validated"}</li><li>3. Contract {config.config.contract_confirmed === "true" ? "confirmed" : "not confirmed"}</li><li>4. Test SMS {config.airtel_workflow?.submission_status ?? (config.last_success_at ? "submitted" : "not yet submitted")}</li><li>5. Test OTP {config.airtel_workflow?.verified_at ? "verified" : "not yet verified"}</li><li>6. Integration {config.is_active ? "active" : "inactive"}</li></ol>}
+        {config.provider === "airtel_iq" && <AirtelTestPanel active={config.is_active && config.airtel_workflow?.authentication_ready !== false} configId={config.id} disabledReason={sendReason} savedChallengeId={config.airtel_workflow?.challenge_id} alreadyVerified={Boolean(config.airtel_workflow?.verified_at)} onChanged={(notice) => { setMessage(notice); load(); }}/>}
+        {isAirtel && config.airtel_workflow?.authentication_ready === false && <p role="status" className="mb-4 rounded border border-warning p-3">{config.airtel_workflow.authentication_message}</p>}
+        {isAirtel && <ol className="mb-4 text-sm space-y-1"><li>1. Configuration saved</li><li>2. Configuration {config.airtel_workflow?.validated_at ? "validated" : "not yet validated"}</li><li>3. Contract {config.config.contract_confirmed === "true" ? "confirmed" : "not confirmed"}</li><li>4. Test SMS {config.airtel_workflow?.submission_status ?? (config.last_success_at ? "submitted" : "not yet submitted")}</li><li>5. Test OTP {config.airtel_workflow?.verified_at ? "verified" : "not yet verified"}</li><li>6. Integration {config.airtel_workflow?.authentication_ready === false ? "blocked pending authentication" : config.is_active ? "active" : "inactive"}</li></ol>}
         {config.provider === "airtel_iq" && <p role="status" className="mb-4 text-sm">Complete the steps above. Configuration validation sends no SMS. An explicit test submits the OTP; verify the received code separately.</p>}
         {config.last_error_message && <p className="mb-4 text-sm text-danger">Last error: {config.last_error_message}</p>}
         {configJustChanged && (
@@ -566,7 +568,8 @@ export function IntegrationDetailsPage() {
           }}
         >
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-            {fields.map((field) => (
+            {isAirtel && <AirtelCredentialFields values={fieldValues} saved={config.config} onChange={(key,value)=>setFieldValues(old=>({...old,[key]:value}))}/>}
+            {fields.filter(field=>!isAirtel || !AIRTEL_CREDENTIAL_KEYS.includes(field.key)).map((field) => (
               <label key={field.key} className="text-xs text-text/60">
                 {field.label} {field.secret && <span className="text-text/40">(current: {config.config[field.key] || "not set"})</span>}
                 {config.provider === "airtel_iq" && field.toggle ? (

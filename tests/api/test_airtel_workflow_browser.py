@@ -1,3 +1,5 @@
+from test_airtel_transport import confirmed_auth_stub  # noqa: F401
+
 # ruff: noqa: F811
 """Opt-in local browser + real API/MongoDB, with Airtel completely mocked."""
 

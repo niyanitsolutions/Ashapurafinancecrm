@@ -1,4 +1,8 @@
-"""Fixtures below are synthetic contract rules, not Airtel account defaults."""
+"""Historical transport regressions with a TEST-ONLY auth-confirmation stub.
+
+This stub is not an implemented Airtel authentication contract. Default runtime
+blocking is tested separately in test_airtel_authentication_pending.py.
+"""
 
 import asyncio
 import json
@@ -10,6 +14,8 @@ from app.features.integrations.airtel_iq import DEFAULTS, ENDPOINT
 
 CONFIG = DEFAULTS | {
     "customer_id": "fixture-customer",
+    "username": "fixture-username",
+    "password": "fixture-password",
     "authorization_value": "ASHFNS",
     "message_type": "TRANSACTIONAL",
     "destination_template": '["{{mobile}}"]',
@@ -17,6 +23,13 @@ CONFIG = DEFAULTS | {
     "success_value": "true",
     "contract_confirmed": "true",
 }
+
+
+@pytest.fixture(autouse=True)
+def confirmed_auth_stub(monkeypatch):
+    from app.features.integrations import airtel_iq
+    monkeypatch.setattr(airtel_iq,"authentication_ready",lambda _config:True)
+    monkeypatch.setattr(adapter,"authentication_ready",lambda _config:True)
 
 
 @pytest.mark.parametrize(
@@ -153,7 +166,8 @@ async def test_timeout_and_concurrent_duplicate_no_retry(mock_db, monkeypatch):
     "key",
     [
         "customer_id",
-        "authorization_value",
+        "username",
+        "password",
         "contract_confirmed",
     ],
 )
