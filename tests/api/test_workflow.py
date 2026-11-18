@@ -9,8 +9,16 @@ their own assignment), and reassignment auditing.
 """
 
 from app.features.customer.constants import FieldType
-from app.features.customer.models import ApplicationFormDefinition, FormFieldDefinition, RequiredDocumentDefinition
-from app.features.system_settings.models import DocumentType, InsuranceProduct, LoanProduct
+from app.features.customer.models import (
+    ApplicationFormDefinition,
+    FormFieldDefinition,
+    RequiredDocumentDefinition,
+)
+from app.features.system_settings.models import (
+    DocumentType,
+    InsuranceProduct,
+    LoanProduct,
+)
 from app.features.workflow_engine.constants import (
     ON_HOLD_STATUS,
     CaseType,
@@ -21,6 +29,7 @@ from app.features.workflow_engine.constants import (
     WorkflowAuditEvent,
 )
 from app.features.workflow_engine.models import WorkflowDefinition
+from customer_test_helpers import start_legacy_customer
 
 _LOAN_ROWS = [
     (LoanStatus.NEW_CUSTOMER, "New Customer", 1, [LoanStatus.CREDIT_EVALUATION], LoanAuditEvent.CASE_CREATED),
@@ -146,7 +155,7 @@ async def _signup_via_otp(client, mobile: str, dev_otp: str, password: str = "Cu
 async def _submitted_application(client, mock_db, product, *, mobile, extra_doc_ids=None):
     """Direct-portal registration -> profile -> application -> upload required doc ->
     submit. Returns (customer_headers, application_id)."""
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": mobile})
+    r = await start_legacy_customer(client, mobile)
     assert r.status_code == 200, r.text
     customer_headers = await _signup_via_otp(client, mobile, r.json()["data"]["dev_otp"])
 

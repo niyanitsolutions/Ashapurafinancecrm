@@ -10,18 +10,11 @@ from pathlib import Path
 
 import pytest
 from bson import ObjectId
+from customer_test_helpers import start_legacy_customer
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
-
-from migrate_redesign_insurance_pipeline import _remap_cases, _rewrite_definitions
-from test_workflow import (
-    _seed_workflow_definitions,
-    _signup_via_otp,
-    _submitted_application,
-    _verify_all_current_documents,
-)
 
 from app.features.customer.constants import FieldType
 from app.features.customer.models import (
@@ -33,6 +26,13 @@ from app.features.system_settings.models import (
     DocumentType,
     InsuranceCategory,
     InsuranceProduct,
+)
+from migrate_redesign_insurance_pipeline import _remap_cases, _rewrite_definitions
+from test_workflow import (
+    _seed_workflow_definitions,
+    _signup_via_otp,
+    _submitted_application,
+    _verify_all_current_documents,
 )
 
 
@@ -110,7 +110,7 @@ async def test_front_back_required_doc_needs_both_sides_verified(client, mock_db
     )
     # Register + upload front & back.
     mobile = "9640000002"
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": mobile})
+    r = await start_legacy_customer(client, mobile)
     headers = await _signup_via_otp(client, mobile, r.json()["data"]["dev_otp"])
     await client.post("/api/v1/customers/me", json={"full_name": "FB Test"}, headers=headers)
     r = await client.post("/api/v1/applications", json={"product_category": "insurance", "product_id": product["product_id"]}, headers=headers)

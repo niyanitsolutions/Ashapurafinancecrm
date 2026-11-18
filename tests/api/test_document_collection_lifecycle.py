@@ -14,6 +14,7 @@ Reuses `test_leads.py`'s own fixtures/helpers (`_lead_master_data`, `_create_emp
 """
 
 from app.features.system_settings.models import LoanProduct
+from customer_test_helpers import start_legacy_customer
 from test_leads import (
     _create_employee,
     _create_lead,
@@ -29,7 +30,7 @@ from test_leads import (
 
 
 async def _register_customer(client, mobile: str) -> dict:
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": mobile})
+    r = await start_legacy_customer(client, mobile)
     assert r.status_code == 200, r.text
     dev_otp = r.json()["data"]["dev_otp"]
     r = await client.post("/api/v1/auth/verify-otp", json={"mobile": mobile, "otp": dev_otp, "purpose": "signup"})
@@ -330,8 +331,11 @@ async def test_move_lead_less_enforces_assignment_scoping_for_employee(client, m
 async def test_optional_document_does_not_block_lead_less_submission_or_move(client, mock_db, owner_headers, master_data):
     await _seed_loan_new_customer_definition(mock_db)
     lmd = await _lead_master_data(mock_db)
-    from app.features.customer.models import ApplicationFormDefinition, FormFieldDefinition
     from app.features.customer.constants import FieldType
+    from app.features.customer.models import (
+        ApplicationFormDefinition,
+        FormFieldDefinition,
+    )
 
     required_doc_type_id = await _seed_document_type(mock_db, "PAN")
     optional_doc_type_id = await _seed_document_type(mock_db, "Passport")
@@ -369,8 +373,11 @@ async def test_required_document_defaults_true_for_legacy_schema_missing_the_fie
     behave as required, not silently become optional."""
     await _seed_loan_new_customer_definition(mock_db)
     lmd = await _lead_master_data(mock_db)
-    from app.features.customer.models import ApplicationFormDefinition, FormFieldDefinition
     from app.features.customer.constants import FieldType
+    from app.features.customer.models import (
+        ApplicationFormDefinition,
+        FormFieldDefinition,
+    )
 
     doc_type_id = await _seed_document_type(mock_db, "PAN")
     form_def = ApplicationFormDefinition(

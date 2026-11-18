@@ -20,21 +20,20 @@ from app.core.exceptions import (
     ValidationError,
 )
 from app.features.auth.models import User
-from app.features.auth.schemas import MobileStr
 from app.features.communication.airtel_iq import submit
 from app.features.geo_fencing.constants import GeoActivity
 from app.features.geo_fencing.enforcement import enforce_geo_fence
 from app.security.encryption import decrypt
-from app.security.password import hash_password, verify_password
+from app.security.pin import hash_pin, verify_pin
 from app.shared.audit_log import write_audit_log
 from app.utils.datetime import utc_now
 
-Purpose = Literal["FIRST_TIME_LOGIN", "FORGOT_PIN"]
+Purpose = Literal["FIRST_TIME_LOGIN", "FORGOT_PIN", "REGISTRATION"]
 
 
 class Start(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    mobile: MobileStr
+    mobile: str = Field(pattern=r"^[0-9]{10}$")
     purpose: Purpose
 
 
@@ -60,7 +59,7 @@ class Complete(BaseModel):
 
 class Login(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    mobile: MobileStr
+    mobile: str = Field(pattern=r"^[0-9]{10}$")
     pin: str = Field(pattern=r"^[0-9]{4}$", repr=False)
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
@@ -131,6 +130,12 @@ class PinService:
                 or (body.purpose == "FORGOT_PIN" and user.get("pin_hash"))
             )
         )
+        if body.purpose == "REGISTRATION":
+            # Registration creates no User until the OTP is verified and completed.
+            existing = await self.db.users.find_one({"mobile": body.mobile})
+            if existing:
+                raise ConflictError("This mobile is already registered. Log in or use Create PIN.")
+            eligible = True
         if user:
             await limit(self.db, "pin-otp-account:" + str(user["_id"]), 5, 3600)
         now = utc_now()
@@ -187,13 +192,15 @@ class PinService:
             {"_id": slot, "challenge_id": challenge},
             {"$set": {"state": "issued" if delivered else "failed"}},
         )
+        if body.purpose == "REGISTRATION" and not delivered:
+            raise ValidationError("OTP submission was not confirmed. Wait before trying again; contact support if no code arrives.")
         # Same shape for unknown/ineligible/undelivered requests. No account enumeration.
         return {
             "challenge_id": challenge,
             "masked_mobile": "******" + body.mobile[-4:],
             "expires_in": 600,
             "resend_after": 60,
-            "message": "If the account is eligible and SMS is configured, a code will arrive. If none arrives, contact your administrator.",
+            "message": "OTP submitted. Check your mobile for the code." if body.purpose == "REGISTRATION" else "If the account is eligible and SMS is configured, a code will arrive. If none arrives, contact your administrator.",
         }
 
     async def verify(self, body: Verify, ctx: Any) -> dict[str, str]:
@@ -213,10 +220,10 @@ class PinService:
             return_document=ReturnDocument.AFTER,
         )
         account = await self.account(body.mobile)
+        registration = body.purpose == "REGISTRATION"
         if (
-            not account
-            or not doc
-            or str(account["_id"]) != doc.get("user_id")
+            not doc
+            or (not registration and (not account or str(account["_id"]) != doc.get("user_id")))
             or not hmac.compare_digest(doc["otp_hash"], otp_digest(body.challenge_id, body.otp))
         ):
             raise ValidationError(
@@ -273,7 +280,7 @@ class PinService:
             proof.get("used_otp_hash", ""), otp_digest(proof["challenge_id"], body.pin)
         ):
             raise ValidationError("Choose a PIN different from the verification code.")
-        if user.get("pin_hash") and verify_password(body.pin, user["pin_hash"]):
+        if user.get("pin_hash") and verify_pin(body.pin, user["pin_hash"]):
             raise ValidationError("Choose a PIN different from your previous PIN.")
         initial = proof["purpose"] == "FIRST_TIME_LOGIN"
         if initial:
@@ -297,7 +304,7 @@ class PinService:
         )
         if not claimed.modified_count:
             raise UnauthorizedError("PIN authorization was already used.")
-        hashed = hash_password(body.pin)
+        hashed = hash_pin(body.pin)
         changed = await self.db.users.find_one_and_update(
             {
                 "_id": user["_id"],
@@ -383,7 +390,7 @@ class PinService:
             ],
             return_document=ReturnDocument.AFTER,
         )
-        if not user or not verify_password(body.pin, user["pin_hash"]):
+        if not user or not verify_pin(body.pin, user["pin_hash"]):
             await write_audit_log(
                 self.db,
                 event_type="pin_login_failed",
@@ -400,7 +407,10 @@ class PinService:
                 "status": "active",
                 "is_deleted": False,
             },
-            {"$set": {"failed_pin_attempts": 0, "pin_locked_until": None}},
+            {"$set": {
+                "failed_pin_attempts": 0, "pin_locked_until": None,
+                "pin_hash": hash_pin(body.pin) if user["pin_hash"].startswith("$2") else user["pin_hash"],
+            }},
             return_document=ReturnDocument.AFTER,
         )
         if not fresh:

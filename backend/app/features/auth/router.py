@@ -167,6 +167,10 @@ async def pin_policy(auth: AuthServiceDep) -> ApiResponse[dict[str, Any]]:
 async def pin_start(
     payload: PinStart, auth: AuthServiceDep, ctx: RequestContextDep
 ) -> ApiResponse[dict[str, Any]]:
+    if payload.purpose == "REGISTRATION":
+        from app.core.exceptions import ValidationError
+
+        raise ValidationError("Use customer registration to validate your details before requesting an OTP.")
     return ApiResponse.ok(await PinService(auth).start(payload, ctx))
 
 

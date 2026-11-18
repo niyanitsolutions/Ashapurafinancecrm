@@ -18,6 +18,7 @@ from app.worker.tasks.reminders import (
     check_task_reminders,
     poll_audit_events,
 )
+from customer_test_helpers import start_legacy_customer
 
 
 async def _create_employee(client, owner_headers, master_data, mobile, email):
@@ -316,7 +317,7 @@ async def test_notification_inbox_read_archive_dismiss_and_ownership(client, moc
 
 
 async def _signup_customer(client, mobile):
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": mobile})
+    r = await start_legacy_customer(client, mobile)
     assert r.status_code == 200, r.text
     dev_otp = r.json()["data"]["dev_otp"]
     r = await client.post("/api/v1/auth/verify-otp", json={"mobile": mobile, "otp": dev_otp, "purpose": "signup"})

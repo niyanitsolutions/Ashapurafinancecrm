@@ -13,7 +13,11 @@ from app.features.customer.models import (
     FormFieldDefinition,
     RequiredDocumentDefinition,
 )
-from app.features.system_settings.models import DocumentType, InsuranceProduct, LoanProduct
+from app.features.system_settings.models import (
+    DocumentType,
+    InsuranceProduct,
+    LoanProduct,
+)
 from app.features.workflow_engine.constants import (
     ON_HOLD_STATUS,
     CaseType,
@@ -22,6 +26,7 @@ from app.features.workflow_engine.constants import (
     LoanStatus,
 )
 from app.features.workflow_engine.models import WorkflowDefinition
+from customer_test_helpers import start_legacy_customer
 
 # Mirrors test_workflow.py's own `_LOAN_ROWS`/`_INSURANCE_ROWS` seed shape — kept as a
 # separate, local copy (same convention every other test module in this suite already
@@ -129,7 +134,7 @@ async def _signup_via_otp(client, mobile: str, dev_otp: str, password: str = "Cu
 
 
 async def _submitted_application(client, mock_db, product, *, mobile):
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": mobile})
+    r = await start_legacy_customer(client, mobile)
     assert r.status_code == 200, r.text
     customer_headers = await _signup_via_otp(client, mobile, r.json()["data"]["dev_otp"])
     r = await client.post("/api/v1/customers/me", json={"full_name": "Status Control Test Customer"}, headers=customer_headers)
@@ -213,9 +218,8 @@ async def _insurance_case(client, mock_db, owner_headers, master_data, *, mobile
     via "+ Add Insurance Lead" so they own it. The customer registered by
     `_submitted_application` is reused (same mobile) so the portal `mine` view still works.
     """
-    from bson import ObjectId
-
     from app.features.system_settings.models import InsuranceCategory
+    from bson import ObjectId
 
     await _seed_workflow_definitions(mock_db)
     product = await _seed_product_and_form(mock_db, category="insurance", product_name=f"Insurance {mobile_suffix}")

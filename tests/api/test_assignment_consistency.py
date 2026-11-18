@@ -10,15 +10,30 @@ Loan Management and Customer Applications can never again show a different assig
 the same underlying case.
 """
 
-from bson import ObjectId
-
 from app.features.customer.constants import FieldType
-from app.features.customer.models import ApplicationFormDefinition, FormFieldDefinition, RequiredDocumentDefinition
+from app.features.customer.models import (
+    ApplicationFormDefinition,
+    FormFieldDefinition,
+    RequiredDocumentDefinition,
+)
 from app.features.leads.models import Lead
 from app.features.recruitment.models import Advisor
-from app.features.system_settings.models import DocumentType, InsuranceProduct, LeadSource, LoanProduct
-from app.features.workflow_engine.constants import CaseType, InsuranceAuditEvent, InsuranceStatus, LoanAuditEvent, LoanStatus
+from app.features.system_settings.models import (
+    DocumentType,
+    InsuranceProduct,
+    LeadSource,
+    LoanProduct,
+)
+from app.features.workflow_engine.constants import (
+    CaseType,
+    InsuranceAuditEvent,
+    InsuranceStatus,
+    LoanAuditEvent,
+    LoanStatus,
+)
 from app.features.workflow_engine.models import WorkflowDefinition
+from bson import ObjectId
+from customer_test_helpers import start_legacy_customer
 
 
 async def _seed_workflow_definitions(mock_db):
@@ -98,7 +113,7 @@ async def _signup_via_otp(client, mobile: str, dev_otp: str, password: str = "Cu
 
 
 async def _submitted_application(client, mock_db, product, *, mobile, full_name="AC Test Customer"):
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": mobile})
+    r = await start_legacy_customer(client, mobile)
     assert r.status_code == 200, r.text
     customer_headers = await _signup_via_otp(client, mobile, r.json()["data"]["dev_otp"])
     r = await client.post("/api/v1/customers/me", json={"full_name": full_name}, headers=customer_headers)
@@ -148,7 +163,7 @@ async def test_customer_can_apply_for_multiple_independent_products(client, mock
     loan_product = await _seed_product_and_form(mock_db, category="loan", product_name="Business Loan")
     insurance_product = await _seed_product_and_form(mock_db, category="insurance", product_name="Health Cover")
 
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": "9700000101"})
+    r = await start_legacy_customer(client, "9700000101")
     customer_headers = await _signup_via_otp(client, "9700000101", r.json()["data"]["dev_otp"])
     await client.post("/api/v1/customers/me", json={"full_name": "Multi Product Customer"}, headers=customer_headers)
 
@@ -180,7 +195,7 @@ async def test_no_existing_duplicate_same_product_rule_is_preserved(client, mock
     await _seed_workflow_definitions(mock_db)
     product = await _seed_product_and_form(mock_db)
 
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": "9700000102"})
+    r = await start_legacy_customer(client, "9700000102")
     customer_headers = await _signup_via_otp(client, "9700000102", r.json()["data"]["dev_otp"])
     await client.post("/api/v1/customers/me", json={"full_name": "Dup Product Customer"}, headers=customer_headers)
 
@@ -210,7 +225,7 @@ async def test_lead_origin_customer_shows_lead_source_and_preserves_lead_code(cl
     r = await client.post(f"/api/v1/leads/{lead_id}/secure-links", json={}, headers=owner_headers)
     secure_code = r.json()["data"]["secure_code"]
 
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": "9206105818"})
+    r = await start_legacy_customer(client, "9206105818")
     customer_headers = await _signup_via_otp(client, "9206105818", r.json()["data"]["dev_otp"])
     r = await client.post(f"/api/v1/secure-links/{secure_code}/claim", headers=customer_headers)
     assert r.status_code == 200, r.text
@@ -237,7 +252,7 @@ async def test_lead_origin_customer_shows_lead_source_and_preserves_lead_code(cl
 
 
 async def test_direct_customer_shows_direct_source_with_no_fake_lead(client, mock_db, owner_headers):
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": "9876543210"})
+    r = await start_legacy_customer(client, "9876543210")
     customer_headers = await _signup_via_otp(client, "9876543210", r.json()["data"]["dev_otp"])
     r = await client.post("/api/v1/customers/me", json={"full_name": "Direct Customer"}, headers=customer_headers)
     assert r.status_code == 200, r.text
@@ -307,7 +322,7 @@ async def test_two_applications_same_customer_keep_independent_assignments(clien
     loan_product = await _seed_product_and_form(mock_db, category="loan", product_name="Independent Loan")
     insurance_product = await _seed_product_and_form(mock_db, category="insurance", product_name="Independent Cover")
 
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": "9700000107"})
+    r = await start_legacy_customer(client, "9700000107")
     customer_headers = await _signup_via_otp(client, "9700000107", r.json()["data"]["dev_otp"])
     await client.post("/api/v1/customers/me", json={"full_name": "Independent Assign Customer"}, headers=customer_headers)
 

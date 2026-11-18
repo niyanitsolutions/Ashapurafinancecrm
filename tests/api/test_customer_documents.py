@@ -7,10 +7,15 @@ implements for the full rationale.
 """
 
 from app.features.customer.constants import FieldType
-from app.features.customer.models import ApplicationFormDefinition, FormFieldDefinition, RequiredDocumentDefinition
+from app.features.customer.models import (
+    ApplicationFormDefinition,
+    FormFieldDefinition,
+    RequiredDocumentDefinition,
+)
 from app.features.system_settings.models import DocumentType, LoanProduct
 from app.features.workflow_engine.constants import CaseType, LoanAuditEvent, LoanStatus
 from app.features.workflow_engine.models import WorkflowDefinition
+from customer_test_helpers import start_legacy_customer
 from test_customer import _grant_customer_permission
 
 
@@ -82,7 +87,7 @@ async def _signup_via_otp(client, mobile: str, dev_otp: str, password: str = "Cu
 
 
 async def _start_application(client, product, *, mobile, full_name="Doc Test Customer"):
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": mobile})
+    r = await start_legacy_customer(client, mobile)
     assert r.status_code == 200, r.text
     customer_headers = await _signup_via_otp(client, mobile, r.json()["data"]["dev_otp"])
     r = await client.post("/api/v1/customers/me", json={"full_name": full_name}, headers=customer_headers)

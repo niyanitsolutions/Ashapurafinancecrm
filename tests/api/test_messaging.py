@@ -7,12 +7,12 @@ or reply to their conversation).
 """
 
 from bson import ObjectId
-
+from customer_test_helpers import start_legacy_customer
 from test_customer import _create_employee, _seed_product_and_form, _signup_via_otp
 
 
 async def _register_customer(client, mock_db, *, mobile: str) -> dict:
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": mobile})
+    r = await start_legacy_customer(client, mobile)
     assert r.status_code == 200, r.text
     dev_otp = r.json()["data"]["dev_otp"]
     customer_headers = await _signup_via_otp(client, mobile, dev_otp)

@@ -23,8 +23,6 @@ Two independent creation paths exist for a Loan Case, and each needs its own cov
   old immediate-visibility behavior.
 """
 
-from bson import ObjectId
-
 from app.features.customer.constants import FieldType
 from app.features.customer.models import (
     Application,
@@ -33,9 +31,22 @@ from app.features.customer.models import (
     FormFieldDefinition,
     RequiredDocumentDefinition,
 )
-from app.features.system_settings.models import DocumentType, InsuranceProduct, LeadSource, LoanProduct
-from app.features.workflow_engine.constants import ON_HOLD_STATUS, CaseType, InsuranceStatus, LoanAuditEvent, LoanStatus
+from app.features.system_settings.models import (
+    DocumentType,
+    InsuranceProduct,
+    LeadSource,
+    LoanProduct,
+)
+from app.features.workflow_engine.constants import (
+    ON_HOLD_STATUS,
+    CaseType,
+    InsuranceStatus,
+    LoanAuditEvent,
+    LoanStatus,
+)
 from app.features.workflow_engine.models import WorkflowDefinition
+from bson import ObjectId
+from customer_test_helpers import start_legacy_customer
 
 _LOAN_ROWS = [
     (LoanStatus.NEW_CUSTOMER, "New Customer", 1, [LoanStatus.CREDIT_EVALUATION], LoanAuditEvent.CASE_CREATED),
@@ -226,7 +237,7 @@ async def test_customer_portal_list_and_detail_stay_consistent_before_move(clien
     employee = await _create_employee(client, owner_headers, master_data, mobile="9788881006", email="vis6@example.com")
 
     mobile = "9611170006"
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": mobile})
+    r = await start_legacy_customer(client, mobile)
     assert r.status_code == 200, r.text
     customer_headers = await _signup_via_otp(client, mobile, r.json()["data"]["dev_otp"])
     r = await client.post("/api/v1/customers/me", json={"full_name": "Portal Customer"}, headers=customer_headers)
@@ -275,7 +286,7 @@ async def test_lead_less_loan_application_now_gated_through_document_collection(
     await _seed_form_definition(mock_db, "loan", product_id, document_type_ids=[doc_type_id])
 
     mobile = "9611170003"
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": mobile})
+    r = await start_legacy_customer(client, mobile)
     assert r.status_code == 200, r.text
     customer_headers = await _signup_via_otp(client, mobile, r.json()["data"]["dev_otp"])
     r = await client.post("/api/v1/customers/me", json={"full_name": "Self Serve Customer"}, headers=customer_headers)

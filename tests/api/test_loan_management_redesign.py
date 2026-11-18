@@ -7,11 +7,21 @@ round; this file is scoped to what's genuinely new.
 """
 
 from app.features.customer.constants import FieldType
-from app.features.customer.models import ApplicationFormDefinition, FormFieldDefinition, RequiredDocumentDefinition
+from app.features.customer.models import (
+    ApplicationFormDefinition,
+    FormFieldDefinition,
+    RequiredDocumentDefinition,
+)
 from app.features.system_settings.models import DocumentType, LoanProduct
-from app.features.workflow_engine.constants import ON_HOLD_STATUS, CaseType, LoanAuditEvent, LoanStatus
+from app.features.workflow_engine.constants import (
+    ON_HOLD_STATUS,
+    CaseType,
+    LoanAuditEvent,
+    LoanStatus,
+)
 from app.features.workflow_engine.models import WorkflowDefinition
 from app.utils.helpers import to_object_id as _to_oid
+from customer_test_helpers import start_legacy_customer
 
 # Mirrors scripts/seed.py's current loan_rows exactly (allowed_next_statuses +
 # allowed_previous_statuses) — must be kept in sync with that file by hand, same
@@ -112,7 +122,7 @@ async def _signup_via_otp(client, mobile: str, dev_otp: str, password: str = "Cu
 
 
 async def _submitted_application(client, mock_db, product, *, mobile):
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": mobile})
+    r = await start_legacy_customer(client, mobile)
     assert r.status_code == 200, r.text
     customer_headers = await _signup_via_otp(client, mobile, r.json()["data"]["dev_otp"])
     r = await client.post("/api/v1/customers/me", json={"full_name": "Redesign Test Customer"}, headers=customer_headers)

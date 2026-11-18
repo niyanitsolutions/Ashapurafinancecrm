@@ -9,7 +9,8 @@ from app.features.auth import pin_service
 from app.features.auth.models import User
 from app.features.integrations.airtel_iq import DEFAULTS
 from app.security.encryption import encrypt
-from app.security.password import hash_password, verify_password
+from app.security.password import hash_password
+from app.security.pin import verify_pin
 from app.utils.datetime import utc_now
 
 BASE = "/api/v1/auth/pin"
@@ -86,7 +87,7 @@ async def test_enroll_login_refresh_reset_revokes_every_session(
     uid, sent = pin_account
     first = await enroll(client, sent)
     row = await mock_db.users.find_one({"_id": uid})
-    assert row["pin_hash"] != "0472" and verify_password("0472", row["pin_hash"])
+    assert row["pin_hash"] != "0472" and verify_pin("0472", row["pin_hash"])
     assert row["is_mobile_verified"] and row["pin_epoch"] == 1
     headers = {"Authorization": "Bearer " + first["access_token"]}
     assert (
@@ -395,3 +396,15 @@ async def test_role_change_invalidates_existing_customer_setup_proof(
     )
     assert result.status_code == 401
     assert not (await mock_db.users.find_one({"_id": uid}))["pin_hash"]
+
+
+async def test_legacy_bcrypt_pin_upgrades_without_password_or_session_cutover(client, mock_db, pin_account):
+    uid, sent = pin_account
+    old = hash_password("0472")
+    await mock_db.users.update_one({"_id": uid}, {"$set": {"pin_hash": old}})
+    r = await client.post(BASE + "/login", json={"mobile": MOBILE, "pin": "0472"})
+    assert r.status_code == 200, r.text
+    row = await mock_db.users.find_one({"_id": uid})
+    assert row["pin_hash"].startswith("$argon2id$") and verify_pin("0472", row["pin_hash"])
+    assert row["password_hash"] and row.get("pin_epoch", 0) == 0
+    assert not sent

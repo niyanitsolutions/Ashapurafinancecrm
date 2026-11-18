@@ -129,7 +129,7 @@ export function PinAuthPanel({ returnTo, onLegacy }: {
         <form onSubmit={e => { e.preventDefault(); void submit(); }}>
           {(mode === "login" || mode === "start") && (
             <FormField id="pin-mobile" label="Registered mobile number" required inputMode="numeric"
-              pattern="[6-9][0-9]{9}" maxLength={10} autoComplete="tel-national" disabled={busy}
+              pattern="[0-9]{10}" maxLength={10} autoComplete="tel-national" disabled={busy}
               value={mobile} onChange={e => setMobile(e.target.value)} />
           )}
           {mode === "verify" && <>

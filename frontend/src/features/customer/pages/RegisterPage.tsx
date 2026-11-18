@@ -1,225 +1,78 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
-import { Link, useSearchParams } from "react-router-dom";
-import { verifyOtp } from "@/features/auth/api";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { AuthPageLayout } from "@/features/auth/components/AuthPageLayout";
 import { ErrorBanner } from "@/features/auth/components/ErrorBanner";
 import { FormField } from "@/features/auth/components/FormField";
-import { PasswordStrengthChecklist } from "@/features/auth/components/PasswordStrengthChecklist";
 import { SubmitButton } from "@/features/auth/components/SubmitButton";
-import { getErrorMessage as getAuthErrorMessage } from "@/features/auth/errors";
-import { bypassVerifyRegistrationMobile, completeDirectRegistration, startDirectRegistration } from "@/features/customer/api";
+import { verifyPinOtp, type Challenge } from "@/features/auth/pinApi";
+import { completeDirectRegistration, startDirectRegistration } from "@/features/customer/api";
 import { getErrorMessage } from "@/features/customer/errors";
 import { directRegisterSchema, type DirectRegisterFormValues } from "@/features/customer/validation";
 
-// Customer self-registration — the *only* self-registration path in the system. Owner,
-// Employee, and Referral Partner accounts are always staff-created (Owner-invitation-
-// only, see decision 011/053); there is no route to this page, or any equivalent, for
-// those roles. One form (name/email/mobile/password/address), one OTP step, one
-// "Create Account" action — no secure-link-specific variant (see SecureLinkLandingPage,
-// which sends unauthenticated customers here with `?return=` and nowhere else).
-type Stage = "form" | "otp" | "done";
-
 export function RegisterPage() {
-  const [searchParams] = useSearchParams();
-  const returnTo = searchParams.get("return");
+  const [params] = useSearchParams();
+  const navigate = useNavigate();
+  const returnTo = params.get("return");
   const loginPath = returnTo ? `/login?return=${encodeURIComponent(returnTo)}` : "/login";
-
-  const [stage, setStage] = useState<Stage>("form");
-  const [formValues, setFormValues] = useState<DirectRegisterFormValues | null>(null);
+  const [details, setDetails] = useState<DirectRegisterFormValues | null>(null);
+  const [challenge, setChallenge] = useState<Challenge | null>(null);
+  const [authorization, setAuthorization] = useState("");
   const [otp, setOtp] = useState("");
-  const [otpVerifiedToken, setOtpVerifiedToken] = useState<string | null>(null);
-  const [resendMessage, setResendMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const lock = useRef(false);
   const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  // TEMPORARY — MSG91 DLT approval testing bypass; see startDirectRegistration/
-  // bypassVerifyRegistrationMobile in @/features/customer/api. Remove once DLT approval
-  // lands and the backend's Settings.registration_otp_bypass is retired.
-  const [bypassAvailable, setBypassAvailable] = useState(false);
-
-  const {
-    register,
-    handleSubmit,
-    watch,
-    formState: { errors },
-  } = useForm<DirectRegisterFormValues>({ resolver: zodResolver(directRegisterSchema) });
-
-  const onSendOtp = async (values: DirectRegisterFormValues) => {
-    setError(null);
-    setIsSubmitting(true);
-    try {
-      const result = await startDirectRegistration(values.mobile);
-      setBypassAvailable(result.bypass_available);
-      setFormValues(values);
-      setStage("otp");
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const onVerifyOtp = async () => {
-    if (!formValues) return;
-    setError(null);
-    setIsSubmitting(true);
-    try {
-      const result = await verifyOtp(formValues.mobile, otp, "signup");
-      setOtpVerifiedToken(result.otp_verified_token);
-    } catch (err) {
-      setError(getAuthErrorMessage(err));
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  // TEMPORARY — MSG91 DLT approval testing bypass. The backend independently re-verifies
-  // the bypass is enabled (REGISTRATION_OTP_BYPASS=true); this button cannot itself mark
-  // anything verified, it only requests that check.
-  const onBypassVerifyMobile = async () => {
-    if (!formValues) return;
-    setError(null);
-    setIsSubmitting(true);
-    try {
-      const result = await bypassVerifyRegistrationMobile(formValues.mobile);
-      setOtpVerifiedToken(result.otp_verified_token);
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const onResendOtp = () => {
-    if (!formValues) return;
-    setError(null);
-    setResendMessage(null);
-    startDirectRegistration(formValues.mobile)
-      .then(() => setResendMessage("A new code has been sent."))
-      .catch((err) => setError(getErrorMessage(err)));
-  };
-
-  const onCreateAccount = async () => {
-    if (!formValues || !otpVerifiedToken) return;
-    setError(null);
-    setIsSubmitting(true);
-    try {
-      await completeDirectRegistration({
-        full_name: formValues.full_name,
-        email: formValues.email,
-        mobile: formValues.mobile,
-        password: formValues.password,
-        address_line1: formValues.address_line1,
-        city: formValues.city,
-        state: formValues.state,
-        pincode: formValues.pincode,
-        otp_verified_token: otpVerifiedToken,
-      });
-      setStage("done");
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  if (stage === "done") {
-    return (
-      <AuthPageLayout title="Account Created Successfully">
-        <p className="text-sm text-white/70 text-center mb-6">Your customer account is ready. Please log in to continue.</p>
-        <Link to={loginPath} className="w-full block text-center rounded-xl bg-gradient-to-r from-primary to-primary-dark text-white text-sm font-semibold py-3 shadow-glass hover-lift">
-          Go to Login
-        </Link>
-      </AuthPageLayout>
-    );
+  const [resendAt, setResendAt] = useState(0);
+  const [expiresAt, setExpiresAt] = useState(0);
+  const [now, setNow] = useState(Date.now());
+  const { register, handleSubmit, reset, formState: { errors } } = useForm<DirectRegisterFormValues>({ resolver: zodResolver(directRegisterSchema) });
+  useEffect(() => {
+    if (!challenge) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [challenge]);
+  async function act(action: () => Promise<void>) {
+    if (lock.current) return;
+    lock.current = true; setBusy(true); setError(null);
+    try { await action(); } catch (e) { setError(getErrorMessage(e)); }
+    finally { lock.current = false; setBusy(false); }
   }
-
-  if (stage === "otp" && formValues) {
-    return (
-      <AuthPageLayout
-        title="Verify your mobile number"
-        subtitle={bypassAvailable ? undefined : `We sent a 6-digit code to ${formValues.mobile}`}
-      >
-        <ErrorBanner message={error} />
-        {otpVerifiedToken ? (
-          <>
-            <p className="text-sm text-success text-center mb-4">✓ Mobile number verified</p>
-            <SubmitButton isSubmitting={isSubmitting} onClick={onCreateAccount}>
-              Create Account
-            </SubmitButton>
-          </>
-        ) : bypassAvailable ? (
-          // TEMPORARY — MSG91 DLT approval testing bypass, shown for any valid mobile
-          // while REGISTRATION_OTP_BYPASS=true on the backend. Remove this branch once
-          // DLT approval lands.
-          <>
-            <p className="text-xs uppercase tracking-wide text-white/50 mb-1">Mobile Number</p>
-            <p className="text-sm text-white/90 mb-4">{formValues.mobile}</p>
-            <SubmitButton isSubmitting={isSubmitting} onClick={onBypassVerifyMobile}>
-              Verify Mobile
-            </SubmitButton>
-          </>
-        ) : (
-          <>
-            <FormField
-              label="6-digit code"
-              inputMode="numeric"
-              maxLength={6}
-              placeholder="123456"
-              value={otp}
-              onChange={(e) => setOtp(e.target.value)}
-            />
-            <SubmitButton isSubmitting={isSubmitting} onClick={onVerifyOtp} disabled={otp.length !== 6}>
-              Verify OTP
-            </SubmitButton>
-            <p className="text-sm text-white/60 text-center mt-4">
-              Didn't get a code?{" "}
-              <button type="button" onClick={onResendOtp} className="text-primary hover:underline">
-                Resend OTP
-              </button>
-            </p>
-            {resendMessage && <p className="text-sm text-success text-center mt-2">{resendMessage}</p>}
-          </>
-        )}
-      </AuthPageLayout>
-    );
+  async function send(values: DirectRegisterFormValues) {
+    const result = await startDirectRegistration({ ...values, email: values.email || null });
+    setDetails(values); setChallenge(result); setOtp(""); setAuthorization("");
+    setNow(Date.now()); setResendAt(Date.now() + result.resend_after * 1000);
+    setExpiresAt(Date.now() + result.expires_in * 1000); reset();
   }
-
-  return (
-    <AuthPageLayout title="Create Customer Account" subtitle="Apply for a loan or insurance product">
-      <form onSubmit={handleSubmit(onSendOtp)} noValidate>
-        <ErrorBanner message={error} />
-        <FormField label="Full Name" error={errors.full_name?.message} {...register("full_name")} />
-        <FormField label="Email Address" type="email" error={errors.email?.message} {...register("email")} />
-        <FormField
-          label="Mobile Number"
-          inputMode="numeric"
-          maxLength={10}
-          placeholder="10-digit mobile number"
-          error={errors.mobile?.message}
-          {...register("mobile")}
-        />
-        <FormField label="Password" type="password" error={errors.password?.message} {...register("password")} />
-        <PasswordStrengthChecklist password={watch("password") ?? ""} />
-        <FormField
-          label="Confirm Password"
-          type="password"
-          error={errors.confirm_password?.message}
-          {...register("confirm_password")}
-        />
-        <FormField label="Address" error={errors.address_line1?.message} {...register("address_line1")} />
-        <FormField label="City" error={errors.city?.message} {...register("city")} />
-        <FormField label="State" error={errors.state?.message} {...register("state")} />
-        <FormField label="PIN Code" inputMode="numeric" maxLength={6} error={errors.pincode?.message} {...register("pincode")} />
-        <SubmitButton isSubmitting={isSubmitting}>Send OTP</SubmitButton>
-      </form>
-      <p className="text-sm text-white/60 text-center mt-4">
-        Already have an account?{" "}
-        <Link to={loginPath} className="text-primary hover:underline">
-          Log in
-        </Link>
-      </p>
-    </AuthPageLayout>
-  );
+  return <AuthPageLayout title={challenge ? "Verify your mobile number" : "Create Customer Account"} subtitle="Use your mobile number and a 4-digit login PIN">
+    <ErrorBanner message={error} />
+    {!challenge ? <form onSubmit={handleSubmit(values => act(() => send(values)))} noValidate>
+      <FormField label="Mobile Number" inputMode="numeric" autoComplete="tel-national" maxLength={10} disabled={busy} error={errors.mobile?.message} {...register("mobile")} />
+      <FormField label="Email Address (optional)" type="email" autoComplete="email" disabled={busy} error={errors.email?.message} {...register("email")} />
+      <FormField label="Create 4-Digit PIN" type="password" inputMode="numeric" maxLength={4} autoComplete="new-password" disabled={busy} error={errors.pin?.message} {...register("pin")} />
+      <FormField label="Confirm 4-Digit PIN" type="password" inputMode="numeric" maxLength={4} autoComplete="new-password" disabled={busy} error={errors.confirm_pin?.message} {...register("confirm_pin")} />
+      <p className="mb-4 text-sm text-white/70">Your login PIN is separate from the SMS verification code.</p>
+      <SubmitButton isSubmitting={busy}>Send OTP</SubmitButton>
+    </form> : <>
+      <p role="status" className="mb-4 text-sm text-white/80">{authorization ? "Mobile verified. Complete registration to create your account." : `${challenge.message} Recipient: ${challenge.masked_mobile}`}</p>
+      {authorization ? <SubmitButton isSubmitting={busy} onClick={() => void act(async () => {
+        if (!details) return;
+        await completeDirectRegistration({ ...details, email: details.email || null, authorization });
+        setDetails(null); setAuthorization(""); reset();
+        navigate(loginPath, { replace: true, state: { message: "Registration successful. Log in with your mobile number and PIN." } });
+      })}>Complete Registration</SubmitButton> : <form onSubmit={e => { e.preventDefault(); void act(async () => {
+        if (!details) return;
+        const proof = await verifyPinOtp(details.mobile, "REGISTRATION", challenge.challenge_id, otp);
+        setAuthorization(proof.authorization); setOtp("");
+      }); }}>
+        <FormField id="registration-otp" label="4-digit SMS OTP" type="password" inputMode="numeric" pattern="[0-9]{4}" required maxLength={4} autoComplete="one-time-code" value={otp} disabled={busy} onChange={e => setOtp(e.target.value)} />
+        <p className="mb-3 text-sm text-white/70">{now >= expiresAt ? "Code expired. Request a new code." : "Code valid for 10 minutes."}</p>
+        <SubmitButton isSubmitting={busy} disabled={!/^[0-9]{4}$/.test(otp) || now >= expiresAt}>Verify OTP</SubmitButton>
+        <button type="button" className="mt-4 text-primary disabled:opacity-50" disabled={busy || now < resendAt} onClick={() => details && void act(() => send(details))}>
+          {now < resendAt ? `Resend OTP in ${Math.ceil((resendAt - now) / 1000)}s` : "Resend OTP"}
+        </button>
+      </form>}
+    </>}
+    <p className="mt-4 text-center text-sm text-white/70">Already have an account? <Link className="text-primary" to={loginPath}>Log in</Link></p>
+  </AuthPageLayout>;
 }

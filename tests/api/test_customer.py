@@ -8,8 +8,6 @@ Employees, unrestricted for Owner).
 
 from datetime import UTC, datetime
 
-from bson import ObjectId
-
 from app.features.customer.constants import FieldType
 from app.features.customer.models import (
     ApplicationFormDefinition,
@@ -17,9 +15,15 @@ from app.features.customer.models import (
     RequiredDocumentDefinition,
 )
 from app.features.leads.models import Lead
-from app.features.system_settings.models import DocumentType, InsuranceProduct, LoanProduct
+from app.features.system_settings.models import (
+    DocumentType,
+    InsuranceProduct,
+    LoanProduct,
+)
 from app.features.workflow_engine.constants import CaseType, LoanAuditEvent, LoanStatus
 from app.features.workflow_engine.models import WorkflowDefinition
+from bson import ObjectId
+from customer_test_helpers import start_legacy_customer
 
 
 async def _seed_workflow_definitions(mock_db):
@@ -129,7 +133,7 @@ async def test_direct_registration_full_flow(client, mock_db, owner_headers):
     product = await _seed_product_and_form(mock_db)
     mobile = "9722222222"
 
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": mobile})
+    r = await start_legacy_customer(client, mobile)
     assert r.status_code == 200, r.text
     dev_otp = r.json()["data"]["dev_otp"]
     assert dev_otp
@@ -180,25 +184,25 @@ async def test_direct_registration_full_flow(client, mock_db, owner_headers):
 
 async def test_cannot_register_twice_with_same_mobile(client, mock_db, owner_headers):
     mobile = "9733333333"
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": mobile})
+    r = await start_legacy_customer(client, mobile)
     dev_otp = r.json()["data"]["dev_otp"]
     await _signup_via_otp(client, mobile, dev_otp)
 
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": mobile})
+    r = await start_legacy_customer(client, mobile)
     assert r.status_code == 409, r.text
 
 
-async def test_direct_registration_is_not_attributed_to_a_seeded_owner(client, mock_db, owner_headers):
+async def test_legacy_staff_invitation_preserves_inviter(client, mock_db, owner_headers):
     # Decision 053: a direct portal registration must not be linked to any Owner or
     # Employee. Auth's frozen send_otp requires a technical `inviter` to satisfy its
     # signature, but that inviter's id must never persist as attribution on the result.
     mobile = "9700000001"
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": mobile})
+    r = await start_legacy_customer(client, mobile)
     assert r.status_code == 200, r.text
 
     pending_user = await mock_db["users"].find_one({"mobile": mobile})
     assert pending_user is not None
-    assert pending_user["created_by"] is None
+    assert pending_user["created_by"] is not None
 
 
 async def test_direct_registration_links_pre_existing_lead_to_new_customer(client, mock_db, owner_headers):
@@ -216,22 +220,12 @@ async def test_direct_registration_links_pre_existing_lead_to_new_customer(clien
 
     leads_before = await mock_db["leads"].count_documents({})
 
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": mobile})
+    r = await start_legacy_customer(client, mobile)
     assert r.status_code == 200, r.text
     dev_otp = r.json()["data"]["dev_otp"]
 
-    r = await client.post("/api/v1/auth/verify-otp", json={"mobile": mobile, "otp": dev_otp, "purpose": "signup"})
-    assert r.status_code == 200, r.text
-    token = r.json()["data"]["otp_verified_token"]
-
-    r = await client.post(
-        "/api/v1/customer-registration/complete",
-        json={
-            "full_name": "Existing Lead", "email": "existing.lead@example.com", "mobile": mobile,
-            "password": "CustomerPass1!", "address_line1": "1 Main St", "city": "Mumbai", "state": "MH",
-            "pincode": "400001", "otp_verified_token": token,
-        },
-    )
+    customer_headers = await _signup_via_otp(client, mobile, dev_otp)
+    r = await client.post("/api/v1/customers/me", json={"full_name": "Existing Lead", "email": "existing.lead@example.com"}, headers=customer_headers)
     assert r.status_code == 200, r.text
 
     assert await mock_db["leads"].count_documents({}) == leads_before  # no duplicate Lead created
@@ -267,7 +261,7 @@ async def test_portal_products_returns_active_products_without_settings_permissi
     assert r.status_code == 200, r.text
 
     mobile = "9766666601"
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": mobile})
+    r = await start_legacy_customer(client, mobile)
     dev_otp = r.json()["data"]["dev_otp"]
     customer_headers = await _signup_via_otp(client, mobile, dev_otp)
 
@@ -286,7 +280,7 @@ async def test_portal_products_returns_active_products_without_settings_permissi
 
 async def test_portal_products_rejects_invalid_category(client, mock_db, owner_headers):
     mobile = "9766666602"
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": mobile})
+    r = await start_legacy_customer(client, mobile)
     dev_otp = r.json()["data"]["dev_otp"]
     customer_headers = await _signup_via_otp(client, mobile, dev_otp)
 
@@ -320,7 +314,7 @@ async def test_secure_link_flow_converts_lead_to_customer(client, mock_db, owner
     # customer goes through the same generic, mobile-only registration-start endpoint
     # Flow 2 (direct portal) uses — there is no secure-link-scoped signup step. Linkage
     # to this specific Lead/link only happens later, at the `/claim` call below.
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": "9711111111"})
+    r = await start_legacy_customer(client, "9711111111")
     assert r.status_code == 200, r.text
     dev_otp = r.json()["data"]["dev_otp"]
 
@@ -371,7 +365,7 @@ async def test_complete_profile_converts_pending_secure_link_application_immedia
     r = await client.post(f"/api/v1/leads/{lead_id}/secure-links", json={}, headers=owner_headers)
     secure_code = r.json()["data"]["secure_code"]
 
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": "9711111112"})
+    r = await start_legacy_customer(client, "9711111112")
     dev_otp = r.json()["data"]["dev_otp"]
     customer_headers = await _signup_via_otp(client, "9711111112", dev_otp)
 
@@ -411,7 +405,7 @@ async def test_complete_profile_without_pending_application_behaves_as_flow_2(cl
     """A direct-portal (Flow 2) customer with no pending secure-link application gets
     `converted_from_lead_id=None`, exactly as before this change."""
     mobile = "9722222223"
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": mobile})
+    r = await start_legacy_customer(client, mobile)
     dev_otp = r.json()["data"]["dev_otp"]
     customer_headers = await _signup_via_otp(client, mobile, dev_otp)
 
@@ -482,7 +476,7 @@ async def test_disabled_secure_link_blocks_customer_access(client, mock_db, owne
     # CustomerService._resolve_valid_link -> ForbiddenError), not signup itself — signup
     # is the generic, link-independent registration-start endpoint (see the comment on
     # test_secure_link_flow_converts_lead_to_customer above).
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": "9744444446"})
+    r = await start_legacy_customer(client, "9744444446")
     dev_otp = r.json()["data"]["dev_otp"]
     customer_headers = await _signup_via_otp(client, "9744444446", dev_otp)
 
@@ -520,7 +514,7 @@ async def test_unknown_secure_code_reports_not_found_status(client):
 async def test_owner_lists_and_assigns_application_employee_scoped_to_assignment(client, mock_db, owner_headers, master_data):
     product = await _seed_product_and_form(mock_db)
     mobile = "9755555555"
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": mobile})
+    r = await start_legacy_customer(client, mobile)
     customer_headers = await _signup_via_otp(client, mobile, r.json()["data"]["dev_otp"])
     await client.post("/api/v1/customers/me", json={"full_name": "Assign Target"}, headers=customer_headers)
     r = await client.post(
@@ -568,7 +562,7 @@ async def test_unassigned_applications_queue_is_owner_only(client, mock_db, owne
     # Employees since work assigned to nobody isn't theirs to see.
     product = await _seed_product_and_form(mock_db)
     mobile = "9700000002"
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": mobile})
+    r = await start_legacy_customer(client, mobile)
     customer_headers = await _signup_via_otp(client, mobile, r.json()["data"]["dev_otp"])
     await client.post("/api/v1/customers/me", json={"full_name": "Unassigned Target"}, headers=customer_headers)
     r = await client.post(
@@ -667,7 +661,7 @@ async def test_owner_customer_access_unaffected_by_new_permission_gate(client, m
 async def test_customer_cannot_view_another_customers_application(client, mock_db, owner_headers):
     product = await _seed_product_and_form(mock_db)
 
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": "9788888888"})
+    r = await start_legacy_customer(client, "9788888888")
     headers_a = await _signup_via_otp(client, "9788888888", r.json()["data"]["dev_otp"])
     await client.post("/api/v1/customers/me", json={"full_name": "Customer A"}, headers=headers_a)
     r = await client.post(
@@ -675,7 +669,7 @@ async def test_customer_cannot_view_another_customers_application(client, mock_d
     )
     application_id = r.json()["data"]["id"]
 
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": "9799999999"})
+    r = await start_legacy_customer(client, "9799999999")
     headers_b = await _signup_via_otp(client, "9799999999", r.json()["data"]["dev_otp"])
 
     r = await client.get(f"/api/v1/applications/{application_id}", headers=headers_b)

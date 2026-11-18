@@ -1,6 +1,6 @@
 import { apiRequest } from "@/shared/api/client";
 import type { LoginResponse } from "./api";
-export type Purpose = "FIRST_TIME_LOGIN" | "FORGOT_PIN";
+export type Purpose = "FIRST_TIME_LOGIN" | "FORGOT_PIN" | "REGISTRATION";
 export interface Challenge {
   challenge_id: string;
   masked_mobile: string;

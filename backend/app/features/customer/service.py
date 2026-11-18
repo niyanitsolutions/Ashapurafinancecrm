@@ -19,11 +19,9 @@ from app.config.security import get_security_policy
 from app.config.settings import get_settings
 from app.constants.roles import CUSTOMER, EMPLOYEE, OWNER
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
-from app.features.auth.constants import OtpPurpose
-from app.features.auth.exceptions import AlreadyRegisteredError
-from app.features.auth.models import ACCOUNT_STATUS_ACTIVE, ACCOUNT_STATUS_PENDING_PASSWORD, User
+from app.features.auth.models import ACCOUNT_STATUS_ACTIVE, User
 from app.features.auth.repository import UserRepository
-from app.features.auth.service import AuthService
+from app.features.auth.service import AuthService, RequestContext
 from app.features.communication.constants import Channel, TemplateCategory
 from app.features.communication.service import CommunicationService
 from app.features.customer.constants import (
@@ -68,6 +66,7 @@ from app.features.customer.schemas import (
     CompleteProfileRequest,
     ConfirmDocumentRequest,
     CreatableProductItem,
+    DirectRegisterRequest,
     DocumentGroupPreview,
     DocumentPreviewItem,
     FormDefinitionCreateRequest,
@@ -88,7 +87,6 @@ from app.features.customer.schemas import (
 )
 from app.features.employee.models import Employee
 from app.features.employee.repository import EmployeeRepository
-from app.features.employee.schemas import AddressSchema
 from app.features.leads.constants import LeadActivityType
 from app.features.leads.models import Lead, LeadActivity
 from app.features.leads.repository import LeadActivityRepository, LeadRepository
@@ -111,7 +109,6 @@ from app.features.workflow_engine.repository import (
     WorkflowDefinitionRepository,
 )
 from app.security.encryption import decrypt, encrypt
-from app.security.jwt import create_otp_verified_token
 from app.security.password import hash_password
 from app.services.storage.client import (
     generate_presigned_download_url,
@@ -438,98 +435,71 @@ class CustomerService:
 
     # ================================================================== onboarding: Flow 2 (direct portal)
 
-    async def start_direct_registration(self, mobile: str) -> tuple[str | None, bool]:
-        existing = await self._users.find_by_mobile(mobile)
-        if existing is not None and existing.status == ACCOUNT_STATUS_ACTIVE:
-            raise AlreadyRegisteredError("This mobile number is already registered. Please log in.")
+    async def start_direct_registration(self, payload: DirectRegisterRequest, ctx: RequestContext) -> dict[str, Any]:
+        from app.features.auth.pin_service import PinService, Start
 
-        technical_inviter = await self._any_owner()
-        dev_otp = await self._auth.send_otp(mobile=mobile, role=CUSTOMER, inviter=technical_inviter)
-
-        # Auth's send_otp (frozen, unmodified) requires a real Owner/Employee `inviter`
-        # and stamps the new pending User row's `created_by` with that inviter's id — a
-        # side effect that would otherwise make a self-registered Customer look
-        # attributed to/owned by that Owner. Corrected immediately: a direct-portal
-        # registration is not associated with any Owner or Employee (decision 053) —
-        # `created_by=None` matches BaseDocument's own documented convention for
-        # "system-created, no human attribution" rather than pointing at a real Owner.
-        pending_user = await self._users.find_by_mobile(mobile)
-        if pending_user is not None:
-            await self._users.update(pending_user.require_id(), {"created_by": None})
-
-        # TEMPORARY — MSG91 DLT approval testing bypass (see
-        # bypass_verify_registration_mobile below). Only tells the frontend whether to
-        # offer the bypass button; carries no authority of its own — the bypass-verify
-        # endpoint re-checks the same flag server-side regardless of what this says.
-        bypass_available = get_settings().registration_otp_bypass
-        return dev_otp, bypass_available
-
-    async def bypass_verify_registration_mobile(self, mobile: str) -> str:
-        """TEMPORARY — MSG91 DLT Sender ID/template approval is still pending, so real SMS
-        OTP delivery for customer self-registration can't be tested end-to-end yet. While
-        `Settings.registration_otp_bypass` is on, ANY valid mobile with a pending
-        registration can skip the SMS round-trip — gated *only* by that one explicit,
-        administrator-controlled flag (no allowlist: the flag itself is the temporary
-        switch, flipped directly in the real deployment's env, not by a caller). Must be
-        set back to false once DLT approval lands, and the whole feature removed once real
-        MSG91 OTP delivery is verified end-to-end.
-
-        Does not touch Redis OTP generation/hashing/verification/expiry/attempt-limits at
-        all (`otp_service.py`, unmodified) and never calls `AuthService._deliver_otp` — no
-        SMS is sent, no OTP of any kind is generated or stored for a bypassed mobile.
-        Produces the exact same `otp_verified_token` ticket `AuthService.verify_otp`
-        creates on a real OTP match (same `create_otp_verified_token` call, same SIGNUP
-        purpose) so `complete_direct_registration` cannot tell a bypassed verification
-        apart from a real one — no second, parallel "verified" state, no duplicated
-        registration logic, no new token format. Login, forgot-password, and every other
-        OTP purpose never call this and are completely unaffected.
-        """
-        if not get_settings().registration_otp_bypass:
-            raise ForbiddenError("Mobile OTP bypass is not available.")
-
-        pending_user = await self._users.find_by_mobile(mobile)
-        if pending_user is None or pending_user.status != ACCOUNT_STATUS_PENDING_PASSWORD:
-            raise NotFoundError("Start registration (request an OTP) for this number before verifying.")
-
-        await write_audit_log(
-            self._db, event_type=AuditEvent.REGISTRATION_OTP_BYPASSED, mobile=mobile,
-            metadata={"purpose": OtpPurpose.SIGNUP},
-        )
-        return create_otp_verified_token(mobile, claims={"purpose": OtpPurpose.SIGNUP, "jti": secrets.token_urlsafe(16)})
+        return await PinService(self._auth).start(Start(mobile=payload.mobile, purpose="REGISTRATION"), ctx)
 
     async def complete_direct_registration(self, payload: CompleteDirectRegistrationRequest) -> None:
-        """Production Customer self-registration — the only self-registration path in
-        the system (Owner/Employee/Referral Partner accounts are always staff-created,
-        see decision 011/053). Collects the full profile up front rather than deferring
-        it to `complete_profile` post-login: the customer only ever completes one form.
-        Reuses `AuthService.consume_otp_verified_ticket`/`activate_user_with_password`
-        (the same primitives `reset_password` uses) — no duplicate password/OTP logic.
-        Does not issue a session: per the production login flow, a freshly-registered
-        customer always logs in explicitly afterward, exactly like everyone else."""
-        mobile = await self._auth.consume_otp_verified_ticket(payload.otp_verified_token, expected_purposes=(OtpPurpose.SIGNUP,))
-        if mobile != payload.mobile:
-            raise ForbiddenError("This verification code does not match this mobile number.")
+        """Consume shared OTP authorization and atomically create User + Customer.
 
-        user = await self._auth.activate_user_with_password(mobile=mobile, new_password=payload.password)
-        profile = CompleteProfileRequest(
-            full_name=payload.full_name,
-            email=payload.email,
-            address=AddressSchema(line1=payload.address_line1, city=payload.city, state=payload.state, pincode=payload.pincode),
+        No User, password or customer profile exists before verified ownership.
+        MongoDB transaction support is required; there is no unsafe fallback.
+        """
+        from bson import ObjectId
+        from pymongo.errors import DuplicateKeyError
+
+        from app.features.auth.pin_service import digest
+        from app.security.pin import hash_pin
+        from app.shared.audit_log import AuditLog
+
+        now = utc_now()
+        proof_filter = {
+            "authorization_hash": digest(payload.authorization), "state": "verified",
+            "purpose": "REGISTRATION", "mobile": payload.mobile,
+            "authorization_expires_at": {"$gt": now},
+        }
+        if not await self._db.auth_pin_challenges.find_one(proof_filter):
+            raise ValidationError("Mobile verification is invalid, expired or already used.")
+        hashed = hash_pin(payload.pin)
+        user_id = ObjectId()
+        user = User(mobile=payload.mobile, role=CUSTOMER, status="active",
+                    pin_hash=hashed, pin_epoch=1, pin_updated_at=now,
+                    mobile_verified_at=now, is_mobile_verified=True, created_by=None)
+        customer = Customer(
+            customer_code=await generate_id(self._db, IdPrefix.CUSTOMER),
+            user_id=str(user_id), full_name="Customer", mobile=payload.mobile,
+            email=str(payload.email) if payload.email else None, created_by=None,
         )
-        await self._create_customer_from_profile(profile, user, converted_from_lead_id=None)
-
-    async def _any_owner(self) -> User:
-        # Auth's send_otp requires a real Owner/Employee User object to satisfy its
-        # (frozen, unmodified) signature and role-authorization check — there is no
-        # public signup entry point for any role otherwise (decision 011). Direct portal
-        # registration has no actual human inviting this mobile, so any seeded Owner is
-        # used purely as the technical value that satisfies that requirement; its id is
-        # never allowed to persist as the resulting Customer's attribution — see
-        # start_direct_registration's cleanup step and decision 053.
-        owners = await self._users.find_many({"role": OWNER}, limit=1)
-        if not owners:
-            raise ValidationError("No Owner account exists yet to authorize registration.")
-        return owners[0]
+        try:
+            async with await self._db.client.start_session() as session, session.start_transaction():
+                proof = await self._db.auth_pin_challenges.find_one_and_update(
+                    proof_filter,
+                    {"$set": {"state": "consumed"}, "$unset": {"authorization_hash": ""}},
+                    session=session,
+                )
+                if not proof:
+                    raise ValidationError("Mobile verification is invalid, expired or already used.")
+                await self._db.users.insert_one(user.model_dump(by_alias=True, exclude={"id"}) | {"_id": user_id}, session=session)
+                inserted = await self._db.customers.insert_one(customer.model_dump(by_alias=True, exclude={"id"}), session=session)
+                # Same linkage convention as _link_existing_leads_to_customer,
+                # committed together with the account and its mobile proof.
+                await self._db.leads.update_many(
+                    {"mobile": payload.mobile, "customer_id": None, "is_deleted": False},
+                    [{"$set": {
+                        "customer_id": str(inserted.inserted_id),
+                        "user_id": {"$cond": ["$account_created", "$user_id", str(user_id)]},
+                        "account_created_at": {"$cond": ["$account_created", "$account_created_at", now]},
+                        "account_created": True, "updated_at": now,
+                        "version": {"$add": [{"$ifNull": ["$version", 1]}, 1]},
+                    }}], session=session,
+                )
+                audit = AuditLog(event_type=AuditEvent.CUSTOMER_REGISTERED, user_id=str(user_id),
+                                 metadata={"customer_id": str(inserted.inserted_id)})
+                await self._db.audit_logs.insert_one(audit.model_dump(by_alias=True, exclude={"id"}), session=session)
+        except DuplicateKeyError:
+            raise ConflictError("This mobile is already registered. Log in or use Create PIN.") from None
+        # No session is issued here: the customer explicitly logs in with their PIN.
 
     # ================================================================== customer profile
 

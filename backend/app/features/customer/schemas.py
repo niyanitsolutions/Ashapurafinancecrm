@@ -1,61 +1,31 @@
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Self
 
-from pydantic import AliasChoices, BaseModel, EmailStr, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 from app.features.customer.constants import ConditionOperator, FieldFormat, FieldType, OptionsSource
 from app.features.employee.schemas import AddressSchema
-from app.security.password import PasswordStr
-from app.shared.customer_identity import normalize_mobile
 
 # ---------------------------------------------------------------------- onboarding (public)
-# Authentication/registration itself always happens through Auth's own, single flow
-# (POST /auth/login, /auth/send-otp+/auth/verify-otp+/auth/reset-password, wrapped by
-# CustomerService.complete_direct_registration below for the Customer-only self-signup
-# case) — nothing here duplicates that. A Secure Application Link only ever resolves its
-# own status (below) and, once the customer is authenticated, gets claimed via the
-# authenticated `claim_secure_link` endpoint in router.py.
+# Customer-only signup composes the shared PIN OTP flow and existing User/Customer models.
 
 
 class DirectRegisterRequest(BaseModel):
-    _phone = field_validator("mobile", mode="before")(normalize_mobile)
+    model_config = ConfigDict(extra="forbid")
+    mobile: str = Field(pattern=r"^[0-9]{10}$")
+    email: EmailStr | None = None
+    pin: str = Field(pattern=r"^[0-9]{4}$", repr=False)
+    confirm_pin: str = Field(pattern=r"^[0-9]{4}$", repr=False)
 
-    mobile: str = Field(pattern=r"^[6-9]\d{9}$")
-
-
-class CompleteDirectRegistrationRequest(BaseModel):
-    """Production Customer self-registration — the *only* self-registration path in the
-    system (Owner/Employee/Referral Partner are always staff-created, decision 011/053).
-    `otp_verified_token` (from `POST /auth/verify-otp`, after `start_direct_registration`
-    sends the code) proves phone ownership; a real password is always required on top of
-    that, never in place of it."""
-
-    _phone = field_validator("mobile", mode="before")(normalize_mobile)
-
-    full_name: str = Field(min_length=3)
-    email: EmailStr
-    mobile: str = Field(pattern=r"^[6-9]\d{9}$")
-    password: PasswordStr
-    address_line1: str
-    city: str
-    state: str
-    pincode: str = Field(pattern=r"^\d{6}$")
-    otp_verified_token: str
+    @model_validator(mode="after")
+    def matching(self) -> Self:
+        if self.pin != self.confirm_pin:
+            raise ValueError("PIN confirmation does not match.")
+        return self
 
 
-class OtpKickoffResponse(BaseModel):
-    dev_otp: str | None = None
-    # TEMPORARY — true only when Settings.registration_otp_bypass is on (see
-    # CustomerService.start_direct_registration / bypass_verify_registration_mobile).
-    # Tells the frontend whether to offer the "Verify Mobile" bypass button instead of the
-    # normal OTP-entry step; the frontend is never trusted to decide this on its own, and
-    # the bypass-verify endpoint re-checks the same flag server-side regardless of what
-    # this flag said.
-    bypass_available: bool = False
-
-
-class BypassVerifyMobileResponse(BaseModel):
-    otp_verified_token: str
+class CompleteDirectRegistrationRequest(DirectRegisterRequest):
+    authorization: str = Field(min_length=32, max_length=100, repr=False)
 
 
 class ResolveSecureLinkResponse(BaseModel):

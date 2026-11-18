@@ -14,7 +14,12 @@ per-product code. `test_customer.py`'s `_seed_product_and_form`/`_signup_via_otp
 """
 
 from app.features.system_settings.models import LoanProduct
-from test_customer import _seed_product_and_form, _seed_workflow_definitions, _signup_via_otp
+from customer_test_helpers import start_legacy_customer
+from test_customer import (
+    _seed_product_and_form,
+    _seed_workflow_definitions,
+    _signup_via_otp,
+)
 
 
 async def _seed_loan_product(mock_db, name="Personal Loan") -> str:
@@ -229,7 +234,7 @@ async def test_application_submission_rejects_invalid_gender_value(client, mock_
     )
     assert r.status_code == 200, r.text
 
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": "9611122001"})
+    r = await start_legacy_customer(client, "9611122001")
     customer_headers = await _signup_via_otp(client, "9611122001", r.json()["data"]["dev_otp"])
     await client.post("/api/v1/customers/me", json={"full_name": "Gender Test Customer"}, headers=customer_headers)
     r = await client.post(
@@ -286,7 +291,7 @@ async def test_application_submission_accepts_legacy_gender_value(client, mock_d
         headers=owner_headers,
     )
 
-    r = await client.post("/api/v1/customer-registration/start", json={"mobile": "9611122002"})
+    r = await start_legacy_customer(client, "9611122002")
     customer_headers = await _signup_via_otp(client, "9611122002", r.json()["data"]["dev_otp"])
     await client.post("/api/v1/customers/me", json={"full_name": "Legacy Gender Customer"}, headers=customer_headers)
     r = await client.post(
