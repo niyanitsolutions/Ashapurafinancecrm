@@ -1,13 +1,13 @@
+import { uploadCustomerDocument } from "@/features/customer/customerUpload";
 import { useEffect, useState } from "react";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
-import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
-import { DocumentChecklist } from "@/features/customer/components/DocumentChecklist";
+import { PortalPage as SimplePageLayout } from "@/features/customer/components/PortalPage";
+import { CustomerDocumentChecklist as DocumentChecklist } from "@/features/customer/components/CustomerDocumentChecklist";
 import {
   getFormDefinition,
   listDocuments,
   listOwnApplications,
   markDocumentNotAvailable,
-  uploadApplicationDocument,
   type ApplicationDocument,
   type ApplicationListItem,
   type FormDefinition,
@@ -28,6 +28,7 @@ interface ApplicationDocs {
 export function DocumentsPage() {
   const [groups, setGroups] = useState<ApplicationDocs[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
 
   const load = async () => {
@@ -50,19 +51,19 @@ export function DocumentsPage() {
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const onUpload = async (applicationId: string, documentTypeId: string, file: File, password?: string, side?: string) => {
     setError(null);
     setUploadingFor(documentTypeId);
     try {
-      await uploadApplicationDocument(applicationId, documentTypeId, file, password, side);
+      await uploadCustomerDocument(applicationId, documentTypeId, file, password, side, setUploadProgress);
       await load();
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
       setUploadingFor(null);
+      setUploadProgress(null);
     }
   };
 
@@ -109,7 +110,7 @@ export function DocumentsPage() {
             <h2 className="text-sm font-semibold text-text">{application.product_name}</h2>
             <span className="text-xs text-text/50">{application.application_code}</span>
           </div>
-          <DocumentChecklist
+          <DocumentChecklist applicationId={application.id} progress={uploadProgress}
             requiredDocuments={formDef.required_documents}
             uploadedDocuments={documents}
             onUpload={(documentTypeId, file, password, side) => onUpload(application.id, documentTypeId, file, password, side)}

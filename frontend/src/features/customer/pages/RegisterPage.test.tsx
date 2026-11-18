@@ -4,16 +4,18 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RegisterPage } from "./RegisterPage";
 import * as api from "../api";
+vi.mock("@/features/auth/useAuth", () => ({ useAuth: () => ({ setSession: vi.fn() }) }));
 import * as pin from "@/features/auth/pinApi";
 
 const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }));
 vi.mock("react-router-dom", async () => ({ ...await vi.importActual("react-router-dom"), useNavigate: () => navigate }));
 vi.mock("../api", () => ({ startDirectRegistration: vi.fn(), completeDirectRegistration: vi.fn() }));
-vi.mock("@/features/auth/pinApi", () => ({ verifyPinOtp: vi.fn() }));
+vi.mock("@/features/auth/pinApi", () => ({ verifyPinOtp: vi.fn(), loginPin: vi.fn() }));
 const challenge = { challenge_id: "fixture-challenge", masked_mobile: "******0088", expires_in: 600, resend_after: 60, message: "OTP submitted." };
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(api.startDirectRegistration).mockResolvedValue(challenge);
+  vi.mocked(pin.loginPin).mockResolvedValue({ access_token: "fixture-access", refresh_token: "fixture-refresh", role: "customer", user_id: "fixture-user", must_change_password: false, expires_in: 900, token_type: "bearer" });
   vi.mocked(pin.verifyPinOtp).mockResolvedValue({ authorization: "single-use-proof" });
   vi.mocked(api.completeDirectRegistration).mockResolvedValue(null);
 });
@@ -43,7 +45,7 @@ describe("Customer registration", () => {
     await user.type(screen.getByLabelText("4-digit SMS OTP"), "8621");
     await user.click(screen.getByRole("button", { name: "Verify OTP" }));
     await user.click(await screen.findByRole("button", { name: "Complete Registration" }));
-    await waitFor(() => expect(navigate).toHaveBeenCalledWith("/login?return=%2Fapply%2Ffixture", expect.objectContaining({ replace: true })));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith("/apply/fixture", expect.objectContaining({ replace: true })));
     expect(api.completeDirectRegistration).toHaveBeenCalledWith(expect.objectContaining({ authorization: "single-use-proof", email: email || null, pin: "0472" }));
     expect(sessionStorage.length).toBe(0); expect(localStorage.length).toBe(0);
   });

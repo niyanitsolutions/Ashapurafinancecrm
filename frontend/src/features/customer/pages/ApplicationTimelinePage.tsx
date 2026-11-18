@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
-import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { PortalPage as SimplePageLayout } from "@/features/customer/components/PortalPage";
 import { getApplicationTimeline, type TimelineEntry } from "@/features/customer/api";
 import { getErrorMessage } from "@/features/customer/errors";
 import { formatISTDateTime } from "@/shared/dateFormat";

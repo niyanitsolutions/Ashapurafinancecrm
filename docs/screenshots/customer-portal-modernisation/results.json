@@ -1,0 +1,43 @@
+{
+  "viewports": [
+    {
+      "width": 360,
+      "result": "passed",
+      "api": "real local FastAPI; mocked storage; no SMS"
+    },
+    {
+      "width": 390,
+      "result": "passed",
+      "api": "real local FastAPI; mocked storage; no SMS"
+    },
+    {
+      "width": 768,
+      "result": "passed",
+      "api": "real local FastAPI; mocked storage; no SMS"
+    },
+    {
+      "width": 1024,
+      "result": "passed",
+      "api": "real local FastAPI; mocked storage; no SMS"
+    },
+    {
+      "width": 1366,
+      "result": "passed",
+      "api": "real local FastAPI; mocked storage; no SMS"
+    },
+    {
+      "width": 1920,
+      "result": "passed",
+      "api": "real local FastAPI; mocked storage; no SMS"
+    }
+  ],
+  "journeys": [
+    "PIN login",
+    "save/resume",
+    "private upload",
+    "confirmed submission",
+    "secure-link same application resume",
+    "staff Document Collection"
+  ],
+  "providers": "mocked; no SMS"
+}

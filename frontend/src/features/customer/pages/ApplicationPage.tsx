@@ -1,5 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { formatISTDateTime } from "@/shared/dateFormat";
+import { uploadCustomerDocument } from "@/features/customer/customerUpload";
+import { CustomerDocumentChecklist as DocumentChecklist } from "@/features/customer/components/CustomerDocumentChecklist";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useBlocker, useNavigate, useParams } from "react-router-dom";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { computeProgress, validateFormData } from "@/components/forms/fieldValidation";
 import { FormField } from "@/components/forms/FormField";
@@ -7,7 +10,7 @@ import { ProductSchemaForm, RepeatableGroupsForm, groupBySection } from "@/compo
 import { SubmitButton } from "@/components/forms/SubmitButton";
 import { ConfirmDialog } from "@/components/overlays/ConfirmDialog";
 import { useAuth } from "@/features/auth/useAuth";
-import { documentCompletionSummary, DocumentChecklist } from "@/features/customer/components/DocumentChecklist";
+import { documentCompletionSummary } from "@/features/customer/components/DocumentChecklist";
 import {
   getApplication,
   getFormDefinition,
@@ -15,7 +18,6 @@ import {
   markDocumentNotAvailable,
   updateApplication,
   submitApplication,
-  uploadApplicationDocument,
   type ApplicationDetail,
   type ApplicationDocument,
   type FormDefinition,
@@ -67,8 +69,11 @@ export function ApplicationPage() {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
-  const [confirmLeave, setConfirmLeave] = useState(false);
+  const [confirmSubmit, setConfirmSubmit] = useState(false);
+  const submitLock = useRef(false);
+  const allowNavigation = useRef(false);
   const { status: tabLockStatus, takeOver: takeOverTabLock } = useApplicationTabLock(id);
   // Restores "Same Step" after an idle auto-logout or a plain browser refresh — the
   // draft itself is already safe via autosave (below); this just keeps the wizard from
@@ -89,6 +94,13 @@ export function ApplicationPage() {
   const [nowTick, setNowTick] = useState(() => Date.now());
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipNextAutosave = useRef(true);
+  const saveQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const persistDraft = useCallback((payload: Parameters<typeof updateApplication>[1]) => {
+    const pending = saveQueue.current.catch(() => undefined).then(() => updateApplication(id!, payload));
+    saveQueue.current = pending;
+    return pending;
+  }, [id]);
+
 
   const load = () => {
     if (!id) return;
@@ -120,6 +132,9 @@ export function ApplicationPage() {
   const isSubmitted = application?.status === "submitted";
   const needsProfile = application?.customer_id === null;
   const hasUnsavedChanges = saveState === "unsaved" || saveState === "saving";
+  const blocker = useBlocker(({ currentLocation, nextLocation }) =>
+    hasUnsavedChanges && !isSubmitting && !allowNavigation.current && currentLocation.pathname !== nextLocation.pathname);
+
 
   // Debounced autosave — fires on any formData/pendingProfile change once the initial
   // load has settled, skipping the very first render after `load()` sets state so
@@ -134,7 +149,7 @@ export function ApplicationPage() {
     autosaveTimer.current = setTimeout(async () => {
       setSaveState("saving");
       try {
-        await updateApplication(id, { form_data: formData, pending_profile: needsProfile ? pendingProfile : undefined });
+        await persistDraft({ form_data: formData, pending_profile: needsProfile ? pendingProfile : undefined });
         setSaveState("saved");
         setSavedAt(new Date());
       } catch {
@@ -166,10 +181,10 @@ export function ApplicationPage() {
     registerPreLogoutFlush(async () => {
       if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
       if (!hasUnsavedChanges) return;
-      await updateApplication(id, { form_data: formData, pending_profile: needsProfile ? pendingProfile : undefined });
+      await persistDraft({ form_data: formData, pending_profile: needsProfile ? pendingProfile : undefined });
     });
     return () => registerPreLogoutFlush(null);
-  }, [id, registerPreLogoutFlush, hasUnsavedChanges, formData, pendingProfile, needsProfile]);
+  }, [id, registerPreLogoutFlush, hasUnsavedChanges, formData, pendingProfile, needsProfile, persistDraft]);
 
   const steps = useMemo<WizardStep[]>(() => {
     if (!formDef) return [];
@@ -221,13 +236,14 @@ export function ApplicationPage() {
     setError(null);
     setUploadingFor(documentTypeId);
     try {
-      await uploadApplicationDocument(id, documentTypeId, file, password, side);
+      await uploadCustomerDocument(id, documentTypeId, file, password, side, setUploadProgress);
       const docs = await listDocuments(id);
       setDocuments(docs);
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
       setUploadingFor(null);
+      setUploadProgress(null);
     }
   };
 
@@ -247,22 +263,18 @@ export function ApplicationPage() {
     if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     setSaveState("saving");
     try {
-      await updateApplication(id, { form_data: formData, pending_profile: needsProfile ? pendingProfile : undefined });
+      await persistDraft({ form_data: formData, pending_profile: needsProfile ? pendingProfile : undefined });
       setSaveState("saved");
       setSavedAt(new Date());
+      return true;
     } catch (err) {
       setSaveState("error");
       setError(getErrorMessage(err));
+      return false;
     }
   };
 
-  const onBack = () => {
-    if (hasUnsavedChanges) {
-      setConfirmLeave(true);
-      return;
-    }
-    navigate("/portal/applications");
-  };
+  const onBack = () => navigate("/portal/applications");
 
   const onNext = () => {
     setError(null);
@@ -275,6 +287,7 @@ export function ApplicationPage() {
       }
     }
     setStepIndex((i) => Math.min(i + 1, steps.length - 1));
+    window.scrollTo({ top: 0, behavior: "auto" });
   };
   const onPrevious = () => {
     setError(null);
@@ -303,8 +316,18 @@ export function ApplicationPage() {
       if (documentsStepIndex >= 0) setStepIndex(documentsStepIndex);
       return;
     }
+    setConfirmSubmit(true);
+  };
+
+  const onConfirmSubmit = async () => {
+    if (submitLock.current) return;
+    submitLock.current = true;
+    setConfirmSubmit(false);
     setIsSubmitting(true);
+    if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     try {
+      // Flush the exact reviewed values before submission; do not race the debounce.
+      await persistDraft({ form_data: formData, pending_profile: needsProfile ? pendingProfile : undefined });
       const profile = needsProfile
         ? { full_name: String(pendingProfile.full_name ?? ""), email: (pendingProfile.email as string) || undefined }
         : undefined;
@@ -314,6 +337,7 @@ export function ApplicationPage() {
       setError(getErrorMessage(err));
     } finally {
       setIsSubmitting(false);
+      submitLock.current = false;
     }
   };
 
@@ -329,6 +353,9 @@ export function ApplicationPage() {
 
   return (
     <div className="max-w-app mx-auto">
+      <ConfirmDialog open={confirmSubmit} title="Submit your application?"
+        message="Check your details and documents. After submitting, your relationship manager will review this application."
+        confirmLabel="Confirm submission" onConfirm={() => void onConfirmSubmit()} onClose={() => setConfirmSubmit(false)} />
       <ConfirmDialog
         open={tabLockStatus === "conflict"}
         title="Already Open"
@@ -338,13 +365,12 @@ export function ApplicationPage() {
         onClose={() => navigate("/portal/applications")}
       />
       <ConfirmDialog
-        open={confirmLeave}
-        title="Unsaved Changes"
-        message="You have unsaved changes. Leave without saving?"
-        confirmLabel="Leave"
-        confirmVariant="danger"
-        onConfirm={() => navigate("/portal/applications")}
-        onClose={() => setConfirmLeave(false)}
+        open={blocker.state === "blocked"}
+        title="Save before leaving?"
+        message="Your latest changes have not finished saving. Save them before continuing."
+        confirmLabel="Save and leave"
+        onConfirm={async () => { if (await onSaveDraft()) { if (blocker.state === "blocked") blocker.proceed(); } }}
+        onClose={() => { if (blocker.state === "blocked") blocker.reset(); }}
       />
       <button type="button" onClick={onBack} className="mb-3 text-sm text-primary hover:underline">
         ← Back to My Applications
@@ -355,11 +381,16 @@ export function ApplicationPage() {
         <span className="text-xs font-medium rounded-full px-2 py-1 bg-primary/10 text-primary">{statusLabel}</span>
       </div>
       <p className="text-sm text-text/60 mb-4">{application.product_name}</p>
+      <dl className="portal-card grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5 text-sm">
+        <div><dt className="text-slate-500">Processing stage</dt><dd>{application.case_status_label ?? statusLabel}</dd></div>
+        <div><dt className="text-slate-500">Submitted on</dt><dd>{application.submitted_at ? formatISTDateTime(application.submitted_at) : "Not yet submitted"}</dd></div>
+        <div><dt className="text-slate-500">Next action</dt><dd>{isSubmitted ? "Check document requests and notifications" : "Complete your details and review"}</dd></div>
+      </dl>
 
       {!isSubmitted && (
         <>
           {/* Sticky step progress bar */}
-          <div className="sticky top-0 z-10 -mx-6 mb-6 bg-background/95 backdrop-blur px-6 py-3 border-b border-border">
+          <div className="portal-wizard-progress sticky top-0 z-10 -mx-6 mb-6 bg-background/95 backdrop-blur px-6 py-3 border-b border-border">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-medium text-text/60">Application Progress</span>
               <span className="text-xs font-medium text-text/60">{progress}%</span>
@@ -420,7 +451,7 @@ export function ApplicationPage() {
           </div>
           <div className="bg-card border border-border rounded-card shadow-card p-6 mb-6">
             <h2 className="text-sm font-semibold text-text/70 mb-4">Documents</h2>
-            <DocumentChecklist
+            <DocumentChecklist applicationId={id} progress={uploadProgress}
               requiredDocuments={formDef.required_documents}
               uploadedDocuments={documents}
               onUpload={onUploadDocument}
@@ -448,7 +479,7 @@ export function ApplicationPage() {
                   </span>
                 )}
               </div>
-              <DocumentChecklist
+              <DocumentChecklist applicationId={id} progress={uploadProgress}
                 requiredDocuments={formDef.required_documents}
                 uploadedDocuments={documents}
                 onUpload={onUploadDocument}
@@ -492,7 +523,7 @@ export function ApplicationPage() {
               </div>
               <div className="bg-card border border-border rounded-card shadow-card p-6">
                 <h2 className="text-sm font-semibold text-text/70 mb-4">Documents</h2>
-                <DocumentChecklist
+                <DocumentChecklist applicationId={id} progress={uploadProgress}
                   requiredDocuments={formDef.required_documents}
                   uploadedDocuments={documents}
                   onUpload={onUploadDocument}
@@ -505,7 +536,7 @@ export function ApplicationPage() {
           )}
 
           {/* Sticky footer */}
-          <div className="sticky bottom-0 -mx-6 mt-6 bg-card border-t border-border px-6 py-4 flex items-center justify-between gap-3">
+          <div className="portal-wizard-actions sticky bottom-0 -mx-6 mt-6 bg-card border-t border-border px-6 py-4 flex items-center justify-between gap-3">
             <button
               type="button"
               onClick={onPrevious}
@@ -515,8 +546,8 @@ export function ApplicationPage() {
               Previous
             </button>
             <div className="flex items-center gap-3">
-              <button type="button" onClick={onSaveDraft} className="rounded-lg border border-border text-sm font-medium py-2.5 px-5 text-text/70 hover:bg-background">
-                Save Draft
+              <button type="button" onClick={async () => { if (await onSaveDraft()) { allowNavigation.current = true; navigate("/portal/applications"); } }} className="rounded-lg border border-border text-sm font-medium py-2.5 px-5 text-text/70 hover:bg-background">
+                Save and continue later
               </button>
               {currentStep.kind === "review" ? (
                 <SubmitButton isSubmitting={isSubmitting} onClick={onSubmit}>
@@ -524,7 +555,7 @@ export function ApplicationPage() {
                 </SubmitButton>
               ) : (
                 <button type="button" onClick={onNext} className="rounded-xl bg-gradient-to-r from-primary to-primary-dark text-white text-sm font-semibold py-2.5 px-5 shadow-card">
-                  Next
+                  Continue
                 </button>
               )}
             </div>

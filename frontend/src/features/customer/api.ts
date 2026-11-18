@@ -237,6 +237,8 @@ export interface FormDefinitionUpdateInput {
 }
 
 export interface ApplicationListItem {
+  submission_source?: string;
+  last_customer_activity_at?: string | null;
   id: string;
   application_code: string;
   customer_id: string | null;
@@ -531,8 +533,8 @@ export function getProductSchemaAudit(productCategory: string, productId: string
 
 // ---- applications (customer self-service) ----
 
-export function startApplication(productCategory: string, productId: string) {
-  return apiRequest<ApplicationDetail>("/applications", { method: "POST", body: JSON.stringify({ product_category: productCategory, product_id: productId }) });
+export function startApplication(productCategory: string, productId: string, requestKey?: string) {
+  return apiRequest<ApplicationDetail>("/applications", { method: "POST", body: JSON.stringify({ product_category: productCategory, product_id: productId, request_key: requestKey }) });
 }
 
 export function listOwnApplications(status?: string) {
@@ -655,6 +657,7 @@ export interface DocumentGroupPreview {
 }
 
 export interface PortalDashboard {
+  application_counts?: { all: number; draft: number; submitted: number };
   has_application: boolean;
   has_lead: boolean;
   application_id: string | null;

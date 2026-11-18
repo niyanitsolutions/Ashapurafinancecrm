@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
 import { SelectField } from "@/components/forms/SelectField";
-import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { PortalPage as SimplePageLayout } from "@/features/customer/components/PortalPage";
 import { SubmitButton } from "@/components/forms/SubmitButton";
 import {
   createSupportTicket,
@@ -53,7 +53,7 @@ export function SupportPage() {
   const loadTickets = () => {
     listOwnSupportTickets()
       .then(setTickets)
-      .catch(() => setTickets([]));
+      .catch((err) => setError(getErrorMessage(err)));
   };
 
   useEffect(loadTickets, []);

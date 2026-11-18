@@ -1,3 +1,4 @@
+import { PortalOverview } from "@/features/customer/components/PortalOverview";
 import { useEffect, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
@@ -29,11 +30,11 @@ function Hero({ customer, dashboard }: { customer: Customer; dashboard: PortalDa
   const ctaLabel = dashboard?.has_application ? (dashboard.status_label === "Draft" ? "Continue Application" : "Track Status") : "Start an Application";
 
   return (
-    <div className="mb-6 rounded-card bg-gradient-to-r from-primary to-primary-light px-6 py-6 text-white shadow-card animate-fade-in">
+    <div className="portal-card mb-6 border-l-4 border-l-orange-500">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold">Welcome, {customer.full_name}</h1>
-          <p className="text-sm text-white/80 mt-0.5">{customer.customer_code}</p>
+          <p className="text-sm text-slate-600 mt-0.5">{customer.customer_code}</p>
         </div>
         <Link
           to={ctaTo}
@@ -44,21 +45,21 @@ function Hero({ customer, dashboard }: { customer: Customer; dashboard: PortalDa
       </div>
 
       {dashboard?.has_application && (
-        <div className="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-4 border-t border-white/20 pt-4">
+        <div className="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-4 border-t border-slate-200 pt-4">
           <div>
-            <p className="text-[11px] uppercase tracking-wide text-white/60">Product</p>
+            <p className="text-[11px] uppercase tracking-wide text-slate-600">Product</p>
             <p className="text-sm font-medium">{dashboard.product_name}</p>
           </div>
           <div>
-            <p className="text-[11px] uppercase tracking-wide text-white/60">Current Stage</p>
+            <p className="text-[11px] uppercase tracking-wide text-slate-600">Current Stage</p>
             <p className="text-sm font-medium">{dashboard.current_stage_label}</p>
           </div>
           <div>
-            <p className="text-[11px] uppercase tracking-wide text-white/60">Progress</p>
+            <p className="text-[11px] uppercase tracking-wide text-slate-600">Progress</p>
             <p className="text-sm font-medium">{dashboard.progress_percent}%</p>
           </div>
           <div>
-            <p className="text-[11px] uppercase tracking-wide text-white/60">Relationship Manager</p>
+            <p className="text-[11px] uppercase tracking-wide text-slate-600">Relationship Manager</p>
             <p className="text-sm font-medium">{dashboard.relationship_manager?.name ?? "Not yet assigned"}</p>
           </div>
         </div>
@@ -157,75 +158,6 @@ function ActionRequiredBanner({ dashboard }: { dashboard: PortalDashboard }) {
   }
 
   return null;
-}
-
-function QuickActionCard({ to, icon, title, subtitle }: { to: string; icon: IconName; title: string; subtitle: string }) {
-  return (
-    <Link
-      to={to}
-      className="hover-lift bg-card border border-border rounded-card shadow-card hover:shadow-cardHover p-4 flex items-start gap-3 transition-shadow"
-    >
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-        <Icon name={icon} className="h-5 w-5" />
-      </span>
-      <span>
-        <span className="block text-sm font-semibold text-text">{title}</span>
-        <span className="block text-xs text-text/50 mt-0.5">{subtitle}</span>
-      </span>
-    </Link>
-  );
-}
-
-function QuickActions({ dashboard }: { dashboard: PortalDashboard }) {
-  const isDraft = dashboard.status_label === "Draft";
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-      {isDraft && (
-        <QuickActionCard to={`/portal/applications/${dashboard.application_id}`} icon="applications" title="Continue Application" subtitle="Pick up where you left off" />
-      )}
-      <QuickActionCard to="/portal/documents" icon="upload" title="Upload Documents" subtitle={`${dashboard.pending_documents_count} pending`} />
-      <QuickActionCard to="/portal/messages" icon="chat" title="Message your RM" subtitle={dashboard.relationship_manager?.name ?? "Contact support"} />
-      {!isDraft && (
-        <QuickActionCard to={`/portal/applications/${dashboard.application_id}/timeline`} icon="clock" title="Track Status" subtitle={dashboard.current_stage_label ?? "View progress"} />
-      )}
-      <QuickActionCard to="/portal/support" icon="shield-check" title="Support" subtitle="Raise a ticket" />
-    </div>
-  );
-}
-
-function ApplicationSummaryCard({ dashboard }: { dashboard: PortalDashboard }) {
-  return (
-    <div className="bg-card border border-border rounded-card shadow-card p-5">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-text/40 mb-3">Application Summary</h3>
-      <dl className="grid grid-cols-2 gap-3 text-sm">
-        <div>
-          <dt className="text-[11px] uppercase tracking-wide text-text/40">Application Number</dt>
-          <dd className="font-medium text-text">{dashboard.application_code}</dd>
-        </div>
-        <div>
-          <dt className="text-[11px] uppercase tracking-wide text-text/40">Product</dt>
-          <dd className="font-medium text-text">{dashboard.product_name}</dd>
-        </div>
-        <div>
-          <dt className="text-[11px] uppercase tracking-wide text-text/40">Current Stage</dt>
-          <dd className="font-medium text-text">{dashboard.current_stage_label}</dd>
-        </div>
-        <div>
-          <dt className="text-[11px] uppercase tracking-wide text-text/40">Assigned Employee</dt>
-          <dd className="font-medium text-text">{dashboard.relationship_manager?.name ?? "Unassigned"}</dd>
-        </div>
-      </dl>
-      <div className="mt-4">
-        <div className="flex items-center justify-between mb-1">
-          <span className="text-[11px] uppercase tracking-wide text-text/40">Progress</span>
-          <span className="text-xs font-medium text-text/60">{dashboard.progress_percent}%</span>
-        </div>
-        <div className="h-2 rounded-full bg-border overflow-hidden">
-          <div className="h-full bg-primary transition-all" style={{ width: `${dashboard.progress_percent}%` }} />
-        </div>
-      </div>
-    </div>
-  );
 }
 
 function RelationshipManagerCard({ dashboard }: { dashboard: PortalDashboard }) {
@@ -367,11 +299,13 @@ export function PortalHomePage() {
       .catch((err) => setError(getErrorMessage(err)));
   };
 
-  useEffect(() => {
+  const loadCustomer = () => {
+    setError(null);
     getOwnCustomerProfile()
       .then(setCustomer)
       .catch((err) => setError(getErrorMessage(err)));
-  }, []);
+  };
+  useEffect(loadCustomer, []);
 
   useEffect(() => {
     if (!customer) return;
@@ -379,6 +313,7 @@ export function PortalHomePage() {
   }, [customer]);
 
   if (customer === undefined) {
+    if (error) return <div className="portal-card"><ErrorBanner message={error} /><button type="button" onClick={loadCustomer}>Try again</button></div>;
     return (
       <div className="max-w-app mx-auto space-y-4">
         <SkeletonBlock className="h-32" />
@@ -400,6 +335,8 @@ export function PortalHomePage() {
       )}
 
       <Hero customer={customer} dashboard={dashboard} />
+      {dashboard?.has_application && <ActionRequiredBanner dashboard={dashboard} />}
+      <PortalOverview counts={dashboard?.application_counts} pendingDocuments={dashboard?.pending_documents_count ?? null} />
 
       {!dashboard && !error && (
         <div className="space-y-4">
@@ -408,54 +345,17 @@ export function PortalHomePage() {
         </div>
       )}
 
-      {dashboard && !dashboard.has_application && (
-        <div className="bg-card border border-border rounded-card shadow-card p-6 mb-6">
-          <h2 className="text-sm font-semibold text-text/70 mb-3">Start a new application</h2>
-          <div className="flex gap-3">
-            <Link to="/portal/applications/new?category=loan" className="rounded bg-primary text-white text-sm font-medium py-2 px-4 hover:bg-primary-light">
-              Apply for a Loan
-            </Link>
-            <Link
-              to="/portal/applications/new?category=insurance"
-              className="rounded border border-primary text-primary text-sm font-medium py-2 px-4 hover:bg-primary/10"
-            >
-              Apply for Insurance
-            </Link>
-          </div>
-        </div>
-      )}
-
       {dashboard && dashboard.has_application && (
         <div className="space-y-4">
-          <ActionRequiredBanner dashboard={dashboard} />
-          <QuickActions dashboard={dashboard} />
-
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <ApplicationSummaryCard dashboard={dashboard} />
             <RelationshipManagerCard dashboard={dashboard} />
+            <PendingDocumentsCard dashboard={dashboard} />
           </div>
 
-          <PendingDocumentsCard dashboard={dashboard} />
           <TimelineSummaryWidget dashboard={dashboard} />
 
           {dashboard.recent_activity.length > 0 && <RecentActivity dashboard={dashboard} />}
 
-          {/* Having an application for one product must never hide the ability to apply
-              for another — this card is always reachable, not conditioned on has_application. */}
-          <div className="bg-card border border-border rounded-card shadow-card p-6">
-            <h2 className="text-sm font-semibold text-text/70 mb-3">Apply for another product</h2>
-            <div className="flex gap-3">
-              <Link to="/portal/applications/new?category=loan" className="rounded bg-primary text-white text-sm font-medium py-2 px-4 hover:bg-primary-light">
-                Apply for a Loan
-              </Link>
-              <Link
-                to="/portal/applications/new?category=insurance"
-                className="rounded border border-primary text-primary text-sm font-medium py-2 px-4 hover:bg-primary/10"
-              >
-                Apply for Insurance
-              </Link>
-            </div>
-          </div>
         </div>
       )}
     </div>

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
-import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { PortalPage as SimplePageLayout } from "@/features/customer/components/PortalPage";
 import { getOwnConversation, sendOwnMessage, type Conversation } from "@/features/messaging/api";
 import { getErrorMessage } from "@/features/customer/errors";
 import { formatISTDateTime } from "@/shared/dateFormat";

@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/buttons/Button";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { Modal } from "@/components/overlays/Modal";
-import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { PortalPage as SimplePageLayout } from "@/features/customer/components/PortalPage";
 import { getErrorMessage } from "@/features/customer/errors";
 import {
   confirmOwnOfferAcceptance,

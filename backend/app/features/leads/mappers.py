@@ -88,6 +88,9 @@ def lead_less_application_to_list_item(
         is_potential_duplicate=False,
         created_at=application.created_at,
         is_lead_less=True,
+        submission_source=application.submission_source,
+        submitted_at=application.submitted_at,
+        last_customer_activity_at=application.last_customer_activity_at,
     )
 
 

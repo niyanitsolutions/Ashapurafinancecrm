@@ -70,6 +70,8 @@ let formDefToReturn: FormDefinition = mockFormDef;
 
 const { uploadApplicationDocument } = vi.hoisted(() => ({ uploadApplicationDocument: vi.fn(() => Promise.resolve({})) }));
 
+vi.mock("@/features/customer/customerUpload", () => ({ uploadCustomerDocument: uploadApplicationDocument }));
+
 vi.mock("@/features/customer/api", async () => {
   const actual = await vi.importActual<typeof import("@/features/customer/api")>("@/features/customer/api");
   return {
@@ -107,7 +109,7 @@ describe("DocumentsPage — password forwarding regression", () => {
     const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(fileInput, makeFile());
 
-    expect(uploadApplicationDocument).toHaveBeenCalledWith("app-1", "dt-bank", expect.any(File), "PortalTypedPass1", undefined);
+    expect(uploadApplicationDocument).toHaveBeenCalledWith("app-1", "dt-bank", expect.any(File), "PortalTypedPass1", undefined, expect.any(Function));
   });
 
   it("uploads with no password when the field is left blank", async () => {
@@ -122,7 +124,7 @@ describe("DocumentsPage — password forwarding regression", () => {
     const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(fileInput, makeFile());
 
-    expect(uploadApplicationDocument).toHaveBeenCalledWith("app-1", "dt-bank", expect.any(File), undefined, undefined);
+    expect(uploadApplicationDocument).toHaveBeenCalledWith("app-1", "dt-bank", expect.any(File), undefined, undefined, expect.any(Function));
   });
 });
 
@@ -182,7 +184,7 @@ describe("DocumentsPage — Re-upload must stay available for a rejected documen
     const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(fileInput, makeFile("pan_new.jpg"));
 
-    expect(uploadApplicationDocument).toHaveBeenCalledWith("app-1", "dt-pan", expect.any(File), undefined, undefined);
+    expect(uploadApplicationDocument).toHaveBeenCalledWith("app-1", "dt-pan", expect.any(File), undefined, undefined, expect.any(Function));
   });
 
   it("Front/Back on a submitted application: only the rejected side offers Re-upload", async () => {

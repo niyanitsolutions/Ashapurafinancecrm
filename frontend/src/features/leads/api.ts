@@ -1,6 +1,9 @@
 import { apiRequest, apiRequestRaw, type PaginationMeta } from "@/shared/api/client";
 
 export interface LeadListItem {
+  submission_source?: string;
+  submitted_at?: string | null;
+  last_customer_activity_at?: string | null;
   id: string;
   lead_code: string;
   full_name: string;

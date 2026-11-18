@@ -1,0 +1,8 @@
+{
+  "baseline": "3d1d9f25881d9df7707e82e2d315d20bf1a9eb4f",
+  "protected_tracked_files": 849,
+  "modified_protected_files": [],
+  "non_customer_routes_unchanged": true,
+  "customer_only_auth_ui_exception": "PinAuthPanel presentation and visibility; shared auth pages/forms/context/backend unchanged",
+  "staff_ui_exception": "Document Collection source/date text and loan-only action guard"
+}

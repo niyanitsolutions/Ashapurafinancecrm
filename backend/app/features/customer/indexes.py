@@ -10,6 +10,9 @@ async def ensure_customer_indexes(db: AsyncIOMotorDatabase[Any]) -> None:
     await db["customers"].create_index("converted_from_lead_id")
 
     await db["applications"].create_index("application_code", unique=True)
+    # Legacy rows have no key; only new explicitly keyed requests participate.
+    await db["applications"].create_index("creation_key", unique=True,
+        partialFilterExpression={"creation_key": {"$type": "string"}}, name="application_creation_key")
     await db["applications"].create_index("user_id")
     await db["applications"].create_index("customer_id")
     await db["applications"].create_index("lead_id")

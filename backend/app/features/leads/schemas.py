@@ -126,6 +126,9 @@ class AddNoteRequest(BaseModel):
 
 
 class LeadListItem(BaseModel):
+    submission_source: str = "unknown"
+    submitted_at: datetime | None = None
+    last_customer_activity_at: datetime | None = None
     id: str
     lead_code: str
     full_name: str

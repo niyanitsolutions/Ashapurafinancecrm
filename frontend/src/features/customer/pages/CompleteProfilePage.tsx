@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
 import { SubmitButton } from "@/components/forms/SubmitButton";
@@ -15,6 +15,7 @@ import { getErrorMessage } from "@/features/customer/errors";
 // there's an application to resume.
 export function CompleteProfilePage() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [dateOfBirth, setDateOfBirth] = useState("");
@@ -41,6 +42,8 @@ export function CompleteProfilePage() {
         address: line1 ? { line1, city, state, pincode } : undefined,
       });
       const dashboard = await getOwnDashboard();
+      const target = params.get("return");
+      if (target && /^\/portal\/applications\/[a-f0-9]{24}$/.test(target)) { navigate(target, { replace: true }); return; }
       navigate(dashboard.has_application && dashboard.application_id ? `/portal/applications/${dashboard.application_id}` : "/portal");
     } catch (err) {
       setError(getErrorMessage(err));

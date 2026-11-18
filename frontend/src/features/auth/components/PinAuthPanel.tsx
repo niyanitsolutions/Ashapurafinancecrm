@@ -18,6 +18,7 @@ export function PinAuthPanel({ returnTo, onLegacy }: {
   const [policy, setPolicy] = useState<string | null>(null);
   const [mobile, setMobile] = useState("");
   const [pin, setPin] = useState("");
+  const [showPin, setShowPin] = useState(false);
   const [confirm, setConfirm] = useState("");
   const [otp, setOtp] = useState("");
   const [purpose, setPurpose] = useState<Purpose>("FIRST_TIME_LOGIN");
@@ -98,6 +99,7 @@ export function PinAuthPanel({ returnTo, onLegacy }: {
     });
   }
   function start(p: Purpose) {
+    setShowPin(false);
     setPurpose(p);
     setMode("start");
     setError(null);
@@ -111,6 +113,7 @@ export function PinAuthPanel({ returnTo, onLegacy }: {
     : mode === "verify" ? "Verify your mobile"
     : purpose === "FIRST_TIME_LOGIN" ? "First-time verification" : "Forgot PIN";
   function backToLogin() {
+    setShowPin(false);
     setMode("login");
     setAuthorization("");
     setPin("");
@@ -119,7 +122,7 @@ export function PinAuthPanel({ returnTo, onLegacy }: {
     setError(null);
   }
   return (
-    <div className="text-white">
+    <div className="customer-pin-panel">
       <h2 className="mb-5 text-lg font-semibold">{title}</h2>
       <ErrorBanner message={error} />
       {mode === "success" ? <>
@@ -148,10 +151,12 @@ export function PinAuthPanel({ returnTo, onLegacy }: {
           </>}
           {(mode === "login" || mode === "set") && (
             <FormField id="login-pin" label={mode === "set" ? "New 4-digit PIN" : "4-digit PIN"}
-              type="password" required inputMode="numeric" pattern="[0-9]{4}" maxLength={4} disabled={busy}
+              type={showPin ? "text" : "password"} required inputMode="numeric" pattern="[0-9]{4}" maxLength={4} disabled={busy}
               autoComplete={mode === "set" ? "new-password" : "current-password"}
               value={pin} onChange={e => setPin(e.target.value)} />
           )}
+          {(mode === "login" || mode === "set") && <button type="button" className="mb-4 text-sm text-primary"
+            aria-pressed={showPin} onClick={() => setShowPin(value => !value)}>{showPin ? "Hide PIN" : "Show PIN"}</button>}
           {mode === "set" && (
             <FormField id="confirm-pin" label="Confirm PIN" type="password" required inputMode="numeric"
               pattern="[0-9]{4}" maxLength={4} autoComplete="new-password" disabled={busy}

@@ -149,6 +149,8 @@ def application_to_list_item(
     return ApplicationListItem(
         id=application.require_id(),
         application_code=application.application_code,
+        submission_source=application.submission_source,
+        last_customer_activity_at=application.last_customer_activity_at,
         customer_id=application.customer_id,
         customer_name=customer_name,
         lead_id=application.lead_id,

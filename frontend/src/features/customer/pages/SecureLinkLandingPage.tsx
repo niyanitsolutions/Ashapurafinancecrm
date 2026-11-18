@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { AuthPageLayout } from "@/features/auth/components/AuthPageLayout";
+import { CustomerAuthLayout as AuthPageLayout } from "@/features/customer/components/CustomerAuthLayout";
 import { ErrorBanner } from "@/features/auth/components/ErrorBanner";
 import { useAuth } from "@/features/auth/useAuth";
 import {
@@ -128,7 +128,7 @@ export function SecureLinkLandingPage() {
   const onContinue = async () => {
     if (!application) return;
     const customer = await getOwnCustomerProfile();
-    navigate(customer ? `/portal/applications/${application.id}` : "/portal/profile/setup", { replace: true });
+    navigate(customer ? `/portal/applications/${application.id}` : `/portal/profile/setup?return=${encodeURIComponent(`/portal/applications/${application.id}`)}`, { replace: true });
   };
 
   if (!resolution) {

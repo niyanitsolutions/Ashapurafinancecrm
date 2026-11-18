@@ -26,7 +26,7 @@ import {
 import { getErrorMessage } from "@/features/leads/errors";
 import { leadSourcesApi, type NamedMasterData } from "@/features/system_settings/api";
 import { getAccessToken } from "@/shared/api/client";
-import { followUpTone, formatISTDate, formatISTTime } from "@/shared/dateFormat";
+import { followUpTone, formatISTDate, formatISTDateTime, formatISTTime } from "@/shared/dateFormat";
 import { Icon } from "@/theme/icons";
 
 // Leads (including Meta Lead Ads, which arrive via a server-side webhook the browser
@@ -476,6 +476,12 @@ export function LeadListPage({ tab }: { tab: LeadTab }) {
                           ) : (
                             <StatusBadge status="pending" label="Pending" />
                           )}
+                          {tab === "document_collection" && lead.submission_source && lead.submission_source !== "unknown" && (
+                            <span className="block text-xs text-text/60" title={lead.submitted_at ? `Submitted: ${formatISTDateTime(lead.submitted_at)}` : undefined}>
+                              {lead.submission_source === "secure_link" ? (lead.submitted_at ? "Secure link submission" : "Secure link") : lead.submission_source === "staff_assisted" ? "Staff assisted" : (lead.submitted_at ? "Customer submitted" : "Self service")}
+                            </span>
+                          )}
+                          {tab === "document_collection" && lead.submitted_at && <time className="block text-xs text-text/60" dateTime={lead.submitted_at}>{formatISTDateTime(lead.submitted_at)}</time>}
                         </Td>
                       )}
                       {isVisible("status") && (
@@ -521,7 +527,7 @@ export function LeadListPage({ tab }: { tab: LeadTab }) {
                           {/* A Lead-less row's only "Update" action is Move to Loan
                               Management — there's no Reject/financial-assessment
                               concept for it, so it's gated on canEdit alone. */}
-                          {tab === "document_collection" && lead.is_lead_less && canEdit && (
+                          {tab === "document_collection" && lead.is_lead_less && lead.product_category === "loan" && canEdit && (
                             <ActionButton variant="update" onClick={() => setUpdateStageLead(lead)} />
                           )}
                           {!lead.is_lead_less && (tab === "my" || tab === "document_collection") && (canEdit || canReject) && (

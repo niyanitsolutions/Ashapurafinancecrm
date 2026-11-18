@@ -4,7 +4,7 @@ import {createInterface} from 'node:readline/promises';
 import {chromium} from '../frontend/node_modules/.cache/voice-ui-audit/node_modules/playwright/index.mjs';
 
 const origin='http://127.0.0.1:5175';
-const output='docs/screenshots/customer-pin-2026-11-18';
+const output='docs/screenshots/customer-portal-modernisation/registration';
 await mkdir(output,{recursive:true});
 const input=createInterface({input:process.stdin,terminal:false});
 async function code() { console.log('NEED_MOCK_OTP'); return new Promise(resolve=>input.once('line',resolve)); }
@@ -41,7 +41,9 @@ try {
   await page.getByLabel('4-digit SMS OTP',{exact:true}).fill(await code());
   await page.getByRole('button',{name:'Verify OTP',exact:true}).click();
   stage=`complete-${width}`; await page.getByRole('button',{name:'Complete Registration',exact:true}).click();
-  await page.waitForURL('**/login');
+  await page.waitForURL('**/portal');
+  await page.evaluate(()=>localStorage.clear());
+  await page.goto(origin+'/login');
   await page.getByRole('tab',{name:'Employee / Partner',exact:true}).click();
   assert.equal(await page.locator('#internal-password').isVisible(),true);
   await page.getByRole('tab',{name:'Customer',exact:true}).click();

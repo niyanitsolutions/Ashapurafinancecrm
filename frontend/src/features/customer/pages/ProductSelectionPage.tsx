@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import {
@@ -28,13 +28,15 @@ export function ProductSelectionPage() {
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [products, setProducts] = useState<NamedMasterData[]>([]);
   const [ownApplications, setOwnApplications] = useState<ApplicationListItem[]>([]);
+  const [applicationsLoaded, setApplicationsLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState<string | null>(null);
 
   useEffect(() => {
     setSelectedCategoryId(null);
     setProducts([]);
-    listOwnApplications().then(setOwnApplications).catch(() => setOwnApplications([]));
+    setApplicationsLoaded(false);
+    listOwnApplications().then(rows => { setOwnApplications(rows); setApplicationsLoaded(true); }).catch(err => setError(getErrorMessage(err)));
     if (category === "insurance") {
       listPortalInsuranceCategories()
         .then(setInsuranceCategories)
@@ -51,16 +53,23 @@ export function ProductSelectionPage() {
       .catch((err) => setError(getErrorMessage(err)));
   }, [category, selectedCategoryId]);
 
+  const requestKeys = useRef<Record<string, string>>({});
+  const starting = useRef(false);
   const onSelect = async (productId: string) => {
+    if (starting.current || !applicationsLoaded) return;
+    starting.current = true;
+    const key = `${category}:${productId}`;
+    requestKeys.current[key] ??= crypto.randomUUID();
     setError(null);
     setIsStarting(productId);
     try {
-      const application = await startApplication(category, productId);
+      const application = await startApplication(category, productId, requestKeys.current[key]);
       navigate(`/portal/applications/${application.id}`);
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
       setIsStarting(null);
+      starting.current = false;
     }
   };
 
@@ -75,7 +84,7 @@ export function ProductSelectionPage() {
           <button
             key={product.id}
             type="button"
-            disabled={isStarting === product.id}
+            disabled={!!isStarting || !applicationsLoaded}
             onClick={() => (draft ? navigate(`/portal/applications/${draft.id}`) : onSelect(product.id))}
             className="w-full text-left px-4 py-3 hover:bg-background disabled:opacity-50 flex items-center justify-between gap-3"
           >

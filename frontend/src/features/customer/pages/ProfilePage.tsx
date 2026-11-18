@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
 import { SelectField } from "@/components/forms/SelectField";
-import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
+import { PortalPage as SimplePageLayout } from "@/features/customer/components/PortalPage";
 import { SubmitButton } from "@/components/forms/SubmitButton";
 import { getOwnCustomerProfile, updateOwnProfile, type Address, type Customer } from "@/features/customer/api";
 import { getErrorMessage } from "@/features/customer/errors";
@@ -117,6 +117,7 @@ export function ProfilePage() {
 
         <Section title="Personal Information">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
+            <FormField label="Registered mobile number" value={customer.mobile} readOnly />
             <FormField label="Full Name" value={fullName} onChange={(e) => setFullName(e.target.value)} />
             <FormField label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
             <FormField label="Date of Birth" type="date" value={dateOfBirth} onChange={(e) => setDateOfBirth(e.target.value)} />

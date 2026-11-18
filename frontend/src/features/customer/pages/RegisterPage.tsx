@@ -2,11 +2,12 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { AuthPageLayout } from "@/features/auth/components/AuthPageLayout";
+import { CustomerAuthLayout as AuthPageLayout } from "@/features/customer/components/CustomerAuthLayout";
 import { ErrorBanner } from "@/features/auth/components/ErrorBanner";
 import { FormField } from "@/features/auth/components/FormField";
 import { SubmitButton } from "@/features/auth/components/SubmitButton";
-import { verifyPinOtp, type Challenge } from "@/features/auth/pinApi";
+import { loginPin, verifyPinOtp, type Challenge } from "@/features/auth/pinApi";
+import { useAuth } from "@/features/auth/useAuth";
 import { completeDirectRegistration, startDirectRegistration } from "@/features/customer/api";
 import { getErrorMessage } from "@/features/customer/errors";
 import { directRegisterSchema, type DirectRegisterFormValues } from "@/features/customer/validation";
@@ -14,6 +15,7 @@ import { directRegisterSchema, type DirectRegisterFormValues } from "@/features/
 export function RegisterPage() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
+  const { setSession } = useAuth();
   const returnTo = params.get("return");
   const loginPath = returnTo ? `/login?return=${encodeURIComponent(returnTo)}` : "/login";
   const [details, setDetails] = useState<DirectRegisterFormValues | null>(null);
@@ -59,7 +61,15 @@ export function RegisterPage() {
         if (!details) return;
         await completeDirectRegistration({ ...details, email: details.email || null, authorization });
         setDetails(null); setAuthorization(""); reset();
-        navigate(loginPath, { replace: true, state: { message: "Registration successful. Log in with your mobile number and PIN." } });
+        try {
+          const result = await loginPin(details.mobile, details.pin, null);
+          setSession({ accessToken: result.access_token, refreshToken: result.refresh_token, role: result.role,
+            userId: result.user_id, mustChangePassword: result.must_change_password });
+          const target = returnTo && /^\/(?!\/)/.test(returnTo) && !returnTo.includes("\\") ? returnTo : "/portal";
+          navigate(target, { replace: true });
+        } catch {
+          navigate(loginPath, { replace: true, state: { message: "Registration successful. Please log in with your mobile number and PIN." } });
+        }
       })}>Complete Registration</SubmitButton> : <form onSubmit={e => { e.preventDefault(); void act(async () => {
         if (!details) return;
         const proof = await verifyPinOtp(details.mobile, "REGISTRATION", challenge.challenge_id, otp);

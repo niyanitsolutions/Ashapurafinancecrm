@@ -8,6 +8,7 @@ how Auth's invitation-only signup model is reused for both onboarding flows with
 single line changed under app/features/auth/).
 """
 
+import hashlib
 import secrets
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, ClassVar
@@ -522,6 +523,8 @@ class CustomerService:
             payload, actor, converted_from_lead_id=pending.lead_id if pending else None
         )
         if pending:
+            # find_pending_conversion_for_user only returns lead-originated drafts.
+            assert pending.lead_id is not None
             await self._applications.update(pending.require_id(), {"customer_id": customer.require_id()}, updated_by=actor.require_id())
             # `account_created`/`user_id` were already set at claim time (see
             # `claim_secure_link`) — `customer_id` becomes known only now.
@@ -691,6 +694,7 @@ class CustomerService:
             user_id=actor.require_id(), customer_id=customer.require_id(), lead_id=None,
             product_category=payload.product_category, product_id=payload.product_id, form_definition=form_def, actor=actor,
             initial_assigned_to=initial_assigned_to,
+            request_key=payload.request_key,
         )
 
     async def create_application_for_customer(
@@ -829,14 +833,37 @@ class CustomerService:
     async def _create_application(
         self, *, user_id: str, customer_id: str | None, lead_id: str | None, product_category: str, product_id: str,
         form_definition: ApplicationFormDefinition, actor: User, initial_assigned_to: str | None = None,
+        request_key: str | None = None,
     ) -> Application:
+        from pymongo.errors import DuplicateKeyError
+
+        # Secure-link claims are get-or-create; independent applications remain
+        # repeatable, but an explicit request key makes transport retries safe.
+        identity = f"secure:{lead_id}:{user_id}" if lead_id and actor.role == CUSTOMER else (
+            f"portal:{user_id}:{product_category}:{product_id}:{request_key}" if request_key else None)
+        creation_key = hashlib.sha256(identity.encode()).hexdigest() if identity else None
+        if creation_key:
+            existing = await self._applications.find_many({"creation_key": creation_key}, limit=1)
+            if existing:
+                return existing[0]
         code = await generate_id(self._db, IdPrefix.APPLICATION)
         application = Application(
             application_code=code, user_id=user_id, customer_id=customer_id, lead_id=lead_id,
             product_category=product_category, product_id=product_id, form_definition_id=form_definition.require_id(),
             assigned_to=initial_assigned_to, created_by=actor.require_id(),
+            creation_key=creation_key,
+            submission_source="staff_assisted" if actor.role in (OWNER, EMPLOYEE) else ("secure_link" if lead_id else "customer_portal"),
+            last_customer_activity_at=utc_now() if actor.role == CUSTOMER else None,
         )
-        application_id = await self._applications.insert(application)
+        try:
+            application_id = await self._applications.insert(application)
+        except DuplicateKeyError:
+            if creation_key:
+                existing = await self._applications.find_many({"creation_key": creation_key}, limit=1)
+                if existing:
+                    return existing[0]
+                raise ConflictError("This application request is no longer available. Start a new application.") from None
+            raise
         await write_audit_log(
             self._db, event_type=AuditEvent.APPLICATION_STARTED, user_id=actor.require_id(), metadata={"application_id": application_id}
         )
@@ -1421,7 +1448,18 @@ class CustomerService:
             updates["pending_profile"] = payload.pending_profile
         if not updates:
             return application
-        updated = await self._applications.update(application_id, updates, updated_by=actor.require_id())
+        updates["last_customer_activity_at"] = utc_now()
+        from pymongo import ReturnDocument
+
+        updates.update({"updated_at": utc_now(), "updated_by": actor.require_id()})
+        row = await self._db.applications.find_one_and_update(
+            {"_id": to_object_id(application_id), "user_id": actor.require_id(),
+             "status": ApplicationStatus.DRAFT, "is_deleted": False},
+            {"$set": updates, "$inc": {"version": 1}}, return_document=ReturnDocument.AFTER,
+        )
+        if row is None:
+            raise ConflictError("Application changed or was submitted. Reload before editing.")
+        updated = Application.model_validate(row)
         await write_audit_log(
             self._db, event_type=AuditEvent.APPLICATION_UPDATED, user_id=actor.require_id(), metadata={"application_id": application_id}
         )
@@ -1431,8 +1469,11 @@ class CustomerService:
 
     async def submit_application(self, application_id: str, payload: SubmitApplicationRequest, actor: User) -> Application:
         application = await self.get_own_application(application_id, actor)
+        if application.status == ApplicationStatus.SUBMITTED:
+            await self._ensure_submitted_case(application)
+            return application
         if application.status != ApplicationStatus.DRAFT:
-            raise ConflictError("This application has already been submitted.")
+            raise ConflictError("This application cannot be submitted.")
 
         form_def = await self._form_defs.find_by_id(application.form_definition_id)
         if form_def is None:
@@ -1482,35 +1523,51 @@ class CustomerService:
             customer = await self._create_customer_from_profile(payload.profile, actor, converted_from_lead_id=application.lead_id)
             customer_id = customer.require_id()
 
-        updated = await self._applications.update(
-            application_id,
-            {"status": ApplicationStatus.SUBMITTED, "submitted_at": utc_now(), "customer_id": customer_id, "pending_profile": None},
-            updated_by=actor.require_id(),
+        from pymongo import ReturnDocument
+
+        submitted_at = utc_now()
+        row = await self._db.applications.find_one_and_update(
+            {"_id": to_object_id(application_id), "user_id": actor.require_id(),
+             "status": ApplicationStatus.DRAFT, "is_deleted": False},
+            {"$set": {"status": ApplicationStatus.SUBMITTED, "submitted_at": submitted_at,
+                      "customer_id": customer_id, "pending_profile": None,
+                      "last_customer_activity_at": submitted_at, "updated_at": submitted_at,
+                      "updated_by": actor.require_id()}, "$inc": {"version": 1}},
+            return_document=ReturnDocument.AFTER,
         )
+        if row is None:
+            current = await self.get_own_application(application_id, actor)
+            if current.status != ApplicationStatus.SUBMITTED:
+                raise ConflictError("Application changed. Reload before submitting.")
+            await self._ensure_submitted_case(current)
+            return current
+        updated = Application.model_validate(row)
         await write_audit_log(
             self._db, event_type=AuditEvent.APPLICATION_SUBMITTED, user_id=actor.require_id(), metadata={"application_id": application_id}
         )
         if application.lead_id:
             await self._log_lead_timeline(application.lead_id, LeadTimelineEvent.CUSTOMER_SUBMITTED_APPLICATION, {"application_id": application_id})
 
-        # Deferred import: loan_management/insurance_management both import this module's
-        # Application model/repository at module level, so importing them back at module
-        # level here would be circular. Case creation used to be entirely lazy (a
-        # submitted application had no case — and was invisible to every dashboard/report/
-        # notification keyed on cases — until a staff member happened to open the case
-        # list); `ensure_case_for_application` is idempotent, so calling it eagerly here is
-        # safe even alongside the existing lazy sync paths.
-        final_application = updated or application
-        if final_application.product_category == "loan":
-            from app.features.loan_management.service import LoanCaseService
+        await self._ensure_submitted_case(updated)
+        return updated
 
-            await LoanCaseService(self._db).ensure_case_for_application(application_id)
-        elif final_application.product_category == "insurance":
-            from app.features.insurance_management.service import InsuranceCaseService
+    async def _ensure_submitted_case(self, application: Application) -> None:
+        # Existing case creation is idempotent. Reconcile on a repeated request too,
+        # so a transport failure after committing submission can be safely resumed.
+        from pymongo.errors import DuplicateKeyError
 
-            await InsuranceCaseService(self._db).ensure_case_for_application(application_id)
+        try:
+            if application.product_category == "loan":
+                from app.features.loan_management.service import LoanCaseService
 
-        return final_application
+                await LoanCaseService(self._db).ensure_case_for_application(application.require_id())
+            elif application.product_category == "insurance":
+                from app.features.insurance_management.service import InsuranceCaseService
+
+                await InsuranceCaseService(self._db).ensure_case_for_application(application.require_id())
+        except DuplicateKeyError:
+            if not await self._db.application_workflows.find_one({"application_id": application.require_id(), "is_deleted": False}):
+                raise
 
     # ================================================================== documents
 
@@ -1689,6 +1746,8 @@ class CustomerService:
                 application_id, payload.document_type_id, keep_document_id=document_id, updated_by=actor.require_id(), side=payload.side,
             )
         await write_audit_log(self._db, event_type=AuditEvent.DOCUMENT_UPLOADED, user_id=actor.require_id(), metadata={"application_id": application_id})
+        if actor.role == CUSTOMER:
+            await self._applications.update(application_id, {"last_customer_activity_at": utc_now()}, updated_by=actor.require_id())
         return await self._documents.find_by_id(document_id) or document
 
     async def mark_document_not_available(self, application_id: str, document_type_id: str, actor: User) -> ApplicationDocument:
@@ -1733,6 +1792,7 @@ class CustomerService:
             self._db, event_type=AuditEvent.DOCUMENT_MARKED_UNAVAILABLE, user_id=actor.require_id(),
             metadata={"application_id": application_id, "document_type_id": document_type_id},
         )
+        await self._applications.update(application_id, {"last_customer_activity_at": utc_now()}, updated_by=actor.require_id())
         return await self._documents.find_by_id(document_id) or document
 
     async def list_own_documents(self, application_id: str, actor: User) -> list[ApplicationDocument]:
@@ -2144,7 +2204,11 @@ class CustomerService:
         return items, total
 
     async def _own_recent_activity(self, actor: User, *, limit: int) -> list[dict[str, Any]]:
-        cursor = self._db["audit_logs"].find({"user_id": actor.require_id()}).sort("created_at", -1).limit(limit)
+        cursor = self._db["audit_logs"].find({"user_id": actor.require_id(), "event_type": {"$in": [
+            AuditEvent.APPLICATION_STARTED, AuditEvent.APPLICATION_UPDATED, AuditEvent.APPLICATION_SUBMITTED,
+            AuditEvent.DOCUMENT_UPLOADED, AuditEvent.DOCUMENT_REJECTED, AuditEvent.DOCUMENT_VERIFIED,
+            AuditEvent.CUSTOMER_REGISTERED, AuditEvent.SECURE_LINK_CLAIMED,
+        ]}}).sort("created_at", -1).limit(limit)
         return [
             {"event_type": doc["event_type"], "created_at": doc["created_at"].isoformat() if doc.get("created_at") else None}
             async for doc in cursor
@@ -2164,9 +2228,15 @@ class CustomerService:
         customer = await self.get_own_customer(actor)
         recent_messages, recent_message_count = await self._own_messages(customer, limit=5)
         recent_activity = await self._own_recent_activity(actor, limit=5)
+        # Counts must not inherit the paginated/list endpoint's 200-row display cap.
+        scope = {"user_id": actor.require_id(), "is_deleted": False}
+        counts = {"all": await self._db.applications.count_documents(scope),
+                  "draft": await self._db.applications.count_documents(scope | {"status": "draft"}),
+                  "submitted": await self._db.applications.count_documents(scope | {"status": "submitted"})}
 
         if application is None:
             return PortalDashboardResponse(
+                application_counts=counts,
                 has_application=False, recent_messages=recent_messages, recent_message_count=recent_message_count,
                 recent_activity=recent_activity,
             )
@@ -2221,6 +2291,7 @@ class CustomerService:
             next_action = self._CASE_NEXT_ACTION.get(case.current_status, f"Awaiting: {current_stage_label}")
 
         return PortalDashboardResponse(
+            application_counts=counts,
             has_application=True,
             has_lead=bool(application.lead_id),
             application_id=application.require_id(),

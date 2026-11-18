@@ -384,6 +384,7 @@ class SchemaAuditEntryResponse(BaseModel):
 class StartApplicationRequest(BaseModel):
     product_category: str
     product_id: str
+    request_key: str | None = Field(default=None, pattern=r"^[a-f0-9-]{36}$")
 
 
 class UpdateApplicationRequest(BaseModel):
@@ -400,6 +401,8 @@ class AssignApplicationRequest(BaseModel):
 
 
 class ApplicationListItem(BaseModel):
+    submission_source: str = "unknown"
+    last_customer_activity_at: datetime | None = None
     id: str
     application_code: str
     customer_id: str | None
@@ -540,6 +543,7 @@ class DocumentGroupPreview(BaseModel):
 
 
 class PortalDashboardResponse(BaseModel):
+    application_counts: dict[str, int] = Field(default_factory=dict)
     """One summary call for the Customer Portal's landing page (performance
     requirement — avoid several round-trips just to render the home screen). Detail
     views (full timeline, full document list, full message history) are separate,

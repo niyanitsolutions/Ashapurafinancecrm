@@ -75,6 +75,7 @@ from app.features.workflow_engine.constants import TERMINAL_STATUSES_BY_CASE_TYP
 from app.features.workflow_engine.repository import ApplicationWorkflowRepository
 from app.shared.audit_log import write_audit_log
 from app.utils.datetime import ist_date_to_utc_midnight, now_ist, start_of_day_ist, utc_now
+from app.utils.helpers import to_object_id
 from app.utils.id_generator import IdPrefix, generate_id
 
 _EXPORT_HEADER = ["Lead Code", "Name", "Mobile", "Email", "Source", "Product Category", "Product", "Status", "Stage", "Assigned To", "Created At"]
@@ -484,9 +485,49 @@ class LeadService:
         lead_less_items = await self._lead_less_document_collection_items(
             actor, search=search, source_id=source_id, product_category=product_category, product_id=product_id, assigned_to=assigned_to,
         )
+        if product_category in (None, "insurance") and not source_id:
+            scoped, _ = await self._scope_query(actor, assigned_to, LeadStage.DOCUMENT_COLLECTION)
+            insurance_apps, _ = await self._applications.search_and_filter(
+                search=search, customer_id=None, assigned_to=scoped, unassigned_only=False,
+                status="submitted", product_category="insurance", skip=0, limit=1000,
+                sort=[("created_at", -1)], lead_id_is_none=True,
+            )
+            # Batch enrichment, matching the loan path's bounded query shape.
+            insurance_apps = [app for app in insurance_apps
+                if app.submission_source in ("customer_portal", "secure_link") and (not product_id or app.product_id == product_id)]
+            insurance_ids = [app.require_id() for app in insurance_apps]
+            cases = await self._workflow_cases.find_many({"application_id": {"$in": insurance_ids}, "case_type": "insurance"}, limit=len(insurance_ids)) if insurance_ids else []
+            cases_by_application = {case.application_id: case for case in cases}
+            insurance_apps = [app for app in insurance_apps if app.require_id() not in cases_by_application
+                or cases_by_application[app.require_id()].current_status == "fresh_lead"]
+            customer_ids = {app.customer_id for app in insurance_apps if app.customer_id}
+            product_ids = {app.product_id for app in insurance_apps}
+            employee_ids = {app.assigned_to for app in insurance_apps if app.assigned_to}
+            customers = await self._customers.find_many({"_id": {"$in": [to_object_id(value) for value in customer_ids]}}, limit=len(customer_ids)) if customer_ids else []
+            products = await self._insurance_products.find_many({"_id": {"$in": [to_object_id(value) for value in product_ids]}}, limit=len(product_ids)) if product_ids else []
+            employees = await self._employees.find_many({"_id": {"$in": [to_object_id(value) for value in employee_ids]}}, limit=len(employee_ids)) if employee_ids else []
+            customers_by_id = {customer.require_id(): customer for customer in customers}
+            products_by_id = {product.require_id(): product for product in products}
+            employees_by_id = {employee.require_id(): employee for employee in employees}
+            for app in insurance_apps:
+                product = products_by_id.get(app.product_id)
+                employee = employees_by_id.get(app.assigned_to or "")
+                lead_less_items.append(mappers.lead_less_application_to_list_item(
+                    app, customers_by_id.get(app.customer_id or ""), product.name if product else "", employee.display_name if employee else None))
         merged = sorted(lead_items + lead_less_items, key=lambda item: item.created_at, reverse=True)
         total = len(merged)
-        return merged[skip : skip + limit], total
+        page = merged[skip : skip + limit]
+        ids = [item.application_id for item in page if item.application_id]
+        if ids:
+            apps = await self._applications.find_many({"_id": {"$in": [to_object_id(value) for value in ids]}}, limit=len(ids))
+            metadata = {app.require_id(): app for app in apps}
+            for item in page:
+                matched_app = metadata.get(item.application_id or "")
+                if matched_app:
+                    item.submission_source = matched_app.submission_source
+                    item.submitted_at = matched_app.submitted_at
+                    item.last_customer_activity_at = matched_app.last_customer_activity_at
+        return page, total
 
     async def _get_lead_less_application_scoped(self, application_id: str, actor: User) -> Application:
         """Shared ownership check for both the Lead-less summary and Move to Loan
@@ -1052,7 +1093,7 @@ class LeadService:
         open_case_terminal = set(TERMINAL_STATUSES_BY_CASE_TYPE.get(product_category, ()))
 
         results = []
-        sort_keys: dict[str, tuple[int, int, int, int, bool, bool, str]] = {}
+        sort_keys: dict[str, tuple[bool, int, int, int, int, bool, str]] = {}
         for employee in candidates:
             employee_id = employee.require_id()
             current_lead_count = await self._leads.count({"assigned_to": employee_id})

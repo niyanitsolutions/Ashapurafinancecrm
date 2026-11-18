@@ -313,6 +313,10 @@ class FormTemplateMaster(BaseDocument):
 
 class Application(BaseDocument):
     application_code: str  # AFS-APP-000001
+    # Additive provenance: older rows stay unknown rather than inventing history.
+    submission_source: str = "unknown"
+    creation_key: str | None = None
+    last_customer_activity_at: datetime | None = None
     user_id: str  # the authenticated Customer-role user editing this application
 
     # Null until the "conversion" happens (Flow 1, at submission) or set immediately at

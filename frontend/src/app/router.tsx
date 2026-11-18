@@ -1,3 +1,4 @@
+import { PortalNotificationsPage } from "@/features/customer/pages/PortalNotificationsPage";
 import {EmployeeHrSettingsPage} from "@/features/employee/pages/EmployeeHrSettingsPage";
 import {EmployeeHrReportsPage} from "@/features/employee/pages/EmployeeHrReportsPage";
 import {EmployeeLeavePage} from "@/features/employee/pages/EmployeeLeavePage";
@@ -552,7 +553,7 @@ export const router = createBrowserRouter([
               // working feature; both surfaces read from the same backend Notification
               // model this route's sibling below does.
               { path: "/portal/notifications", element: <MessagesPage /> },
-              { path: "/portal/alerts", element: <NotificationListPage /> },
+              { path: "/portal/alerts", element: <PortalNotificationsPage /> },
               { path: "/portal/support", element: <SupportPage /> },
             ],
           },
