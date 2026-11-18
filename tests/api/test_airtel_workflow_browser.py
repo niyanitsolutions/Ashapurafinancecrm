@@ -1,4 +1,3 @@
-from test_airtel_transport import confirmed_auth_stub  # noqa: F401
 
 # ruff: noqa: F811
 """Opt-in local browser + real API/MongoDB, with Airtel completely mocked."""
@@ -39,7 +38,7 @@ async def test_airtel_owner_workflow_browser(
     await ensure_integrations_indexes(db)
     received = []
 
-    async def gateway(body, authorization):
+    async def gateway(body, username, password):
         received.append(body["message"].split(" is ")[1].split(".")[0])
         return 200, None
 

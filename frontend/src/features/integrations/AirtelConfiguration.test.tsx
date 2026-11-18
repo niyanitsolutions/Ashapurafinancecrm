@@ -15,8 +15,8 @@ async function form() {
   return dialog;
 }
 it("shows approved defaults and fully sensitive credential inputs", async () => {
-  const dialog = await form(); expect(dialog.getByLabelText("Username")).toHaveAttribute("type","text"); expect(dialog.getByLabelText("Password")).toHaveAttribute("type","password"); expect(dialog.getByLabelText("API Endpoint")).toHaveValue("https://iqsms.airtel.in/api/v1/send-prepaid-sms"); expect(dialog.getByLabelText("Sender ID")).toHaveValue("ASHFNS"); expect(dialog.getByLabelText("DLT Template ID")).toHaveValue("1077151820081508033"); expect(dialog.getByLabelText("DLT Entity ID")).toHaveValue("AIR7316372024"); for(const label of ["Customer ID","Username"])
-    expect(dialog.getByLabelText(label)).toHaveAttribute("type", "text"); expect(dialog.getByLabelText("Message Type")).toHaveValue("TRANSACTIONAL"); expect(dialog.getByRole("status")).toHaveTextContent("Authentication is awaiting Airtel documentation");
+  const dialog = await form(); expect(dialog.getByLabelText("Username")).toHaveAttribute("type","text"); expect(dialog.getByLabelText("Password")).toHaveAttribute("type","password"); expect(dialog.getByLabelText("API Endpoint")).toHaveValue("https://iqsms.airtel.in/api/v1/send-prepaid-sms"); expect(dialog.getByLabelText("Sender ID")).toHaveValue("ASHFNS"); expect(dialog.getByLabelText("DLT Template ID")).toHaveValue("1077151820081508033"); expect(dialog.getByLabelText("DLT Entity ID")).toHaveValue("1001474305342749488"); for(const label of ["Customer ID","Username"])
+    expect(dialog.getByLabelText(label)).toHaveAttribute("type", "text"); expect(dialog.getByLabelText("Message Type")).toHaveValue("TRANSACTIONAL"); expect(dialog.getByRole("status")).toHaveTextContent("Airtel uses HTTP Basic authentication");
 });
 it("saves encrypted-backend draft without inventing a successful connection", async () => {
   const dialog = await form(); fireEvent.change(dialog.getByPlaceholderText("Name (e.g. Meta Production)"), { target: { value: "Airtel Production draft" } }); for(const label of ["Customer ID","Username","Password"])

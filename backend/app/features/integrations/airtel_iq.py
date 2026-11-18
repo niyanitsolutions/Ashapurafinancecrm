@@ -1,4 +1,4 @@
-"""Confirmed Airtel payload fields; three-credential authentication remains undocumented."""
+"""Owner-confirmed Airtel prepaid HTTP Basic authentication and SMS mapping."""
 
 from typing import Any
 
@@ -11,12 +11,12 @@ DEFAULTS = {
     "api_url": ENDPOINT,
     "sender_id": "ASHFNS",
     "dlt_template_id": "1077151820081508033",
-    "entity_id": "AIR7316372024",
+    "entity_id": "1001474305342749488",
     "message_type": "TRANSACTIONAL",
-    "destination_template": '["{{mobile}}"]',
+    "destination_template": "[]",
 }
-# Credentials are collected securely. Their wire authentication format is not known.
-# Legacy header/message parsing values are retained encrypted but cannot authorize a send.
+# Username/password are passed only to HTTPX BasicAuth. Legacy manual headers
+# are removed when corrected settings are saved or explicitly migrated.
 SENSITIVE = frozenset({"customer_id", "username", "password", "authorization_value"})
 MASK = "********"
 BLOCKED = "Save and validate the complete Airtel IQ configuration, then confirm the account contract. No SMS was sent; activation is unavailable."
@@ -38,7 +38,17 @@ ALLOWED = frozenset(
 def validate_config(values: dict[str, str]) -> dict[str, str]:
     if values.keys() - ALLOWED:
         raise ValidationError("Unsupported Airtel IQ configuration fields.")
-    data = DEFAULTS | values
+    data = DEFAULTS | corrected_values(values)
+    import json
+
+    try:
+        destination_valid = json.loads(data["destination_template"]) == []
+    except (ValueError, TypeError):
+        destination_valid = False
+    if not destination_valid:
+        raise ValidationError(
+            "Destination Address mapping must be []; the recipient is inserted at runtime."
+        )
     if any(data[key] != value for key, value in DEFAULTS.items() if key != "destination_template"):
         raise ValidationError(
             "Use the supplied Airtel IQ prepaid endpoint and approved sender/DLT identifiers."
@@ -65,6 +75,7 @@ def contract_ready(config: dict[str, str]) -> bool:
     """Local consistency only; never authenticates or sends an SMS."""
     import json
 
+    config = corrected_values(config)
     try:
         return (
             all(
@@ -78,7 +89,7 @@ def contract_ready(config: dict[str, str]) -> bool:
                 config.get(key, "").strip() and config.get(key) != MASK
                 for key in ("username", "password")
             )
-            and json.loads(config.get("destination_template", "")) == ["{{mobile}}"]
+            and json.loads(config.get("destination_template", "")) == []
         )
     except (ValueError, TypeError):
         return False
@@ -107,7 +118,7 @@ def config_fingerprint(config: dict[str, str]) -> str:
         json.dumps(
             {
                 k: v
-                for k, v in config.items()
+                for k, v in corrected_values(config).items()
                 if k
                 not in {
                     "contract_confirmed",
@@ -125,6 +136,7 @@ def config_fingerprint(config: dict[str, str]) -> str:
 def validation_errors(config: dict[str, str]) -> list[str]:
     import json
 
+    config = corrected_values(config)
     errors = []
     for key, value in DEFAULTS.items():
         if key != "destination_template" and config.get(key) != value:
@@ -135,11 +147,11 @@ def validation_errors(config: dict[str, str]) -> list[str]:
         if not config.get(key, "").strip() or config.get(key) == MASK:
             errors.append(key + ": a saved credential is required.")
     try:
-        valid = json.loads(config.get("destination_template", "")) == ["{{mobile}}"]
+        valid = json.loads(config.get("destination_template", "")) == []
     except (ValueError, TypeError):
         valid = False
     if not valid:
-        errors.append("destination_template: use one {{mobile}} string in a JSON array.")
+        errors.append("destination_template: use []; the recipient is inserted at runtime.")
     if config.get("contract_confirmed", "false") not in {"false", "true"}:
         errors.append("contract_confirmed: invalid confirmation state.")
     return errors
@@ -156,14 +168,32 @@ def require_validated(
             "Run successful Validate Configuration (no SMS) on the saved settings first."
         )
     if require_authentication and not authentication_ready(values):
-        raise ValidationError(AUTHENTICATION_PENDING)
+        raise ValidationError(
+            "Save Customer ID, Username and Password before using Airtel Basic authentication."
+        )
     if values.get("contract_confirmed") != "true" or not contract_ready(values):
         raise ValidationError("Confirm and save the account-specific Airtel contract first.")
 
 
-AUTHENTICATION_PENDING = "Airtel authentication is not documented for this prepaid endpoint. Customer ID, Username and Password can be saved securely, but SMS submission and activation are blocked until Airtel confirms the exact authentication mechanism. No SMS was sent."
+def authentication_ready(config: dict[str, str]) -> bool:
+    """Credential availability only; actual authentication is determined by Airtel."""
+    return all(
+        config.get(key, "").strip() and config.get(key) != MASK
+        for key in ("customer_id", "username", "password")
+    )
 
 
-def authentication_ready(_config: dict[str, str]) -> bool:
-    """No runtime flag, guessed scheme or owner-entered header can bypass missing docs."""
-    return False
+def corrected_values(values: dict[str, str]) -> dict[str, str]:
+    """Only known obsolete mappings; credentials and unrelated settings are retained."""
+    import json
+
+    data = dict(values)
+    if data.get("entity_id") == "AIR7316372024":
+        data["entity_id"] = DEFAULTS["entity_id"]
+    try:
+        if json.loads(data.get("destination_template", "[]")) in (["{{mobile}}"], ["{mobile}"]):
+            data["destination_template"] = "[]"
+    except (ValueError, TypeError):
+        pass
+    data.pop("authorization_value", None)
+    return data

@@ -272,14 +272,10 @@ async def test_whatsapp(config: dict[str, str]) -> ConnectionCheckResult:
 async def test_sms(config: dict[str, str]) -> ConnectionCheckResult:
     if config.get("provider") == "airtel_iq":
         from app.features.integrations.airtel_iq import (
-            AUTHENTICATION_PENDING,
-            authentication_ready,
             validation_errors,
         )
         errors=validation_errors(config)
         message="; ".join(errors) if errors else "Configuration validation successful. No SMS was sent. Airtel authentication and delivery are not yet verified."
-        if not errors and not authentication_ready(config):
-            message += " " + AUTHENTICATION_PENDING
         return ConnectionCheckResult(not errors, 0, message, kind="configuration_validation")
     if config.get("provider") == "msg91":
         auth_key = config.get("auth_key")

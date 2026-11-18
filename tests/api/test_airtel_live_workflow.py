@@ -1,4 +1,3 @@
-from test_airtel_transport import confirmed_auth_stub  # noqa: F401
 
 """All provider calls are mocked; no production SMS or deployment."""
 
@@ -17,7 +16,7 @@ from test_airtel_transport import CONFIG
 async def setup(client, mock_db, owner_headers, monkeypatch):
     calls = []
 
-    async def request(body, authorization):
+    async def request(body, username, password):
         calls.append(body)
         return 200, None
 
@@ -192,7 +191,7 @@ async def test_failed_or_ambiguous_send_records_failure_without_retry(
 
     _row, url, calls = await setup(client, mock_db, owner_headers, monkeypatch)
 
-    async def request(body, auth):
+    async def request(body, username, password):
         calls.append(True)
         if mode == "unknown":
             raise httpx.ReadTimeout("private credential details")

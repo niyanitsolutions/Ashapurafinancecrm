@@ -488,7 +488,8 @@ export function IntegrationDetailsPage() {
         </div>
         {config.provider === "airtel_iq" && <AirtelTestPanel active={config.is_active && config.airtel_workflow?.authentication_ready !== false} configId={config.id} disabledReason={sendReason} savedChallengeId={config.airtel_workflow?.challenge_id} alreadyVerified={Boolean(config.airtel_workflow?.verified_at)} onChanged={(notice) => { setMessage(notice); load(); }}/>}
         {isAirtel && config.airtel_workflow?.authentication_ready === false && <p role="status" className="mb-4 rounded border border-warning p-3">{config.airtel_workflow.authentication_message}</p>}
-        {isAirtel && <ol className="mb-4 text-sm space-y-1"><li>1. Configuration saved</li><li>2. Configuration {config.airtel_workflow?.validated_at ? "validated" : "not yet validated"}</li><li>3. Contract {config.config.contract_confirmed === "true" ? "confirmed" : "not confirmed"}</li><li>4. Test SMS {config.airtel_workflow?.submission_status ?? (config.last_success_at ? "submitted" : "not yet submitted")}</li><li>5. Test OTP {config.airtel_workflow?.verified_at ? "verified" : "not yet verified"}</li><li>6. Integration {config.airtel_workflow?.authentication_ready === false ? "blocked pending authentication" : config.is_active ? "active" : "inactive"}</li></ol>}
+        {isAirtel && config.airtel_workflow?.configuration_upgrade_required && <p className="mb-4 rounded border border-warning p-3">Apply the confirmed Entity ID and dynamic recipient mapping, save, then validate and test again. Credentials are preserved.</p>}
+        {isAirtel && <ol className="mb-4 text-sm space-y-1"><li>1. Configuration saved</li><li>2. Configuration {config.airtel_workflow?.validated_at ? "validated" : "not yet validated"}</li><li>3. Contract {config.config.contract_confirmed === "true" ? "confirmed" : "not confirmed"}</li><li>4. Test SMS {config.airtel_workflow?.submission_status ?? (config.last_success_at ? "submitted" : "not yet submitted")}</li><li>5. Test OTP {config.airtel_workflow?.verified_at ? "verified" : "not yet verified"}</li><li>6. Integration {config.airtel_workflow?.authentication_ready === false ? "credentials incomplete" : config.is_active ? "active" : "inactive"}</li></ol>}
         {config.provider === "airtel_iq" && <p role="status" className="mb-4 text-sm">Complete the steps above. Configuration validation sends no SMS. An explicit test submits the OTP; verify the received code separately.</p>}
         {config.last_error_message && <p className="mb-4 text-sm text-danger">Last error: {config.last_error_message}</p>}
         {configJustChanged && (
@@ -579,7 +580,7 @@ export function IntegrationDetailsPage() {
                     <option value="false">Not confirmed</option><option value="true">Confirmed with Airtel</option>
                   </select>
                 ) : <input
-                  aria-label={config.provider === "airtel_iq" ? field.label : undefined} name={`${config.provider}-${field.key}`} autoComplete={field.secret ? "new-password" : "off"} readOnly={isAirtel && field.key === "api_url"} type={field.secret ? "password" : isAirtel && field.key === "api_url" ? "url" : "text"} placeholder={field.secret ? "Leave blank to keep current value" : config.config[field.key] || ""}
+                  aria-label={config.provider === "airtel_iq" ? field.label : undefined} name={`${config.provider}-${field.key}`} autoComplete={field.secret ? "new-password" : "off"} readOnly={isAirtel && ["api_url","destination_template"].includes(field.key)} type={field.secret ? "password" : isAirtel && field.key === "api_url" ? "url" : "text"} placeholder={field.secret ? "Leave blank to keep current value" : config.config[field.key] || ""}
                   value={fieldValues[field.key] || ""} onChange={(e) => setFieldValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
                   className="mt-1 block w-full rounded border border-border px-3 py-2 text-sm"
                 />}
@@ -588,6 +589,7 @@ export function IntegrationDetailsPage() {
             ))}
           </div>
           {isAirtel && config.airtel_workflow?.expected_endpoint && fieldValues.api_url !== config.airtel_workflow.expected_endpoint && <Button variant="secondary" onClick={()=>setFieldValues(old=>({...old,api_url:config.airtel_workflow!.expected_endpoint}))}>Restore confirmed Airtel endpoint</Button>}
+          {isAirtel && config.airtel_workflow?.configuration_upgrade_required && <Button variant="secondary" onClick={()=>void run(()=>updateIntegrationConfig(config.id,{config:{...pendingChanges,entity_id:config.airtel_workflow!.expected_entity_id!,destination_template:config.airtel_workflow!.expected_destination_mapping!}}),"Confirmed SMS mappings saved. Validate and test again.")}>Apply confirmed SMS mappings</Button>}
           <SubmitButton>Save Changes</SubmitButton>
         </form>
       </div>

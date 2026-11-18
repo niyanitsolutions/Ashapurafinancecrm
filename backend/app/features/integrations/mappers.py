@@ -53,11 +53,12 @@ def config_to_response(config: IntegrationConfig, *, reveal: dict[str, str] | No
     workflow = None
     if config.provider == "airtel_iq":
         from app.features.integrations.airtel_iq import (
-            AUTHENTICATION_PENDING,
+            DEFAULTS,
             ENDPOINT,
             authentication_ready,
+            corrected_values,
         )
-        workflow = {"authentication_ready": authentication_ready(decrypted), "authentication_message": None if authentication_ready(decrypted) else AUTHENTICATION_PENDING, "expected_endpoint": ENDPOINT, "validated_at": config.airtel_config_validated_at.isoformat() if config.airtel_config_validated_at else None,
+        workflow = {"authentication_ready": authentication_ready(decrypted), "authentication_message": None if authentication_ready(decrypted) else "Save Customer ID, Username and Password to use Airtel Basic authentication.", "expected_entity_id": DEFAULTS["entity_id"], "expected_destination_mapping": DEFAULTS["destination_template"], "configuration_upgrade_required": corrected_values(decrypted) != decrypted or decrypted.get("entity_id") != DEFAULTS["entity_id"] or decrypted.get("destination_template") != "[]", "expected_endpoint": ENDPOINT, "validated_at": config.airtel_config_validated_at.isoformat() if config.airtel_config_validated_at else None,
                     "verified_at": config.airtel_test_verified_at.isoformat() if config.airtel_test_verified_at else None,
                     "challenge_id": config.airtel_test_challenge_id, "submission_status": config.airtel_last_submission_status}
     return IntegrationConfigResponse(

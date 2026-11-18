@@ -1,12 +1,11 @@
 """Airtel prepaid transport. Unknown account-specific rules are explicit configuration.
 
 The payload uses a ten-digit recipient and HTTP 200 submission success.
-Authentication is unconfirmed; default submission is blocked before provider I/O.
+HTTPX generates HTTP Basic authentication from saved Username and Password.
 Timeout/ambiguous responses are never automatically retried (provider idempotency unknown).
 """
 
 import hashlib
-import json
 from time import perf_counter
 from typing import Any
 
@@ -16,7 +15,6 @@ from pymongo.errors import DuplicateKeyError
 from app.core.exceptions import ValidationError
 from app.features.integrations.airtel_iq import (
     APPROVED_MESSAGE,
-    AUTHENTICATION_PENDING,
     BLOCKED,
     ENDPOINT,
     authentication_ready,
@@ -26,7 +24,7 @@ from app.features.integrations.airtel_iq import (
 from app.utils.datetime import utc_now
 
 
-async def request(body: dict[str, Any], authorization: str) -> tuple[int, Any]:
+async def request(body: dict[str, Any], username: str, password: str) -> tuple[int, Any]:
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(15, connect=5, write=10, pool=5), follow_redirects=False
     ) as client:
@@ -35,8 +33,8 @@ async def request(body: dict[str, Any], authorization: str) -> tuple[int, Any]:
             headers={
                 "accept": "application/json",
                 "content-type": "application/json",
-                "Authorization": authorization,
             },
+            auth=httpx.BasicAuth(username, password),
             json=body,
         )
     from app.features.communication.airtel_diagnostics import MAX_BODY, ProviderBody
@@ -55,7 +53,7 @@ async def submit(
     if len(mobile) != 10 or not mobile.isascii() or not mobile.isdigit():
         raise ValidationError("Use the registered ten-digit mobile number.")
     if not authentication_ready(config):
-        return {"success": False, "status": "unconfigured", "error": AUTHENTICATION_PENDING}
+        return {"success": False, "status": "unconfigured", "error": "Save Customer ID, Username and Password before submitting an Airtel SMS."}
     config = validate_config(
         {k: v for k, v in config.items() if k not in {"provider", "_provider"}}
     )
@@ -91,11 +89,9 @@ async def submit(
                 },
             ),
         }
-    body = {
+    body: dict[str, Any] = {
         "customerId": config.get("customer_id", ""),
-        "destinationAddress": json.loads(
-            config["destination_template"].replace("{{mobile}}", mobile)
-        ),
+        "destinationAddress": [mobile],
         "dltTemplateId": config["dlt_template_id"],
         "entityId": config["entity_id"],
         "message": APPROVED_MESSAGE.replace("{OTP}", otp),
@@ -108,7 +104,7 @@ async def submit(
     category = "unexpected_response"
     details = {"response_format": "unavailable", "response_excerpt": None}
     try:
-        code, payload = await request(body, config["authorization_value"])
+        code, payload = await request(body, config["username"], config["password"])
         if type(code) is not int or not 100 <= code <= 599:
             code = None
         else:

@@ -243,7 +243,7 @@ export function CreateConfigForm({
         onSubmit({ integration_type: integrationType, provider, name, config: fieldValues });
       }}
     >
-      {isAirtel && <p role="status" className="mb-4 text-sm">Customer ID, Username and Password can be saved securely. Authentication is awaiting Airtel documentation. SMS submission and activation remain blocked; no Basic/Bearer scheme or token endpoint is assumed.</p>}
+      {isAirtel && <p role="status" className="mb-4 text-sm">Airtel uses HTTP Basic authentication with the saved Username and Password. Customer ID is sent separately. Validation sends no SMS; use an explicitly authorized test and verify its received OTP before activation.</p>}
       <ol className="space-y-5">
         <li>
           <StepHeading step={1} title="Choose Provider" />
@@ -294,7 +294,7 @@ export function CreateConfigForm({
                     </select>
                   ) : (
                     <input
-                      name={`${provider}-${field.key}`} autoComplete={field.secret ? "new-password" : "off"} readOnly={isAirtel && field.key === "api_url"} aria-label={isAirtel ? field.label : undefined} type={field.secret ? "password" : "text"} value={fieldValues[field.key] || ""}
+                      name={`${provider}-${field.key}`} autoComplete={field.secret ? "new-password" : "off"} readOnly={isAirtel && ["api_url","destination_template"].includes(field.key)} aria-label={isAirtel ? field.label : undefined} type={field.secret ? "password" : "text"} value={fieldValues[field.key] || ""}
                       onChange={(e) => { setFieldValues((prev) => ({ ...prev, [field.key]: e.target.value })); resetTestState(); }}
                       className="mt-1 block w-full rounded border border-border px-3 py-2 text-sm"
                     />

@@ -1,4 +1,3 @@
-from test_airtel_transport import confirmed_auth_stub  # noqa: F401
 
 """Untrusted provider replies must never leak echoed SMS/PII or trigger retries."""
 

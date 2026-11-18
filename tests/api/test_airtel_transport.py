@@ -1,8 +1,4 @@
-"""Historical transport regressions with a TEST-ONLY auth-confirmation stub.
-
-This stub is not an implemented Airtel authentication contract. Default runtime
-blocking is tested separately in test_airtel_authentication_pending.py.
-"""
+"""Mocked confirmed HTTP Basic transport tests; never send real SMS."""
 
 import asyncio
 import json
@@ -16,20 +12,12 @@ CONFIG = DEFAULTS | {
     "customer_id": "fixture-customer",
     "username": "fixture-username",
     "password": "fixture-password",
-    "authorization_value": "ASHFNS",
     "message_type": "TRANSACTIONAL",
-    "destination_template": '["{{mobile}}"]',
+    "destination_template": "[]",
     "success_field": "result.accepted",
     "success_value": "true",
     "contract_confirmed": "true",
 }
-
-
-@pytest.fixture(autouse=True)
-def confirmed_auth_stub(monkeypatch):
-    from app.features.integrations import airtel_iq
-    monkeypatch.setattr(airtel_iq,"authentication_ready",lambda _config:True)
-    monkeypatch.setattr(adapter,"authentication_ready",lambda _config:True)
 
 
 @pytest.mark.parametrize(
@@ -47,14 +35,17 @@ async def test_invalid_destination_shape_never_sends(mock_db, monkeypatch, desti
         raise AssertionError("Invalid destination must not reach Airtel")
 
     monkeypatch.setattr(adapter, "request", forbidden)
-    result = await adapter.submit(
-        mock_db,
-        CONFIG | {"destination_template": destination, "contract_confirmed": "false"},
-        "9000000001",
-        "0472",
-        "invalid-destination",
-    )
-    assert not result["success"]
+    from app.core.exceptions import ValidationError
+
+    with pytest.raises(ValidationError):
+        await adapter.submit(
+            mock_db,
+            CONFIG
+            | {"destination_template": destination, "contract_confirmed": "false"},
+            "9000000001",
+            "0472",
+            "invalid-destination",
+        )
     assert await mock_db.sms_submissions.count_documents({}) == 0
 
 
@@ -88,8 +79,18 @@ async def test_exact_post_headers_body_and_no_secret_persistence(mock_db, monkey
     assert call["headers"] == {
         "accept": "application/json",
         "content-type": "application/json",
-        "Authorization": "ASHFNS",
     }
+    import base64
+
+    assert isinstance(call["auth"], httpx.BasicAuth)
+    authenticated = next(call["auth"].auth_flow(httpx.Request("POST", url)))
+    assert (
+        authenticated.headers["authorization"]
+        == "Basic "
+        + base64.b64encode(
+            (CONFIG["username"] + ":" + CONFIG["password"]).encode()
+        ).decode()
+    )
     assert call["json"] == {
         "customerId": "fixture-customer",
         "destinationAddress": ["9000000001"],
@@ -242,3 +243,76 @@ async def test_connection_failure_unknown_without_provider_schema(mock_db, monke
     )
     assert result["status"] == "unknown" and not result["success"]
     assert "private details" not in str(result)
+
+
+async def test_each_recipient_is_runtime_array_without_saved_number(
+    mock_db, monkeypatch
+):
+    bodies = []
+
+    async def request(body, username, password):
+        bodies.append(body)
+        return 200, None
+
+    monkeypatch.setattr(adapter, "request", request)
+    for index, mobile in enumerate(["9000000011", "9000000022"]):
+        result = await adapter.submit(
+            mock_db, CONFIG, mobile, "0472", "recipient-" + str(index)
+        )
+        assert result["success"]
+        assert bodies[index]["destinationAddress"] == [mobile]
+    assert CONFIG["destination_template"] == "[]"
+    assert all("{{" not in json.dumps(body) for body in bodies)
+
+
+async def test_httpx_applies_basic_auth_on_wire_and_redacts_echo(
+    mock_db, monkeypatch, caplog
+):
+    import base64
+
+    client_class = httpx.AsyncClient
+    expected = (
+        "Basic "
+        + base64.b64encode(
+            (CONFIG["username"] + ":" + CONFIG["password"]).encode()
+        ).decode()
+    )
+    calls = []
+
+    def handler(request):
+        calls.append(True)
+        assert request.method == "POST" and str(request.url) == ENDPOINT
+        assert request.headers["authorization"] == expected
+        payload = json.loads(request.content)
+        assert payload["customerId"] == CONFIG["customer_id"]
+        assert "username" not in payload and "password" not in payload
+        return httpx.Response(
+            401,
+            json={
+                "message": "Invalid credentials "
+                + expected
+                + " "
+                + CONFIG["username"]
+                + " "
+                + CONFIG["password"],
+                "authorization": expected,
+            },
+        )
+
+    def client(**kwargs):
+        return client_class(**kwargs, transport=httpx.MockTransport(handler))
+
+    monkeypatch.setattr(httpx, "AsyncClient", client)
+    outcome = await adapter.submit(
+        mock_db, CONFIG, "9000000001", "0472", "real-httpx-mock-wire"
+    )
+    assert not outcome["success"] and outcome["diagnostics"]["http_status"] == 401
+    safe = (
+        json.dumps(outcome)
+        + caplog.text
+        + str((await mock_db.sms_submissions.find_one({}))["diagnostics"])
+    )
+    for secret in (CONFIG["username"], CONFIG["password"], expected):
+        assert secret not in safe
+    await adapter.submit(mock_db, CONFIG, "9000000001", "0472", "real-httpx-mock-wire")
+    assert len(calls) == 1

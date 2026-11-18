@@ -8,7 +8,7 @@ export interface IntegrationProvider {
 }
 
 export interface IntegrationConfig {
-  airtel_workflow?: {authentication_ready?: boolean; authentication_message?: string | null;submission_status?: string | null; expected_endpoint: string; validated_at: string | null; verified_at: string | null; challenge_id: string | null} | null;
+  airtel_workflow?: {expected_entity_id?: string; expected_destination_mapping?: string; configuration_upgrade_required?: boolean;authentication_ready?: boolean; authentication_message?: string | null;submission_status?: string | null; expected_endpoint: string; validated_at: string | null; verified_at: string | null; challenge_id: string | null} | null;
   id: string;
   integration_code: string;
   integration_type: string;

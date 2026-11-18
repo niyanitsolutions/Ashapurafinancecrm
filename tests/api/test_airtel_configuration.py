@@ -1,4 +1,3 @@
-from test_airtel_transport import confirmed_auth_stub  # noqa: F401
 
 """Airtel configuration-stage tests. Network is forbidden; PIN runtime is pending."""
 
@@ -274,7 +273,7 @@ async def test_no_sms_validation_and_confirmation_gate(
     url = BASE + "/" + row["id"]
     assert (
         row["config"]["customer_id"] == "********"
-        and row["config"]["authorization_value"] == "********"
+        and row["config"]["password"] == "********"
     )
     assert (
         await client.patch(
@@ -303,7 +302,7 @@ async def test_no_sms_validation_and_confirmation_gate(
     assert changed.json()["data"]["last_tested_at"] is None
 
 
-async def test_registration_id_not_silently_used_as_entity(
+async def test_unconfirmed_entity_is_not_silently_accepted(
     client, mock_db, owner_headers
 ):
     from test_airtel_transport import CONFIG
@@ -317,7 +316,7 @@ async def test_registration_id_not_silently_used_as_entity(
             "provider": "airtel_iq",
             "name": "Wrong entity",
             "config": CONFIG
-            | {"contract_confirmed": "false", "entity_id": "1001474305342749488"},
+            | {"contract_confirmed": "false", "entity_id": "wrong-api-entity"},
         },
     )
     assert result.status_code == 422

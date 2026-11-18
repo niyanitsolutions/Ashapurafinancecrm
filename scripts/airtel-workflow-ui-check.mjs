@@ -3,7 +3,7 @@ import {mkdir,writeFile} from 'node:fs/promises';
 import {createInterface} from 'node:readline/promises';
 import {chromium} from '../frontend/node_modules/.cache/voice-ui-audit/node_modules/playwright/index.mjs';
 const origin='http://127.0.0.1:5175';const authorization=process.env.AFS_TEST_AUTH;const configs=JSON.parse(process.env.AFS_TEST_CONFIGS);
-const output='docs/screenshots/airtel-sms-workflow-2026-11-16';await mkdir(output,{recursive:true});
+const output='docs/screenshots/airtel-basic-auth-2026-11-18';await mkdir(output,{recursive:true});
 const input=createInterface({input:process.stdin,terminal:false});const results=[];
 const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
 try{for(const [index,width] of [1440,390].entries()){
@@ -12,7 +12,7 @@ try{for(const [index,width] of [1440,390].entries()){
  await context.route('**/*',async route=>{const req=route.request();const url=new URL(req.url());if(!url.pathname.startsWith('/api/v1/'))return url.origin===origin?route.continue():route.abort();if(url.pathname==='/api/v1/auth/refresh')return route.fulfill({json:{success:true,data:{access_token:authorization.slice(7),refresh_token:'isolated-airtel-browser'},error:null,meta:null}});const response=await route.fetch({url:'http://127.0.0.1:18769'+url.pathname+url.search,headers:{...req.headers(),authorization}});await route.fulfill({response});});
  const page=await context.newPage();const errors=[];page.on('pageerror',error=>errors.push(error.message));
  await page.goto(origin+'/integrations/'+configs[index],{waitUntil:'domcontentloaded',timeout:60000});
- const endpoint=page.getByLabel('API Endpoint',{exact:true});await endpoint.waitFor();assert.equal(await endpoint.inputValue(),'https://iqsms.airtel.in/api/v1/send-prepaid-sms');assert.equal(await endpoint.evaluate(node=>node.readOnly),true);assert.equal(await page.getByLabel('Customer ID',{exact:true}).inputValue(),'');
+ const endpoint=page.getByLabel('API Endpoint',{exact:true});await endpoint.waitFor();assert.equal(await page.getByLabel('DLT Entity ID',{exact:true}).inputValue(),'1001474305342749488');assert.equal(await page.getByLabel('Destination Address mapping',{exact:true}).inputValue(),'[]');assert.equal(await endpoint.inputValue(),'https://iqsms.airtel.in/api/v1/send-prepaid-sms');assert.equal(await endpoint.evaluate(node=>node.readOnly),true);assert.equal(await page.getByLabel('Customer ID',{exact:true}).inputValue(),'');
  await page.reload();await endpoint.waitFor();assert.equal(await endpoint.inputValue(),'https://iqsms.airtel.in/api/v1/send-prepaid-sms');
  await page.getByRole('button',{name:'Validate Configuration (no SMS)',exact:true}).click();const contract=page.getByLabel('Account-specific API contract confirmed',{exact:true});await contract.waitFor();await page.waitForFunction(()=>!document.querySelector('select[aria-label="Account-specific API contract confirmed"]').disabled);await contract.selectOption('true');await page.getByRole('button',{name:'Save Changes',exact:true}).click();
  await page.getByRole('button',{name:'Enable',exact:true}).click();await page.getByRole('button',{name:'Disable',exact:true}).waitFor();

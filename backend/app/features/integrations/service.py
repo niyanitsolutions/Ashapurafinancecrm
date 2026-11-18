@@ -169,8 +169,15 @@ class IntegrationsService:
                     updates["airtel_validated_fingerprint"] = None
             current.update(incoming)
             if config.provider == "airtel_iq":
-                from app.features.integrations.airtel_iq import validate_config
-                current = validate_config(current)
+                from app.features.integrations.airtel_iq import corrected_values, validate_config
+                corrected = corrected_values(current)
+                if corrected != current:
+                    corrected["contract_confirmed"] = "false"
+                    credentials_changed = True
+                    updates["last_tested_at"] = None
+                    updates["airtel_config_validated_at"] = None
+                    updates["airtel_validated_fingerprint"] = None
+                current = validate_config(corrected)
             updates["config_encrypted"] = encrypt(json.dumps(current))
             if credentials_changed:
                 # Editing credentials must require re-proving them — a stale "last success"
@@ -212,14 +219,13 @@ class IntegrationsService:
             require_owner(actor)
         if config.provider == "airtel_iq":
             from app.features.integrations.airtel_iq import (
-                AUTHENTICATION_PENDING,
                 BLOCKED,
                 authentication_ready,
                 confirmed_contract,
             )
             values = json.loads(decrypt(config.config_encrypted))
             if not authentication_ready(values):
-                raise ValidationError(AUTHENTICATION_PENDING)
+                raise ValidationError("Save Customer ID, Username and Password before using Airtel Basic authentication.")
             if not confirmed_contract(values):
                 raise ValidationError(BLOCKED)
         if config.provider == "airtel_iq":
