@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { FormField } from "./FormField";
 import { SubmitButton } from "./SubmitButton";
 import { ErrorBanner } from "./ErrorBanner";
@@ -122,6 +122,7 @@ export function PinAuthPanel({ returnTo, onLegacy }: {
     setError(null);
   }
   return (
+    <>
     <div className="customer-pin-panel">
       <h2 className="mb-5 text-lg font-semibold">{title}</h2>
       <ErrorBanner message={error} />
@@ -171,14 +172,19 @@ export function PinAuthPanel({ returnTo, onLegacy }: {
       {mode === "login" ? (
         <div className="mt-4 grid gap-3 text-sm">
           <button type="button" className="text-primary" disabled={busy} onClick={() => start("FORGOT_PIN")}>Forgot PIN</button>
-          <button type="button" className="text-primary" disabled={busy} onClick={() => start("FIRST_TIME_LOGIN")}>First-time verification / Create PIN</button>
-          {policy === "enrollment" && <button type="button" className="text-white/70" disabled={busy} onClick={onLegacy}>
-            Existing account migration: password sign-in
-          </button>}
+          <Link className="text-primary hover:underline text-center" to={returnTo ? `/create-account?return=${encodeURIComponent(returnTo)}` : "/create-account"}>Create New Account</Link>
         </div>
       ) : mode !== "success" && (
         <button type="button" className="mt-4 text-primary" disabled={busy} onClick={backToLogin}>Back to login</button>
       )}
     </div>
+    {mode === "login" && policy === "enrollment" && (
+      <p className="mt-4 text-sm text-white/60 text-center">
+        <button type="button" className="text-white/70" disabled={busy} onClick={onLegacy}>
+          Existing account migration: password sign-in
+        </button>
+      </p>
+    )}
+    </>
   );
 }

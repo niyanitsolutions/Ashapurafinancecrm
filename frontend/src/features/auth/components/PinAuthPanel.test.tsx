@@ -17,7 +17,7 @@ const challenge = { challenge_id: "fixture-challenge", masked_mobile: "******007
 function mount(returnTo: string | null = null) {
   return render(<MemoryRouter><PinAuthPanel returnTo={returnTo} onLegacy={vi.fn()} /></MemoryRouter>);
 }
-async function start(purpose = "First-time verification / Create PIN") {
+async function start(purpose = "Forgot PIN") {
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: purpose }));
   await user.type(screen.getByLabelText("Registered mobile number"), "9000000077");
@@ -68,10 +68,11 @@ describe("PIN sign in", () => {
     expect(screen.queryByText(/password sign-in/)).not.toBeInTheDocument();
   });
 
-  it("does not authenticate until OTP and matching PIN setup finish", async () => {
+  it("requires OTP and matching PINs before completing recovery", async () => {
+    vi.mocked(api.finishPin).mockResolvedValue({ message: "PIN reset" });
     mount("/portal");
     const user = await verify();
-    expect(api.startPin).toHaveBeenCalledWith("9000000077", "FIRST_TIME_LOGIN");
+    expect(api.startPin).toHaveBeenCalledWith("9000000077", "FORGOT_PIN");
     expect(session).not.toHaveBeenCalled();
     expect(screen.getByLabelText("Confirm PIN")).toHaveAttribute("type", "password");
     await user.type(screen.getByLabelText("New 4-digit PIN"), "0472");
@@ -82,9 +83,10 @@ describe("PIN sign in", () => {
     await user.clear(screen.getByLabelText("Confirm PIN"));
     await user.type(screen.getByLabelText("Confirm PIN"), "0472");
     await user.click(screen.getByRole("button", { name: "Save PIN" }));
-    await waitFor(() => expect(session).toHaveBeenCalledOnce());
+    await screen.findByRole("heading", { name: "PIN reset successful" });
+    expect(session).not.toHaveBeenCalled();
     expect(api.finishPin).toHaveBeenCalledWith("single-use-proof", "0472", "0472", null);
-    expect(navigate).toHaveBeenCalledWith("/portal", { replace: true });
+    expect(navigate).not.toHaveBeenCalled();
   });
 
   it("resets with a separate purpose and returns to login without a session", async () => {

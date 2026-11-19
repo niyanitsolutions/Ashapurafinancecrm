@@ -1,0 +1,47 @@
+[
+  {
+    "width": 390,
+    "result": "passed",
+    "checks": [
+      "exact-order",
+      "redundant-link-removed",
+      "registration-route",
+      "forgot-pin-entry",
+      "migration-entry",
+      "internal-tab-unchanged",
+      "no-overflow",
+      "no-runtime-errors"
+    ],
+    "providers": "mocked; no SMS"
+  },
+  {
+    "width": 768,
+    "result": "passed",
+    "checks": [
+      "exact-order",
+      "redundant-link-removed",
+      "registration-route",
+      "forgot-pin-entry",
+      "migration-entry",
+      "internal-tab-unchanged",
+      "no-overflow",
+      "no-runtime-errors"
+    ],
+    "providers": "mocked; no SMS"
+  },
+  {
+    "width": 1366,
+    "result": "passed",
+    "checks": [
+      "exact-order",
+      "redundant-link-removed",
+      "registration-route",
+      "forgot-pin-entry",
+      "migration-entry",
+      "internal-tab-unchanged",
+      "no-overflow",
+      "no-runtime-errors"
+    ],
+    "providers": "mocked; no SMS"
+  }
+]

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useLocation, useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { AuthPageLayout } from "@/features/auth/components/AuthPageLayout";
 import { PinAuthPanel } from "@/features/auth/components/PinAuthPanel";
 import { LoginForm } from "@/features/auth/components/LoginForm";
@@ -53,9 +53,6 @@ export function LoginPage() {
       />
       <div hidden={activeTab !== "customer" || legacyCustomer}>
         <PinAuthPanel returnTo={returnTo} onLegacy={() => setLegacyCustomer(true)} />
-        <p className="mt-4 text-sm text-white/60 text-center">
-          Don't have an account? <Link className="text-primary hover:underline" to={`/create-account${returnQuery}`}>Create New Account</Link>
-        </p>
       </div>
       {activeTab === "customer" && legacyCustomer && (
         <button type="button" className="mb-4 text-primary" onClick={() => setLegacyCustomer(false)}>Use customer PIN sign-in</button>
