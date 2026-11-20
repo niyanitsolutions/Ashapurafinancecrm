@@ -7,6 +7,7 @@ from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import ValidationError
 
+from app.features.customer.identity_name import application_name
 from app.features.customer.models import Application
 from app.features.customer.schemas import CompleteProfileRequest
 from app.shared.audit_log import write_audit_log
@@ -34,22 +35,16 @@ async def enrich_submitted_identity(
     schema = await db.application_form_definitions.find_one(
         {"_id": ObjectId(application.form_definition_id)}
     )
-    keys = {field["key"] for field in (schema or {}).get("fields", [])}
-    values = {
-        key: value
-        for key, value in application.form_data.items()
-        if key in keys
-        and key in {"full_name", "email", "date_of_birth", "gender", "address"}
-        and value
-    }
+    resolved_name = application_name(application, schema)
+    values = {"full_name": resolved_name} if resolved_name else {}
     name = values.get("full_name")
     if name is not None and (not isinstance(name, str) or normalized_name(name) in PLACEHOLDERS):
         values.pop("full_name", None)
-    candidates = {}
-    for key, value in values.items():
+    candidates: dict[str, Any] = {}
+    for key, input_value in values.items():
         try:
             profile = CompleteProfileRequest.model_validate(
-                {"full_name": customer["full_name"], key: value}
+                {"full_name": customer["full_name"], key: input_value}
             )
         except ValidationError:
             # A product field can differ from profile format. Skip that field without

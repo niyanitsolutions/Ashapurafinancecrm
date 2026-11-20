@@ -60,7 +60,7 @@ class LeadRepository(BaseRepository[Lead]):
             query["product_id"] = product_id
         if assigned_to == UNASSIGNED_SENTINEL:
             if stage == "fresh" and not created_by:
-                query["$and"] = [{"$or": [{"assigned_to": None}, {"assignment_origin": {"$in": ["automatic", "creator"]}}]}]
+                query["$and"] = [{"$or": [{"assigned_to": None}, {"assignment_origin": {"$in": ["automatic", "creator", "bulk"]}}]}]
             else:
                 query["assigned_to"] = None
             # `created_by` is only ever passed alongside UNASSIGNED_SENTINEL, by a

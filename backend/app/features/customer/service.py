@@ -836,6 +836,10 @@ class CustomerService:
         request_key: str | None = None,
     ) -> Application:
         from pymongo.errors import DuplicateKeyError
+        if lead_id and initial_assigned_to is None:
+            linked = await self._leads.find_by_id(lead_id)
+            initial_assigned_to = linked.assigned_to if linked else None
+        from app.features.leads.auto_assignment import AutoAssignment
 
         # Secure-link claims are get-or-create; independent applications remain
         # repeatable, but an explicit request key makes transport retries safe.
@@ -845,9 +849,13 @@ class CustomerService:
         if creation_key:
             existing = await self._applications.find_many({"creation_key": creation_key}, limit=1)
             if existing:
-                return existing[0]
+                if existing[0].auto_assignment_eligible and not existing[0].assigned_to:
+                    await AutoAssignment(self._db).assign("applications", existing[0].require_id(), actor, source="retry")
+                return await self._applications.find_by_id(existing[0].require_id()) or existing[0]
         code = await generate_id(self._db, IdPrefix.APPLICATION)
         application = Application(
+            auto_assignment_eligible=not bool(initial_assigned_to),
+            assignment_pending=not bool(initial_assigned_to) and await AutoAssignment(self._db).pending_on_intake(),
             application_code=code, user_id=user_id, customer_id=customer_id, lead_id=lead_id,
             product_category=product_category, product_id=product_id, form_definition_id=form_definition.require_id(),
             assigned_to=initial_assigned_to, created_by=actor.require_id(),
@@ -867,6 +875,12 @@ class CustomerService:
         await write_audit_log(
             self._db, event_type=AuditEvent.APPLICATION_STARTED, user_id=actor.require_id(), metadata={"application_id": application_id}
         )
+        if not initial_assigned_to:
+            from app.features.leads.auto_assignment import AutoAssignment
+
+            await self._db.applications.update_one({"_id": to_object_id(application_id), "assigned_to": None},
+                {"$set": {"auto_assignment_eligible": True}})
+            await AutoAssignment(self._db).assign("applications", application_id, actor)
         return await self._applications.find_by_id(application_id) or application
 
     async def _get_or_error_form_definition(self, product_category: str, product_id: str) -> ApplicationFormDefinition:
@@ -1560,9 +1574,7 @@ class CustomerService:
         from app.features.leads.auto_assignment import AutoAssignment
 
         await enrich_submitted_identity(self._db, application)
-        existing_case = await self._db.application_workflows.find_one(
-            {"application_id": application.require_id(), "is_deleted": False}, {"assigned_to": 1})
-        if not application.assigned_to and not application.lead_id and not (existing_case or {}).get("assigned_to"):
+        if not application.assigned_to:
             await self._db.applications.update_one(
                 {"_id": to_object_id(application.require_id()), "assigned_to": None,
                  "auto_assignment_eligible": {"$exists": False}},
@@ -1986,7 +1998,8 @@ class CustomerService:
         )
 
     async def assign_application(self, application_id: str, employee_id: str, actor: User) -> Application:
-        if await self._applications.find_by_id(application_id) is None:
+        previous = await self._applications.find_by_id(application_id)
+        if previous is None:
             raise NotFoundError("Application not found.")
         if await self._employees.find_by_id(employee_id) is None:
             raise ValidationError("Unknown employee_id.")
@@ -1995,7 +2008,7 @@ class CustomerService:
             raise NotFoundError("Application not found.")
         await write_audit_log(
             self._db, event_type=AuditEvent.APPLICATION_ASSIGNED, user_id=actor.require_id(),
-            metadata={"application_id": application_id, "employee_id": employee_id},
+            metadata={"application_id": application_id, "employee_id": employee_id, "old_employee_id": previous.assigned_to, "source": "manual"},
         )
         # Assignment-consistency fix: once a Loan/Insurance Case exists for this
         # Application, `ApplicationWorkflow.assigned_to` (Loan Management's own copy) is

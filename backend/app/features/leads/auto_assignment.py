@@ -14,6 +14,7 @@ from pymongo.errors import PyMongoError
 from app.constants.roles import OWNER
 from app.core.exceptions import ConflictError, ForbiddenError, ValidationError
 from app.features.auth.models import User
+from app.features.leads.assignment_policy import eligible_employees, eligible_record, intake_filter
 from app.shared.audit_log import write_audit_log
 from app.utils.datetime import utc_now
 
@@ -45,6 +46,12 @@ class AutoAssignment:
                 ("sequence", 0),
             )
         }
+
+    async def pending_on_intake(self) -> bool:
+        try:
+            return bool((await self.settings())["enabled"])
+        except PyMongoError:
+            return True  # Persist recoverable intake even if settings storage is unavailable.
 
     async def save(self, payload: AssignmentSettings, actor: User) -> dict[str, Any]:
         owner_only(actor)
@@ -140,7 +147,7 @@ class AutoAssignment:
             {"_id": oid}, {"$setOnInsert": notification.model_dump(exclude={"id"})}, upsert=True
         )
 
-    async def assign(self, collection: str, record_id: str, actor: User) -> None:
+    async def assign(self, collection: str, record_id: str, actor: User, *, source: str = "auto") -> None:
         """Claim -> reserve rotation -> persist assignment. Never raises to entry intake.
 
         Each reservation increments one singleton atomically; a crash can skip a slot,
@@ -154,6 +161,20 @@ class AutoAssignment:
         now = utc_now()
         claimed = False
         try:
+            current = await records.find_one({"_id": ObjectId(record_id), "is_deleted": False})
+            if not current or current.get("assigned_to") or not await eligible_record(self.db, collection, current):
+                return
+            if collection == "applications":
+                linked = await self.db.leads.find_one({"_id": ObjectId(current["lead_id"]), "is_deleted": False}, {"assigned_to": 1}) if current.get("lead_id") else None
+                case = await self.db.application_workflows.find_one({"application_id": record_id, "case_type": "loan", "is_deleted": False}, {"assigned_to": 1})
+                inherited = (linked or {}).get("assigned_to") or (case or {}).get("assigned_to")
+                if inherited:
+                    await records.update_one({"_id": current["_id"], "assigned_to": None, "version": current.get("version", 1), "assignment_event_pending": {"$exists": False}},
+                        {"$set": {"assigned_to": inherited, "assignment_origin": "linked", "auto_assignment_eligible": False,
+                            "assignment_event_pending": {"employee_id": inherited, "sequence": f"linked:{record_id}", "source": source,
+                                "actor_id": actor.require_id(), "at": now}}, "$inc": {"version": 1}})
+                    await self.deliver_event(collection, record_id)
+                    return
             settings = await self.settings()
             if not settings["enabled"]:
                 if await records.find_one(
@@ -176,12 +197,16 @@ class AutoAssignment:
                             True,
                         )
                 return
+            if current.get("assignment_event_pending"):
+                await self.deliver_event(collection, record_id)
             row = await records.find_one_and_update(
                 {
                     "_id": ObjectId(record_id),
                     "is_deleted": False,
                     "assigned_to": None,
                     "auto_assignment_eligible": True,
+                    **intake_filter(collection),
+                    "assignment_event_pending": {"$exists": False},
                     "$or": [
                         {"assignment_lease_until": {"$exists": False}},
                         {"assignment_lease_until": {"$lte": now}},
@@ -203,12 +228,9 @@ class AutoAssignment:
             # Reuse a durable reservation on retry unless the employee lost eligibility.
             selected = row.get("assignment_reserved_employee")
             sequence = row.get("assignment_sequence")
-            from app.features.leads.constants import PRODUCT_CATEGORY_MODULE
-            from app.features.leads.service import LeadService
-
-            eligible = await LeadService(self.db)._employees_with_module_access(
-                PRODUCT_CATEGORY_MODULE[row["product_category"]]
-            )
+            eligible = await eligible_employees(self.db, settings["employee_ids"], row, collection)
+            if not eligible:
+                raise ValidationError("No eligible employee is available.")
             if (
                 selected not in eligible
                 or selected not in settings["employee_ids"]
@@ -216,7 +238,7 @@ class AutoAssignment:
                 or not await self.active(selected)
             ):
                 reservation = await self.db.auto_assignment_settings.find_one_and_update(
-                    {"_id": "default", "enabled": True},
+                    {"_id": "default", "enabled": True, "version": settings["version"]},
                     {"$inc": {"sequence": 1}},
                     return_document=ReturnDocument.AFTER,
                 )
@@ -238,12 +260,27 @@ class AutoAssignment:
                         }
                     },
                 )
+            if not await eligible_record(self.db, collection, row) or not await eligible_employees(self.db, [selected], row, collection):
+                raise ValidationError("Record or assignee is no longer eligible.")
+            mirrors = []
+            if collection == "applications":
+                targets = [("application_workflows", await self.db.application_workflows.find_one(
+                    {"application_id": record_id, "case_type": "loan", "is_deleted": False}))]
+                if ObjectId.is_valid(row.get("lead_id")):
+                    targets.append(("leads", await self.db.leads.find_one({"_id": ObjectId(row["lead_id"]), "is_deleted": False})))
+                for target, document in targets:
+                    if document:
+                        if document.get("assigned_to") not in (None, selected):
+                            raise ValidationError("Linked record already has an assignee.")
+                        mirrors.append({"collection": target, "id": str(document["_id"]), "previous_employee": document.get("assigned_to")})
             result = await records.update_one(
                 {
                     "_id": row["_id"],
                     "assignment_token": token,
                     "assigned_to": None,
                     "is_deleted": False,
+                    "version": row.get("version", 1),
+                    **intake_filter(collection),
                 },
                 {
                     "$set": {
@@ -258,6 +295,8 @@ class AutoAssignment:
                             "sequence": sequence,
                             "actor_id": actor.require_id(),
                             "at": now,
+                            "source": source,
+                            "mirrors": mirrors,
                         },
                         "auto_assignment_eligible": False,
                         "updated_at": now,
@@ -307,16 +346,32 @@ class AutoAssignment:
         key = f"assigned:{collection}:{record_id}:{event['sequence']}"
         from app.shared.audit_log import AuditLog
 
+        if row.get("assigned_to") == event["employee_id"]:
+            for target in event.get("mirrors", []):
+                document = await self.db[target["collection"]].find_one({"_id": ObjectId(target["id"]), "is_deleted": False})
+                if not document or document.get("assigned_to") == event["employee_id"]:
+                    continue
+                update = await self.db[target["collection"]].update_one(
+                    {"_id": document["_id"], "assigned_to": target.get("previous_employee"), "is_deleted": False,
+                     **({"stage": {"$in": ["fresh", "document_collection"]}} if target["collection"] == "leads" else
+                        {"moved_to_loan_management_at": None, "current_status": {"$nin": ["rejected", "cancelled", "disbursed"]}})},
+                    {"$set": {"assigned_to": event["employee_id"], "assigned_by": event["actor_id"], "assigned_at": event["at"],
+                        "assignment_token": None, "auto_assignment_eligible": False, "assignment_pending": False,
+                        "assignment_origin": "bulk" if event.get("source") == "bulk" else "automatic"}, "$inc": {"version": 1}})
+                if not update.modified_count:
+                    raise ConflictError("Linked assignment changed; Owner review is required.")
         audit = AuditLog(
-            event_type="crm_auto_assigned",
+            event_type="crm_bulk_assigned" if event.get("source") == "bulk" else "crm_auto_assigned",
             user_id=event["actor_id"],
             created_at=event["at"],
             metadata={
                 "collection": collection,
                 "record_id": record_id,
-                "old_employee_id": None,
+                "old_employee_id": event.get("old_employee_id"),
                 "employee_id": event["employee_id"],
                 "sequence": event["sequence"],
+                "source": event.get("source", "auto"),
+                "mirrors": event.get("mirrors", []),
             },
         )
         await self.db.audit_logs.update_one(
@@ -334,7 +389,8 @@ class AutoAssignment:
                 created_at=event["at"],
                 metadata={
                     "employee_id": event["employee_id"],
-                    "source": "automatic",
+                    "source": event.get("source", "auto"),
+                    "old_employee_id": event.get("old_employee_id"),
                     "sequence": event["sequence"],
                 },
             )
@@ -393,7 +449,7 @@ class AutoAssignment:
                     )
                     .limit(100)
                 ):
-                    await self.assign(collection, str(row["_id"]), User.model_validate(owner))
+                    await self.assign(collection, str(row["_id"]), User.model_validate(owner), source="retry")
                     counts["retried"] += 1
         # Historical ownership is preserved when an employee is deactivated.
         checkpoint = await self.db.auto_assignment_scan_state.find_one({"_id": "inactive"})
@@ -430,6 +486,7 @@ class AutoAssignment:
 
 
 async def ensure_assignment_indexes(db: AsyncIOMotorDatabase[Any]) -> None:
+    await db.assignment_previews.create_index("expires_at", expireAfterSeconds=0)
     await db.audit_logs.create_index([("event_type", 1), ("created_at", -1)])
     for name in ("leads", "applications"):
         await db[name].create_index([("assignment_pending", 1), ("assigned_to", 1)])

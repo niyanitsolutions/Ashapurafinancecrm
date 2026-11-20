@@ -1,0 +1,36 @@
+{
+  "results": [
+    {
+      "width": 390,
+      "result": "passed",
+      "journeys": [
+        "Fresh bulk preview/confirm",
+        "Document Collection actual seeded applicant name",
+        "Application bulk preview/confirm",
+        "selection cleared"
+      ]
+    },
+    {
+      "width": 768,
+      "result": "passed",
+      "journeys": [
+        "Fresh bulk preview/confirm",
+        "Document Collection actual seeded applicant name",
+        "Application bulk preview/confirm",
+        "selection cleared"
+      ]
+    },
+    {
+      "width": 1366,
+      "result": "passed",
+      "journeys": [
+        "Fresh bulk preview/confirm",
+        "Document Collection actual seeded applicant name",
+        "Application bulk preview/confirm",
+        "selection cleared"
+      ]
+    }
+  ],
+  "backend": "real local FastAPI and disposable MongoDB",
+  "external_calls": "none"
+}

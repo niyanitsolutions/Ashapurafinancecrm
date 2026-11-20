@@ -1,4 +1,5 @@
 import { BulkUploadModal } from "@/features/bulk_import/BulkUploadModal";
+import { BulkAssignmentModal, type AssignmentResult } from "@/features/leads/components/BulkAssignmentModal";
 import { useEffect, useState } from "react";
 import { Link, useOutletContext } from "react-router-dom";
 import { ActionButton } from "@/components/tables/ActionButton";
@@ -126,7 +127,11 @@ async function downloadLeadsCsv(setError: (msg: string | null) => void) {
 }
 
 export function LeadListPage({ tab }: { tab: LeadTab }) {
-  const { can } = usePermissions();
+  const { can, isOwner } = usePermissions();
+  const canBulkAssign = tab === "fresh" ? can("leads:leads", "assign") : tab === "document_collection" && isOwner;
+  const [assignmentSelection, setAssignmentSelection] = useState<Set<string>>(new Set());
+  const [assignmentIds, setAssignmentIds] = useState<string[] | null>(null);
+  const [assignmentResult, setAssignmentResult] = useState<AssignmentResult | null>(null);
   const [showBulk, setShowBulk] = useState(false);
   const canCreate = can("leads:leads", "create");
   const canEdit = can("leads:leads", "edit");
@@ -142,6 +147,7 @@ export function LeadListPage({ tab }: { tab: LeadTab }) {
     setReloadKey((k) => k + 1);
     refreshCounts();
   });
+  const clearDeleteSelection = del.clear;
   const [items, setItems] = useState<LeadListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -156,7 +162,7 @@ export function LeadListPage({ tab }: { tab: LeadTab }) {
   const [followUpLead, setFollowUpLead] = useState<LeadListItem | null>(null);
   const [updateStageLead, setUpdateStageLead] = useState<LeadListItem | null>(null);
 
-  const showAssignedTo = tab === "my" || tab === "document_collection" || tab === "assigned";
+  const showAssignedTo = tab === "fresh" || tab === "my" || tab === "document_collection" || tab === "assigned";
   const showNextFollowUp = tab === "fresh" || tab === "my" || tab === "assigned";
   const showRejectedColumns = tab === "rejected";
   const showAssignedColumns = tab === "assigned";
@@ -176,7 +182,7 @@ export function LeadListPage({ tab }: { tab: LeadTab }) {
   const isVisible = (key: string) => visibleColumns.has(key);
   const columnCount =
     3 +
-    (del.enabled ? 1 : 0) +
+    (del.enabled || canBulkAssign ? 1 : 0) +
     menuColumns.filter((c) => isVisible(c.key)).length +
     (showNextFollowUp ? 1 : 0) +
     (showRejectedColumns ? 3 : 0) +
@@ -245,6 +251,14 @@ export function LeadListPage({ tab }: { tab: LeadTab }) {
     setSourceId("");
     setPage(1);
   };
+  useEffect(() => { setAssignmentSelection(new Set()); clearDeleteSelection(); setAssignmentResult(null); }, [page, pageSize, search, productCategory, sourceId, tab, clearDeleteSelection]);
+  const selectedRecordIds = [...new Set(items.filter(row => assignmentSelection.has(row.id)).map(row => tab === "document_collection" ? row.application_id : row.id).filter((id): id is string => Boolean(id)))];
+  const selected = (id: string) => canBulkAssign ? assignmentSelection.has(id) : del.isSelected(id);
+  const toggleSelection = (row: LeadListItem) => {
+    if (canBulkAssign) setAssignmentSelection(previous => { const next = new Set(previous); if (next.has(row.id)) next.delete(row.id); else next.add(row.id); return next; });
+    if (del.enabled && !row.is_lead_less) del.toggle(row.id);
+  };
+  const selectAllIds = items.filter(row => canBulkAssign ? tab === "fresh" || Boolean(row.application_id) : !row.is_lead_less).map(row => row.id);
 
   const refreshAfterAction = () => {
     load({ silent: true });
@@ -259,10 +273,26 @@ export function LeadListPage({ tab }: { tab: LeadTab }) {
   return (
     <div className="min-h-screen bg-background">
       {showBulk && <BulkUploadModal kind="leads" onClose={() => setShowBulk(false)} onImported={refreshAfterAction} />}
+      {assignmentIds && <BulkAssignmentModal collection={tab === "document_collection" ? "applications" : "leads"} ids={assignmentIds} onClose={() => setAssignmentIds(null)} onDone={result => {
+        setAssignmentResult(result); setAssignmentIds(null);
+        const completed = new Set(result.results.filter(row => row.status === "assigned").map(row => row.id));
+        const remaining = items.filter(row => assignmentSelection.has(row.id) && !completed.has(tab === "document_collection" ? row.application_id ?? "" : row.id));
+        setAssignmentSelection(new Set(remaining.map(row => row.id))); del.clear();
+        for (const row of remaining) if (!row.is_lead_less && del.enabled) del.toggle(row.id);
+        refreshAfterAction();
+      }} />}
       <div className="p-6">
         <ErrorBanner message={error} />
         <ErrorBanner message={del.error} />
         {del.bulkBar}
+        {canBulkAssign && selectedRecordIds.length > 0 && <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-primary/20 bg-primary/5 p-3 text-sm">
+          <strong>{selectedRecordIds.length} {tab === "document_collection" ? "Applications" : "Leads"} Selected</strong>
+          <Button size="sm" onClick={() => setAssignmentIds(selectedRecordIds)}>Assign Selected</Button>
+          <Button size="sm" variant="secondary" onClick={() => { setAssignmentSelection(new Set()); del.clear(); }}>Clear Selection</Button>
+        </div>}
+        {assignmentResult && <div role="status" className="mb-4 rounded-xl border border-border bg-card p-3 text-sm"><p>Successfully assigned: {assignmentResult.assigned} · Skipped: {assignmentResult.skipped} · Failed: {assignmentResult.failed}</p>
+          <ul>{assignmentResult.results.filter(row => row.status !== "assigned").map(row => <li key={row.id} className="break-all">{row.id}: {row.reason}</li>)}</ul>
+        </div>}
 
         <div className="bg-card border border-border rounded-card shadow-card overflow-hidden">
           <div className="p-6 flex flex-wrap items-start justify-between gap-4">
@@ -349,14 +379,15 @@ export function LeadListPage({ tab }: { tab: LeadTab }) {
             <Table>
               <TableHead>
                 <TableHeadRow>
-                  {del.enabled && (
+                  {(del.enabled || canBulkAssign) && (
                     <Th className="w-10">
                       <input
                         type="checkbox"
                         aria-label="Select all"
                         className="accent-primary"
-                        checked={deletableIds.length > 0 && deletableIds.every((id) => del.isSelected(id))}
-                        onChange={() => del.toggleAll(deletableIds)}
+                        checked={selectAllIds.length > 0 && selectAllIds.every(selected)}
+                        disabled={isLoading || selectAllIds.length === 0}
+                        onChange={() => { if (!canBulkAssign) { del.toggleAll(deletableIds); return; } const all = selectAllIds.every(selected); setAssignmentSelection(all ? new Set() : new Set(selectAllIds)); del.clear(); if (!all && del.enabled) for (const row of items) if (selectAllIds.includes(row.id) && !row.is_lead_less) del.toggle(row.id); }}
                       />
                     </Th>
                   )}
@@ -411,15 +442,16 @@ export function LeadListPage({ tab }: { tab: LeadTab }) {
                   const created = formatDateTime(lead.created_at);
                   return (
                     <TableRow key={lead.id}>
-                      {del.enabled && (
+                      {(del.enabled || canBulkAssign) && (
                         <Td>
-                          {!lead.is_lead_less && (
+                          {(!lead.is_lead_less || canBulkAssign) && (
                             <input
                               type="checkbox"
                               aria-label={`Select ${lead.lead_code}`}
                               className="accent-primary"
-                              checked={del.isSelected(lead.id)}
-                              onChange={() => del.toggle(lead.id)}
+                              checked={selected(lead.id)}
+                              disabled={lead.is_lead_less && !lead.application_id}
+                              onChange={() => toggleSelection(lead)}
                             />
                           )}
                         </Td>

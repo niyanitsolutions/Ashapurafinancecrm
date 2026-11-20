@@ -312,6 +312,8 @@ class FormTemplateMaster(BaseDocument):
 
 
 class Application(BaseDocument):
+    auto_assignment_eligible: bool = False
+    assignment_pending: bool = False
     application_code: str  # AFS-APP-000001
     # Additive provenance: older rows stay unknown rather than inventing history.
     submission_source: str = "unknown"

@@ -232,13 +232,13 @@ async def test_manual_ownership_and_replayed_outbox_are_preserved(team):
     assert (await LeadService(db).get_lead(lead.require_id())).assigned_to == pool[1]
 
 
-async def test_employee_creator_keeps_fresh_and_owner_controls_are_forbidden(team):
+async def test_employee_creator_is_unassigned_when_rotation_disabled_and_owner_controls_are_forbidden(team):
     db, _, employees, master = team
     employee, user = employees[0]
     lead = await LeadService(db).create_lead(
         CreateLeadRequest(**_lead_payload(master)), user
     )
-    assert lead.assigned_to == employee.require_id() and lead.stage == "fresh"
+    assert lead.assigned_to is None and lead.stage == "fresh"
     with pytest.raises(ForbiddenError):
         await AutoAssignment(db).save(AssignmentSettings(), user)
     assert (await LeadService(db).get_tab_counts(user)).fresh == 1
@@ -374,7 +374,7 @@ async def test_submission_identity_updates_only_existing_placeholder_profile(
     customer, app = await seed_identity(mock_db, existing)
     await asyncio.gather(*(enrich_submitted_identity(mock_db, app) for _ in range(3)))
     row = await mock_db.customers.find_one({"_id": ObjectId(customer.require_id())})
-    assert row["full_name"] == expected and row["email"] == "ramesh@example.com"
+    assert row["full_name"] == expected and row["email"] == customer.email
     assert row["mobile"] == customer.mobile
     assert await mock_db.customers.count_documents({}) == 1
     app.form_data["full_name"] = "Customer"

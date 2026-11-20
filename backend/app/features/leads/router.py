@@ -14,6 +14,7 @@ from app.features.geo_fencing.constants import GeoActivity
 from app.features.geo_fencing.enforcement import enforce_geo_fence
 from app.features.leads import mappers
 from app.features.leads.assignment_routes import router as assignment_router
+from app.features.leads.bulk_routes import lead_router as bulk_assignment_router
 from app.features.leads.constants import LeadActivityType, LeadStage
 from app.features.leads.dependencies import get_lead_service
 from app.features.leads.schemas import (
@@ -42,6 +43,7 @@ from app.features.leads.service import LeadService
 
 router = APIRouter(prefix="/leads", tags=["leads"])
 router.include_router(assignment_router)
+router.include_router(bulk_assignment_router)
 
 ServiceDep = Annotated[LeadService, Depends(get_lead_service)]
 PageParamsDep = Annotated[PageParams, Depends(page_params)]

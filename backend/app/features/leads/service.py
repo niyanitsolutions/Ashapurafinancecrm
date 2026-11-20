@@ -75,7 +75,7 @@ from app.features.workflow_engine.constants import TERMINAL_STATUSES_BY_CASE_TYP
 from app.features.workflow_engine.repository import ApplicationWorkflowRepository
 from app.shared.audit_log import write_audit_log
 from app.utils.datetime import ist_date_to_utc_midnight, now_ist, start_of_day_ist, utc_now
-from app.utils.helpers import to_object_id
+from app.utils.helpers import is_valid_object_id, to_object_id
 from app.utils.id_generator import IdPrefix, generate_id
 
 _EXPORT_HEADER = ["Lead Code", "Name", "Mobile", "Email", "Source", "Product Category", "Product", "Status", "Stage", "Assigned To", "Created At"]
@@ -212,9 +212,12 @@ class LeadService:
 
         lead_code = await generate_id(self._db, IdPrefix.LEAD)
         next_follow_up = ist_date_to_utc_midnight(payload.next_follow_up_date) if payload.next_follow_up_date else None
+        from app.features.leads.auto_assignment import AutoAssignment
         from app.shared.customer_identity import normalized_name
 
         lead = Lead(
+            auto_assignment_eligible=not bool(payload.assigned_to),
+            assignment_pending=not bool(payload.assigned_to) and await AutoAssignment(self._db).pending_on_intake(),
             identity_name=normalized_name(payload.full_name),
             intake_key=intake_key,
             lead_code=lead_code,
@@ -261,18 +264,10 @@ class LeadService:
             return await self._assign(lead_id, employee_id, actor)
 
         # Automatic intake ownership deliberately preserves the Fresh destination.
-        if actor.role == EMPLOYEE:
-            employee = await self._employees.find_by_user_id(actor.require_id())
-            if employee is not None and employee.status == EmploymentStatus.ACTIVE:
-                await self._leads.update(lead_id, {"assigned_to": employee.require_id(),
-                    "assigned_by": actor.require_id(), "assigned_at": utc_now(), "assignment_origin": "creator"})
-                await self._log_activity(lead_id, LeadActivityType.ASSIGNED, actor,
-                    {"employee_id": employee.require_id(), "old_employee_id": None, "source": "creator"})
-        else:
-            from app.features.leads.auto_assignment import AutoAssignment
+        from app.features.leads.auto_assignment import AutoAssignment
 
-            await self._leads.update(lead_id, {"auto_assignment_eligible": True})
-            await AutoAssignment(self._db).assign("leads", lead_id, actor)
+        await self._leads.update(lead_id, {"auto_assignment_eligible": True})
+        await AutoAssignment(self._db).assign("leads", lead_id, actor)
         return await self._leads.find_by_id(lead_id) or lead
 
     async def get_lead(self, lead_id: str) -> Lead:
@@ -469,7 +464,9 @@ class LeadService:
             return []
 
         customer_ids = {a.customer_id for a in candidates if a.customer_id}
-        customers = [c for cid in customer_ids for c in [await self._customers.find_by_id(cid)] if c is not None]
+        from bson import ObjectId
+
+        customers = await self._customers.find_many({"_id": {"$in": [ObjectId(cid) for cid in customer_ids if ObjectId.is_valid(cid)]}}, limit=max(1, len(customer_ids)))
         customer_map = {c.require_id(): c for c in customers}
         product_ids = {a.product_id for a in candidates}
         products = await self._loan_products.find_many({}, limit=500)
@@ -549,6 +546,8 @@ class LeadService:
         total = len(merged)
         page = merged[skip : skip + limit]
         ids = [item.application_id for item in page if item.application_id]
+        apps: list[Application] = []
+        metadata: dict[str, Application] = {}
         if ids:
             apps = await self._applications.find_many({"_id": {"$in": [to_object_id(value) for value in ids]}}, limit=len(ids))
             metadata = {app.require_id(): app for app in apps}
@@ -558,6 +557,29 @@ class LeadService:
                     item.submission_source = matched_app.submission_source
                     item.submitted_at = matched_app.submitted_at
                     item.last_customer_activity_at = matched_app.last_customer_activity_at
+        from app.features.customer.identity_name import actual_name, application_name
+
+        lead_customers = {lead.require_id(): lead.customer_id for lead in leads if lead.customer_id and is_valid_object_id(lead.customer_id)}
+        customer_ids = {a.customer_id for a in apps if a.customer_id and is_valid_object_id(a.customer_id)}
+        customer_ids.update(lead_customers.values())
+        customers = await self._customers.find_many({"_id": {"$in": [to_object_id(value) for value in customer_ids]}}, limit=max(1, len(customer_ids)))
+        customer_names = {c.require_id(): (c.user_id, c.full_name) for c in customers}
+        schema_ids = {a.form_definition_id for a in apps if is_valid_object_id(a.form_definition_id)}
+        schemas = {str(s["_id"]): s async for s in self._db.application_form_definitions.find(
+            {"_id": {"$in": [to_object_id(value) for value in schema_ids]}}, {"fields.key": 1, "fields.hidden": 1})}
+        missing = 0
+        for item in page:
+            resolved_app = metadata.get(item.application_id or "")
+            if item.is_lead_less or not actual_name(item.full_name):
+                customer_id = resolved_app.customer_id if resolved_app else lead_customers.get(item.id)
+                profile = customer_names.get(customer_id or "")
+                profile_name = profile[1] if profile and (not resolved_app or profile[0] == resolved_app.user_id) else None
+                item.full_name = actual_name(profile_name) or (application_name(resolved_app, schemas.get(resolved_app.form_definition_id)) if resolved_app else None) or "Name unavailable"
+                missing += item.full_name == "Name unavailable"
+        if missing:
+            import logging
+
+            logging.getLogger(__name__).warning("Document Collection applicant name unavailable for %d rows.", missing)
         return page, total
 
     async def _get_lead_less_application_scoped(self, application_id: str, actor: User) -> Application:
@@ -870,7 +892,7 @@ class LeadService:
         )
         if updated is None:
             raise NotFoundError("Lead not found.")
-        await self._log_activity(lead_id, LeadActivityType.ASSIGNED, actor, {"employee_id": assignee_id, "old_employee_id": previous.assigned_to})
+        await self._log_activity(lead_id, LeadActivityType.ASSIGNED, actor, {"employee_id": assignee_id, "old_employee_id": previous.assigned_to, "source": "manual"})
         # NotificationType.LEAD_ASSIGNED has existed since Module 6D but was never wired
         # up to the one event it names — Reminders' own create_task is the only caller
         # that ever fired a notification. No import cycle: reminders/service.py doesn't

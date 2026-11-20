@@ -19,6 +19,20 @@ beforeEach(() => {
   } : { items: [], total: 0 });
 });
 describe("Owner auto assignment controls", () => {
+  it("requires preview and explicit confirmation before retrying historical intake", async () => {
+    api.mockImplementation(async (path, options) => {
+      if (path.endsWith("auto-assignment")) return { enabled: true, employee_ids: ["one"], version: 1, employees: [] };
+      if (path.includes("/pending")) return { items: [{ id: "old-record", collection: "leads", route: "/leads/old-record" }], total: 1 };
+      if (path.endsWith("/bulk-retry")) return { preview: !JSON.parse(String(options?.body)).preview_id, preview_id: "preview", total: 1, eligible: 1, assigned: JSON.parse(String(options?.body)).preview_id ? 1 : 0, skipped: 0, failed: 0, results: [] };
+      return { items: [], total: 0 };
+    });
+    mount(); const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Preview retry for this page" }));
+    expect(await screen.findByRole("dialog", { name: "Confirm unassigned intake retry" })).toBeVisible();
+    expect(api.mock.calls.filter(([path]) => path.endsWith("/bulk-retry"))).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "Confirm retry" }));
+    expect(await screen.findByText(/Successfully assigned: 1/)).toBeVisible();
+  });
   it("saves the selected employee order with the loaded settings version", async () => {
     mount(); const user = userEvent.setup();
     await user.click(await screen.findByRole("checkbox", { name: "Priya" }));

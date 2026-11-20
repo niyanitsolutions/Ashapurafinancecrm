@@ -63,6 +63,15 @@ function renderDocumentCollectionTab() {
 }
 
 describe("LeadListPage — Document Collection tab, Lead-less rows", () => {
+  it("selects applications on the current page for bulk assignment and clears selection", async () => {
+    renderDocumentCollectionTab();
+    await screen.findByText("AFS-APP-000001");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("checkbox", { name: "Select all" }));
+    expect(screen.getByText("2 Applications Selected")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Clear Selection" }));
+    expect(screen.queryByText("2 Applications Selected")).not.toBeInTheDocument();
+  });
   it("opens the shared bulk upload dialog from Leads", async () => {
     renderDocumentCollectionTab();
     await screen.findByText("AFS-APP-000001");

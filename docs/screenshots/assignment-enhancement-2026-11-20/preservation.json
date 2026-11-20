@@ -1,0 +1,48 @@
+{
+  "baseline_commit": "27445006580e71ba201af5b6de3263d60656876f",
+  "production_access": false,
+  "external_sms_or_meta_calls": false,
+  "protected_scopes": {
+    "backend/app/features/auth/": {
+      "tracked_files": 14,
+      "changed_files": [],
+      "unchanged": true
+    },
+    "backend/app/features/integrations/": {
+      "tracked_files": 16,
+      "changed_files": [],
+      "unchanged": true
+    },
+    "backend/app/features/access_control/": {
+      "tracked_files": 11,
+      "changed_files": [],
+      "unchanged": true
+    },
+    "backend/app/features/employee/": {
+      "tracked_files": 17,
+      "changed_files": [],
+      "unchanged": true
+    },
+    "backend/app/features/attendance/": {
+      "tracked_files": 0,
+      "changed_files": [],
+      "unchanged": true
+    },
+    "frontend/src/features/auth/": {
+      "tracked_files": 31,
+      "changed_files": [],
+      "unchanged": true
+    },
+    "frontend/src/features/integrations/": {
+      "tracked_files": 13,
+      "changed_files": [],
+      "unchanged": true
+    },
+    "frontend/src/features/customer/": {
+      "tracked_files": 56,
+      "changed_files": [],
+      "unchanged": true
+    }
+  },
+  "note": "Source comparison only; live production integrity was not inspected. Local disposable Mongo integrity is covered by tests."
+}

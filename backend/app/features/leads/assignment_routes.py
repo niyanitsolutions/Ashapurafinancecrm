@@ -11,6 +11,7 @@ from app.core.exceptions import NotFoundError
 from app.core.response import ApiResponse
 from app.features.auth.dependencies import get_current_active_user
 from app.features.auth.models import User
+from app.features.leads.assignment_policy import intake_filter
 from app.features.leads.auto_assignment import AssignmentSettings, AutoAssignment, owner_only
 
 router = APIRouter(prefix="/auto-assignment", tags=["auto-assignment"])
@@ -70,22 +71,18 @@ async def pending(
     items = []
     total = 0
     for name in ("leads", "applications"):
-        query = {"is_deleted": False, "assigned_to": None, "auto_assignment_eligible": True}
+        query = {**intake_filter(name), "assigned_to": None}
         total += await db[name].count_documents(query)
         # Combined page built server-side using unionWith below in real Mongo.
     pipeline: list[dict[str, Any]] = [
-        {"$match": {"is_deleted": False, "assigned_to": None, "auto_assignment_eligible": True}},
+        {"$match": {**intake_filter("leads"), "assigned_to": None}},
         {"$project": {"created_at": 1, "assignment_error": 1, "collection": {"$literal": "leads"}}},
         {
             "$unionWith": {
                 "coll": "applications",
                 "pipeline": [
                     {
-                        "$match": {
-                            "is_deleted": False,
-                            "assigned_to": None,
-                            "auto_assignment_eligible": True,
-                        }
+                        "$match": {**intake_filter("applications"), "assigned_to": None}
                     },
                     {
                         "$project": {
@@ -127,7 +124,7 @@ async def retry(
         {"_id": ObjectId(record_id), "is_deleted": False}, {"_id": 1}
     ):
         raise NotFoundError("Record not found.")
-    await AutoAssignment(db).assign(collection, record_id, actor)
+    await AutoAssignment(db).assign(collection, record_id, actor, source="retry")
     row = await db[collection].find_one(
         {"_id": ObjectId(record_id)}, {"assigned_to": 1, "assignment_pending": 1}
     )
@@ -146,7 +143,7 @@ async def history(
     owner_only(actor)
     query = {
         "event_type": {
-            "$in": ["crm_auto_assigned", "lead_assigned", "lead_unassigned", "application_assigned"]
+            "$in": ["crm_auto_assigned", "crm_bulk_assigned", "lead_assigned", "lead_unassigned", "application_assigned"]
         }
     }
     rows = (

@@ -52,9 +52,11 @@ from app.features.customer.schemas import (
     UpdateProfileRequest,
 )
 from app.features.customer.service import CustomerService
+from app.features.leads.bulk_routes import application_router as bulk_assignment_router
 from app.features.system_settings.schemas import NamedMasterDataResponse
 
 router = APIRouter(tags=["customer"])
+router.include_router(bulk_assignment_router)
 
 ServiceDep = Annotated[CustomerService, Depends(get_customer_service)]
 PageParamsDep = Annotated[PageParams, Depends(page_params)]

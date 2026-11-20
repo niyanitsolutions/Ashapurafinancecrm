@@ -1,3 +1,4 @@
+from app.features.customer.identity_name import actual_name
 from app.features.customer.models import Application, Customer
 from app.features.leads.models import Lead, LeadActivity, LeadNote
 from app.features.leads.schemas import (
@@ -51,6 +52,7 @@ def to_list_item(
 
 def lead_less_application_to_list_item(
     application: Application, customer: Customer | None, product_name: str, assigned_to_name: str | None,
+    customer_name: str | None = None,
 ) -> LeadListItem:
     """Production fix "DC vs LM" — the Lead-less counterpart of `to_list_item`, for an
     Application with no Lead at all (see `LeadService.list_document_collection`). Reuses
@@ -59,10 +61,12 @@ def lead_less_application_to_list_item(
     carries the Application's own code (there's no Lead code to show); `source_name` is
     "Direct" (no Lead Source applies); every Lead-only field (financial assessment,
     assignment/rejection audit trail) is null, since none of that exists for this row."""
+    if customer is not None and customer.user_id != application.user_id:
+        customer = None
     return LeadListItem(
         id=application.require_id(),
         lead_code=application.application_code,
-        full_name=customer.full_name if customer else "",
+        full_name=customer_name or actual_name(customer.full_name if customer else None) or "Name unavailable",
         mobile=customer.mobile if customer else "",
         email=customer.email if customer else None,
         source_id="",

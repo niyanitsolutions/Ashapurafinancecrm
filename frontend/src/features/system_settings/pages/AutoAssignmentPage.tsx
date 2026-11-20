@@ -7,6 +7,8 @@ import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { usePermissions } from "@/features/access_control/usePermissions";
 import { apiRequest } from "@/shared/api/client";
 import { formatISTDateTime } from "@/shared/dateFormat";
+import { Modal } from "@/components/overlays/Modal";
+import type { AssignmentResult } from "@/features/leads/components/BulkAssignmentModal";
 
 interface Settings { enabled: boolean; employee_ids: string[]; version: number; sequence: number; employees: { id: string; name: string; active: boolean; assigned_leads?: number }[] }
 interface Pending { items: { id: string; collection: string; error: string | null; route: string }[]; total: number }
@@ -22,6 +24,9 @@ export function AutoAssignmentPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
+  const [retryPreview, setRetryPreview] = useState<AssignmentResult | null>(null);
+  const [retryRecords, setRetryRecords] = useState<{ id: string; collection: string }[]>([]);
+  const [retryResult, setRetryResult] = useState<AssignmentResult | null>(null);
   const settings = useQuery({ queryKey: ["auto-assignment"], queryFn: () => apiRequest<Settings>(base), enabled: isOwner });
   const pending = useQuery({ queryKey: ["auto-assignment", "pending", page], queryFn: () => apiRequest<Pending>(`${base}/pending?page=${page}`), enabled: isOwner });
   const history = useQuery({ queryKey: ["auto-assignment", "history", historyPage], queryFn: () => apiRequest<History>(`${base}/history?page=${historyPage}`), enabled: isOwner });
@@ -50,14 +55,33 @@ export function AutoAssignmentPage() {
       {!settings.data?.employees.length && <p>No employee accounts are available.</p>}
       <Button type="submit" disabled={busy}>Save settings</Button>
     </form>}
-    <section className="mt-6 space-y-3 rounded-card border border-border bg-card p-5"><h3 className="font-semibold">Unassigned intake awaiting assignment ({pending.data?.total ?? 0})</h3>
+    <section className="mt-6 space-y-3 rounded-card border border-border bg-card p-5"><h3 className="font-semibold">Unassigned intake for review ({pending.data?.total ?? 0})</h3>
+      <p className="text-sm text-textSecondary">This includes historical unassigned intake. Review a preview before retrying this page; existing assignments are preserved.</p>
+      <Button disabled={busy || !value?.enabled || !pending.data?.items.length} onClick={() => void action(async () => {
+        const records = pending.data!.items.map(({ id, collection }) => ({ id, collection }));
+        const result = await apiRequest<AssignmentResult>(`${base}/bulk-retry`, { method: "POST", body: JSON.stringify({ records }) });
+        setRetryRecords(records); setRetryPreview(result);
+      }, "Retry preview ready. No assignment has been changed.")}>Preview retry for this page</Button>
+      {retryResult && <div role="status" className="text-sm"><p>Successfully assigned: {retryResult.assigned} · Skipped: {retryResult.skipped} · Failed: {retryResult.failed}</p><ul>{retryResult.results.filter(row => row.status !== "assigned").map(row => <li key={`${row.collection}:${row.id}`} className="break-all">{row.id}: {row.reason}</li>)}</ul></div>}
       <p className="text-sm text-textSecondary">Retry uses the original record. A paused rotation must be enabled first. A request still processing may take two minutes to become retryable.</p>
       {pending.data?.items.map(row => <div key={`${row.collection}:${row.id}`} className="flex flex-wrap items-center gap-3 border-t border-border pt-3 text-sm">
         <Link className="text-primary underline break-all" to={row.route}>Open {row.collection === "leads" ? "lead" : "application"} {row.id}</Link><span>{row.error ? "No eligible assignee or assignment service unavailable" : "Awaiting assignment"}</span>
-        <Button size="sm" disabled={busy || !value?.enabled} onClick={() => void action(async () => { const result = await apiRequest<{ assigned_to: string | null }>(`${base}/retry/${row.collection}/${row.id}`, { method: "POST" }); if (!result.assigned_to) throw new Error("Still unassigned. Check employee activity and product module access, then retry."); }, "Record assigned.")}>Retry assignment</Button>
+        <Button size="sm" disabled={busy || !value?.enabled} onClick={() => void action(async () => {
+          const records = [{ id: row.id, collection: row.collection }];
+          const result = await apiRequest<AssignmentResult>(`${base}/bulk-retry`, { method: "POST", body: JSON.stringify({ records }) });
+          setRetryRecords(records); setRetryPreview(result);
+        }, "Retry preview ready. No assignment has been changed.")}>Preview retry</Button>
       </div>)}
       <div className="flex items-center gap-3"><Button variant="secondary" disabled={page === 1} onClick={() => setPage(page - 1)}>Previous</Button><span>Page {page}</span><Button variant="secondary" disabled={page * 20 >= (pending.data?.total ?? 0)} onClick={() => setPage(page + 1)}>Next</Button></div>
     </section>
+    {retryPreview && <Modal open title="Confirm unassigned intake retry" onClose={() => { if (!busy) setRetryPreview(null); }}><div className="space-y-4 text-sm">
+      <p>{retryPreview.eligible} eligible · {retryPreview.skipped} skipped · {retryPreview.failed} failed. Confirm assigning these original records using the current configured rotation, including any historical rows on this page.</p>
+      <ul>{retryPreview.results.map(row => <li key={`${row.collection}:${row.id}`} className="break-all">{row.id}: {row.reason}</li>)}</ul>
+      <div className="flex flex-wrap gap-2"><Button disabled={busy || !retryPreview.eligible} onClick={() => void action(async () => {
+        const result = await apiRequest<AssignmentResult>(`${base}/bulk-retry`, { method: "POST", body: JSON.stringify({ records: retryRecords, preview_id: retryPreview.preview_id }) });
+        setRetryResult(result); setRetryPreview(null);
+      }, "Retry finished. Review the individual results.")}>Confirm retry</Button><Button variant="secondary" disabled={busy} onClick={() => setRetryPreview(null)}>Cancel</Button></div>
+    </div></Modal>}
     <section className="mt-6 space-y-3 rounded-card border border-border bg-card p-5"><h3 className="font-semibold">Assignment history</h3>
       {history.data?.items.map(row => {
         const recordId = row.metadata?.record_id ?? row.metadata?.lead_id ?? row.metadata?.application_id;
