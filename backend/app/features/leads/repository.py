@@ -59,7 +59,10 @@ class LeadRepository(BaseRepository[Lead]):
         if product_id:
             query["product_id"] = product_id
         if assigned_to == UNASSIGNED_SENTINEL:
-            query["assigned_to"] = None
+            if stage == "fresh" and not created_by:
+                query["$and"] = [{"$or": [{"assigned_to": None}, {"assignment_origin": {"$in": ["automatic", "creator"]}}]}]
+            else:
+                query["assigned_to"] = None
             # `created_by` is only ever passed alongside UNASSIGNED_SENTINEL, by a
             # non-Owner actor — see LeadService._scope_query. It narrows the query with
             # AND (not OR): "unassigned AND created by me," i.e. my own not-yet-assigned
@@ -69,7 +72,11 @@ class LeadRepository(BaseRepository[Lead]):
         elif assigned_to == ASSIGNED_SENTINEL:
             query["assigned_to"] = {"$ne": None}
         elif assigned_to:
-            query["assigned_to"] = assigned_to
+            if stage == "fresh" and created_by:
+                query["$and"] = [{"$or": [{"assigned_to": assigned_to},
+                    {"assigned_to": None, "created_by": created_by}]}]
+            else:
+                query["assigned_to"] = assigned_to
         if status:
             query["status"] = status
         # `stage`/`exclude_stage` are mutually exclusive by caller convention (see

@@ -65,6 +65,10 @@ class Lead(BaseDocument):
     city: str | None = None
     preferred_amount: float | None = None
     assigned_to: str | None = None  # ref: employees (Module 2), nullable — unassigned until set
+    auto_assignment_eligible: bool = False
+    assignment_origin: str | None = None
+    assignment_pending: bool = False
+    intake_key: str | None = None
 
     # Product Schema Engine (additive, optional — see docs/decisions/DECISIONS.md #051
     # amendment): when the selected product has an `ApplicationFormDefinition`, Create

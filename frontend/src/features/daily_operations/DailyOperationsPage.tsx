@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/buttons/Button";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
@@ -59,6 +59,14 @@ export function DailyOperationsPage({ area }: { area: Area }) {
   const [extraColumns, setExtraColumns] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
+  const linkedRecordId = searchParams.get("record");
+  useEffect(() => {
+    if (area !== "follow-ups" || !allowed || !linkedRecordId) return;
+    let active = true;
+    void getRecord(area, linkedRecordId).then(row => { if (active) setEditing(row); })
+      .catch(err => { if (active) setError(err instanceof Error ? err.message : "Unable to open linked record."); });
+    return () => { active = false; };
+  }, [area, allowed, linkedRecordId]);
   function filter(key: string, value: string) {
     const next = new URLSearchParams(pendingParams.current);
     if (value) next.set(key, value); else next.delete(key);
@@ -131,6 +139,11 @@ export function DailyOperationsPage({ area }: { area: Area }) {
       {query.data?.metrics && <details className="mt-4 text-sm"><summary className="cursor-pointer text-textSecondary">Official loan totals</summary><p className="mt-2">Approved offers: {money(query.data.metrics.approved_amount)} · Verified disbursed: {money(query.data.metrics.disbursed_amount)}. Manual daily entries do not change these totals.</p></details>}
     </>}
     <Modal open={editing !== undefined} title={editing ? "Edit record" : "Add record"} onClose={() => setEditing(undefined)} size="lg">
+      {editing && Boolean(editing.working_key) && <p className="mb-4 flex flex-wrap gap-3 text-sm">
+        {editing.lead_id ? <Link className="text-primary underline" to={`/leads/${String(editing.lead_id)}`}>Original lead</Link> : null}
+        {editing.application_id ? <Link className="text-primary underline" to={`/applications/${String(editing.application_id)}`}>Original application</Link> : null}
+        <span>Linked workspace · business status changes remain in the original record.</span>
+      </p>}
       {editing !== undefined && <RecordForm key={editing?.id ?? "new"} area={area} record={editing ?? undefined} onCancel={() => setEditing(undefined)} onSaved={() => { setEditing(undefined); setNotice("Record saved."); refresh(); }} />}
     </Modal>
     <Modal open={!!history} title="Record history" onClose={() => setHistory(null)} size="lg">

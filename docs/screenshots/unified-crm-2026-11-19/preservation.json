@@ -1,0 +1,7 @@
+{
+  "baseline": "68aeae675f115c7fa50e4dba2e83ec89adac9d20",
+  "protected_tracked_files_checked": 159,
+  "changed_protected_files": [],
+  "method": "git diff against current HEAD; scoped feature changes only",
+  "production_access": false
+}

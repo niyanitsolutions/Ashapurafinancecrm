@@ -168,7 +168,7 @@ class LeadCaptureService:
                     full_name=parsed.full_name, mobile=parsed.mobile, email=parsed.email, source_id=source.lead_source_id,
                     product_category=parsed.product_category, product_id=parsed.product_id, remarks=parsed.remarks,
                 ),
-                actor,
+                actor, intake_key=hashlib.sha256(f"{capture_source}:{external_id}".encode()).hexdigest() if external_id else None,
             )
             await self._leads.update(lead.require_id(), {"created_by": None})
         logger.info(
@@ -193,11 +193,14 @@ class LeadCaptureService:
         )
 
         if external_id:
-            await self._receipts.insert(CaptureReceipt(
+            receipt = CaptureReceipt(
                 capture_source=capture_source, external_id=external_id,
                 lead_id=lead.require_id() if parsed.destination_module == MetaDestination.LEADS else None,
                 destination_module=parsed.destination_module, destination_record_id=lead.require_id(),
-            ))
+            )
+            await self._db.capture_receipts.update_one(
+                {"capture_source": capture_source, "external_id": external_id},
+                {"$setOnInsert": receipt.model_dump(exclude={"id"})}, upsert=True)
 
         logger.info(
             "Capture processing completed: source=%s external_id=%s lead_id=%s activity_recorded=true audit_recorded=true receipt_recorded=%s",

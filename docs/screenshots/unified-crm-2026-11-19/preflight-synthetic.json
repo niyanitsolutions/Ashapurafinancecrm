@@ -1,0 +1,37 @@
+{
+  "dataset": "Synthetic inconsistent records in a disposable loopback Mongo database",
+  "mode": "read_only",
+  "issue_count": 4,
+  "issues": [
+    {
+      "kind": "application_missing_user_id",
+      "record_id": "6aff3859d6f767ebc04d4cb4"
+    },
+    {
+      "kind": "application_customer_account_mismatch",
+      "record_id": "6aff3859d6f767ebc04d4cb4"
+    },
+    {
+      "kind": "application_missing_user_id",
+      "record_id": "6aff3859d6f767ebc04d4cb7"
+    },
+    {
+      "kind": "application_missing_lead_id",
+      "record_id": "6aff3859d6f767ebc04d4cb7"
+    }
+  ],
+  "counts": {
+    "leads": 0,
+    "customers": 1,
+    "applications": 2,
+    "daily_follow_ups": 0,
+    "placeholder_profiles": 1,
+    "legacy_daily_links_for_manual_review": 0
+  },
+  "duplicate_keys": {
+    "leads.intake_key": 0,
+    "daily_follow_ups.working_key": 0,
+    "applications.creation_key": 1
+  },
+  "changes_applied": 0
+}

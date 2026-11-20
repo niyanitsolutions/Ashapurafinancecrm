@@ -60,6 +60,7 @@ const SECTIONS: SettingsSection[] = [
     label: "Operations",
     items: [
       { to: "/settings/lead-sources", icon: "funnel", title: "Lead Sources", description: "Manage where new leads come from." },
+      { to: "/settings/auto-assignment", icon: "user", title: "Auto Assignment Settings", description: "Owner-controlled rotation and assignment recovery." },
       { to: "/settings/branches", icon: "departments", title: "Branches", description: "Manage branch offices and locations." },
       { to: "/settings/reminder-rules", icon: "clock", title: "Reminder Rules", description: "Configure automated task and follow-up reminders." },
     ],

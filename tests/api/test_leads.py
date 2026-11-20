@@ -334,7 +334,7 @@ async def test_owner_sees_full_unassigned_pool(client, mock_db, owner_headers, m
     lead_a = await _create_lead(client, headers_a, lmd, mobile="9611111101")
     lead_b = await _create_lead(client, headers_b, lmd, mobile="9611111102")
 
-    r = await client.get("/api/v1/leads?assigned_to=__unassigned__", headers=owner_headers)
+    r = await client.get("/api/v1/leads?assigned_to=__unassigned__&stage=fresh", headers=owner_headers)
     assert r.status_code == 200, r.text
     ids = {x["id"] for x in r.json()["data"]}
     assert {lead_a["id"], lead_b["id"]} <= ids
@@ -352,11 +352,11 @@ async def test_employee_unassigned_view_scoped_to_own_created_leads_only(client,
     lead_a = await _create_lead(client, headers_a, lmd, mobile="9611111103")
     lead_b = await _create_lead(client, headers_b, lmd, mobile="9611111104")
 
-    r = await client.get("/api/v1/leads?assigned_to=__unassigned__", headers=headers_a)
+    r = await client.get("/api/v1/leads?assigned_to=__unassigned__&stage=fresh", headers=headers_a)
     assert r.status_code == 200, r.text
     assert [x["id"] for x in r.json()["data"]] == [lead_a["id"]]
 
-    r = await client.get("/api/v1/leads?assigned_to=__unassigned__", headers=headers_b)
+    r = await client.get("/api/v1/leads?assigned_to=__unassigned__&stage=fresh", headers=headers_b)
     assert [x["id"] for x in r.json()["data"]] == [lead_b["id"]]
 
 

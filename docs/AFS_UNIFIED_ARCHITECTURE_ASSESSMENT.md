@@ -1,0 +1,15 @@
+# Unified CRM architecture assessment — 2026-11-19
+
+Assessment before implementation, based on repository code; no production data accessed.
+
+* MongoDB/Motor is scoped to one company per database (decision 001). Users authenticate separately from Employee and Customer profiles. Existing permissions and session checks remain authoritative.
+* Lead capture delegates ordinary mapped events to LeadService.create_lead. Capture receipts and external IDs provide retry context. Configured insurance-policy destinations use the existing insurance pipeline; changing these would contradict the requirement to preserve working destinations.
+* Manual leads start at `fresh`; explicit assignment currently moves them to `assigned`. Fresh Leads additionally filters `assigned_to=__unassigned__`. Automatic assignment must retain `fresh`, with a narrowly marked exception in the existing Fresh list/count query, preserving old rows and explicit assignment behavior.
+* Customer.user_id is unique. Applications carry customer_id, optional lead_id and assigned_to. Secure links reuse their application context. Independent applications are intentionally lead-less and Document Collection merges those rows with leads. No synthetic Lead is required.
+* Customer submission already uses a draft-to-submitted atomic update, reconciles the case on retry and preserves assignment. Placeholder registration profiles are not yet filled from submitted form fields. Only placeholder/missing profile fields can be filled automatically; existing names must remain intact. Names in leads can represent a different prospect despite an account link, so mobile matching alone must not rewrite them.
+* DailyOperationsService currently rejects **new** CRM links, while legacy linked rows already resolve current ownership via lookup. Extend with an explicit opt-in open-linked action; keep standalone entry, attendance, imports, Loan Progress and Re-Eligible processing unchanged. Linked working identity must be application/case-specific when supplied, otherwise lead-specific.
+* Dashboard has permission-scoped widgets, date/product/source filters and existing aggregate providers. Add operational monitoring without replacing its cards or changing financial calculations.
+* Reminders notifications and audit logs already exist. New durable assignment state must support owner retry without inserting another business record. Disabled-by-default settings avoid automatic reassignment of historic data.
+* Existing lead validation intentionally rejects repeat mobile numbers. This conflicts with arbitrary multiple lead opportunities; keep that rule for ordinary lead creation and allow existing multiple Applications rather than silently relaxing identity constraints or merging records.
+
+Implementation boundaries: additive settings/relationship metadata and indexes; atomic record claims and round-robin counter; stable-ID profile enrichment after submission; opt-in Daily Follow-up linking; scoped operational summary and owner configuration. No authentication, tenant architecture, Airtel, attendance, case-status transitions, tab ordering or production deployment changes.

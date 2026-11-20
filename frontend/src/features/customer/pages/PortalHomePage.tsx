@@ -33,7 +33,8 @@ function Hero({ customer, dashboard }: { customer: Customer; dashboard: PortalDa
     <div className="portal-card mb-6 border-l-4 border-l-orange-500">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold">Welcome, {customer.full_name}</h1>
+          <h1 className="text-xl font-semibold">{customer.full_name.trim().toLowerCase() === "customer" ? "Welcome" : `Welcome, ${customer.full_name}`}</h1>
+          {customer.full_name.trim().toLowerCase() === "customer" && <p className="mt-1 text-sm text-slate-600">Name not provided. Complete your application or update your profile.</p>}
           <p className="text-sm text-slate-600 mt-0.5">{customer.customer_code}</p>
         </div>
         <Link

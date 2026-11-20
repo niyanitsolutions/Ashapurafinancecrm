@@ -40,6 +40,7 @@ async def deliver_notifications(db: AsyncIOMotorDatabase[Any]) -> dict[str, int]
                 {
                     "assigned_to": 1,
                     "lead_oid": 1,
+                    "application_oid": 1,
                     "case_oid": 1,
                     "due_date": 1,
                     "notified_due_date": 1,
@@ -54,7 +55,11 @@ async def deliver_notifications(db: AsyncIOMotorDatabase[Any]) -> dict[str, int]
         )
         for doc in documents:
             employee_id = doc.get("assigned_to")
-            if kind == "follow-ups" and doc.get("case_oid"):
+            if kind == "follow-ups" and doc.get("application_oid"):
+                application = await db.applications.find_one(
+                    {"_id": doc["application_oid"], "is_deleted": False}, {"assigned_to": 1})
+                employee_id = application.get("assigned_to") if application else None
+            elif kind == "follow-ups" and doc.get("case_oid"):
                 case = await db.application_workflows.find_one(
                     {"_id": doc["case_oid"], "case_type": "loan", "is_deleted": False},
                     {"assigned_to": 1},

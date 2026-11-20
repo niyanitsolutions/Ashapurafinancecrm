@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { OpenLinkedFollowUp } from "@/features/daily_operations/OpenLinkedFollowUp";
 import { useLocation, useParams } from "react-router-dom";
 import { Button } from "@/components/buttons/Button";
 import { EligibleAssigneeSelect } from "@/components/forms/EligibleAssigneeSelect";
@@ -224,6 +225,7 @@ export function LeadDetailsPage() {
           ) : (
             <>
               <HeaderButton icon="print" label="Print" onClick={() => window.print()} />
+              <OpenLinkedFollowUp entity="lead" recordId={lead.id} />
               <HeaderButton icon="link" label="Generate Link" onClick={() => setIsLinkModalOpen(true)} />
               {canSendMessage && <HeaderButton icon="chat" label="Send Message" onClick={() => setIsSendMessageOpen(true)} />}
               {canAddTask && <HeaderButton icon="tasks" label="Add Task" onClick={() => setIsTaskModalOpen(true)} />}

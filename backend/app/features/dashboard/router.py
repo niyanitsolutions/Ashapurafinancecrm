@@ -1,5 +1,5 @@
 from datetime import date
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 
@@ -20,6 +20,22 @@ from app.features.dashboard.service import DashboardService
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 ServiceDep = Annotated[DashboardService, Depends(get_dashboard_service)]
+
+
+@router.get("/operations")
+async def operations(
+    service: ServiceDep, current_user: CurrentUserDep,
+    date_range: Annotated[str, Query(alias="range")] = "this_month",
+    start_date: date | None = None, end_date: date | None = None,
+    product_category: str | None = None, source_id: str | None = None,
+    employee: str | None = None, stage: str | None = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+) -> ApiResponse[dict[str, Any]]:
+    from app.features.dashboard.operations import operational_summary
+
+    criteria = resolve_dashboard_filters(date_range=date_range, start_date=start_date, end_date=end_date,
+        product_category=product_category, source_id=source_id)
+    return ApiResponse[dict[str, Any]].ok(await operational_summary(service._db, current_user, criteria, employee, stage, page))
 
 
 @router.get("/nav")

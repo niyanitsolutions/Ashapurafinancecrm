@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { OpenLinkedFollowUp } from "@/features/daily_operations/OpenLinkedFollowUp";
 import { Link, useParams } from "react-router-dom";
 import { Button } from "@/components/buttons/Button";
 import { EmployeeSelect } from "@/components/forms/EmployeeSelect";
@@ -211,6 +212,7 @@ export function StaffApplicationDetailsPage() {
 
   return (
     <SimplePageLayout title={application.application_code} backTo={backTo} backLabel={backLabel}>
+      <div className="mb-4"><OpenLinkedFollowUp entity="application" recordId={applicationId} /></div>
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
       <ErrorBanner message={error} />
 

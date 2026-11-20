@@ -123,6 +123,7 @@ import { LeadSourcesPage } from "@/features/system_settings/pages/LeadSourcesPag
 import { BranchesPage } from "@/features/system_settings/pages/BranchesPage";
 import { NotificationTemplatesPage } from "@/features/system_settings/pages/NotificationTemplatesPage";
 import { CompanySettingsPage } from "@/features/system_settings/pages/CompanySettingsPage";
+import { AutoAssignmentPage } from "@/features/system_settings/pages/AutoAssignmentPage";
 import { ReminderRulesPage } from "@/features/reminders/pages/ReminderRulesPage";
 import { ProductSchemasPage } from "@/features/customer/pages/ProductSchemasPage";
 import { SchemaEditorPage } from "@/features/customer/pages/SchemaEditorPage";
@@ -487,6 +488,7 @@ export const router = createBrowserRouter([
                   { path: "/settings/status-masters", element: <StatusMastersPage /> },
                   { path: "/settings/notification-templates", element: <NotificationTemplatesPage /> },
                   { path: "/settings/company", element: <CompanySettingsPage /> },
+                  { path: "/settings/auto-assignment", element: <AutoAssignmentPage /> },
                   { path: "/settings/invoices", element: <InvoiceSettingsPage /> },
                   { path: "/settings/product-schemas", element: <ProductSchemasPage /> },
                   { path: "/settings/product-schemas/compare", element: <SchemaComparePage /> },

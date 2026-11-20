@@ -1,0 +1,26 @@
+{
+  "results": [
+    {
+      "width": 390,
+      "role": "owner",
+      "result": "passed"
+    },
+    {
+      "width": 768,
+      "role": "owner",
+      "result": "passed"
+    },
+    {
+      "width": 1366,
+      "role": "owner",
+      "result": "passed"
+    },
+    {
+      "width": 1366,
+      "role": "employee",
+      "result": "passed"
+    }
+  ],
+  "backend": "real local FastAPI and disposable MongoDB",
+  "external_calls": "none"
+}

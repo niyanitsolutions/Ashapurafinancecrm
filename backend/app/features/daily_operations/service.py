@@ -79,7 +79,7 @@ def public(doc: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
             for event in doc["history"]
         ]
     return {
-        **{k: v for k, v in doc.items() if k not in {"_id", "import_key", "lead_oid", "case_oid"}},
+        **{k: v for k, v in doc.items() if k not in {"_id", "import_key", "lead_oid", "case_oid", "application_oid", "customer_oid"}},
         "id": str(doc["_id"]),
     }
 
@@ -191,6 +191,16 @@ class DailyOperationsService:
         if not doc:
             raise NotFoundError("Record not found.")
         if kind == "follow-ups":
+            if doc.get("working_key"):
+                await self.authorize_lead_view(actor)
+            if doc.get("application_id"):
+                from app.config.redis import get_redis
+                from app.features.customer.service import CustomerService
+
+                if not await PermissionEngine(self.db).has_permission(actor, module="customer", resource="customers", action="view"):
+                    raise ForbiddenError("Customer viewing permission is required for this linked application.")
+                application = await CustomerService(self.db, get_redis()).get_application_for_staff(doc["application_id"], actor)
+                doc["assigned_to"] = application.assigned_to
             if (
                 not doc.get("lead_id")
                 and not doc.get("case_id")
@@ -212,8 +222,16 @@ class DailyOperationsService:
                     doc["assigned_to"] = case["assigned_to"]
             elif doc.get("lead_id"):
                 lead = await LeadService(self.db).get_lead_scoped(doc["lead_id"], actor)
-                if actor.role != OWNER:
+                if not doc.get("application_id"):
                     doc["assigned_to"] = lead.assigned_to
+        if kind == "follow-ups" and doc.get("customer_id"):
+            customer = await self.db.customers.find_one({"_id": ObjectId(doc["customer_id"]), "is_deleted": False},
+                                                       {"full_name": 1, "mobile": 1})
+            if customer:
+                doc.update(customer_name=customer["full_name"], customer_number=customer["mobile"])
+        if kind == "follow-ups" and doc.get("working_key") and doc.get("assigned_to"):
+            employee = await self.db.employees.find_one({"_id": ObjectId(doc["assigned_to"])}, {"display_name": 1})
+            doc["employee_name"] = (employee or {}).get("display_name", "Owner")
         return doc
 
     async def save(
@@ -239,6 +257,9 @@ class DailyOperationsService:
                     "Daily Follow-up records are independent; new CRM links are not supported."
                 )
             data = await self.validate_follow_up(payload, actor)
+            if old and old.get("working_key"):
+                data.update(assigned_to=old["assigned_to"], customer_name=old["customer_name"],
+                            customer_number=old["customer_number"])
             from app.features.daily_operations.bank_options import BankOptions
 
             banks = await BankOptions(self).selections(payload.banks, payload.bank, old)
@@ -308,6 +329,15 @@ class DailyOperationsService:
             )
             if not updated:
                 raise ConflictError("This record changed. Reload it before saving again.")
+            if kind == "follow-ups" and old.get("working_key"):
+                from app.shared.audit_log import write_audit_log
+
+                metadata = {"daily_follow_up_id": str(updated["_id"]), "lead_id": old.get("lead_id"),
+                            "application_id": old.get("application_id"), "customer_id": old.get("customer_id"),
+                            "fields": [key for key, value in data.items() if old.get(key) != value]}
+                await write_audit_log(self.db, event_type="daily_follow_up_updated", user_id=actor.require_id(), metadata=metadata)
+                if old.get("lead_id"):
+                    await LeadService(self.db).log_activity(old["lead_id"], "daily_follow_up_updated", actor, metadata)
             return public(updated)
         doc = {
             **BaseDocument(created_by=actor.require_id()).model_dump(exclude={"id"}),
@@ -353,6 +383,12 @@ class DailyOperationsService:
         await self.authorize(actor, kind)
         now = utc_now()
         query = await self.scope(actor, kind)
+        if kind == "follow-ups":
+            engine = PermissionEngine(self.db)
+            if not await engine.has_permission(actor, module="leads", resource="leads", action="view"):
+                query["working_key"] = {"$exists": False}
+            if not await engine.has_permission(actor, module="customer", resource="customers", action="view"):
+                query["application_id"] = None
         if kind == "progress":
             query["case_id"] = None  # Linked annotations are already merged with CRM cases.
         if date_from and date_to and date_from > date_to:
@@ -517,6 +553,18 @@ class DailyOperationsService:
                     },
                 ]
             )
+        if kind == "follow-ups":
+            pipeline.extend([
+                {"$lookup": {"from": "applications", "localField": "application_oid", "foreignField": "_id", "as": "linked_application"}},
+                {"$unwind": {"path": "$linked_application", "preserveNullAndEmptyArrays": True}},
+                {"$match": {"$or": [{"application_oid": {"$exists": False}}, {"linked_application.is_deleted": False}]}},
+                {"$set": {"assigned_to": {"$cond": [
+                    {"$ne": [{"$ifNull": ["$application_oid", None]}, None]},
+                    "$linked_application.assigned_to", "$assigned_to"]}}},
+                {"$lookup": {"from": "customers", "localField": "customer_oid", "foreignField": "_id", "as": "linked_customer"}},
+                {"$unwind": {"path": "$linked_customer", "preserveNullAndEmptyArrays": True}},
+                {"$set": {"customer_name": {"$ifNull": ["$linked_customer.full_name", "$customer_name"]}}},
+            ])
         pipeline.extend(
             [
                 {"$match": query},
@@ -537,6 +585,10 @@ class DailyOperationsService:
                                     "lead_oid": 0,
                                     "case_oid": 0,
                                     "linked_case": 0,
+                                    "linked_application": 0,
+                                    "linked_customer": 0,
+                                    "application_oid": 0,
+                                    "customer_oid": 0,
                                 }
                             },
                         ],
@@ -622,6 +674,10 @@ class DailyOperationsService:
 
 
 async def ensure_daily_operations_indexes(db: AsyncIOMotorDatabase[Any]) -> None:
+    await db.daily_follow_ups.create_index("working_key", unique=True,
+        partialFilterExpression={"working_key": {"$type": "string"}})
+    await db.daily_follow_ups.create_index("application_oid")
+    await db.daily_follow_ups.create_index("customer_oid")
     from app.features.daily_operations.status_options import install
 
     await install(db)

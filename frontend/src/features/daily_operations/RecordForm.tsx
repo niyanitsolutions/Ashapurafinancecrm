@@ -62,7 +62,7 @@ export function RecordForm({ area, record, onSaved, onCancel }: {
       value={values[key] ?? ""} maxLength={1000} min={type === "number" ? 0 : key === "due_date" ? values.date : undefined}
       step={type === "number" ? "0.01" : undefined} onChange={event => change(key, event.target.value)} />
   );
-  const linked = area === "progress" && (!!values.case_id || !!values.lead_id);
+  const linked = (area === "progress" && (!!values.case_id || !!values.lead_id)) || (area === "follow-ups" && Boolean(record?.working_key));
   const crmProgress = area === "progress" && !!values.case_id;
   const openFollowUp = followStatuses.slice(0, 2).includes(values.status);
   const statusLabel = statusOptions.data?.find(option => option.value === values.status)?.name ?? (values.status === record?.status ? String(record.status_display ?? values.status) : values.status);

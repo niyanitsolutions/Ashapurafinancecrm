@@ -58,6 +58,7 @@ class NotificationType:
     DAILY_FOLLOW_UP_DUE = "daily_follow_up_due"
     OPERATIONAL_ISSUE_ASSIGNED = "operational_issue_assigned"
     LEAD_ASSIGNED = "lead_assigned"
+    ASSIGNMENT_ATTENTION = "assignment_attention"
     DOCUMENT_UPLOADED = "document_uploaded"
     TASK_ASSIGNED = "task_assigned"
     TASK_DUE = "task_due"
@@ -76,7 +77,7 @@ class NotificationType:
 
     ALL = (
         EMPLOYEE_HR, DAILY_FOLLOW_UP_DUE, OPERATIONAL_ISSUE_ASSIGNED,
-        LEAD_ASSIGNED, DOCUMENT_UPLOADED, TASK_ASSIGNED, TASK_DUE, TASK_ESCALATION, TASK_OWNER_ESCALATION,
+        LEAD_ASSIGNED, ASSIGNMENT_ATTENTION, DOCUMENT_UPLOADED, TASK_ASSIGNED, TASK_DUE, TASK_ESCALATION, TASK_OWNER_ESCALATION,
         REMINDER_TRIGGERED, SUPPORT_REQUEST_RAISED, DOCUMENT_REJECTED,
     )
 
@@ -109,6 +110,7 @@ CATEGORY_BY_NOTIFICATION_TYPE: dict[str, str] = {
     NotificationType.DAILY_FOLLOW_UP_DUE: NotificationCategory.REMINDER,
     NotificationType.OPERATIONAL_ISSUE_ASSIGNED: NotificationCategory.ASSIGNMENT,
     NotificationType.LEAD_ASSIGNED: NotificationCategory.ASSIGNMENT,
+    NotificationType.ASSIGNMENT_ATTENTION: NotificationCategory.ASSIGNMENT,
     NotificationType.TASK_ASSIGNED: NotificationCategory.ASSIGNMENT,
     NotificationType.DOCUMENT_UPLOADED: NotificationCategory.DOCUMENT,
     NotificationType.TASK_DUE: NotificationCategory.TASK,

@@ -15,6 +15,7 @@ from app.features.auth.models import User
 from app.features.bulk_import.files import MAX_BYTES
 from app.features.daily_operations import entries, transfers, views
 from app.features.daily_operations.bank_options import BankEdit, BankName, BankOptions
+from app.features.daily_operations.linked import OpenLinkedRequest, open_linked
 from app.features.daily_operations.loan_options import LoanOptions
 from app.features.daily_operations.schemas import (
     DeleteRecord,
@@ -122,6 +123,11 @@ async def lookups(
     return ApiResponse[dict[str, Any]].ok(
         await entries.lookups(DailyOperationsService(db), actor, search, include_crm)
     )
+
+
+@router.post("/linked-follow-up")
+async def linked_follow_up(payload: OpenLinkedRequest, actor: Actor, db: Db) -> ApiResponse[dict[str, Any]]:
+    return ApiResponse[dict[str, Any]].ok(await open_linked(DailyOperationsService(db), payload, actor))
 
 
 @router.post("/progress")

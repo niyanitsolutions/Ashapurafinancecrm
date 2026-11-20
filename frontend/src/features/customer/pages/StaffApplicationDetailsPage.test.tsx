@@ -79,6 +79,10 @@ vi.mock("@/features/auth/useAuth", () => ({
   useAuth: () => ({ role: "employee" }),
 }));
 
+vi.mock("@/features/access_control/usePermissions", () => ({
+  usePermissions: () => ({ can: () => true, isOwner: false, loading: false }),
+}));
+
 vi.mock("@/features/customer/useProductSchema", () => ({
   useProductSchema: () => ({
     data: {

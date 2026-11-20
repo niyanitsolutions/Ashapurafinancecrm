@@ -14,4 +14,7 @@ async def check_daily_operations_notifications(_ctx: dict[Any, Any]) -> dict[str
     await reconcile_statuses(db)
     await reconcile_reeligible(db)
     await expire_sessions(db)
+    from app.features.leads.auto_assignment import AutoAssignment
+
+    await AutoAssignment(db).recover()
     return await deliver_notifications(db)

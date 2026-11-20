@@ -188,8 +188,19 @@ class LeadService:
             await self._assignment_recipient(assignee_id)
         return duplicate_ids
 
-    async def create_lead(self, payload: CreateLeadRequest, actor: User) -> Lead:
-        duplicate_ids = await self.validate_create_lead(payload, actor)
+    async def create_lead(self, payload: CreateLeadRequest, actor: User, *, intake_key: str | None = None) -> Lead:
+        if intake_key:
+            existing = await self._leads.find_many({"intake_key": intake_key}, limit=1)
+            if existing:
+                return existing[0]
+        try:
+            duplicate_ids = await self.validate_create_lead(payload, actor)
+        except ConflictError:
+            if intake_key:
+                existing = await self._leads.find_many({"intake_key": intake_key}, limit=1)
+                if existing:
+                    return existing[0]
+            raise
 
         # Looked up only to stamp `form_definition_id` for later reference — Create Lead
         # collects basic lead info only (see docs/decisions/DECISIONS.md); the Product
@@ -205,6 +216,7 @@ class LeadService:
 
         lead = Lead(
             identity_name=normalized_name(payload.full_name),
+            intake_key=intake_key,
             lead_code=lead_code,
             full_name=payload.full_name,
             mobile=payload.mobile,
@@ -227,6 +239,10 @@ class LeadService:
         try:
             lead_id = await self._leads.insert(lead)
         except DuplicateKeyError:
+            if intake_key:
+                existing = await self._leads.find_many({"intake_key": intake_key}, limit=1)
+                if existing:
+                    return existing[0]
             raise ConflictError("A lead already exists with this mobile number. Reload before continuing.") from None
 
         await self._log_activity(lead_id, LeadActivityType.CREATED, actor, {"lead_code": lead_code})
@@ -244,6 +260,19 @@ class LeadService:
             employee_id = await self._resolve_assignee(payload.assigned_to, actor)
             return await self._assign(lead_id, employee_id, actor)
 
+        # Automatic intake ownership deliberately preserves the Fresh destination.
+        if actor.role == EMPLOYEE:
+            employee = await self._employees.find_by_user_id(actor.require_id())
+            if employee is not None and employee.status == EmploymentStatus.ACTIVE:
+                await self._leads.update(lead_id, {"assigned_to": employee.require_id(),
+                    "assigned_by": actor.require_id(), "assigned_at": utc_now(), "assignment_origin": "creator"})
+                await self._log_activity(lead_id, LeadActivityType.ASSIGNED, actor,
+                    {"employee_id": employee.require_id(), "old_employee_id": None, "source": "creator"})
+        else:
+            from app.features.leads.auto_assignment import AutoAssignment
+
+            await self._leads.update(lead_id, {"auto_assignment_eligible": True})
+            await AutoAssignment(self._db).assign("leads", lead_id, actor)
         return await self._leads.find_by_id(lead_id) or lead
 
     async def get_lead(self, lead_id: str) -> Lead:
@@ -346,6 +375,8 @@ class LeadService:
         if requested_assigned_to == UNASSIGNED_SENTINEL:
             if await self._has_broad_visibility(actor):
                 return UNASSIGNED_SENTINEL, None
+            if requested_stage == LeadStage.FRESH:
+                return employee_id, actor.require_id()
             return UNASSIGNED_SENTINEL, actor.require_id()
 
         if requested_assigned_to == ASSIGNED_SENTINEL or requested_stage in (LeadStage.DOCUMENT_COLLECTION, LeadStage.REJECTED):
@@ -829,15 +860,17 @@ class LeadService:
         holds a User id while `assigned_to` normally holds an Employee id (see
         `get_lead_scoped`'s docstring)."""
         recipient_user_id = await self._assignment_recipient(assignee_id)
+        previous = await self.get_lead(lead_id)
 
         updated = await self._leads.update(
             lead_id,
-            {"assigned_to": assignee_id, "stage": LeadStage.ASSIGNED, "assigned_by": actor.require_id(), "assigned_at": utc_now()},
+            {"assigned_to": assignee_id, "stage": LeadStage.ASSIGNED, "assigned_by": actor.require_id(), "assigned_at": utc_now(),
+             "assignment_origin": "manual", "auto_assignment_eligible": False, "assignment_pending": False, "assignment_token": None},
             updated_by=actor.require_id(),
         )
         if updated is None:
             raise NotFoundError("Lead not found.")
-        await self._log_activity(lead_id, LeadActivityType.ASSIGNED, actor, {"employee_id": assignee_id})
+        await self._log_activity(lead_id, LeadActivityType.ASSIGNED, actor, {"employee_id": assignee_id, "old_employee_id": previous.assigned_to})
         # NotificationType.LEAD_ASSIGNED has existed since Module 6D but was never wired
         # up to the one event it names — Reminders' own create_task is the only caller
         # that ever fired a notification. No import cycle: reminders/service.py doesn't
@@ -861,7 +894,8 @@ class LeadService:
         if lead.stage == LeadStage.REJECTED:
             raise ValidationError("A rejected lead cannot be unassigned.")
         updated = await self._leads.update(
-            lead_id, {"assigned_to": None, "stage": LeadStage.FRESH, "assigned_by": None, "assigned_at": None},
+            lead_id, {"assigned_to": None, "stage": LeadStage.FRESH, "assigned_by": None, "assigned_at": None,
+                      "assignment_origin": "manual", "auto_assignment_eligible": False, "assignment_pending": False, "assignment_token": None},
             updated_by=actor.require_id(),
         )
         if updated is None:

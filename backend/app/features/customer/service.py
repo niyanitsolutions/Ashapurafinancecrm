@@ -1471,7 +1471,7 @@ class CustomerService:
         application = await self.get_own_application(application_id, actor)
         if application.status == ApplicationStatus.SUBMITTED:
             await self._ensure_submitted_case(application)
-            return application
+            return await self._applications.find_by_id(application_id) or application
         if application.status != ApplicationStatus.DRAFT:
             raise ConflictError("This application cannot be submitted.")
 
@@ -1540,7 +1540,7 @@ class CustomerService:
             if current.status != ApplicationStatus.SUBMITTED:
                 raise ConflictError("Application changed. Reload before submitting.")
             await self._ensure_submitted_case(current)
-            return current
+            return await self._applications.find_by_id(application_id) or current
         updated = Application.model_validate(row)
         await write_audit_log(
             self._db, event_type=AuditEvent.APPLICATION_SUBMITTED, user_id=actor.require_id(), metadata={"application_id": application_id}
@@ -1549,12 +1549,28 @@ class CustomerService:
             await self._log_lead_timeline(application.lead_id, LeadTimelineEvent.CUSTOMER_SUBMITTED_APPLICATION, {"application_id": application_id})
 
         await self._ensure_submitted_case(updated)
-        return updated
+        return await self._applications.find_by_id(application_id) or updated
 
     async def _ensure_submitted_case(self, application: Application) -> None:
         # Existing case creation is idempotent. Reconcile on a repeated request too,
         # so a transport failure after committing submission can be safely resumed.
         from pymongo.errors import DuplicateKeyError
+
+        from app.features.customer.submitted_identity import enrich_submitted_identity
+        from app.features.leads.auto_assignment import AutoAssignment
+
+        await enrich_submitted_identity(self._db, application)
+        existing_case = await self._db.application_workflows.find_one(
+            {"application_id": application.require_id(), "is_deleted": False}, {"assigned_to": 1})
+        if not application.assigned_to and not application.lead_id and not (existing_case or {}).get("assigned_to"):
+            await self._db.applications.update_one(
+                {"_id": to_object_id(application.require_id()), "assigned_to": None,
+                 "auto_assignment_eligible": {"$exists": False}},
+                {"$set": {"auto_assignment_eligible": True}})
+            actor = await self._users.find_by_id(application.user_id)
+            if actor is not None:
+                await AutoAssignment(self._db).assign("applications", application.require_id(), actor)
+                application = await self._applications.find_by_id(application.require_id()) or application
 
         try:
             if application.product_category == "loan":
