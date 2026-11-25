@@ -1,0 +1,20 @@
+{
+  "baseline_commit": "f4c479a8e66cb1166155e4df9c6b6e05fcc6564c",
+  "protected_scopes": {
+    "backend/app/features/auth/": [],
+    "backend/app/features/customer/service.py": [],
+    "backend/app/features/customer/models.py": [],
+    "backend/app/features/customer/profile_edit.py": [],
+    "backend/app/features/bin/": [],
+    "backend/app/features/integrations/": [],
+    "backend/app/features/daily_operations/": [],
+    "backend/app/features/leads/auto_assignment.py": [],
+    "backend/app/features/workflow_engine/": [],
+    "backend/app/features/loan_management/": [],
+    "backend/app/features/insurance_management/": [],
+    "backend/app/security/": []
+  },
+  "production_access": false,
+  "historical_pan_backfill": false,
+  "historical_screenshot_changes": "Restored to baseline; correction evidence lives only in this new directory."
+}

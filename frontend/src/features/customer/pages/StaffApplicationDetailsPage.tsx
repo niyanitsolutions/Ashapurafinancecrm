@@ -75,7 +75,7 @@ export function StaffApplicationDetailsPage() {
   // Opened from Leads -> Document Collection (the row-level View action and Update
   // Lead's "View Full Application" link both pass this) never from the Customer
   // Applications module or Customer Details page, which keep the original default.
-  const { backTo, backLabel, fromDocumentCollection } = useDocumentCollectionBackContext("/applications");
+  const { backTo, backLabel, fromDocumentCollection } = useDocumentCollectionBackContext("/leads/document-collection");
   const { role } = useAuth();
   const [application, setApplication] = useState<ApplicationDetail | null>(null);
   const [documents, setDocuments] = useState<ApplicationDocument[]>([]);

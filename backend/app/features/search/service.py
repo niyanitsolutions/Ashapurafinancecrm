@@ -95,7 +95,16 @@ async def search_records(
                     "id": {"$toString": "$_id"},
                     "label": "$full_name",
                     "subtitle": "$customer_code",
-                    "route": {"$concat": ["/customers/", {"$toString": "$_id"}]},
+                    "customer_code": "$customer_code",
+                    "mobile": "$mobile",
+                    "route": {
+                        "$concat": [
+                            "/leads/document-collection?customer_id=",
+                            {"$toString": "$_id"},
+                            "&expand=",
+                            {"$toString": "$_id"},
+                        ]
+                    },
                 }
             },
         ]
@@ -182,18 +191,29 @@ async def search_records(
                         "label": "$application_code",
                         "subtitle": {
                             "$concat": [
-                                "$customer.full_name",
-                                " ? ",
+                                "$name",
+                                " | ",
                                 "$customer.customer_code",
-                                " ? ",
+                                " | ",
                                 {"$ifNull": ["$loan.name", {"$ifNull": ["$insurance.name", ""]}]},
-                                " ? ",
+                                " | ",
                                 "$status",
-                                " ? ",
+                                " | ",
                                 {"$ifNull": ["$employee.display_name", "Unassigned"]},
                             ]
                         },
-                        "route": {"$concat": ["/applications/", {"$toString": "$_id"}]},
+                        "customer_name": "$name",
+                        "product_name": {"$ifNull": ["$loan.name", "$insurance.name"]},
+                        "status": "$status",
+                        "assigned_to_name": "$employee.display_name",
+                        "route": {
+                            "$concat": [
+                                "/applications/",
+                                {"$toString": "$_id"},
+                                "?from=document-collection&customer_id=",
+                                {"$toString": "$customer._id"},
+                            ]
+                        },
                     }
                 },
             ],
@@ -203,6 +223,8 @@ async def search_records(
                         "_id": "$customer._id",
                         "label": {"$first": "$name"},
                         "subtitle": {"$first": "$customer.customer_code"},
+                        "customer_code": {"$first": "$customer.customer_code"},
+                        "mobile": {"$first": "$customer.mobile"},
                     }
                 },
                 {"$sort": {"_id": -1}},
@@ -215,7 +237,16 @@ async def search_records(
                         "id": {"$toString": "$_id"},
                         "label": 1,
                         "subtitle": 1,
-                        "route": {"$concat": ["/customers/", {"$toString": "$_id"}]},
+                        "customer_code": 1,
+                        "mobile": 1,
+                        "route": {
+                            "$concat": [
+                                "/leads/document-collection?customer_id=",
+                                {"$toString": "$_id"},
+                                "&expand=",
+                                {"$toString": "$_id"},
+                            ]
+                        },
                     }
                 },
             ],
@@ -242,7 +273,9 @@ async def search_records(
                 "type": "lead",
                 "id": lead.require_id(),
                 "label": lead.lead_code,
-                "subtitle": lead.full_name,
+                "subtitle": " | ".join(filter(None, [lead.full_name, lead.mobile, lead.status])),
+                "mobile": lead.mobile,
+                "status": lead.status,
                 "route": "/leads/" + lead.require_id(),
             }
             for lead in leads
@@ -255,19 +288,38 @@ async def search_records(
                     "is_deleted": False,
                     "$or": [{key: regex} for key in ["display_name", "employee_code", "mobile"]],
                 },
-                {"display_name": 1, "employee_code": 1},
+                {"display_name": 1, "employee_code": 1, "designation_id": 1},
             )
             .sort([("_id", -1)])
             .skip(offset)
             .limit(10)
             .to_list(10)
         )
+        from bson import ObjectId
+
+        designation_ids = {
+            row.get("designation_id")
+            for row in rows
+            if ObjectId.is_valid(row.get("designation_id"))
+        }
+        designations = {
+            str(d["_id"]): d["name"]
+            async for d in db.designations.find(
+                {
+                    "_id": {"$in": [ObjectId(value) for value in designation_ids]},
+                    "is_deleted": False,
+                },
+                {"name": 1},
+            )
+        }
         results.extend(
             {
                 "type": "employee",
                 "id": str(row["_id"]),
                 "label": row.get("display_name", "Employee"),
                 "subtitle": row.get("employee_code"),
+                "employee_code": row.get("employee_code"),
+                "designation": designations.get(row.get("designation_id")),
                 "route": "/employees/" + str(row["_id"]),
             }
             for row in rows
@@ -288,4 +340,11 @@ async def search_records(
             for item in unique:
                 if item["type"] == "customer" and item["id"] == row["id"]:
                     item["label"] = row["label"]
+    from app.features.customer.identity_name import actual_name
+
+    for result in unique:
+        if result["type"] == "customer":
+            result["label"] = actual_name(result.get("label")) or "Name unavailable"
+        elif result["type"] == "application":
+            result["label"] = result.get("label") or "Application code unavailable"
     return sorted(unique, key=lambda row: row["type"])

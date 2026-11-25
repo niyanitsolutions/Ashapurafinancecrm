@@ -1,0 +1,60 @@
+{
+  "results": [
+    {
+      "width": 390,
+      "result": "passed",
+      "checks": [
+        "11-column table",
+        "one customer/two applications",
+        "independent application actions",
+        "staff-only assigning-user options",
+        "stored source options",
+        "catalogue status labels",
+        "combined filters",
+        "debounced mobile/application search and clearing",
+        "group-aware customer/application navigation",
+        "legacy list redirect",
+        "profile editor preserved",
+        "no business mutations"
+      ]
+    },
+    {
+      "width": 768,
+      "result": "passed",
+      "checks": [
+        "11-column table",
+        "one customer/two applications",
+        "independent application actions",
+        "staff-only assigning-user options",
+        "stored source options",
+        "catalogue status labels",
+        "combined filters",
+        "debounced mobile/application search and clearing",
+        "group-aware customer/application navigation",
+        "legacy list redirect",
+        "profile editor preserved",
+        "no business mutations"
+      ]
+    },
+    {
+      "width": 1366,
+      "result": "passed",
+      "checks": [
+        "11-column table",
+        "one customer/two applications",
+        "independent application actions",
+        "staff-only assigning-user options",
+        "stored source options",
+        "catalogue status labels",
+        "combined filters",
+        "debounced mobile/application search and clearing",
+        "group-aware customer/application navigation",
+        "legacy list redirect",
+        "profile editor preserved",
+        "no business mutations"
+      ]
+    }
+  ],
+  "api": "real local FastAPI and disposable MongoDB",
+  "external_calls": "none"
+}

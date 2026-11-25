@@ -1,9 +1,10 @@
+import { LegacyCustomerListRedirect } from "./LegacyCustomerListRedirect";
 import { PortalNotificationsPage } from "@/features/customer/pages/PortalNotificationsPage";
 import {EmployeeHrSettingsPage} from "@/features/employee/pages/EmployeeHrSettingsPage";
 import {EmployeeHrReportsPage} from "@/features/employee/pages/EmployeeHrReportsPage";
 import {EmployeeLeavePage} from "@/features/employee/pages/EmployeeLeavePage";
 import {EmployeeOnboardingPage} from "@/features/employee/pages/EmployeeOnboardingPage";
-import { createBrowserRouter, Navigate } from "react-router-dom";
+import { createBrowserRouter, Navigate, Outlet } from "react-router-dom";
 import { DailyOperationsPage } from "@/features/daily_operations/DailyOperationsPage";
 import { TransferCentre } from "@/features/daily_operations/TransferCentre";
 import { DailyUpdateLayout } from "@/features/daily_operations/DailyUpdateLayout";
@@ -37,9 +38,7 @@ import { AdditionalDocumentsPage } from "@/features/customer/pages/AdditionalDoc
 import { DisbursementsPage } from "@/features/loan_management/pages/DisbursementsPage";
 import { CompleteProfilePage } from "@/features/customer/pages/CompleteProfilePage";
 import { CustomerDetailsPage } from "@/features/customer/pages/CustomerDetailsPage";
-import { CustomerListPage } from "@/features/customer/pages/CustomerListPage";
 import { ConversationPage } from "@/features/customer/pages/ConversationPage";
-import { CustomersLayout } from "@/features/customer/pages/CustomersLayout";
 import { DocumentsPage } from "@/features/customer/pages/DocumentsPage";
 import { MessagesPage } from "@/features/customer/pages/MessagesPage";
 import { PortalHomePage } from "@/features/customer/pages/PortalHomePage";
@@ -49,7 +48,6 @@ import { RegisterPage } from "@/features/customer/pages/RegisterPage";
 import { SecureLinkLandingPage } from "@/features/customer/pages/SecureLinkLandingPage";
 import { SupportPage } from "@/features/customer/pages/SupportPage";
 import { StaffApplicationDetailsPage } from "@/features/customer/pages/StaffApplicationDetailsPage";
-import { StaffApplicationListPage } from "@/features/customer/pages/StaffApplicationListPage";
 import { CreateEmployeePage } from "@/features/employee/pages/CreateEmployeePage";
 import { EmployeeActivityOverviewPage } from "@/features/employee/pages/EmployeeActivityOverviewPage";
 import { EmployeeDetailsPage } from "@/features/employee/pages/EmployeeDetailsPage";
@@ -239,10 +237,10 @@ export const router = createBrowserRouter([
             // Employees (list-level tabs share a layout, detail routes sit outside it).
             // /applications isn't nested under /customers in the URL, same as
             // AdministrationLayout already grouping unrelated absolute paths.
-            element: <CustomersLayout />,
+            element: <Outlet />,
             children: [
-              { path: "/customers", element: <CustomerListPage /> },
-              { path: "/applications", element: <StaffApplicationListPage /> },
+              { path: "/customers", element: <LegacyCustomerListRedirect /> },
+              { path: "/applications", element: <LegacyCustomerListRedirect /> },
             ],
           },
           { path: "/customers/:customerId", element: <CustomerDetailsPage /> },

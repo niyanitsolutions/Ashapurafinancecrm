@@ -19,7 +19,7 @@ export function StaffCustomerProfile({ customerId }: { customerId: string }) {
   useEffect(() => { let active = true; apiRequest<Customer & { version: number }>(`/customers/${customerId}`).then(p => { if(active) setProfile(p); }).catch(e => { if(active) setError(e.message); }); return () => { active = false; }; },[customerId]);
   return <section className="rounded-card border border-border bg-card p-6">
     <h2 className="mb-3 font-semibold">Customer Details - current profile</h2><ErrorBanner message={error} />
-    {profile && <><Link className="text-primary underline" to={`/customers/${customerId}`}>{profile.customer_code}</Link><p>{profile.full_name}</p><p>{profile.mobile}</p><p>{profile.email}</p>{profile.date_of_birth && <p>Date of birth: {formatISTDate(profile.date_of_birth)}</p>}<p>PAN: {profile.pan_number_masked || "Not provided"}</p>
+    {profile && <><Link className="text-primary underline" to={`/leads/document-collection?customer_id=${customerId}&expand=${customerId}`}>{profile.customer_code}</Link><p>{profile.full_name}</p><p>{profile.mobile}</p><p>{profile.email}</p>{profile.date_of_birth && <p>Date of birth: {formatISTDate(profile.date_of_birth)}</p>}<p>PAN: {profile.pan_number_masked || "Not provided"}</p>
       <p className="my-3 text-xs text-textSecondary">Current shared identity. Original application answers remain in the application record below.</p>
       {can("customer:customers","edit") && <Button size="sm" variant="secondary" onClick={() => { setForm({ full_name: profile.full_name, email: profile.email || "", date_of_birth: profile.date_of_birth || "", pan_number: "", reason: "" }); setEditing(true); }}>Edit Customer Details</Button>}
     </>}

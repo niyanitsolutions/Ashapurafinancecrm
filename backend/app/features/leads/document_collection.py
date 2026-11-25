@@ -26,6 +26,7 @@ Actor = Annotated[User, require_permission("leads", "leads", "view")]
 
 class CollectionFilters(BaseModel):
     search: str = Field(default="", max_length=120)
+    customer_id: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{24}$")
     assigned_to: str | None = None
     assigned_by: str | None = None
     assigned_from: date | None = None
@@ -365,7 +366,6 @@ async def pipeline(
         "product_id": "product_id",
         "product_category": "product_category",
         "application_status": "status",
-        "source_id": "lead.source_id",
         "branch_id": "employee.branch_id",
         "assigned_by": "assigned_by",
         "designation_id": "employee.designation_id",
@@ -375,6 +375,14 @@ async def pipeline(
         value = getattr(f, key)
         if value:
             criteria[target] = value
+    if f.source_id:
+        if f.source_id.startswith("submission:"):
+            criteria["submission_source"] = f.source_id.removeprefix("submission:")
+            criteria["lead.source_id"] = None
+        else:
+            criteria["lead.source_id"] = f.source_id
+    if f.customer_id:
+        criteria["group_key"] = f.customer_id.lower()
     for target, start, end in [
         ("created_at", f.created_from, f.created_until),
         ("assigned_at", f.assigned_from, f.assigned_until),
@@ -488,6 +496,12 @@ async def grouped(
                                 "created_at": 1,
                                 "customer_id": {"$toString": "$customer._id"},
                                 "customer_code": "$customer.customer_code",
+                                "customer_name": "$name",
+                                "mobile": {"$ifNull": ["$customer.mobile", "$lead.mobile"]},
+                                "source_name": "$source.name",
+                                "source_id": "$lead.source_id",
+                                "submission_source": 1,
+                                "customer_status": "$customer.status",
                             }
                         },
                     ],
@@ -497,6 +511,7 @@ async def grouped(
         ]
     else:
         p += [
+            {"$sort": {"submitted_at": -1, "created_at": -1, "_id": -1}},
             {
                 "$group": {
                     "_id": "$group_key",
@@ -508,6 +523,23 @@ async def grouped(
                     },
                     "latest_submission": {"$max": "$submitted_at"},
                     "created_at": {"$max": "$created_at"},
+                    "primary": {
+                        "$first": {
+                            "id": "$record_id",
+                            "record_kind": "$record_kind",
+                            "lead_id": "$lead_id",
+                            "application_code": "$application_code",
+                            "product_name": "$product_name",
+                            "product_category": "$product_category",
+                            "status": "$status",
+                            "assigned_to": "$assigned_to",
+                            "assigned_to_name": "$employee.display_name",
+                            "source_name": "$source.name",
+                            "submission_source": "$submission_source",
+                            "customer_status": "$customer.status",
+                            "created_at": "$created_at",
+                        }
+                    },
                 }
             },
             {"$sort": {"created_at": -1, "_id": -1}},
@@ -552,15 +584,22 @@ async def filter_options(db: Db, actor: Actor) -> ApiResponse[dict[str, Any]]:
         ),
         "source_id": ("$lead.source_id", "$source.name"),
         "branch_id": ("$employee.branch_id", "$branch.name"),
-        "designation_id": ("$employee.designation_id", "$designation.name"),
         "follow_up_status": ("$followups.status", "$followups.status"),
+        "follow_up_employee": ("$followups.assigned_to", "$followups.assigned_to"),
+        "submission_sources": ("$submission_source", "$submission_source"),
         "bank_id": ("$followups.banks.option_id", "$followups.banks.name"),
     }
     facets = {}
     for key, (value, label) in dimensions.items():
-        prefix = [{"$unwind": "$followups"}] if key in {"follow_up_status", "bank_id"} else []
+        prefix: list[dict[str, Any]] = (
+            [{"$unwind": "$followups"}]
+            if key in {"follow_up_status", "follow_up_employee", "bank_id"}
+            else []
+        )
         if key == "bank_id":
             prefix.append({"$unwind": "$followups.banks"})
+        if key == "submission_sources":
+            prefix.append({"$match": {"lead.source_id": None}})
         facets[key] = prefix + [
             {"$group": {"_id": value, "label": {"$first": label}}},
             {"$match": {"_id": {"$nin": [None, ""]}}},
@@ -568,4 +607,94 @@ async def filter_options(db: Db, actor: Actor) -> ApiResponse[dict[str, Any]]:
             {"$project": {"_id": 0, "value": "$_id", "label": 1}},
         ]
     rows = await db.applications.aggregate(p + [{"$facet": facets}], allowDiskUse=True).to_list(1)
-    return ApiResponse[dict[str, Any]].ok(rows[0] if rows else {})
+    data = rows[0] if rows else {}
+    from bson import ObjectId
+
+    from app.features.daily_operations.status_options import COMPANY, INITIAL
+
+    actor_ids = [
+        o["value"] for o in data.get("assigned_by", []) if ObjectId.is_valid(o.get("value"))
+    ]
+    staff = {
+        str(u["_id"]): u
+        async for u in db.users.find(
+            {
+                "_id": {"$in": [ObjectId(value) for value in actor_ids]},
+                "role": {"$in": ["owner", "employee"]},
+                "is_deleted": False,
+            },
+            {"role": 1},
+        )
+    }
+    names = {
+        e["user_id"]: e["display_name"]
+        async for e in db.employees.find(
+            {"user_id": {"$in": list(staff)}, "is_deleted": False},
+            {"user_id": 1, "display_name": 1},
+        )
+    }
+    names.update(
+        {
+            o["user_id"]: o["full_name"]
+            async for o in db.owner_profiles.find(
+                {"user_id": {"$in": list(staff)}, "is_deleted": False},
+                {"user_id": 1, "full_name": 1},
+            )
+        }
+    )
+    data["assigned_by"] = [
+        {"value": value, "label": names.get(value) or staff[value]["role"].title()}
+        for value in actor_ids
+        if value in staff
+    ]
+    follow_ids = [
+        o["value"] for o in data.get("follow_up_employee", []) if ObjectId.is_valid(o.get("value"))
+    ]
+    data["follow_up_employee"] = [
+        {"value": str(e["_id"]), "label": e["display_name"]}
+        async for e in db.employees.find(
+            {"_id": {"$in": [ObjectId(value) for value in follow_ids]}, "is_deleted": False},
+            {"display_name": 1},
+        )
+    ]
+    values = [o["value"] for o in data.get("follow_up_status", [])]
+    catalogue = {
+        o["value"]: o["name"]
+        async for o in db.daily_followup_status_options.find(
+            {"company_id": COMPANY, "value": {"$in": values}}, {"value": 1, "name": 1}
+        )
+    }
+    builtins = {value: value.title() for value, _ in INITIAL}
+    data["follow_up_status"] = [
+        {
+            "value": value,
+            "label": catalogue.get(value) or builtins.get(value) or "Unavailable follow-up status",
+        }
+        for value in values
+    ]
+    sources = {
+        str(o["_id"]): o["name"]
+        async for o in db.lead_sources.find(
+            {"is_deleted": False, "status": "active"}, {"name": 1}
+        ).limit(1000)
+    }
+    sources.update(
+        {
+            o["value"]: o.get("label") or "Source unavailable"
+            for o in data.get("source_id", [])
+            if o["value"] not in sources
+        }
+    )
+    data["source_id"] = [{"value": key, "label": label} for key, label in sources.items()]
+    for item in data.pop("submission_sources", []):
+        value = item.get("value")
+        if value and value != "unknown":
+            data["source_id"].append(
+                {"value": "submission:" + value, "label": value.replace("_", " ").title()}
+            )
+    for key in data:
+        for option in data[key]:
+            if not option.get("label"):
+                option["label"] = key.removesuffix("_id").replace("_", " ").title() + " unavailable"
+        data[key] = sorted(data[key], key=lambda option: str(option.get("label", "")).casefold())
+    return ApiResponse[dict[str, Any]].ok(data)

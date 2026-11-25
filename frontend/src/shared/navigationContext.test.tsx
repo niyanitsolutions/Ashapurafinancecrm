@@ -34,6 +34,10 @@ describe("useDocumentCollectionBackContext", () => {
     expect(result.current.fromDocumentCollection).toBe(true);
   });
 
+  it("returns to the selected customer group without using legacy lists",()=>{
+    const {result}=renderAt("/x?from=document-collection&customer_id=customer1","/applications");
+    expect(result.current.backTo).toBe("/leads/document-collection?customer_id=customer1&expand=customer1");
+  });
   it("falls back to the default for an unrecognized from value", () => {
     const { result } = renderAt("/x?from=something-else", "/insurance-cases");
     expect(result.current.backTo).toBe("/insurance-cases");

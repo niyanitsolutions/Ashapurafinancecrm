@@ -17,3 +17,11 @@ it("does not reveal results for a query cleared while its request is pending",as
  const input=screen.getByRole("combobox");fireEvent.change(input,{target:{value:"customer"}});await act(async()=>{await vi.advanceTimersByTimeAsync(251);});fireEvent.change(input,{target:{value:""}});
  await act(async()=>{resolve({results:[{type:"customer",id:"c1",label:"Stale identity",route:"/customers/c1"}]});});expect(screen.queryByText("Stale identity")).not.toBeInTheDocument();
 });
+
+
+it("groups readable results, highlights matching text and navigates to the new customer workflow",async()=>{
+ vi.useFakeTimers();lookup.mockResolvedValue({results:[{type:"employee",id:"e1",label:"Lucky Kumar",employee_code:"AFS-EMP-1",designation:"Manager",route:"/employees/e1"},{type:"application",id:"a1",label:"AFS-APP-1",customer_name:"Lucky Customer",product_name:"Personal Loan",status:"submitted",assigned_to_name:"Lucky Kumar",route:"/applications/a1?from=document-collection"},{type:"customer",id:"c1",label:"Lucky Customer",customer_code:"AFS-CUS-1",mobile:"9000000000",route:"/leads/document-collection?customer_id=c1&expand=c1"}]});
+ render(<MemoryRouter><Routes><Route path="/" element={<QuickSearch/>}/><Route path="/leads/document-collection" element={<p>Correct grouped customer</p>}/></Routes></MemoryRouter>);fireEvent.change(screen.getByRole("combobox"),{target:{value:"Lucky"}});await act(async()=>{await vi.advanceTimersByTimeAsync(251);});
+ expect(screen.getByText("Customers")).toBeInTheDocument();expect(screen.getByText("Applications")).toBeInTheDocument();expect(screen.getByText("Employees")).toBeInTheDocument();expect(screen.getByText(/AFS-CUS-1.*9000000000/)).toBeInTheDocument();expect(screen.getByText(/AFS-EMP-1.*Manager/)).toBeInTheDocument();expect(document.querySelector("mark")).toHaveTextContent("Lucky");
+ fireEvent.keyDown(screen.getByRole("combobox"),{key:"ArrowDown"});fireEvent.keyDown(screen.getByRole("combobox"),{key:"Enter"});expect(screen.getByText("Correct grouped customer")).toBeInTheDocument();
+});

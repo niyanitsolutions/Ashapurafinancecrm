@@ -42,6 +42,14 @@ class NotificationsResponse(BaseModel):
 
 
 class SearchResultItem(BaseModel):
+    customer_code: str | None = None
+    customer_name: str | None = None
+    mobile: str | None = None
+    product_name: str | None = None
+    status: str | None = None
+    assigned_to_name: str | None = None
+    employee_code: str | None = None
+    designation: str | None = None
     type: str
     id: str
     label: str

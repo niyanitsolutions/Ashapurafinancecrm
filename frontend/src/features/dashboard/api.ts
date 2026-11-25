@@ -30,6 +30,14 @@ export interface UpdateLayoutItem {
 }
 
 export interface SearchResult {
+  customer_code?: string | null;
+  customer_name?: string | null;
+  mobile?: string | null;
+  product_name?: string | null;
+  status?: string | null;
+  assigned_to_name?: string | null;
+  employee_code?: string | null;
+  designation?: string | null;
   type: string;
   id: string;
   label: string;

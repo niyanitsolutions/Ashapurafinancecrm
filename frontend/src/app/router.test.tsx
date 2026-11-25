@@ -1,3 +1,4 @@
+import { LegacyCustomerListRedirect } from "./LegacyCustomerListRedirect";
 import { describe, expect, it } from "vitest";
 import { router } from "./router";
 import { DailyUpdateLayout } from "@/features/daily_operations/DailyUpdateLayout";
@@ -35,6 +36,11 @@ function findRouteByPath(routes: RouteLike[], path: string): RouteLike | undefin
 function findRoute(children: RouteLike[] | undefined, path: string): RouteLike | undefined {
   return children?.find((r) => r.path === path);
 }
+
+it("keeps required internal details but routes obsolete customer/application lists to grouped intake",()=>{
+  for(const path of ["/customers","/applications"])expect((findRouteByPath(router.routes as RouteLike[],path)?.element as {type:unknown}).type).toBe(LegacyCustomerListRedirect);
+  for(const path of ["/customers/:customerId","/applications/:applicationId"])expect(findRouteByPath(router.routes as RouteLike[],path)?.element).toBeTruthy();
+});
 
 describe("router — Loan/Insurance Management tab routes stay keyed", () => {
   it("nests all existing Daily Update URLs under one shared layout with the original functional pages", () => {

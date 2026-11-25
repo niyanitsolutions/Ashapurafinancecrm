@@ -106,7 +106,7 @@ function ApplicationRow({ app, canReassign, onReassigned }: { app: ApplicationLi
               Manage Status →
             </Link>
           )}
-          <Link to={`/applications/${app.id}`} className="text-sm font-medium text-primary hover:underline">
+          <Link to={`/applications/${app.id}?from=document-collection${app.customer_id ? `&customer_id=${encodeURIComponent(app.customer_id)}` : ""}`} className="text-sm font-medium text-primary hover:underline">
             View Application →
           </Link>
         </div>
@@ -149,14 +149,14 @@ export function CustomerDetailsPage() {
   if (!customerId) return null;
   if (error && !customer) {
     return (
-      <SimplePageLayout title="Customer" backTo="/customers">
+      <SimplePageLayout title="Customer" backTo="/leads/document-collection">
         <p className="text-sm text-danger">{error}</p>
       </SimplePageLayout>
     );
   }
   if (!customer) {
     return (
-      <SimplePageLayout title="Customer" backTo="/customers">
+      <SimplePageLayout title="Customer" backTo="/leads/document-collection">
         <p className="text-sm text-text/50">Loading…</p>
       </SimplePageLayout>
     );
@@ -165,7 +165,7 @@ export function CustomerDetailsPage() {
   return (
     <SimplePageLayout
       title={`${customer.full_name} (${customer.customer_code})`}
-      backTo="/customers"
+      backTo="/leads/document-collection"
       actions={
         <div className="flex items-center gap-2.5">
           {canSendMessage && <HeaderButton icon="chat" label="Send Message" onClick={() => setIsSendMessageOpen(true)} />}

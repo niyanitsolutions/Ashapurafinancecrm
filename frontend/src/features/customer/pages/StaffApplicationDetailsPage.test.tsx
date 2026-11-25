@@ -138,14 +138,14 @@ describe("StaffApplicationDetailsPage navigation context", () => {
     renderAt("/applications/app-1");
 
     const backLink = await screen.findByRole("link", { name: "← Back" });
-    expect(backLink).toHaveAttribute("href", "/applications");
+    expect(backLink).toHaveAttribute("href", "/leads/document-collection");
   });
 
   it("an unrecognized from value falls back to the default Back destination", async () => {
     renderAt("/applications/app-1?from=something-else");
 
     const backLink = await screen.findByRole("link", { name: "← Back" });
-    expect(backLink).toHaveAttribute("href", "/applications");
+    expect(backLink).toHaveAttribute("href", "/leads/document-collection");
   });
 
   it("clicking Back actually navigates to Document Collection, not the Applications module", async () => {

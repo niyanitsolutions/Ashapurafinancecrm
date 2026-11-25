@@ -1,0 +1,41 @@
+{
+  "frontend": {
+    "passed": 509,
+    "failed": 0
+  },
+  "backend_regression": {
+    "passed": 182,
+    "failed": 0
+  },
+  "final_backend_contracts_and_enterprise": {
+    "passed": 13,
+    "failed": 0
+  },
+  "browser": {
+    "passed": 2,
+    "failed": 0,
+    "widths": [
+      390,
+      768,
+      1366
+    ],
+    "new_correction_fixture": "Customer and Application documents unchanged; no Bin entries",
+    "existing_enterprise_fixture": "Profile edit and Bin regression in a separate disposable synthetic database"
+  },
+  "typescript": "passed via production build",
+  "production_build": "passed; existing bundle-size advisory",
+  "eslint": {
+    "errors": 0,
+    "existing_warnings": 8
+  },
+  "ruff": "passed; final check recorded in report",
+  "mypy_affected": {
+    "files": 3,
+    "errors": 0
+  },
+  "production_access": false,
+  "deployment": false,
+  "data_migration": false,
+  "real_sms": false,
+  "note": "Backend test runs overlap. Do not add counts into a distinct total."
+}
