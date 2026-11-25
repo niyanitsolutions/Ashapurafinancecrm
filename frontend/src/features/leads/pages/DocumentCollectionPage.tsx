@@ -1,3 +1,5 @@
+import { StaffApplicationDetailsPage } from "@/features/customer/pages/StaffApplicationDetailsPage";
+import { useLocation } from "react-router-dom";
 import { UpdateStageModal } from "@/features/leads/components/UpdateStageModal";
 import { getLead, type LeadListItem } from "@/features/leads/api";
 import { BulkUploadModal } from "@/features/bulk_import/BulkUploadModal";
@@ -24,36 +26,38 @@ const base = "/leads/document-collection";
 const dimensionLabels: Record<string, string> = { assigned_to: "Assigned To", assigned_by: "Assigned By", product_id: "Product", source_id: "Source", branch_id: "Branch", follow_up_status: "Follow-up status", bank_id: "Bank / NBFC" };
 const dateLabels: Record<string, string> = { created_from: "Created from", follow_up_from: "Next follow-up from", follow_up_until: "Next follow-up until" };
 const filterKeys = new Set(["search", ...Object.keys(dimensionLabels), ...Object.keys(dateLabels), "follow_up_employee", "application_status", "document_status", "customer_status", "product_category", "overdue", "customer_id"]);
+const compactHeadings: Record<string,string> = {"Application / Lead Code":"App / Lead code","Customer Name":"Customer","Application Status":"App status","Customer Account Status":"Account status"};
 const columns = ["", "Application / Lead Code", "Customer Name", "Mobile", "Source", "Product", "Assigned To", "Application Status", "Customer Account Status", "Created On", "Actions"];
-function Status({ value }: { value?: string }) { return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${value === "submitted" ? "bg-blue-50 text-blue-700" : value === "active" ? "bg-green-50 text-green-700" : "bg-orange-50 text-orange-800"}`}>{value === "draft" ? "Pending" : value ? value.charAt(0).toUpperCase()+value.slice(1) : "Not recorded"}</span>; }
+function Status({ value }: { value?: string }) { return <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${value === "submitted" ? "bg-blue-50 text-blue-700" : value === "active" ? "bg-green-50 text-green-700" : "bg-orange-50 text-orange-800"}`}>{value === "draft" ? "Pending" : value ? value.charAt(0).toUpperCase()+value.slice(1) : "Not recorded"}</span>; }
 function sourceName(app?: Application) { return app?.source_name || (app?.submission_source && app.submission_source !== "unknown" ? app.submission_source.replaceAll("_", " ") : "Not recorded"); }
-const cell = "px-3 py-4 text-sm align-middle break-words";
-function RecordCells({ app, group }: { app?: Application; group: Group }) { return <>
-  <td className={`${cell} whitespace-nowrap`}>{app?.id ? <Link className="font-medium text-primary hover:underline" to={app.record_kind === "lead" ? `/leads/${app.id}` : `/applications/${app.id}?from=document-collection${group.customer_code ? `&customer_id=${encodeURIComponent(group.id)}` : ""}`}>{app.application_code}</Link> : group.customer_code ? <Link className="font-medium text-primary hover:underline" to={`/leads/document-collection?customer_id=${encodeURIComponent(group.id)}&expand=${encodeURIComponent(group.id)}`}>{group.customer_code}</Link> : "Not recorded"}{app?.id && group.customer_code && <Link className="mt-1 block text-xs text-textSecondary hover:underline" to={`/leads/document-collection?customer_id=${encodeURIComponent(group.id)}&expand=${encodeURIComponent(group.id)}`}>{group.customer_code}</Link>}</td>
-  <td className={`${cell} font-medium`}>{app?.customer_name || group.name}</td><td className={`${cell} whitespace-nowrap`}>{app?.mobile || group.mobile || "Not recorded"}</td>
-  <td className={cell}><span className="inline-flex whitespace-nowrap rounded-full bg-blue-50 px-2.5 py-1 text-xs capitalize text-blue-700">{app ? sourceName(app) : "Per application"}</span></td>
+const cell = "px-3 py-2.5 align-middle break-words";
+function RecordCells({ app, group }: { app?: Application; group: Group }) { const location=useLocation();return <>
+  <td className={`${cell} whitespace-nowrap`}>{app?.id ? <Link className="font-medium text-primary hover:underline" to={app.record_kind === "lead" ? `/leads/${app.id}` : `/leads/document-collection?${new URLSearchParams({...Object.fromEntries(new URLSearchParams(location.search)),application:app.id})}`}>{app.application_code}</Link> : group.customer_code ? <Link className="font-medium text-primary hover:underline" to={`/leads/document-collection?customer_id=${encodeURIComponent(group.id)}&expand=${encodeURIComponent(group.id)}`}>{group.customer_code}</Link> : "Not recorded"}{app?.id && group.customer_code && <Link className="mt-1 block text-xs text-textSecondary hover:underline" to={`/leads/document-collection?customer_id=${encodeURIComponent(group.id)}&expand=${encodeURIComponent(group.id)}`}>{group.customer_code}</Link>}</td>
+  <td className={`${cell} font-semibold`}>{app?.customer_name || group.name}</td><td className={`${cell} whitespace-nowrap`}>{app?.mobile || group.mobile || "Not recorded"}</td>
+  <td className={cell}><span className="inline-flex max-w-full whitespace-normal rounded-full bg-blue-50 px-2 py-0.5 text-xs capitalize text-blue-700">{app ? sourceName(app) : "Per application"}</span></td>
   <td className={`${cell}`}>{app?.product_name || "See applications"}</td><td className={cell}>{app ? app.assigned_to_name || "Unassigned" : "Per application"}</td><td className={cell}>{app ? <Status value={app.status} /> : <span className="text-xs text-textSecondary">Per application</span>}</td><td className={cell}><Status value={app?.customer_status || group.primary?.customer_status} /></td>
   <td className={`${cell} whitespace-nowrap`}>{app?.created_at ? formatISTDate(app.created_at) : "See applications"}</td>
 </>; }
 
 
-function ApplicationActions({ app, group, owner, onDelete, onChanged }: {app: Application; group: Group; owner: boolean; onDelete: (id: string) => void; onChanged: () => void}) {
+function ApplicationActions({ app, owner, onDelete, onChanged }: {app: Application; group: Group; owner: boolean; onDelete: (id: string) => void; onChanged: () => void}) {
   const { can } = usePermissions();
+  const location=useLocation();
   const [link,setLink] = useState<Application | null>(null);
   const [move,setMove] = useState<Application | null>(null);
   const [updating,setUpdating] = useState<LeadListItem | null>(null);
   const [error,setError] = useState<string | null>(null);
-  return <><ErrorBanner message={error} /><div className="flex flex-wrap gap-2"><Link className="rounded-full border border-border px-3 py-1.5 text-xs text-primary" to={app.record_kind === "lead" ? `/leads/${app.id}` : `/applications/${app.id}?from=document-collection${group.customer_code ? `&customer_id=${encodeURIComponent(group.id)}` : ""}`}>View</Link>
-      {app.lead_id && can("leads:leads", "edit") && <><Link className="text-primary underline" to={`/leads/${app.lead_id}/edit`}>Edit Lead</Link><Button size="sm" variant="secondary" onClick={() => setLink(app)}>Generate Link</Button><Button size="sm" variant="secondary" onClick={async () => { try { setUpdating(await getLead(app.lead_id!)); } catch(err) { setError(err instanceof Error ? err.message : "Unable to load Lead update."); } }}>Update</Button></>}
-      {!app.lead_id && app.product_category === "loan" && can("leads:leads", "edit") && <Button size="sm" variant="secondary" onClick={() => setMove(app)}>Update</Button>}
-      {owner && app.record_kind !== "lead" && <Button size="sm" variant="danger" onClick={() => onDelete(app.id)}>Delete application</Button>}
+  return <><ErrorBanner message={error} /><div className="flex flex-wrap items-center gap-1"><Link className="rounded-full border border-border px-2 py-1 text-xs text-primary" to={app.record_kind === "lead" ? `/leads/${app.id}` : `/leads/document-collection?${new URLSearchParams({...Object.fromEntries(new URLSearchParams(location.search)),application:app.id})}`}>View</Link>
+      {app.lead_id && can("leads:leads", "edit") && <><Button className="!min-h-8 !px-2 !py-1 !text-xs" size="sm" variant="secondary" onClick={async () => { try { setUpdating(await getLead(app.lead_id!)); } catch(err) { setError(err instanceof Error ? err.message : "Unable to load Lead update."); } }}>Update</Button><details className="relative"><summary className="flex min-h-8 cursor-pointer items-center rounded-lg border border-border px-2 py-1 text-xs">More</summary><div className="absolute right-0 z-20 mt-1 flex min-w-36 flex-col gap-2 rounded-lg border border-border bg-card p-2 shadow-card"><Link className="text-xs text-primary underline" to={`/leads/${app.lead_id}/edit`}>Edit Lead</Link><Button size="sm" variant="secondary" onClick={()=>setLink(app)}>Generate Link</Button></div></details></>}
+      {!app.lead_id && app.product_category === "loan" && can("leads:leads", "edit") && <Button className="!min-h-8 !px-2 !py-1 !text-xs" size="sm" variant="secondary" onClick={() => setMove(app)}>Update</Button>}
+      {owner && app.record_kind !== "lead" && <Button className="!min-h-8 !px-2 !py-1 !text-xs" size="sm" variant="danger" aria-label="Delete application" onClick={() => onDelete(app.id)}>Delete</Button>}
       </div>
     {link?.lead_id && <GenerateLinkModal leadId={link.lead_id} leadCode={link.lead_code || link.application_code} onClose={() => setLink(null)} />}
     {updating && <UpdateStageModal lead={updating} onClose={() => setUpdating(null)} onChanged={() => { setUpdating(null); onChanged(); }} />}
     {move && <MoveApplicationToLoanManagementModal lead={{ application_id: move.id, lead_code: move.application_code }} onClose={() => setMove(null)} onChanged={() => { setMove(null); onChanged(); }} />}
   </>;
 }
-const widths = [44, 185, 190, 130, 120, 150, 140, 125, 135, 120, 260];
+const widths = [36, 158, 160, 116, 104, 134, 116, 110, 120, 105, 244];
 function ColumnWidths() { return <colgroup>{widths.map((width,i) => <col key={i} style={{width}} />)}</colgroup>; }
 
 const control = "w-full rounded-lg border border-border bg-card px-3 py-2 text-sm";
@@ -72,7 +76,7 @@ function Applications({ group, query, selected, toggle, onDelete, owner, onChang
   return <div role="region" aria-label={`Applications for ${group.name}`} className="space-y-3 border-t border-border bg-background py-3">
     <ErrorBanner message={error} />
     {!data && !error && <p role="status">Loading applications...</p>}
-    <div className="overflow-x-auto"><table className="w-full table-fixed min-w-[1599px] text-left font-sans"><ColumnWidths /><tbody>
+    <div className="overflow-x-auto"><table className="w-full table-fixed min-w-[1403px] text-left text-sm"><ColumnWidths /><tbody>
     {data?.items.map((app, i) => <tr key={app.id} className={`border-t border-border ${page === 1 && i === 0 ? "bg-primary/5" : "bg-card"}`}>
       <td className={cell}>{owner && app.record_kind !== "lead" && <input aria-label={`Select ${app.application_code}`} type="checkbox" checked={selected.has(app.id)} onChange={() => toggle(app.id)} />}</td>
       <RecordCells app={app} group={group} />
@@ -85,6 +89,7 @@ function Applications({ group, query, selected, toggle, onDelete, owner, onChang
 
 export function DocumentCollectionPage() {
   const { isOwner, can } = usePermissions();
+  const [followupNotice,setFollowupNotice]=useState("");
   const [bulk,setBulk] = useState(false);
   const [params, setParams] = useSearchParams();
   const page = Math.max(1, Number(params.get("page")) || 1);
@@ -106,6 +111,9 @@ export function DocumentCollectionPage() {
   const [result, setResult] = useState<AssignmentResult | null>(null);
   const query = new URLSearchParams(applied).toString();
   const focusedGroup = params.get("expand");
+  const selectedApplication = params.get("application");
+  const closeApplication = () => {setOpen(new Set());setParams({});};
+  useEffect(()=>{if(!selectedApplication)setOpen(new Set());},[selectedApplication]);
   useEffect(() => {
     const text = draft.search || "";
     const timer = setTimeout(() => {
@@ -140,6 +148,7 @@ export function DocumentCollectionPage() {
     <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold">Document Collection</h2>{can("leads:leads","create") && <div className="flex gap-3"><Button variant="secondary" onClick={() => setBulk(true)}>Bulk Upload</Button><Link className="rounded-lg bg-primary px-4 py-2 text-sm text-white" to="/leads/create">Create Lead</Link></div>}</div>
     {bulk && <BulkUploadModal kind="leads" onClose={() => setBulk(false)} onImported={() => { setBulk(false); setRevision(v => v+1); }} />}
     <ErrorBanner message={error || optionsError} />
+    {followupNotice && <p role="status" className="text-sm text-success">{followupNotice}</p>}
     <form className="space-y-4 rounded-card border border-border bg-card p-4" onSubmit={e => { e.preventDefault(); setParams({ ...Object.fromEntries(Object.entries(draft).filter(([,v]) => v)), page: "1", page_size: String(pageSize) }); }}>
       <label className="block text-sm">Search customers and applications<input className={`${control} mt-1`} type="search" placeholder="Name, mobile, email, Customer ID, Application ID or Lead code" value={draft.search || ""} onChange={e => update("search", e.target.value)} /></label>
       <details><summary className="cursor-pointer font-medium">Advanced filters</summary>{optionsLoading && <p role="status" className="mt-2 text-sm text-textSecondary">Loading filter choices...</p>}<div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -158,19 +167,20 @@ export function DocumentCollectionPage() {
     {isOwner && selected.size > 0 && <div className="flex flex-wrap items-center gap-3"><span>{selected.size} Applications selected (maximum 100)</span><Button onClick={() => setAssign(true)}>Assign Selected</Button><Button variant="secondary" onClick={() => setSelected(new Set())}>Clear Selection</Button></div>}
     {result && <div role="status"><p>Assigned: {result.assigned} | Skipped: {result.skipped} | Failed: {result.failed}</p><ul className="text-sm">{result.results.filter(row => row.status !== "assigned").map(row => <li key={row.id} className="break-all">{row.id}: {row.reason}</li>)}</ul></div>}
     {!data && !error && <p role="status">Loading customers...</p>}
-    <div className="overflow-hidden rounded-card border border-border bg-card"><div className="overflow-x-auto"><table aria-label="Document Collection customers" className="w-full table-fixed min-w-[1599px] text-left font-sans"><ColumnWidths />
-      <thead className="bg-background text-xs uppercase text-textSecondary"><tr>{columns.map((name,i) => <th key={i} scope="col" className="px-3 py-3">{name || <span className="sr-only">Select</span>}</th>)}</tr></thead><tbody>
+    <div className="overflow-hidden rounded-card border border-border bg-card"><div className="overflow-x-auto"><table aria-label="Document Collection customers" className="w-full table-fixed min-w-[1403px] text-left text-sm"><ColumnWidths />
+      <thead className="bg-background text-xs uppercase text-textSecondary"><tr>{columns.map((name,i) => <th key={i} scope="col" aria-label={compactHeadings[name] ? name : undefined} title={name || "Select"} className="px-3 py-2.5 font-semibold tracking-wide">{compactHeadings[name] || name || <span className="sr-only">Select</span>}</th>)}</tr></thead><tbody>
       {data?.items.map(group => <Fragment key={group.id}>
         <tr data-customer-group={group.id} className="border-t border-border hover:bg-background/50">
           <td className={cell}>{isOwner && <input aria-label={`Select ${group.name}`} type="checkbox" disabled={group.application_count !== 1 || !group.primary?.id || group.primary.record_kind === "lead"} title={group.application_count !== 1 ? "Expand to select individual applications" : undefined} checked={Boolean(group.primary?.id && selected.has(group.primary.id))} onChange={() => { if(group.primary?.id) toggle(group.primary.id); }} />}</td>
           <RecordCells app={group.application_count > 1 ? undefined : group.primary} group={group} />
-          <td className={cell}>{group.application_count > 1 ? <><Button variant="secondary" size="sm" aria-expanded={open.has(group.id)} aria-controls={`applications-${group.id}`} onClick={() => { setVisited(old => new Set([...old, group.id])); setOpen(old => { const next = new Set(old); if(next.has(group.id)) next.delete(group.id); else next.add(group.id); return next; }); }}>{open.has(group.id) ? "Collapse" : "Expand"}</Button><span className="mt-1 block text-xs text-textSecondary">{group.application_count} Applications</span></> : group.primary && <ApplicationActions app={group.primary} group={group} owner={isOwner} onDelete={setDeleting} onChanged={() => setRevision(v => v+1)} />}{group.latest_submission && <small className="mt-1 block text-textSecondary">Latest submitted {formatISTDate(group.latest_submission)}</small>}</td>
+          <td className={cell}>{group.application_count > 1 ? <><Button className="!min-h-8 !px-2 !py-1 !text-xs" variant="secondary" size="sm" aria-expanded={open.has(group.id)} aria-controls={`applications-${group.id}`} onClick={() => { setVisited(old => new Set([...old, group.id])); setOpen(old => { const next = new Set(old); if(next.has(group.id)) next.delete(group.id); else next.add(group.id); return next; }); }}>{open.has(group.id) ? "Collapse" : "Expand"}</Button><span className="mt-1 block text-xs text-textSecondary">{group.application_count} Applications</span></> : group.primary && <ApplicationActions app={group.primary} group={group} owner={isOwner} onDelete={setDeleting} onChanged={() => setRevision(v => v+1)} />}{group.latest_submission && <small className="mt-1 block text-textSecondary">Latest submitted {formatISTDate(group.latest_submission)}</small>}</td>
         </tr>
         {group.application_count > 1 && visited.has(group.id) && <tr hidden={!open.has(group.id)} id={`applications-${group.id}`}><td colSpan={11} className="p-0"><Applications group={group} query={query} selected={selected} toggle={toggle} owner={isOwner} onDelete={setDeleting} onChanged={() => setRevision(v => v+1)} /></td></tr>}
       </Fragment>)}
       </tbody></table></div></div>
     {data && data.total === 0 && <p>No matching customers or applications.</p>}
     {data && <Pagination page={page} totalPages={Math.max(1,Math.ceil(data.total / pageSize))} totalItems={data.total} pageSize={pageSize} onPageChange={p => navigate({ page: String(p) })} onPageSizeChange={size => navigate({ page: "1", page_size: String(size) })} pageSizeOptions={[10,25,50,100,200]} itemLabel="customers" />}
+    {selectedApplication && <Modal open size="lg" title="Application details" onClose={closeApplication}><StaffApplicationDetailsPage applicationIdOverride={selectedApplication} onClose={closeApplication} onFollowupSaved={()=>{setFollowupNotice("Daily follow-up saved.");setRevision(v=>v+1);closeApplication();}} onApplicationSaved={()=>setRevision(v=>v+1)} /></Modal>}
     {assign && <BulkAssignmentModal collection="applications" ids={[...selected]} onClose={() => setAssign(false)} onDone={r => { setResult(r); setAssign(false); setSelected(new Set(r.results.filter(row => row.status !== "assigned").map(row => row.id))); setRevision(v => v + 1); }} />}
     {deleting && <Modal open title="Delete application?" onClose={() => { if (!busy) setDeleting(null); }}><p className="mb-4 text-sm">Move this application to Bin. Its Customer and other applications remain intact. Recovery follows the existing retention policy.</p><div className="flex gap-3"><Button variant="danger" loading={busy} onClick={async () => { setBusy(true); try { await deleteRecord("applications",deleting); setDeleting(null); setRevision(v => v+1); } catch(err) { setError(err instanceof Error ? err.message : "Deletion failed."); } finally { setBusy(false); } }}>Confirm Delete</Button><Button variant="secondary" disabled={busy} onClick={() => setDeleting(null)}>Cancel</Button></div></Modal>}
   </section>;

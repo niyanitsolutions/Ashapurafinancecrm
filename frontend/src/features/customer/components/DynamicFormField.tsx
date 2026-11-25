@@ -90,7 +90,7 @@ export function DynamicFormField({
           placeholder={field.field_type === "date" ? undefined : placeholder}
           title={field.validation?.mask ? `Format: ${field.validation.mask}` : undefined}
           value={(value as string | number) ?? ""}
-          onChange={(e) => (field.field_type === "number" ? onChange(field.key, Number(e.target.value)) : handleTextChange(e.target.value))}
+          onChange={(e) => (field.field_type === "number" ? onChange(field.key, e.target.value === "" ? "" : Number(e.target.value)) : handleTextChange(e.target.value))}
           className="w-full rounded border border-border px-3 py-2 text-sm"
         />
       )}

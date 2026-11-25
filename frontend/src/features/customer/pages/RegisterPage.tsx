@@ -30,7 +30,7 @@ export function RegisterPage() {
   const [resendAt, setResendAt] = useState(0);
   const [expiresAt, setExpiresAt] = useState(0);
   const [now, setNow] = useState(Date.now());
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<DirectRegisterFormValues>({ resolver: zodResolver(directRegisterSchema), defaultValues: { mobile: /^[0-9]{10}$/.test(params.get("mobile") || "") ? params.get("mobile")! : "", terms_accepted: false } });
+  const { register, handleSubmit, reset, formState: { errors } } = useForm<DirectRegisterFormValues>({ resolver: zodResolver(directRegisterSchema), defaultValues: { mobile: /^[0-9]{10}$/.test(params.get("mobile") || "") ? params.get("mobile")! : "" } });
   useEffect(() => {
     if (!challenge) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -43,7 +43,7 @@ export function RegisterPage() {
     finally { lock.current = false; setBusy(false); }
   }
   async function send(values: DirectRegisterFormValues) {
-    const result = await startDirectRegistration({ ...values, email: values.email || null });
+    const result = await startDirectRegistration(values);
     setDetails(values); setChallenge(result); setOtp(""); setAuthorization("");
     setNow(Date.now()); setResendAt(Date.now() + result.resend_after * 1000);
     setExpiresAt(Date.now() + result.expires_in * 1000); reset();
@@ -57,19 +57,15 @@ export function RegisterPage() {
     </Modal>}
     {!challenge ? <form onSubmit={handleSubmit(values => act(() => send(values)))} noValidate>
       <FormField label="Mobile Number" inputMode="numeric" autoComplete="tel-national" maxLength={10} disabled={busy} error={errors.mobile?.message} {...register("mobile")} />
-      <FormField label="Full Name" autoComplete="name" disabled={busy} error={errors.full_name?.message} {...register("full_name")} />
-      <FormField label="Email Address (optional)" type="email" autoComplete="email" disabled={busy} error={errors.email?.message} {...register("email")} />
       <FormField label="Create 4-Digit PIN" type="password" inputMode="numeric" maxLength={4} autoComplete="new-password" disabled={busy} error={errors.pin?.message} {...register("pin")} />
       <FormField label="Confirm 4-Digit PIN" type="password" inputMode="numeric" maxLength={4} autoComplete="new-password" disabled={busy} error={errors.confirm_pin?.message} {...register("confirm_pin")} />
       <p className="mb-4 text-sm text-white/70">Your login PIN is separate from the SMS verification code.</p>
-      <label className="mb-4 flex items-start gap-2 text-sm text-white/80"><input type="checkbox" disabled={busy} {...register("terms_accepted")} />I accept the applicable terms and privacy policy.</label>
-      {errors.terms_accepted && <p role="alert" className="mb-3 text-sm text-red-300">{errors.terms_accepted.message}</p>}
       <SubmitButton isSubmitting={busy}>Send OTP</SubmitButton>
     </form> : <>
       <p role="status" className="mb-4 text-sm text-white/80">{authorization ? "Customer Account Not Found. Your mobile is verified. Complete registration to create your account." : `${challenge.message} Recipient: ${challenge.masked_mobile}`}</p>
       {authorization ? <SubmitButton isSubmitting={busy} onClick={() => void act(async () => {
         if (!details) return;
-        await completeDirectRegistration({ ...details, email: details.email || null, authorization });
+        await completeDirectRegistration({ ...details, authorization });
         setDetails(null); setAuthorization(""); reset();
         try {
           const result = await loginPin(details.mobile, details.pin, null);

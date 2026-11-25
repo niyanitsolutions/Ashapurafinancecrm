@@ -78,11 +78,13 @@ export function RepeatableGroupsForm({
   values,
   onChange,
   disabled = false,
+  errors,
 }: {
   groups: RepeatableGroup[];
   values: Record<string, unknown>;
   onChange: (groupKey: string, blocks: Record<string, unknown>[]) => void;
   disabled?: boolean;
+  errors?: Record<string, string>;
 }) {
   if (groups.length === 0) return null;
 
@@ -96,9 +98,11 @@ export function RepeatableGroupsForm({
         return (
           <div key={group.key} className="mb-6 last:mb-0">
             <h3 className="text-sm font-semibold text-text/70 mb-3">{group.label}</h3>
+            {errors?.[group.key] && <p role="alert" className="mb-2 text-xs text-danger">{errors[group.key]}</p>}
             {blocks.map((block, index) => (
               <div key={index} className="mb-3 rounded border border-border p-4">
                 <ProductSchemaForm
+                  errors={Object.fromEntries(group.fields.map(field=>[field.key,errors?.[`${group.key}.${index}.${field.key}`] || ""]))}
                   fields={group.fields}
                   values={block}
                   disabled={disabled}

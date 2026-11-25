@@ -61,3 +61,10 @@ describe("Modal focus retention", () => {
     expect(latestOnClose).toHaveBeenCalledTimes(1);
   });
 });
+
+it("only closes the top nested dialog and restores body scrolling after both close",async()=>{
+ const outer=vi.fn(),inner=vi.fn();const user=userEvent.setup();
+ const view=render(<Modal open title="Outer" onClose={outer}><Modal open title="Inner" onClose={inner}><button>Inner control</button></Modal></Modal>);
+ await user.keyboard("{Escape}");expect(inner).toHaveBeenCalledTimes(1);expect(outer).not.toHaveBeenCalled();
+ expect(document.body.style.overflow).toBe("hidden");view.unmount();expect(document.body.style.overflow).not.toBe("hidden");
+});

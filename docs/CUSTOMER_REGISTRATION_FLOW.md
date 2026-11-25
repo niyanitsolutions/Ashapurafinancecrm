@@ -1,21 +1,23 @@
 # Customer registration flow
 
-## Safe login discovery
+## Revised three-field account signup
 
-Customer mobile/PIN login retains uniform invalid-credential errors and the existing lock/session behavior. A failed credential attempt offers a neutral Create New Account popup without stating whether the number exists. No OTP is sent merely because login failed. The registration link pre-fills the entered mobile and retains a safe return destination.
+The current Customer registration form contains only mobile number, four-digit PIN and PIN confirmation. Full name, email and the checkbox are absent. The same authenticated Customer login, recovery, session and OTP services remain in use; Employee, Partner and Owner sign-in is unchanged.
 
-The existing registration start endpoint validates full name, mobile, optional email, matching four-digit PIN and explicit terms consent. It uses the existing REGISTRATION OTP challenge, Airtel provider, resend cooldown, IP/mobile/account limits, expiry, attempt counters and single-use verification. Start returns the same shape for existing and unregistered accounts and does not create a User or Customer. There is no new SMS provider or DLT content.
+Start validates the three fields and uses the existing REGISTRATION challenge, Airtel adapter, cooldown, expiry and attempt/rate limits. Account existence is disclosed only after mobile ownership verification. Existing accounts receive no registration authorization. A valid, unused authorization is required to complete account creation; the PIN must differ from the OTP and is hashed by the existing Argon2 helper.
 
-Only after successful OTP ownership verification can the UI state ?Customer Account Not Found?. It offers explicit account creation. If the verified number already belongs to any account, verification consumes the challenge and returns the login action without registration authorization. This includes Employee/Partner accounts: public signup can never convert them to Customers. Ordinary PIN completion rejects REGISTRATION proofs, preventing a signup proof from resetting an existing PIN.
+## Account and identity are separate
 
-## Creation and existing identities
+The existing Customer model requires a real full name. Registration therefore creates a valid verified Customer-role **User account**, consumes its proof and appends its security audit atomically. It does not create a Customer profile, allocate a Customer ID, invent a name/email, use a mobile as a name, or create an invalid placeholder identity. The existing portal already redirects accounts without a Customer profile to `/portal/profile/setup`; that existing flow collects real profile details after login and creates the valid Customer record there.
 
-`POST /customer-registration/complete` requires a live single-use REGISTRATION authorization tied to the mobile, full name, optional email, matching PIN and terms consent. The PIN must differ from the OTP. It stores an Argon2 PIN hash through the existing helper, never a password or plaintext PIN. User, Customer, proof consumption and registration audit commit transactionally; no standalone fallback exists. Existing unique User mobile and Customer user/code indexes guard races. The audit records consent and its version.
+A private `users.registration_method = mobile_pin` marker distinguishes this signup path. Profile creation for that path does not bulk-claim historical Leads by mobile. Explicit secure-link/pending-application relationships continue through their existing ownership checks. Known historical Customer identities still require reviewed ownership before signup; they are never attached by mobile alone. No historical IDs or records are rewritten.
 
-The Customer profile starts with the supplied full name. Public signup no longer bulk-claims unlinked historical Leads by mobile. A pre-existing Customer mobile, including accepted Indian formatting, blocks creation after verified ownership and requests staff review. It never silently attaches an account or creates a second Customer alongside a known historical profile. Existing authoritative secure-link/profile ownership workflows remain available for reviewed identities; there is no new public merge API.
+## Consent inspection
 
-After commit the existing PIN login creates a session. If login cannot complete, the page shows registration success and asks for explicit login. Return destinations remain restricted to local paths. Registration details, OTP and proof are held only in component memory, never browser storage. Incorrect, expired, exhausted or reused codes cannot create an account. Existing customer recovery, employee/partner password login and Owner authentication are preserved.
+The previous batch introduced the checkbox, a required request boolean and an audit claim. No separate configurable consent policy, applicable legal document or independently enforced registration-consent requirement was found in the repository. The current user request removes that feature requirement. The revised endpoint does not fabricate consent or record `terms_accepted: true`; its audit records account signup and pending profile state. Owner setup and other portals' consent UI are unchanged. Any policy maintained outside the repository must be reconciled by the Owner before deployment; this implementation does not claim legal approval or silently assert acceptance.
 
-## Operational boundaries
+## Compatibility and operation
 
-All OTP tests mock Airtel HTTP. No real SMS or production account is created. The existing Airtel activation/configuration requirements remain in force. Deploy locally reviewed backend and frontend together only after Owner approval, with replica-set transactions enabled. Existing encrypted credentials, DLT mappings, approved message content, PIN hashes and sessions are not migrated or reset by this batch.
+The request contract now accepts only the three signup fields (plus authorization at completion). The only repository frontend consumer and its tests are updated. Deploy compatible frontend/backend versions together and refresh old registration pages. Existing accounts, Customer records, hashes and sessions remain valid. Transaction conflicts return a safe conflict; no automatic OTP/SMS retry is added.
+
+All automated OTP delivery is mocked, with disposable loopback databases. No production deployment, production account creation, historical merge or real SMS is performed.

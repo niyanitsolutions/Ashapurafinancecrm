@@ -25,7 +25,7 @@ export function useDocumentCollectionBackContext(defaultBackTo: string): {
   const [searchParams] = useSearchParams();
   const fromDocumentCollection = searchParams.get("from") === DOCUMENT_COLLECTION_SOURCE;
   return {
-    backTo: fromDocumentCollection ? `/leads/document-collection${searchParams.get("customer_id") ? `?customer_id=${encodeURIComponent(searchParams.get("customer_id")!)}&expand=${encodeURIComponent(searchParams.get("customer_id")!)}` : ""}` : defaultBackTo,
+    backTo: fromDocumentCollection ? "/leads/document-collection" : defaultBackTo,
     backLabel: fromDocumentCollection ? "← Back to Document Collection" : undefined,
     fromDocumentCollection,
   };

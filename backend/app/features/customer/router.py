@@ -429,9 +429,32 @@ async def list_own_applications(
     return ApiResponse[list[ApplicationListItem]].ok(items)
 
 
+@router.get("/applications/{application_id}/form-definition")
+async def application_form_definition(
+    application_id: str, service: ServiceDep, actor: CurrentUserDep
+) -> ApiResponse[FormDefinitionResponse]:
+    if actor.role == CUSTOMER:
+        application = await service.get_own_application(application_id, actor)
+    elif actor.role in {OWNER, EMPLOYEE}:
+        from app.features.access_control.permission_engine import PermissionEngine
+
+        if not await PermissionEngine(service._db).has_permission(
+            actor, module="customer", resource="customers", action="view"
+        ):
+            raise ForbiddenError("Customer viewing permission is required.")
+        application = await service.get_application_for_staff(application_id, actor)
+    else:
+        raise ForbiddenError("Application access is required.")
+    form_def = await service.get_form_definition_by_id(application.form_definition_id)
+    return ApiResponse.ok(await _resolve_form_definition_response(service, form_def))
+
+
 @router.patch("/applications/{application_id}")
 async def update_application(
-    application_id: str, payload: UpdateApplicationRequest, service: ServiceDep, current_user: CurrentUserDep, _customer: CustomerDep
+    application_id: str,
+    payload: UpdateApplicationRequest,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
 ) -> ApiResponse[ApplicationDetailResponse]:
     application = await service.update_application(application_id, payload, current_user)
     result = await _resolve_application_response(service, application)

@@ -1,127 +1,125 @@
 # Production enhancement batch report
 
-25 November 2026 ? local implementation only. No deployment, production database access, production reconciliation, real SMS, production account creation or external integration configuration changes were performed.
+## Scope and execution boundary
 
-## Implemented behavior
+This report covers the latest five-workstream Document Collection, application editing, navigation, inline follow-up and simplified-registration brief. Implementation and validation are local only. No production data, environment variables, Airtel credentials, DLT content, deployments or real SMS were changed or used. The existing single-company database scope remains in place.
 
-**Document Collection:** Single-application rows expose the existing View/Update/Owner Delete actions directly. Only multi-application customers expand, with an application-count tag. Their summary identifies the Customer rather than duplicating one application's identity. Expanded rows have individual actions and no repeated header. Shared explicit column widths and a horizontal scroll container keep the layout stable under filters. Expansion retains child pagination while collapsed. Existing search, URL filters, group paging, assignment, confirmations and Bin services remain in use.
+## Implemented workstreams
 
-**Daily Updates:** Current Customer/Application/Lead references resolve display names without rewriting stored snapshots. Conflicting, broken or ambiguous relationships receive review warnings. Exact name/mobile matching preserves punctuation, whitespace-normalizes and case-folds names, and normalizes accepted Indian mobile formats. New activities reuse an authorized exact Customer, never create or merge Customers, and preserve all Applications. Partial matches require an Owner decision. Actor-bound receipts, a new partial unique activity index, client submission locking and explicit separate-activity reasons prevent accidental duplicates while preserving legitimate dates and histories.
+### 1. Compact Document Collection
 
-The Owner gets a bounded read-only reconciliation preview, verified candidate approval and reversible per-record linking. Live fingerprints and versions reject stale decisions. Link/rollback plus audit commit in a transaction. Rollback restores the prior reference fields, including field absence, while appending history. Source Application ownership is never rewritten. No historical corrections were applied outside disposable tests.
+The existing table now uses the same inherited table font scale and heading weight as Fresh Leads, smaller vertical padding and status/action spacing, and shared explicit widths for root and child rows. Its minimum width is reduced from 1599 to 1403 pixels. Long source labels wrap within their cells. Compact visible headings retain full accessible names and tooltips. Shortened Delete text retains its application-specific accessible label and existing Bin confirmation. Secondary Lead actions remain under More; their APIs and permissions are unchanged.
 
-**Document passwords:** The existing encrypted storage and dedicated read endpoint now support separately authorized reveal. Customer view, active staff status, the explicit password permission and current Application assignment all apply. The endpoint rate-limits, audits IDs/timestamp without secrets and returns no-store responses. Staff controls mask by default; Hide, blur, navigation, permission loss and a 30-second timer clear values. Stale responses are discarded. Normal APIs remain secret-free.
+Search, all advanced filters, Apply/Clear, page size, pagination, selection, single-row direct actions, grouping and child paging remain. Only multi-application customers expand, without repeating headings. Horizontal scrolling remains inside the table when the viewport requires it.
 
-**Customer registration:** Failed PIN login retains safe uniform errors and offers a neutral registration popup. The Customer registration link now opens `/register`, fixing the pre-existing link to the Owner setup page. The PIN login endpoint is excluded from session-refresh retries, so wrong credentials do not dismiss the popup as an expired session. Only verified OTP ownership permits an account-not-found message. Full name, optional email, matching PIN and consent are validated. Existing accounts cannot receive registration authorization. Account/profile/proof/audit creation remains transactional with existing unique indexes and Argon2 PIN hashing. Registration no longer attaches historical Leads by mobile alone. Known historical Customer identities require ownership review instead of a duplicate profile or automatic attachment.
+### 2. Schema-driven submitted application editing
 
-## API and database changes
+Document Collection opens the existing staff application view inside its existing Modal primitive, retaining the list underneath. The separate current-profile card is absent in this context. Application Details now offers Edit Details under the existing Customer edit permission. The editor uses the application's saved `form_definition_id`, not the latest schema for its product, and reuses ProductSchemaForm, DynamicFormField, RepeatableGroupsForm and validation. All applicable saved-schema fields and repeatable sections render; hidden/unrecognized historical answers are read-only and retained.
 
-- Existing POST/PATCH Daily Follow-up APIs gain optional submission/review fields. New manual creation checks exact identity and same-day activity conflicts. Identical request retries return the existing accessible record; changed payloads cannot reuse a committed key.
-- Owner-only GET `/daily-operations/identity-review/preview`, POST `/daily-operations/identity-review/{id}/link`, and POST `/daily-operations/identity-review/{id}/rollback`. Preview paging caps at 100 records, candidate sets cap at 200 and truncated sets cannot apply. Preview is registered before generic dynamic routes.
-- Existing GET document-password endpoint returns plaintext only under its dedicated authorization boundary. Global security middleware normalizes its response to `Cache-Control: no-store`; `Pragma: no-cache` is also set.
-- Existing registration requests now require `full_name` and strict true `terms_accepted`. OTP verification can return `next_action` after ownership proof. Existing-account proofs are consumed without registration authorization; PIN completion rejects registration proofs.
-- New partial unique `daily_follow_ups.activity_key` index applies only to active keyed rows. Existing `import_key` and working-key indexes are retained. Internal receipt/activity fingerprints are omitted from ordinary responses and history projections. Domain-separated HMACs use the existing encryption key, falling back to the existing JWT key in installations without a configured encryption key.
-- No new collections, tenant architecture, production backfill, identifier regeneration, file rewrite or permission reset.
+Save sends only changed application answers, a version and a correction reason through the existing PATCH endpoint. Cancellation discards local edits without a request. Errors retain input and field errors; locking prevents duplicate submissions. The saved server response refreshes the application. List refresh is limited to changes that can affect its displayed applicant name; follow-up saves refresh their relevant group data.
 
-## Security and production approvals
+Submitted answers are application snapshots, including submitted name/PAN/contact values. They do not update the shared Customer, sibling Applications, User mobile/PIN or official Loan/Insurance Case facts. Shared identity retains its existing separately authorized profile API and Owner-only verification-field rules. The Customer identity remains accessible through a link; it is not deleted or replaced.
 
-The separate catalog resource is `customer:document_passwords`, action `view`, with no parent grant. Fresh seed defines it without granting it. Existing installations require an Owner to create the definition through existing permission administration and deliberately grant selected roles. Ordinary Customer edit or module-wide grants must not imply reveal. Existing assignment restrictions and Bin dependencies remain authoritative.
+Staff saves require active authenticated staff access, existing Customer edit/view grants, current Application assignment for Employees, and valid User/Customer/schema relationships. Unknown/protected fields, Mongo path/operator keys, invalid values, hidden edits and pending-profile changes are rejected. Types, dates, formats, bounds, static options, conditional visibility and repeatable groups are validated. Updates use a version/identity/status/assignment compare-and-set. Application change history encrypts before/after answers; the ordinary audit logs actor, IDs, field names, time and version without answer values. Update plus audit commit in one transaction; conflicts return 409 without automatic retries.
 
-Production deployment, new role grants, any historical link/merge approval and backup/restore operations remain Owner-controlled. Legacy Customer profile ownership review uses existing verified account/secure-link processes; this batch intentionally provides no public mobile-only attachment or bulk Customer merge.
+### 3. Return navigation
 
-## Reconciliation evidence
+Application links no longer generate customer-specific filters. Normal Close/Back returns to the default Document Collection list, without customer_id or automatic expansion. Browser Back closes the application view and retains only previously intentional URL state. Existing explicit Customer-ID search/focus links still work. Legacy direct `/applications/{id}?from=document-collection` links remain supported and their Back control also returns to the normal list. Existing View Full Application links in Update dialogs open the same retained-list view and close the previous dialog.
 
-Only disposable fixture data was assessed. The bounded preview fixture returned two exact safe candidates on its first two-record page and correctly reported another page. The preview caused no writes. Real replica-set tests exercised concurrent identical submissions, one-record linking, stale-preview rejection and rollback while preserving original remarks, Application count and append-only audit/history. Browser fixtures resolved blank snapshot names from current profiles and retained the blank original snapshots after three edits. No production preview totals are claimed.
+### 4. Follow-up stays in Document Collection
 
-## Validation
+Open Daily Follow-up in this context uses the existing server-linked workspace API and the existing RecordForm in a modal. Context comes from exact Application/Customer references; no matching or duplicate business logic is added. Opening/saving does not navigate to Daily Updates. Save failure keeps the modal and input intact; success closes the dialogs, refreshes relevant list data and shows a confirmation on Document Collection. Existing linked-workspace idempotency, assignment restrictions, validation and append-only history remain authoritative. Normal standalone Daily Update access and existing navigation-mode callers remain functional.
 
-| Check | Result |
-|---|---|
-| Broad related backend regression run | 145 passed; two old fixture expectations conflicted with the newly required identity/activity review rules |
-| Corrected backend expectations and focused identity/transaction checks | 11 passed, including both corrected fixtures |
-| Final identity, null-name, reference consistency, idempotency and real replica-set rollback checks | 10 passed |
-| Existing Document Collection, search, lifecycle and Bin regression modules | 27 passed; sibling Application and shared Customer preserved through delete/restore |
-| Real local API/database browser journeys | Staff and customer journeys passed at 390, 768 and 1366 pixels; 2 browser tests passed, then the staff test passed again after final table refinement |
-| Complete frontend suite | 515 passed, 0 failed (final serial run) |
-| Additional frontend security/registration/table tests | 16 passed before final full-suite verification |
-| TypeScript and production build | Passed via `npm --prefix frontend run build`; existing bundle-size warning remains |
-| ESLint | 0 errors, 8 existing fast-refresh warnings |
-| Ruff | All changed/new Python source and test files pass; new files fully formatted and changed existing ranges formatted |
-| Focused strict mypy | 2 affected identity helper files pass |
-| Full mypy versus clean HEAD shadow baseline | 117 current / 117 baseline; zero introduced diagnostics |
-| Whitespace/diff checks | Passed |
+The shared Modal primitive now handles nesting depth, top-dialog focus/Escape and scroll restoration; parent-dialog re-renders still do not steal input focus. Existing dialog behavior is regression-tested.
 
-The first backend run also caught an unsupported mock aggregation conversion and legacy password-read expectations. The conversion was removed and the requested permission-driven reveal behavior was tested explicitly. Browser testing found and corrected generic-route shadowing, inappropriate refresh handling for invalid PIN credentials, and the Customer registration link leading to Owner setup. No Owner setup implementation was changed.
+### 5. Three-field registration
 
-One parallel full frontend run reported two timing-sensitive failures in the unchanged `AddInsuranceLeadModal` tests while other validation was running. The earlier full frontend run passed all 510 then-present tests; the final suite includes five additional security tests. The final serial rerun passed all 515 tests, without changing the unrelated insurance implementation or tests. Earlier failures are retained in local diagnostic logs rather than suppressed.
+Registration displays mobile, PIN and confirmation only. OTP proof, expiry, cooldowns, attempt limits, Argon2 PIN hashing, duplicate-account protection and sessions are preserved. The existing mandatory real-name Customer model is not weakened. Signup atomically creates only the verified Customer-role User, consumes its proof and audits pending profile state; the established post-login profile setup creates a valid Customer after real details are supplied. No fabricated names/emails or incomplete Customer records are inserted.
 
-Browser screenshots and JSON evidence are in the artifact folders listed below. Browser tests block external calls and use only disposable loopback MongoDB databases and mocked Airtel responses. The owned temporary replica-set instance and frontend preview are stopped after validation; the pre-existing local MongoDB instance is left running.
+The private signup marker prevents subsequent profile setup from linking historical Leads by mobile. Known historical identities still require ownership review. No consent is invented: the removed checkbox was a prior feature requirement, and no independent repository policy/legal-consent implementation was found. See `CUSTOMER_REGISTRATION_FLOW.md` for the inspected policy boundary and deployment caveat.
 
-## Deployment instructions ? not executed
+## APIs, persistence and permissions
 
-1. Obtain Owner approval for the reviewed commit and coordinated backend/frontend deployment. Confirm replica-set transaction support and take a verified, access-controlled database backup.
-2. Deploy compatible backend and frontend artifacts together. The normal Daily Operations catalog/index installation adds the partial activity index; it excludes historical unkeyed rows. Do not backfill keys, merge profiles or reset grants automatically.
-3. Create the dedicated root password permission if absent, and grant it only to selected authorized roles. Verify active staff, Customer view, assignment denial, audit and cache headers before enabling Employee reveal.
-4. Verify registration and PIN recovery in staging with mocked SMS. Production SMS/OTP testing requires separate explicit Owner authorization; existing Airtel/DLT settings remain unchanged.
-5. Generate bounded read-only reconciliation previews in production only under authorized access. Review and approve individual historical links separately, after a backup. Repair inconsistent authoritative source records through their existing workflows.
+- Existing PATCH `/applications/{id}` now supports authorized staff corrections using form_data/version/reason. Customer-owned draft autosave retains its existing behavior; customers cannot use staff editing to modify submitted applications. Extra protected request fields are rejected.
+- Additive GET `/applications/{id}/form-definition` returns the exact saved schema after application access checks. It reuses existing form-definition mapping and document metadata resolution.
+- Application detail responses include version. Encrypted `answer_history` is stored encrypted in the existing application document and omitted from normal DTOs. No new collection or database index is required.
+- Signup requests now contain only mobile/pin/confirm_pin, plus authorization at completion. Existing registration consumers are updated. A private User signup marker is additive; existing accounts remain untouched.
+- No new permission or default grant is introduced. Existing Customer edit/view, staff assignment, Daily Operations permissions, document password reveal permission and Bin restrictions remain in force.
+
+## Validation evidence
+
+All checks used synthetic data; SMS responses were mocked. No real SMS was sent.
+
+| Check | Final result |
+| --- | --- |
+| Full frontend suite | 520 passed; no failed or skipped tests |
+| Focused frontend checks after final UI refinements | 20 passed |
+| Existing backend regression suite | 133 passed; 173 existing mongomock datetime deprecation warnings |
+| Submitted application editing | 13 passed, including real local replica-set transactions and audit-failure rollback |
+| Registration security and deferred profile creation | 16 passed |
+| Staff browser journey | Passed at 390, 768 and 1366 pixels |
+| Customer registration/login/reset browser journey | Passed at 390, 768 and 1366 pixels; zero fabricated Customer profiles |
+| Frontend TypeScript and production build | Passed; existing bundle-size warning remains |
+| ESLint | Zero errors; eight existing fast-refresh warnings |
+| Ruff | Passed for modified/new Python source and tests; changed ranges formatted |
+| New application editor mypy | Passed |
+| Whole-app mypy baseline comparison | 117 existing errors before and after; zero introduced |
+
+Browser checks covered filter/search preservation, explicit customer focus, normal and browser Back, edit Save/Cancel, nested follow-up saving, retained input after an injected 409, standalone Daily Updates, password visibility permission and reconciliation preview. Database assertions confirmed sibling and shared Customer records remained unchanged, application version/history advanced, identity references remained intact and Bin remained empty. Registration covered mobile/PIN-only signup, existing profile setup, login, Forgot PIN and unchanged staff sign-in tabs.
+
+An initial browser locator conflict from duplicate accessible Source labels was corrected and the staff journey rerun successfully. An initial API test fixture lacked an authenticated Employee session; the fixture now logs in normally, and all 13 final application tests pass. No authentication checks were weakened. Screenshots and structured browser results are under `docs/screenshots/document-application-registration-improvements/`. Local verification logs are under ignored `scripts/dev/.local-run/next-batch-*` paths.
+
+## Deployment prerequisites (not executed)
+
+1. Owner approval of the reviewed changes and coordinated frontend/backend deployment. Registration's revised request contract requires both artifacts and refreshing old open registration pages; check external clients separately if any exist outside this repository.
+2. Confirm MongoDB replica-set transaction support, already required by OTP registration. Application correction and its audit now also require a transaction. Take a verified, access-controlled backup before rollout.
+3. Retain existing role grants; verify Employee view/edit and assignment restrictions in staging. No permission reset or automatic Employee grant is needed.
+4. Confirm any consent obligation managed outside this repository before deployment. The implementation neither displays the removed checkbox nor records assumed consent.
+5. Run staging smoke journeys using mocked SMS. Real OTP testing, production changes or deployment require separate Owner approval. Do not run historical merges, backfills or record rewrites.
 
 ## Rollback
 
-Deploy matching prior backend/frontend artifacts together after Owner review; do not reset PIN hashes, sessions, Customer IDs, Application IDs, files or histories. Retain audit events and newly captured consent/name data. Remove/revoke the new password grant if access must be withdrawn; the old service fails closed on reveal. The partial activity index may remain safely installed because older unkeyed rows do not participate. Dropping it or rotating the HMAC data key requires a separate duplicate-preservation plan. For reviewed historical links, use the Owner rollback action only while the link remains the latest unchanged edit; otherwise inspect later history and restore selected references from the approved backup. No automatic database-wide restore or customer merge reversal is performed.
+Roll back matching frontend/backend artifacts together after Owner review; do not reset account hashes, sessions, Customer/Application IDs or files. Existing accounts remain valid. Retain encrypted application history and audit records. Preserve private signup markers so deferred profile setup continues to avoid historical mobile-only linking; an older backend must be patched/reviewed before resuming that path. Verified accounts created without a profile must continue through the existing profile-setup route; never generate placeholder Customer names to compensate. Application corrections can be reviewed against encrypted before/after history and approved backups; this batch does not automatically reverse business data or rewrite siblings. No new collection/index needs removal.
 
-## Limits
+## Limitations and deliberate boundaries
 
-- Full repository mypy has pre-existing failures; baseline comparison and new-module checks are reported separately.
-- Existing build chunk-size and fast-refresh warnings remain documented.
-- Old unkeyed historical activities are checked before new primary creation, but older application versions do not participate in the new unique constraint. Do not mix incompatible backend versions.
-- Legacy records with broken references remain flagged for source repair. Read-time name resolution does not perform a historical name/index backfill; older searches continue to use persisted searchable values where reference mirrors are absent.
-- Existing encrypted passwords can be revealed; absent or previously unstored values cannot be recovered. No document-type password settings were changed.
-- Preview counts are bounded page counts, not a production-wide merge assessment. Bulk Customer merging and production historical repairs remain outside automatic execution.
+Unknown or hidden historical answers remain read-only; applicable saved-schema fields are editable. Shared identity changes use the existing Customer workflow rather than implicit propagation from application snapshots. Existing standalone history is not migrated. No bulk repair or historical customer merge is included. Existing mypy and frontend warning baselines are reported separately from new checks. Transaction support and coordinated client rollout are prerequisites, not automatic production operations.
 
 ## Changed files
 
-- `backend/app/features/auth/pin_service.py`
+- `backend/app/features/customer/application_edit.py`
+- `backend/app/features/customer/mappers.py`
 - `backend/app/features/customer/router.py`
 - `backend/app/features/customer/schemas.py`
 - `backend/app/features/customer/service.py`
-- `backend/app/features/daily_operations/identity.py`
-- `backend/app/features/daily_operations/router.py`
-- `backend/app/features/daily_operations/schemas.py`
-- `backend/app/features/daily_operations/service.py`
-- `backend/app/shared/customer_identity.py`
 - `docs/CUSTOMER_REGISTRATION_FLOW.md`
-- `docs/DAILY_UPDATE_IDENTITY_AND_DUPLICATE_RULES.md`
-- `docs/DOCUMENT_PASSWORD_ACCESS_SECURITY.md`
 - `docs/PRODUCTION_ENHANCEMENT_BATCH_REPORT.md`
-- `frontend/src/features/auth/components/PinAuthPanel.tsx`
-- `frontend/src/features/auth/pages/LoginPage.test.tsx`
-- `frontend/src/features/auth/pinApi.ts`
+- `frontend/src/components/forms/ProductSchemaForm.tsx`
+- `frontend/src/components/overlays/Modal.test.tsx`
+- `frontend/src/components/overlays/Modal.tsx`
 - `frontend/src/features/customer/api.ts`
-- `frontend/src/features/customer/components/DocumentPassword.test.tsx`
-- `frontend/src/features/customer/components/DocumentPassword.tsx`
+- `frontend/src/features/customer/components/DynamicFormField.tsx`
+- `frontend/src/features/customer/components/SubmittedApplicationDetails.test.tsx`
+- `frontend/src/features/customer/components/SubmittedApplicationDetails.tsx`
 - `frontend/src/features/customer/pages/RegisterPage.test.tsx`
 - `frontend/src/features/customer/pages/RegisterPage.tsx`
-- `frontend/src/features/customer/pages/StaffApplicationDetailsPage.test.tsx`
 - `frontend/src/features/customer/pages/StaffApplicationDetailsPage.tsx`
+- `frontend/src/features/customer/useProductSchema.ts`
 - `frontend/src/features/customer/validation.ts`
-- `frontend/src/features/daily_operations/DailyOperationsPage.tsx`
-- `frontend/src/features/daily_operations/IdentityReview.tsx`
+- `frontend/src/features/daily_operations/OpenLinkedFollowUp.test.tsx`
+- `frontend/src/features/daily_operations/OpenLinkedFollowUp.tsx`
 - `frontend/src/features/daily_operations/RecordForm.tsx`
+- `frontend/src/features/leads/components/MoveApplicationToLoanManagementModal.tsx`
+- `frontend/src/features/leads/components/UpdateStageModal.tsx`
 - `frontend/src/features/leads/pages/DocumentCollectionPage.test.tsx`
 - `frontend/src/features/leads/pages/DocumentCollectionPage.tsx`
 - `frontend/src/features/leads/pages/LeadListPage.test.tsx`
-- `frontend/src/shared/api/client.pin.test.ts`
-- `frontend/src/shared/api/client.ts`
+- `frontend/src/shared/navigationContext.test.tsx`
+- `frontend/src/shared/navigationContext.ts`
 - `scripts/customer-pin-ui-check.mjs`
 - `scripts/document-collection-correction-ui-check.mjs`
-- `scripts/seed.py`
-- `tests/api/test_customer_documents.py`
+- `tests/api/test_customer_pin_browser.py`
 - `tests/api/test_customer_pin_registration.py`
-- `tests/api/test_daily_multi_bank.py`
-- `tests/api/test_daily_operations.py`
-- `tests/api/test_daily_reeligible.py`
 - `tests/api/test_document_collection_correction_browser.py`
-- `tests/api/test_enterprise_crm.py`
-- `tests/api/test_production_batch_identity.py`
-
-Browser artifacts: `docs/screenshots/production-enhancement-batch/` and its `otp/` subdirectory contain the screenshots and machine-readable journey results for 390, 768 and 1366 pixels. No screenshots include revealed document passwords or OTPs.
+- `tests/api/test_submitted_application_edit.py`
+- `docs/screenshots/document-application-registration-improvements/` (synthetic browser evidence).

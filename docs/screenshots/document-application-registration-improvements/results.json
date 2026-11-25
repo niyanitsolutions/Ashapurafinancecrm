@@ -1,0 +1,90 @@
+{
+  "results": [
+    {
+      "width": 390,
+      "result": "passed",
+      "checks": [
+        "11-column table",
+        "single-application direct actions",
+        "no repeated headings",
+        "document password Show/Hide",
+        "linked Daily Update identity and edit",
+        "Owner reconciliation preview",
+        "one customer/two applications",
+        "independent application actions",
+        "staff-only assigning-user options",
+        "stored source options",
+        "catalogue status labels",
+        "combined filters",
+        "debounced mobile/application search and clearing",
+        "group-aware customer/application navigation",
+        "legacy list redirect",
+        "schema-driven submitted editing and cancel",
+        "versioned encrypted answer history",
+        "normal return without customer filter",
+        "browser Back preserves only intentional filters",
+        "follow-up modal stays on Document Collection",
+        "failed follow-up save retains input",
+        "shared customer and sibling unchanged"
+      ]
+    },
+    {
+      "width": 768,
+      "result": "passed",
+      "checks": [
+        "11-column table",
+        "single-application direct actions",
+        "no repeated headings",
+        "document password Show/Hide",
+        "linked Daily Update identity and edit",
+        "Owner reconciliation preview",
+        "one customer/two applications",
+        "independent application actions",
+        "staff-only assigning-user options",
+        "stored source options",
+        "catalogue status labels",
+        "combined filters",
+        "debounced mobile/application search and clearing",
+        "group-aware customer/application navigation",
+        "legacy list redirect",
+        "schema-driven submitted editing and cancel",
+        "versioned encrypted answer history",
+        "normal return without customer filter",
+        "browser Back preserves only intentional filters",
+        "follow-up modal stays on Document Collection",
+        "failed follow-up save retains input",
+        "shared customer and sibling unchanged"
+      ]
+    },
+    {
+      "width": 1366,
+      "result": "passed",
+      "checks": [
+        "11-column table",
+        "single-application direct actions",
+        "no repeated headings",
+        "document password Show/Hide",
+        "linked Daily Update identity and edit",
+        "Owner reconciliation preview",
+        "one customer/two applications",
+        "independent application actions",
+        "staff-only assigning-user options",
+        "stored source options",
+        "catalogue status labels",
+        "combined filters",
+        "debounced mobile/application search and clearing",
+        "group-aware customer/application navigation",
+        "legacy list redirect",
+        "schema-driven submitted editing and cancel",
+        "versioned encrypted answer history",
+        "normal return without customer filter",
+        "browser Back preserves only intentional filters",
+        "follow-up modal stays on Document Collection",
+        "failed follow-up save retains input",
+        "shared customer and sibling unchanged"
+      ]
+    }
+  ],
+  "api": "real local FastAPI and disposable MongoDB",
+  "external_calls": "none"
+}

@@ -45,7 +45,12 @@ async def test_document_collection_table_filters_and_search_responsive(
         {
             "$set": {
                 "status": "draft",
-                "form_data": {"full_name_as_per_pan_card": "Actual Applicant"},
+                "form_data": {
+                    "full_name_as_per_pan_card": "Actual Applicant",
+                    "monthly_net_salary": 30000,
+                    "company_name": "Original Employer",
+                    "current_address": "Original Address",
+                },
             }
         },
     )
@@ -58,7 +63,26 @@ async def test_document_collection_table_filters_and_search_responsive(
                         "key": "full_name_as_per_pan_card",
                         "label": "Full Name (as per PAN Card)",
                         "field_type": "text",
-                    }
+                    },
+                    {
+                        "key": "monthly_net_salary",
+                        "label": "Monthly Net Salary",
+                        "field_type": "number",
+                        "required": False,
+                        "validation": {"min_value": 0},
+                    },
+                    {
+                        "key": "company_name",
+                        "label": "Company Name",
+                        "field_type": "text",
+                        "required": False,
+                    },
+                    {
+                        "key": "current_address",
+                        "label": "Current Address",
+                        "field_type": "textarea",
+                        "required": False,
+                    },
                 ]
             }
         },
@@ -202,7 +226,7 @@ async def test_document_collection_table_filters_and_search_responsive(
             "history": [],
             "bank": "Test Bank",
             "source": "crm_linked",
-            "working_key": "batch-browser-working",
+            "working_key": "application:" + application.require_id(),
         }
     )
     original_apps = await db.applications.find({}).sort("_id", 1).to_list(10)
@@ -249,9 +273,27 @@ async def test_document_collection_table_filters_and_search_responsive(
         output, _ = await asyncio.wait_for(process.communicate(), 240)
         assert process.returncode == 0, output.decode(errors="replace")
         assert await db.leads.count_documents({}) == 1
-        assert (
-            await db.applications.find({}).sort("_id", 1).to_list(10) == original_apps
-        )
+        saved_apps = await db.applications.find({}).sort("_id", 1).to_list(10)
+        for before, after in zip(original_apps, saved_apps, strict=True):
+            if str(before["_id"]) != application.require_id():
+                assert after == before
+            else:
+                assert (
+                    after["version"] == before["version"] + 3
+                    and len(after["answer_history"]) == 3
+                )
+                assert after["form_data"]["monthly_net_salary"] == 45000 + 1366
+                for key in (
+                    "user_id",
+                    "customer_id",
+                    "application_code",
+                    "lead_id",
+                    "assigned_to",
+                    "status",
+                    "form_definition_id",
+                ):
+                    assert after.get(key) == before.get(key)
+                assert after["form_data"]["company_name"] == "Original Employer"
         assert (
             await db.customers.find_one({"_id": ObjectId(customer.require_id())})
             == original_customer
@@ -259,8 +301,8 @@ async def test_document_collection_table_filters_and_search_responsive(
         daily = await db.daily_follow_ups.find_one(
             {"import_key": "batch-browser-daily"}
         )
-        assert daily["customer_name"] == "" and daily["version"] == 4
-        assert len(daily["history"]) == 3
+        assert daily["customer_name"] == "" and daily["version"] == 7
+        assert len(daily["history"]) == 6
         assert all(event["before"]["customer_name"] == "" for event in daily["history"])
         assert daily["customer_id"] == customer.require_id()
         reveals = await db.audit_logs.find(

@@ -450,7 +450,7 @@ class CustomerService:
         MongoDB transaction support is required; there is no unsafe fallback.
         """
         from bson import ObjectId
-        from pymongo.errors import DuplicateKeyError
+        from pymongo.errors import DuplicateKeyError, OperationFailure
 
         from app.features.auth.pin_service import digest
         from app.security.pin import hash_pin
@@ -489,14 +489,6 @@ class CustomerService:
         user = User(mobile=payload.mobile, role=CUSTOMER, status="active",
                     pin_hash=hashed, pin_epoch=1, pin_updated_at=now,
                     mobile_verified_at=now, is_mobile_verified=True, created_by=None)
-        customer = Customer(
-            customer_code=await generate_id(self._db, IdPrefix.CUSTOMER),
-            user_id=str(user_id),
-            full_name=payload.full_name,
-            mobile=payload.mobile,
-            email=str(payload.email) if payload.email else None,
-            created_by=None,
-        )
         try:
             async with await self._db.client.start_session() as session, session.start_transaction():
                 proof = await self._db.auth_pin_challenges.find_one_and_update(
@@ -506,22 +498,29 @@ class CustomerService:
                 )
                 if not proof:
                     raise ValidationError("Mobile verification is invalid, expired or already used.")
-                await self._db.users.insert_one(user.model_dump(by_alias=True, exclude={"id"}) | {"_id": user_id}, session=session)
-                inserted = await self._db.customers.insert_one(customer.model_dump(by_alias=True, exclude={"id"}), session=session)
+                await self._db.users.insert_one(
+                    user.model_dump(by_alias=True, exclude={"id"})
+                    | {"_id": user_id, "registration_method": "mobile_pin"},
+                    session=session,
+                )
                 # Public signup never claims historical Leads by mobile-only matching.
                 # Existing identity ownership requires staff review or the secure-link flow.
                 audit = AuditLog(
                     event_type=AuditEvent.CUSTOMER_REGISTERED,
                     user_id=str(user_id),
-                    metadata={
-                        "customer_id": str(inserted.inserted_id),
-                        "terms_accepted": True,
-                        "terms_version": "2026-11-25",
-                    },
+                    metadata={"profile_status": "pending", "registration_method": "mobile_pin"},
                 )
                 await self._db.audit_logs.insert_one(audit.model_dump(by_alias=True, exclude={"id"}), session=session)
         except DuplicateKeyError:
-            raise ConflictError("This mobile is already registered. Log in or use Create PIN.") from None
+            raise ConflictError(
+                "This mobile is already registered. Log in or use Create PIN."
+            ) from None
+        except OperationFailure as error:
+            if error.code == 112 or error.has_error_label("TransientTransactionError"):
+                raise ConflictError(
+                    "Registration changed during another request. Check whether your account was created before retrying."
+                ) from None
+            raise
         # No session is issued here: the customer explicitly logs in with their PIN.
 
     # ================================================================== customer profile
@@ -607,7 +606,14 @@ class CustomerService:
             raise ConflictError("A customer already exists with this mobile number.") from None
         event = AuditEvent.LEAD_CONVERTED if converted_from_lead_id else AuditEvent.CUSTOMER_REGISTERED
         await write_audit_log(self._db, event_type=event, user_id=actor.require_id(), metadata={"customer_id": customer_id})
-        await self._link_existing_leads_to_customer(actor.mobile, customer_id, actor.require_id())
+        registration = await self._db.users.find_one(
+            {"_id": to_object_id(actor.require_id()), "registration_method": "mobile_pin"},
+            {"_id": 1},
+        )
+        if not registration:
+            await self._link_existing_leads_to_customer(
+                actor.mobile, customer_id, actor.require_id()
+            )
         return await self._customers.find_by_id(customer_id) or customer
 
     async def _link_existing_leads_to_customer(self, mobile: str, customer_id: str, user_id: str) -> None:
@@ -1470,6 +1476,12 @@ class CustomerService:
         return await self._applications.find_for_user(actor.require_id(), status=status)
 
     async def update_application(self, application_id: str, payload: UpdateApplicationRequest, actor: User) -> Application:
+        if actor.role in {OWNER, EMPLOYEE}:
+            from app.features.customer.application_edit import update_details
+
+            return await update_details(self, application_id, payload, actor)
+        if actor.role != CUSTOMER:
+            raise ForbiddenError("Customer or authorized staff access is required.")
         application = await self.get_own_application(application_id, actor)
         if application.status != ApplicationStatus.DRAFT:
             raise ConflictError("Only draft applications can be edited.")

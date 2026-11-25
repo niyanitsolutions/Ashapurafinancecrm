@@ -1,8 +1,9 @@
+import { SubmittedApplicationDetails } from "../components/SubmittedApplicationDetails";
 import { DocumentPassword } from "@/features/customer/components/DocumentPassword";
 import { StaffCustomerProfile } from "@/features/customer/components/StaffCustomerProfile";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { OpenLinkedFollowUp } from "@/features/daily_operations/OpenLinkedFollowUp";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/buttons/Button";
 import { EmployeeSelect } from "@/components/forms/EmployeeSelect";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
@@ -71,12 +72,16 @@ function RejectDocumentModal({
   );
 }
 
-export function StaffApplicationDetailsPage() {
-  const { applicationId } = useParams<{ applicationId: string }>();
+export function StaffApplicationDetailsPage({applicationIdOverride,onClose,onApplicationSaved,onFollowupSaved}: {applicationIdOverride?:string;onClose?:()=>void;onApplicationSaved?:()=>void;onFollowupSaved?:()=>void} = {}) {
+  const { applicationId: routeApplicationId } = useParams<{ applicationId: string }>();
+  const applicationId = applicationIdOverride || routeApplicationId;
+  const embedded = Boolean(applicationIdOverride);
+  const navigate=useNavigate();
   // Opened from Leads -> Document Collection (the row-level View action and Update
   // Lead's "View Full Application" link both pass this) never from the Customer
   // Applications module or Customer Details page, which keep the original default.
-  const { backTo, backLabel, fromDocumentCollection } = useDocumentCollectionBackContext("/leads/document-collection");
+  const { backTo, backLabel, fromDocumentCollection: routeFromDocumentCollection } = useDocumentCollectionBackContext("/leads/document-collection");
+  const fromDocumentCollection = embedded || routeFromDocumentCollection;
   const { role } = useAuth();
   const [application, setApplication] = useState<ApplicationDetail | null>(null);
   const [documents, setDocuments] = useState<ApplicationDocument[]>([]);
@@ -92,19 +97,22 @@ export function StaffApplicationDetailsPage() {
   // required documents too, not only the ones already uploaded — and Customer/Employee/
   // Owner are guaranteed to be looking at the same document records, never a separate
   // staff-only rendering of them.
-  const { data: formDef } = useProductSchema(application?.product_category, application?.product_id);
+  const { data: formDef, error: schemaError } = useProductSchema(application?.product_category, application?.product_id, applicationId);
 
-  const load = () => {
-    if (!applicationId) return;
+  const activeId=useRef(applicationId);
+  const epoch=useRef(0);
+  const load = useCallback(() => {
+    if (!applicationId || activeId.current!==applicationId) return;
+    const current=++epoch.current;
     getApplication(applicationId)
-      .then(setApplication)
-      .catch((err) => setError(getErrorMessage(err)));
+      .then(app=>{if(epoch.current===current)setApplication(app);})
+      .catch((err) => {if(epoch.current===current)setError(getErrorMessage(err));});
     listDocuments(applicationId)
-      .then(setDocuments)
-      .catch(() => setDocuments([]));
-  };
+      .then(docs=>{if(epoch.current===current)setDocuments(docs);})
+      .catch(() => {if(epoch.current===current)setDocuments([]);});
+  },[applicationId]);
 
-  useEffect(load, [applicationId]);
+  useEffect(()=>{activeId.current=applicationId;setApplication(null);setDocuments([]);setError(null);load();const invalidate=()=>{activeId.current=undefined;epoch.current++;};return invalidate;},[applicationId,load]);
 
   if (!applicationId) return null;
   if (error && !application) {
@@ -194,19 +202,14 @@ export function StaffApplicationDetailsPage() {
   );
 
   return (
-    <SimplePageLayout title={application.application_code} backTo={backTo} backLabel={backLabel}>
-      <div className="mb-4"><OpenLinkedFollowUp entity="application" recordId={applicationId} /></div>
+    <SimplePageLayout title={application.application_code} backTo={embedded ? undefined : backTo} backLabel={backLabel}>
+      <div className="mb-4"><OpenLinkedFollowUp entity="application" recordId={applicationId} mode={fromDocumentCollection ? "modal" : "navigate"} onSaved={onFollowupSaved || onClose || (fromDocumentCollection ? ()=>navigate("/leads/document-collection",{replace:true}) : undefined)} /></div>
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
-      <ErrorBanner message={error} />
+      <ErrorBanner message={error || (schemaError ? getErrorMessage(schemaError) : null)} />
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+      <div className={embedded ? "grid grid-cols-1 gap-4" : "grid grid-cols-1 gap-6 lg:grid-cols-3"}>
         <div className="lg:col-span-2 space-y-6">
-          {application.customer_id && <StaffCustomerProfile customerId={application.customer_id} />}
-          <div className="bg-card border border-border rounded-card shadow-card p-6">
-            <h2 className="text-sm font-semibold text-text/70 mb-3">Details</h2>
-            <p className="text-sm text-text/60 mb-2 capitalize">
-              {application.product_name} · {application.status}
-            </p>
+          {!fromDocumentCollection && application.customer_id && <StaffCustomerProfile customerId={application.customer_id} />}
             {application.case_id && (
               <p className="text-sm text-text/60 mb-2">
                 Case {application.case_code}: <span className="font-medium text-text">{application.case_status_label}</span>{" "}
@@ -220,15 +223,7 @@ export function StaffApplicationDetailsPage() {
                 </Link>
               </p>
             )}
-            <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
-              {Object.entries(application.form_data).map(([key, value]) => (
-                <div key={key}>
-                  <dt className="text-xs text-text/50 capitalize">{key.replace(/_/g, " ")}</dt>
-                  <dd>{String(value)}</dd>
-                </div>
-              ))}
-            </dl>
-          </div>
+          <SubmittedApplicationDetails key={application.id} application={application} schema={formDef || null} onSaved={saved=>{setApplication(saved);if(["full_name","full_name_as_per_pan_card","applicant_name_as_per_pan_card"].some(key=>JSON.stringify(saved.form_data[key])!==JSON.stringify(application.form_data[key])))onApplicationSaved?.();}} />
 
           <div className="bg-card border border-border rounded-card shadow-card p-6">
             <h2 className="text-sm font-semibold text-text/70 mb-3">Documents</h2>

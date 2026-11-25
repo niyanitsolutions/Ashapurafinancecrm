@@ -183,7 +183,16 @@ def application_to_detail(
     case: ApplicationWorkflow | None = None, case_status_label: str | None = None,
 ) -> ApplicationDetailResponse:
     return ApplicationDetailResponse(
-        **application_to_list_item(application, customer_name, product_name, employee_name, progress_percent, case, case_status_label).model_dump(),
+        **application_to_list_item(
+            application,
+            customer_name,
+            product_name,
+            employee_name,
+            progress_percent,
+            case,
+            case_status_label,
+        ).model_dump(),
+        version=application.version,
         form_definition_id=application.form_definition_id,
         form_data=application.form_data,
         updated_at=application.updated_at,

@@ -49,7 +49,7 @@ async def test_customer_registration_login_forgot_pin_browser(registration, monk
         widths = json.loads(os.environ.get("AFS_PIN_BROWSER_WIDTHS", "[1440,390]"))
         assert len(sent) == 2 * len(widths)
         assert await db.users.count_documents({"role": "customer"}) == len(widths)
-        assert await db.customers.count_documents({}) == len(widths)
+        assert await db.customers.count_documents({}) == 0
         print(output)
     finally:
         if process and process.returncode is None:

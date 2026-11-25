@@ -265,6 +265,7 @@ export interface ApplicationListItem {
 }
 
 export interface ApplicationDetail extends ApplicationListItem {
+  version?: number;
   form_definition_id: string;
   form_data: Record<string, unknown>;
   updated_at: string;
@@ -358,10 +359,7 @@ export interface PaginatedResponse<T> {
 // ---- public onboarding ----
 
 export interface RegistrationDetails {
-  full_name: string;
-  terms_accepted: boolean;
   mobile: string;
-  email?: string | null;
   pin: string;
   confirm_pin: string;
 }
@@ -746,4 +744,12 @@ export async function listCustomersStaff(params: { page?: number; page_size?: nu
 
 export function getCustomerStaff(customerId: string) {
   return apiRequest<Customer>(`/customers/${customerId}`);
+}
+
+
+export function getApplicationFormDefinition(id: string) {
+  return apiRequest<FormDefinition>(`/applications/${id}/form-definition`);
+}
+export function updateSubmittedApplication(id: string, form_data: Record<string, unknown>, version: number, reason: string) {
+  return apiRequest<ApplicationDetail>(`/applications/${id}`, {method:"PATCH",body:JSON.stringify({form_data,version,reason})});
 }

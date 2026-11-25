@@ -85,7 +85,7 @@ export function MoveApplicationToLoanManagementModal({
               {summary.documents_not_available > 0 && ` ${summary.documents_not_available} marked not available.`}
             </p>
           )}
-          <Link to={`/applications/${lead.application_id}?from=document-collection`} className="inline-block text-sm font-medium text-primary hover:underline">
+          <Link onClick={onClose} to={`/leads/document-collection?application=${lead.application_id}`} className="inline-block text-sm font-medium text-primary hover:underline">
             View Full Application →
           </Link>
 

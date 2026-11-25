@@ -17,8 +17,6 @@ from test_pin_mongo_integration import pin_mongo  # noqa: F401
 
 BASE = "/api/v1/customer-registration"
 DETAILS = {
-    "full_name": "Test Customer",
-    "terms_accepted": True,
     "mobile": "9000000088",
     "pin": "0472",
     "confirm_pin": "0472",
@@ -65,25 +63,47 @@ async def verified(registration, existing_customers=0):
     return r.json()["data"]["authorization"], body
 
 
-@pytest.mark.parametrize("email", [None, "customer@example.com"])
-async def test_register_login_and_single_use(registration, email):
+async def test_register_login_and_single_use(registration):
     client, db, sent = registration
     proof, verify_body = await verified(registration)
-    r = await client.post(BASE + "/complete", json=DETAILS | {"email": email, "authorization": proof})
-    assert r.status_code == 200, r.text
+    response = await client.post(
+        BASE + "/complete", json=DETAILS | {"authorization": proof}
+    )
+    assert response.status_code == 200, response.text
     user = await db.users.find_one({"mobile": DETAILS["mobile"]})
-    customer = await db.customers.find_one({"user_id": str(user["_id"])})
-    assert user["password_hash"] is None
-    assert user["pin_hash"].startswith("$argon2id$") and verify_pin("0472", user["pin_hash"])
-    assert user["is_mobile_verified"] and user["mobile_verified_at"]
-    assert user["created_by"] is None and customer["email"] == email
-    assert (await client.post("/api/v1/auth/pin/verify", json=verify_body)).status_code == 422
-    assert (await client.post(BASE + "/complete", json=DETAILS | {"authorization": proof})).status_code == 422
-    assert (await client.post(BASE + "/start", json=DETAILS)).status_code in (409, 429)
-    login = await client.post("/api/v1/auth/pin/login", json={"mobile": DETAILS["mobile"], "pin": "0472"})
-    assert login.status_code == 200, login.text
-    assert login.json()["data"]["role"] == "customer" and len(sent) == 1
-    bad = await client.post("/api/v1/auth/pin/login", json={"mobile": DETAILS["mobile"], "pin": "9999"})
+    assert (
+        user["password_hash"] is None
+        and user["pin_hash"].startswith("$argon2id$")
+        and verify_pin("0472", user["pin_hash"])
+    )
+    assert (
+        user["is_mobile_verified"]
+        and user["mobile_verified_at"]
+        and user["registration_method"] == "mobile_pin"
+    )
+    assert await db.customers.count_documents({}) == 0
+    audit = await db.audit_logs.find_one({"user_id": str(user["_id"])})
+    assert (
+        audit["metadata"]["profile_status"] == "pending"
+        and "terms_accepted" not in audit["metadata"]
+    )
+    assert (
+        await client.post("/api/v1/auth/pin/verify", json=verify_body)
+    ).status_code == 422
+    assert (
+        await client.post(BASE + "/complete", json=DETAILS | {"authorization": proof})
+    ).status_code == 422
+    login = await client.post(
+        "/api/v1/auth/pin/login", json={"mobile": DETAILS["mobile"], "pin": "0472"}
+    )
+    assert (
+        login.status_code == 200
+        and login.json()["data"]["role"] == "customer"
+        and len(sent) == 1
+    )
+    bad = await client.post(
+        "/api/v1/auth/pin/login", json={"mobile": DETAILS["mobile"], "pin": "9999"}
+    )
     assert bad.status_code == 401
 
 
@@ -116,21 +136,22 @@ async def test_expiry_wrong_mobile_and_no_proof(registration):
     assert await db.users.count_documents({}) == 0
 
 
-async def test_failed_profile_insert_rolls_back_user_and_proof(registration, monkeypatch):
+async def test_failed_audit_insert_rolls_back_user_and_proof(registration):
     client, db, _ = registration
     proof, _ = await verified(registration)
-    # A duplicate customer code forces a real transaction rollback after User insert.
-    from app.features.customer import service
-
-    async def same_code(*args):
-        return "AFS-CUS-CONFLICT"
-
-    await db.customers.insert_one({"customer_code": "AFS-CUS-CONFLICT", "user_id": "unrelated"})
-    monkeypatch.setattr(service, "generate_id", same_code)
-    r = await client.post(BASE + "/complete", json=DETAILS | {"authorization": proof})
-    assert r.status_code == 409
-    assert await db.users.count_documents({}) == 0
-    assert (await db.auth_pin_challenges.find_one({"purpose": "REGISTRATION"}))["state"] == "verified"
+    await db.audit_logs.create_index("event_type", unique=True)
+    await db.audit_logs.insert_one({"event_type": "customer_registered"})
+    response = await client.post(
+        BASE + "/complete", json=DETAILS | {"authorization": proof}
+    )
+    assert response.status_code == 409
+    assert (
+        await db.users.count_documents({}) == 0
+        and await db.customers.count_documents({}) == 0
+    )
+    assert (await db.auth_pin_challenges.find_one({"purpose": "REGISTRATION"}))[
+        "state"
+    ] == "verified"
 
 
 async def test_otp_expiry_resend_and_attempt_limits(registration):
@@ -152,7 +173,7 @@ async def test_concurrent_completion_only_one_account(registration):
     results = await asyncio.gather(*(client.post(BASE + "/complete", json=DETAILS | {"authorization": proof}) for _ in range(2)))
     assert sum(r.status_code == 200 for r in results) == 1
     assert await db.users.count_documents({}) == 1
-    assert await db.customers.count_documents({}) == 1
+    assert await db.customers.count_documents({}) == 0
 
 
 async def test_registration_cannot_skip_detail_validation_via_pin_start(registration):
@@ -192,7 +213,21 @@ async def test_registration_never_claims_historical_lead_by_mobile_only(registra
     customer = await db.customers.find_one({"user_id": str(user["_id"])})
     assert linked.get("user_id") is None and linked.get("customer_id") is None
     assert not linked["account_created"]
-    assert customer["full_name"] == DETAILS["full_name"]
+    assert customer is None
+    login = await client.post(
+        "/api/v1/auth/pin/login",
+        json={"mobile": DETAILS["mobile"], "pin": DETAILS["pin"]},
+    )
+    headers = {"Authorization": "Bearer " + login.json()["data"]["access_token"]}
+    profile = await client.post(
+        "/api/v1/customers/me",
+        headers=headers,
+        json={"full_name": "Collected After Verification"},
+    )
+    assert profile.status_code == 200, profile.text
+    unchanged = await db.leads.find_one({"_id": lead_id})
+    assert unchanged == linked
+    assert await db.customers.count_documents({}) == 1
     assert linked["assigned_to"] == "fixture-employee" and linked["full_name"] == "Existing Name"
     assert linked["source_id"] == "fixture-source" and linked["product_id"] == "fixture-product"
 
@@ -232,7 +267,7 @@ async def test_existing_customer_requires_review_after_verified_mobile(registrat
             "customer_code": "HISTORICAL",
             "user_id": "historical-owner",
             "mobile": "+91 " + DETAILS["mobile"],
-            "full_name": DETAILS["full_name"],
+            "full_name": "Existing Verified Customer",
             "is_deleted": False,
         }
     )

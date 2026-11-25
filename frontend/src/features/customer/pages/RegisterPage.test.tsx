@@ -20,29 +20,27 @@ beforeEach(() => {
   vi.mocked(api.completeDirectRegistration).mockResolvedValue(null);
 });
 function mount() { render(<MemoryRouter initialEntries={["/register?return=%2Fapply%2Ffixture"]}><RegisterPage /></MemoryRouter>); }
-async function details(email = "") {
+async function details() {
   const user = userEvent.setup();
   await user.type(screen.getByLabelText("Mobile Number"), "9000000088");
-  await user.type(screen.getByLabelText("Full Name"), "Test Customer");
-  await user.click(screen.getByRole("checkbox"));
-  if (email) await user.type(screen.getByLabelText("Email Address (optional)"), email);
   await user.type(screen.getByLabelText("Create 4-Digit PIN"), "0472");
   await user.type(screen.getByLabelText("Confirm 4-Digit PIN"), "0472");
   await user.click(screen.getByRole("button", { name: "Send OTP" }));
   return user;
 }
 describe("Customer registration", () => {
-  it("collects full name and consent with mobile, optional email and secure PIN inputs", () => {
+  it("shows only mobile and two PIN inputs without identity fields or a checkbox", () => {
     mount();
-    expect(screen.getAllByLabelText(/Mobile Number|Email Address|Digit PIN/)).toHaveLength(4);
+    expect(screen.getAllByLabelText(/Mobile Number|Digit PIN/)).toHaveLength(3);
     expect(screen.getByLabelText("Create 4-Digit PIN")).toHaveAttribute("type", "password");
-    expect(screen.getByLabelText("Full Name")).toBeVisible();
-    expect(screen.getByRole("checkbox")).not.toBeChecked();
+    expect(screen.queryByLabelText("Full Name")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Email/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
   });
-  it.each(["", "customer@example.com"])("creates only after verified OTP; email %s", async email => {
-    mount(); const user = await details(email);
+  it("creates an account only after verified OTP", async () => {
+    mount(); const user = await details();
     await screen.findByLabelText("4-digit SMS OTP");
-    expect(api.startDirectRegistration).toHaveBeenCalledWith({ mobile: "9000000088", full_name: "Test Customer", terms_accepted: true, email: email || null, pin: "0472", confirm_pin: "0472" });
+    expect(api.startDirectRegistration).toHaveBeenCalledWith({ mobile: "9000000088", pin: "0472", confirm_pin: "0472" });
     expect(api.completeDirectRegistration).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: /Resend OTP in/ })).toBeDisabled();
     await user.type(screen.getByLabelText("4-digit SMS OTP"), "8621");
@@ -50,7 +48,7 @@ describe("Customer registration", () => {
     await user.click(await screen.findByRole("button", { name: "Create New Account" }));
     await user.click(await screen.findByRole("button", { name: "Complete Registration" }));
     await waitFor(() => expect(navigate).toHaveBeenCalledWith("/apply/fixture", expect.objectContaining({ replace: true })));
-    expect(api.completeDirectRegistration).toHaveBeenCalledWith(expect.objectContaining({ authorization: "single-use-proof", email: email || null, pin: "0472" }));
+    expect(api.completeDirectRegistration).toHaveBeenCalledWith(expect.objectContaining({ authorization: "single-use-proof", pin: "0472" }));
     expect(sessionStorage.length).toBe(0); expect(localStorage.length).toBe(0);
   });
   it("rejects mismatching PINs before sending", async () => {

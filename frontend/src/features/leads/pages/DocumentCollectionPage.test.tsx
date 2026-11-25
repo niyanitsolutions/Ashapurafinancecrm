@@ -12,7 +12,7 @@ it("defaults to 200 customer rows, expands applications and applies filters serv
   await screen.findByText("Current Customer");
   expect(request).toHaveBeenCalledWith(expect.stringContaining("page_size=200"));
   fireEvent.click(screen.getByRole("button", {name:"Expand"}));
-  expect(await screen.findByRole("link",{name:"AFS-APP-1"})).toHaveAttribute("href","/applications/a1?from=document-collection&customer_id=c1");
+  expect(await screen.findByRole("link",{name:"AFS-APP-1"})).toHaveAttribute("href","/leads/document-collection?application=a1");
   fireEvent.change(screen.getByRole("searchbox"),{target:{value:"AFS-CUS-1"}});
   fireEvent.click(screen.getByRole("button",{name:"Apply Filters"}));
   await waitFor(() => expect(request).toHaveBeenCalledWith(expect.stringContaining("search=AFS-CUS-1")));
@@ -54,7 +54,7 @@ it("shows direct actions for a single application and no duplicate headings for 
  request.mockImplementation((url:string)=>Promise.resolve(url.includes("filter-options")?{}:{items:[{...groupRow,application_count:1}],total:1}));
  render(<MemoryRouter><DocumentCollectionPage/></MemoryRouter>);
  const view=await screen.findByRole("link",{name:"View"});
- expect(view).toHaveAttribute("href","/applications/a1?from=document-collection&customer_id=c1");
+ expect(view).toHaveAttribute("href","/leads/document-collection?application=a1");
  expect(screen.queryByRole("button",{name:"Expand"})).not.toBeInTheDocument();
  expect(screen.getAllByRole("columnheader")).toHaveLength(11);
 });

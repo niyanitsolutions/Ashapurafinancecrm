@@ -19,8 +19,8 @@ import { base, businessTime, followStatuses, getLookups, issueStatuses, saveReco
 
 const dateValue = (value: unknown) => value ? /^\d{4}-\d{2}-\d{2}$/.test(String(value)) ? String(value) : istDateKey(String(value)) : "";
 
-export function RecordForm({ area, record, onSaved, onCancel }: {
-  area: Area; record?: Row; onSaved: () => void; onCancel: () => void;
+export function RecordForm({ area, record, onSaved, onCancel, onSavingChange }: {
+  area: Area; record?: Row; onSaved: () => void; onCancel: () => void; onSavingChange?: (saving:boolean)=>void;
 }) {
   const { userId } = useAuth();
   const { isOwner } = usePermissions();
@@ -72,7 +72,7 @@ export function RecordForm({ area, record, onSaved, onCancel }: {
   const showFollowUpDate = !reeligible && (openFollowUp || !followStatuses.includes(values.status));
 
   async function submit(event: FormEvent) {
-    event.preventDefault(); if(savingLock.current) return; savingLock.current = true; setSaving(true); setError(null);
+    event.preventDefault(); if(savingLock.current) return; savingLock.current = true; setSaving(true);onSavingChange?.(true); setError(null);
     try {
       if (area === "sessions") {
         await apiRequest(`${base}/sessions/${record?.id}/correction`, {
@@ -115,7 +115,7 @@ export function RecordForm({ area, record, onSaved, onCancel }: {
       }
       onSaved();
     } catch (err) { setError(err instanceof Error ? err.message : "Unable to save this row."); }
-    finally { savingLock.current = false; setSaving(false); }
+    finally { savingLock.current = false; setSaving(false);onSavingChange?.(false); }
   }
 
   const linkOptions = lookup.data?.cases ?? [];

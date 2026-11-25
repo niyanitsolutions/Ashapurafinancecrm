@@ -20,26 +20,7 @@ from app.features.employee.schemas import AddressSchema
 
 class DirectRegisterRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    full_name: str = Field(min_length=2, max_length=200)
-    terms_accepted: bool = Field(strict=True)
-
-    @field_validator("terms_accepted")
-    @classmethod
-    def consent(cls, value: bool) -> bool:
-        if not value:
-            raise ValueError("Accept the applicable terms to continue.")
-        return value
-
-    @field_validator("full_name")
-    @classmethod
-    def name(cls, value: str) -> str:
-        normalized = " ".join(value.split())
-        if len(normalized) < 2:
-            raise ValueError("Enter your full name.")
-        return normalized
-
     mobile: str = Field(pattern=r"^[0-9]{10}$")
-    email: EmailStr | None = None
     pin: str = Field(pattern=r"^[0-9]{4}$", repr=False)
     confirm_pin: str = Field(pattern=r"^[0-9]{4}$", repr=False)
 
@@ -441,6 +422,9 @@ class StartApplicationRequest(BaseModel):
 
 
 class UpdateApplicationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    version: int | None = Field(default=None, ge=1)
+    reason: str | None = Field(default=None, min_length=3, max_length=500)
     form_data: dict[str, Any] | None = None
     pending_profile: dict[str, Any] | None = None
 
@@ -491,6 +475,7 @@ class ApplicationListItem(BaseModel):
 
 
 class ApplicationDetailResponse(ApplicationListItem):
+    version: int = 1
     form_definition_id: str
     form_data: dict[str, Any]
     updated_at: datetime

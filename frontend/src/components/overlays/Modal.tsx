@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useId, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "@/theme/icons";
 
@@ -7,6 +7,11 @@ import { Icon } from "@/theme/icons";
 // GenerateLinkModal/AddTaskModal, an un-centered inline form card on GeoFencingPage and
 // friends, or a whole separate route for Lead/Employee create) — this is the fix for all
 // three, starting with new/migrated forms.
+const ModalDepth = createContext(0);
+const openDialogs: {id:string;depth:number;node:HTMLDivElement | null}[] = [];
+const topDialog = () => openDialogs.reduce<(typeof openDialogs)[number] | undefined>((top,item)=>!top || item.depth >= top.depth ? item : top,undefined);
+let savedBodyOverflow = "";
+
 export type ModalSize = "sm" | "md" | "lg";
 
 const SIZE_CLASSES: Record<ModalSize, string> = {
@@ -36,6 +41,7 @@ export function Modal({
   footer?: ReactNode;
 }) {
   const titleId = useId();
+  const depth=useContext(ModalDepth);
   const dialogRef = useRef<HTMLDivElement>(null);
 
   // Focus is stolen into the dialog exactly once, when it transitions to open — deps on
@@ -44,13 +50,18 @@ export function Modal({
   // list) must never re-steal focus out of whatever field the user is actively typing in.
   useEffect(() => {
     if (!open) return;
-    const previousOverflow = document.body.style.overflow;
+    if(openDialogs.length === 0) savedBodyOverflow = document.body.style.overflow;
+    openDialogs.push({id:titleId,depth,node:dialogRef.current});
     document.body.style.overflow = "hidden";
-    dialogRef.current?.focus();
+    let active=true;
+    queueMicrotask(()=>{if(active && topDialog()?.id===titleId)dialogRef.current?.focus();});
     return () => {
-      document.body.style.overflow = previousOverflow;
+      active=false;
+      const index=openDialogs.findIndex(item=>item.id===titleId);if(index>=0)openDialogs.splice(index,1);
+      if(openDialogs.length === 0)document.body.style.overflow = savedBodyOverflow;
+      else topDialog()?.node?.focus();
     };
-  }, [open]);
+  }, [open,titleId,depth]);
 
   // Escape/Tab-trap listener — kept in its own effect since it legitimately needs to
   // re-subscribe when `onClose` changes identity (so Escape always calls the latest
@@ -59,6 +70,7 @@ export function Modal({
     if (!open) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
+      if(topDialog()?.id!==titleId)return;
       if (e.key === "Escape") {
         onClose();
         return;
@@ -81,12 +93,13 @@ export function Modal({
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [open, onClose]);
+  }, [open, onClose,titleId]);
 
   if (!open) return null;
 
   return createPortal(
-    <div
+    <ModalDepth.Provider value={depth+1}><div
+      style={{zIndex:50+depth*10}}
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 animate-fade-in sm:items-center sm:px-4"
       onClick={onClose}
     >
@@ -127,7 +140,7 @@ export function Modal({
           </div>
         )}
       </div>
-    </div>,
+    </div></ModalDepth.Provider>,
     document.body,
   );
 }

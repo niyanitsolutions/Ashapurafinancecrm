@@ -404,7 +404,7 @@ export function UpdateStageModal({
                     </p>
                   )}
                   <Link
-                    to={`/applications/${detail.application_id}?from=document-collection`}
+                    onClick={onClose} to={`/leads/document-collection?application=${detail.application_id}`}
                     className="inline-block text-sm font-medium text-primary hover:underline"
                   >
                     View Full Application →
