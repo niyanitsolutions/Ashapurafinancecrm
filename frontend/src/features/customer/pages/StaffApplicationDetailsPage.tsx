@@ -1,3 +1,4 @@
+import { DocumentPassword } from "@/features/customer/components/DocumentPassword";
 import { StaffCustomerProfile } from "@/features/customer/components/StaffCustomerProfile";
 import { useEffect, useState } from "react";
 import { OpenLinkedFollowUp } from "@/features/daily_operations/OpenLinkedFollowUp";
@@ -176,6 +177,7 @@ export function StaffApplicationDetailsPage() {
 
   const documentExtraActions = (doc: ApplicationDocument) => (
     <>
+      {doc.has_password && <DocumentPassword key={`${applicationId}:${doc.id}`} applicationId={applicationId} documentId={doc.id} />}
       {/* Preview/Download are already rendered by the shared UploadedDocumentCard
           (DocumentChecklist.tsx) — only staff-only actions belong here. */}
       {doc.verification_status === "pending" && (

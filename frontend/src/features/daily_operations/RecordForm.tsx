@@ -1,6 +1,6 @@
 import {useStatusOptions} from "./statusOptions";
 import {LoanTypeField} from "./LoanTypeField";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/buttons/Button";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
@@ -53,6 +53,8 @@ export function RecordForm({ area, record, onSaved, onCancel }: {
   const selectedName = values.employee_name ?? employees.find(employee => employee.id === values.assigned_to)?.name ?? defaultName;
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const savingLock = useRef(false);
+  const [submissionKey] = useState(() => crypto.randomUUID());
   const change = (key: string, value: string) => setValues(old => ({ ...old, [key]: value,
     ...(key === "date" && old.due_date === old.date ? { due_date: value } : {}),
     ...(key === "date" && old.remarks_date === old.date ? { remarks_date: value } : {}),
@@ -70,7 +72,7 @@ export function RecordForm({ area, record, onSaved, onCancel }: {
   const showFollowUpDate = !reeligible && (openFollowUp || !followStatuses.includes(values.status));
 
   async function submit(event: FormEvent) {
-    event.preventDefault(); setSaving(true); setError(null);
+    event.preventDefault(); if(savingLock.current) return; savingLock.current = true; setSaving(true); setError(null);
     try {
       if (area === "sessions") {
         await apiRequest(`${base}/sessions/${record?.id}/correction`, {
@@ -106,12 +108,14 @@ export function RecordForm({ area, record, onSaved, onCancel }: {
             approved_amount: values.approved_amount ? Number(values.approved_amount) : null,
             disbursed_amount: values.disbursed_amount ? Number(values.disbursed_amount) : null };
         }
+        if(area === "follow-ups" && !record) Object.assign(payload, { idempotency_key: submissionKey,
+          separate_activity_reason: values.separate_activity_reason || "", identity_review_reason: values.identity_review_reason || "", review_customer_id: values.review_customer_id || null });
         if (record) payload.version = record.version ?? 0;
         await saveRecord(area, payload, record?.id);
       }
       onSaved();
     } catch (err) { setError(err instanceof Error ? err.message : "Unable to save this row."); }
-    finally { setSaving(false); }
+    finally { savingLock.current = false; setSaving(false); }
   }
 
   const linkOptions = lookup.data?.cases ?? [];
@@ -126,6 +130,12 @@ export function RecordForm({ area, record, onSaved, onCancel }: {
 
   return <form onSubmit={submit}>
     <ErrorBanner message={error} />
+    {Boolean(record?.identity_warning) && <p role="alert" className="mb-3 text-sm text-orange-700">{String(record?.identity_warning)}</p>}
+    {area === "follow-ups" && !record && <details className="mb-4 rounded-lg border border-border p-3"><summary>Duplicate and identity review</summary>
+      <p className="my-2 text-sm text-textSecondary">Edit an existing follow-up to change it. For a legitimate separate activity on the same date, enter a reason. A retry keeps the same submission key.</p>
+      {field("separate_activity_reason", "Reason for a separate same-day activity")}
+      {isOwner && <><p className="my-2 text-sm">Verify identity before recording a distinct customer decision or linking a reviewed candidate. Use the read-only identity preview to inspect candidate IDs.</p>{field("identity_review_reason", "Owner identity review reason")}{field("review_customer_id", "Verified Customer ID (optional)")}</>}
+    </details>}
     {area === "sessions" ? <>
       <p className="mb-3 text-sm text-textSecondary">Owner correction only. Original login records are retained. Times are in India time.</p>
       <p className="mb-3 text-sm">Original login: {businessTime(record?.original_login_at)} · Logout: {businessTime(record?.original_logout_at)}</p>
@@ -136,8 +146,8 @@ export function RecordForm({ area, record, onSaved, onCancel }: {
         {field("date", "Date", true, "date")}
         <EmployeeNameField value={selectedName} options={employees} disabled={linked} onChange={name => change("employee_name", name)} />
         {area !== "issues" && <>
-          {field("customer_name", "Customer name", !linked, "text", linked)}
-          {field("customer_number", "Customer number", !linked, "tel", linked)}
+          {field("customer_name", "Customer name", !linked, "text", linked || Boolean(record?.customer_id))}
+          {field("customer_number", "Customer number", !linked, "tel", linked || Boolean(record?.customer_id))}
           {linked?field("loan_type", "Loan type", false, "text", true):<LoanTypeField value={String(values.loan_type??"")} onChange={value=>setValues(prev=>({...prev,loan_type:value}))}/>}{area === "follow-ups"?<BankMultiSelect value={banks} onChange={setBanks}/>:field("bank", "Bank / NBFC", !crmProgress, "text", crmProgress)}
         </>}
       </div>

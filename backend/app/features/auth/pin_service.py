@@ -132,9 +132,7 @@ class PinService:
         )
         if body.purpose == "REGISTRATION":
             # Registration creates no User until the OTP is verified and completed.
-            existing = await self.db.users.find_one({"mobile": body.mobile})
-            if existing:
-                raise ConflictError("This mobile is already registered. Log in or use Create PIN.")
+            # Send the same ownership challenge regardless of account existence.
             eligible = True
         if user:
             await limit(self.db, "pin-otp-account:" + str(user["_id"]), 5, 3600)
@@ -250,7 +248,18 @@ class PinService:
         )
         if not used.modified_count:
             raise ValidationError("This code was already used. Request another code.")
-        return {"authorization": token, "purpose": body.purpose}
+        if registration and await self.db.users.find_one({"mobile": body.mobile}, {"_id": 1}):
+            await self.db.auth_pin_challenges.update_one(
+                {"_id": slot, "authorization_hash": digest(token), "state": "verified"},
+                {"$set": {"state": "consumed"}, "$unset": {"authorization_hash": ""}},
+            )
+            # Disclosure is allowed only after a successful, single-use ownership proof.
+            return {"authorization": "", "purpose": body.purpose, "next_action": "login"}
+        return {
+            "authorization": token,
+            "purpose": body.purpose,
+            "next_action": "register" if registration else "set_pin",
+        }
 
     async def complete(self, body: Complete, ctx: Any) -> Any:
         await limit(self.db, "pin-complete-ip:" + str(ctx.ip_address), 20, 600)
@@ -274,7 +283,12 @@ class PinService:
             if proof and proof.get("user_id")
             else None
         )
-        if not proof or not user or user.get("pin_epoch", 0) != proof["base_epoch"]:
+        if (
+            not proof
+            or proof["purpose"] == "REGISTRATION"
+            or not user
+            or user.get("pin_epoch", 0) != proof["base_epoch"]
+        ):
             raise UnauthorizedError("PIN authorization is invalid or expired.")
         if hmac.compare_digest(
             proof.get("used_otp_hash", ""), otp_digest(proof["challenge_id"], body.pin)

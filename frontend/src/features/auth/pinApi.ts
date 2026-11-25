@@ -15,6 +15,7 @@ export const pinPolicy = () => apiRequest<{
 export const startPin = (mobile: string, purpose: Purpose) => post<Challenge>("start", { mobile, purpose });
 export const verifyPinOtp = (mobile: string, purpose: Purpose, challenge_id: string, otp: string) => post<{
   authorization: string;
+  next_action?: "login" | "register" | "set_pin";
 }>("verify", { mobile, purpose, challenge_id, otp });
 export const finishPin = (authorization: string, pin: string, confirm_pin: string, coordinates: {
   latitude: number;

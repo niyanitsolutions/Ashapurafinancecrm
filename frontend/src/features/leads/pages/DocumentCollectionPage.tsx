@@ -27,22 +27,38 @@ const filterKeys = new Set(["search", ...Object.keys(dimensionLabels), ...Object
 const columns = ["", "Application / Lead Code", "Customer Name", "Mobile", "Source", "Product", "Assigned To", "Application Status", "Customer Account Status", "Created On", "Actions"];
 function Status({ value }: { value?: string }) { return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${value === "submitted" ? "bg-blue-50 text-blue-700" : value === "active" ? "bg-green-50 text-green-700" : "bg-orange-50 text-orange-800"}`}>{value === "draft" ? "Pending" : value ? value.charAt(0).toUpperCase()+value.slice(1) : "Not recorded"}</span>; }
 function sourceName(app?: Application) { return app?.source_name || (app?.submission_source && app.submission_source !== "unknown" ? app.submission_source.replaceAll("_", " ") : "Not recorded"); }
-const cell = "px-4 py-4 text-sm align-middle";
+const cell = "px-3 py-4 text-sm align-middle break-words";
 function RecordCells({ app, group }: { app?: Application; group: Group }) { return <>
-  <td className={`${cell} whitespace-nowrap`}>{app?.id ? <Link className="font-medium text-primary hover:underline" to={app.record_kind === "lead" ? `/leads/${app.id}` : `/applications/${app.id}?from=document-collection${group.customer_code ? `&customer_id=${encodeURIComponent(group.id)}` : ""}`}>{app.application_code}</Link> : group.customer_code || "Not recorded"}{group.customer_code && <Link className="mt-1 block text-xs text-textSecondary hover:underline" to={`/leads/document-collection?customer_id=${encodeURIComponent(group.id)}&expand=${encodeURIComponent(group.id)}`}>{group.customer_code}</Link>}</td>
+  <td className={`${cell} whitespace-nowrap`}>{app?.id ? <Link className="font-medium text-primary hover:underline" to={app.record_kind === "lead" ? `/leads/${app.id}` : `/applications/${app.id}?from=document-collection${group.customer_code ? `&customer_id=${encodeURIComponent(group.id)}` : ""}`}>{app.application_code}</Link> : group.customer_code ? <Link className="font-medium text-primary hover:underline" to={`/leads/document-collection?customer_id=${encodeURIComponent(group.id)}&expand=${encodeURIComponent(group.id)}`}>{group.customer_code}</Link> : "Not recorded"}{app?.id && group.customer_code && <Link className="mt-1 block text-xs text-textSecondary hover:underline" to={`/leads/document-collection?customer_id=${encodeURIComponent(group.id)}&expand=${encodeURIComponent(group.id)}`}>{group.customer_code}</Link>}</td>
   <td className={`${cell} font-medium`}>{app?.customer_name || group.name}</td><td className={`${cell} whitespace-nowrap`}>{app?.mobile || group.mobile || "Not recorded"}</td>
-  <td className={cell}><span className="inline-flex whitespace-nowrap rounded-full bg-blue-50 px-2.5 py-1 text-xs capitalize text-blue-700">{sourceName(app)}</span></td>
-  <td className={`${cell} whitespace-nowrap`}>{app?.product_name || "Not recorded"}</td><td className={cell}>{app?.assigned_to_name || "Unassigned"}</td><td className={cell}><Status value={app?.status} /></td><td className={cell}><Status value={app?.customer_status} /></td>
-  <td className={`${cell} whitespace-nowrap`}>{app?.created_at ? formatISTDate(app.created_at) : "Not recorded"}</td>
+  <td className={cell}><span className="inline-flex whitespace-nowrap rounded-full bg-blue-50 px-2.5 py-1 text-xs capitalize text-blue-700">{app ? sourceName(app) : "Per application"}</span></td>
+  <td className={`${cell}`}>{app?.product_name || "See applications"}</td><td className={cell}>{app ? app.assigned_to_name || "Unassigned" : "Per application"}</td><td className={cell}>{app ? <Status value={app.status} /> : <span className="text-xs text-textSecondary">Per application</span>}</td><td className={cell}><Status value={app?.customer_status || group.primary?.customer_status} /></td>
+  <td className={`${cell} whitespace-nowrap`}>{app?.created_at ? formatISTDate(app.created_at) : "See applications"}</td>
 </>; }
 
-const control = "w-full rounded-lg border border-border bg-card px-3 py-2 text-sm";
 
-function Applications({ group, query, selected, toggle, onDelete, owner, onChanged }: { group: Group; query: string; selected: Set<string>; toggle: (id: string) => void; onDelete: (id: string) => void; owner: boolean; onChanged: () => void }) {
+function ApplicationActions({ app, group, owner, onDelete, onChanged }: {app: Application; group: Group; owner: boolean; onDelete: (id: string) => void; onChanged: () => void}) {
   const { can } = usePermissions();
   const [link,setLink] = useState<Application | null>(null);
   const [move,setMove] = useState<Application | null>(null);
   const [updating,setUpdating] = useState<LeadListItem | null>(null);
+  const [error,setError] = useState<string | null>(null);
+  return <><ErrorBanner message={error} /><div className="flex flex-wrap gap-2"><Link className="rounded-full border border-border px-3 py-1.5 text-xs text-primary" to={app.record_kind === "lead" ? `/leads/${app.id}` : `/applications/${app.id}?from=document-collection${group.customer_code ? `&customer_id=${encodeURIComponent(group.id)}` : ""}`}>View</Link>
+      {app.lead_id && can("leads:leads", "edit") && <><Link className="text-primary underline" to={`/leads/${app.lead_id}/edit`}>Edit Lead</Link><Button size="sm" variant="secondary" onClick={() => setLink(app)}>Generate Link</Button><Button size="sm" variant="secondary" onClick={async () => { try { setUpdating(await getLead(app.lead_id!)); } catch(err) { setError(err instanceof Error ? err.message : "Unable to load Lead update."); } }}>Update</Button></>}
+      {!app.lead_id && app.product_category === "loan" && can("leads:leads", "edit") && <Button size="sm" variant="secondary" onClick={() => setMove(app)}>Update</Button>}
+      {owner && app.record_kind !== "lead" && <Button size="sm" variant="danger" onClick={() => onDelete(app.id)}>Delete application</Button>}
+      </div>
+    {link?.lead_id && <GenerateLinkModal leadId={link.lead_id} leadCode={link.lead_code || link.application_code} onClose={() => setLink(null)} />}
+    {updating && <UpdateStageModal lead={updating} onClose={() => setUpdating(null)} onChanged={() => { setUpdating(null); onChanged(); }} />}
+    {move && <MoveApplicationToLoanManagementModal lead={{ application_id: move.id, lead_code: move.application_code }} onClose={() => setMove(null)} onChanged={() => { setMove(null); onChanged(); }} />}
+  </>;
+}
+const widths = [44, 185, 190, 130, 120, 150, 140, 125, 135, 120, 260];
+function ColumnWidths() { return <colgroup>{widths.map((width,i) => <col key={i} style={{width}} />)}</colgroup>; }
+
+const control = "w-full rounded-lg border border-border bg-card px-3 py-2 text-sm";
+
+function Applications({ group, query, selected, toggle, onDelete, owner, onChanged }: { group: Group; query: string; selected: Set<string>; toggle: (id: string) => void; onDelete: (id: string) => void; owner: boolean; onChanged: () => void }) {
   const [page, setPage] = useState(1);
   const [data, setData] = useState<Page<Application> | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -53,23 +69,16 @@ function Applications({ group, query, selected, toggle, onDelete, owner, onChang
       .then(result => { if (active) setData(result); }).catch(err => { if (active) setError(err.message); });
     return () => { active = false; };
   }, [group.id, page, query]);
-  return <div role="region" aria-label={`Applications for ${group.name}`} className="space-y-3 border-t border-border bg-background p-4">
+  return <div role="region" aria-label={`Applications for ${group.name}`} className="space-y-3 border-t border-border bg-background py-3">
     <ErrorBanner message={error} />
     {!data && !error && <p role="status">Loading applications...</p>}
-    <div className="overflow-x-auto"><table className="w-full min-w-[1100px] text-left font-sans"><thead className="bg-background text-xs uppercase text-textSecondary"><tr>{columns.map((name,i) => <th key={i} scope="col" className="px-4 py-3">{name || "Select"}</th>)}</tr></thead><tbody>
+    <div className="overflow-x-auto"><table className="w-full table-fixed min-w-[1599px] text-left font-sans"><ColumnWidths /><tbody>
     {data?.items.map((app, i) => <tr key={app.id} className={`border-t border-border ${page === 1 && i === 0 ? "bg-primary/5" : "bg-card"}`}>
       <td className={cell}>{owner && app.record_kind !== "lead" && <input aria-label={`Select ${app.application_code}`} type="checkbox" checked={selected.has(app.id)} onChange={() => toggle(app.id)} />}</td>
       <RecordCells app={app} group={group} />
-      <td className={`${cell} min-w-[240px]`}><div className="flex flex-wrap gap-2"><Link className="rounded-full border border-border px-3 py-1.5 text-xs text-primary" to={app.record_kind === "lead" ? `/leads/${app.id}` : `/applications/${app.id}?from=document-collection${group.customer_code ? `&customer_id=${encodeURIComponent(group.id)}` : ""}`}>View</Link>
-      {app.lead_id && can("leads:leads", "edit") && <><Link className="text-primary underline" to={`/leads/${app.lead_id}/edit`}>Edit Lead</Link><Button size="sm" variant="secondary" onClick={() => setLink(app)}>Generate Link</Button><Button size="sm" variant="secondary" onClick={async () => { try { setUpdating(await getLead(app.lead_id!)); } catch(err) { setError(err instanceof Error ? err.message : "Unable to load Lead update."); } }}>Update</Button></>}
-      {!app.lead_id && app.product_category === "loan" && can("leads:leads", "edit") && <Button size="sm" variant="secondary" onClick={() => setMove(app)}>Update</Button>}
-      {owner && app.record_kind !== "lead" && <Button size="sm" variant="danger" onClick={() => onDelete(app.id)}>Delete application</Button>}
-      </div></td>
+      <td className={cell}><ApplicationActions app={app} group={group} owner={owner} onDelete={onDelete} onChanged={onChanged} /></td>
     </tr>)}
     </tbody></table></div>
-    {link?.lead_id && <GenerateLinkModal leadId={link.lead_id} leadCode={link.lead_code || link.application_code} onClose={() => setLink(null)} />}
-    {updating && <UpdateStageModal lead={updating} onClose={() => setUpdating(null)} onChanged={() => { setUpdating(null); onChanged(); }} />}
-    {move && <MoveApplicationToLoanManagementModal lead={{ application_id: move.id, lead_code: move.application_code }} onClose={() => setMove(null)} onChanged={() => { setMove(null); onChanged(); }} />}
     {data && <Pagination page={page} totalPages={Math.max(1, Math.ceil(data.total / 25))} totalItems={data.total} pageSize={25} onPageChange={setPage} itemLabel="applications" />}
   </div>;
 }
@@ -88,6 +97,7 @@ export function DocumentCollectionPage() {
   const [data, setData] = useState<Page<Group> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());
+  const [visited, setVisited] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [assign, setAssign] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -117,7 +127,7 @@ export function DocumentCollectionPage() {
   }, []);
   useEffect(() => {
     let active = true;
-    setData(null); setError(null); setOpen(new Set(focusedGroup ? [focusedGroup] : []));
+    setData(null); setError(null); setOpen(new Set(focusedGroup ? [focusedGroup] : [])); setVisited(new Set(focusedGroup ? [focusedGroup] : []));
     apiRequest<Page<Group>>(`${base}/grouped?${query}&page=${page}&page_size=${pageSize}`)
       .then(rows => { if (active) setData(rows); }).catch(err => { if (active) setError(err.message); });
     return () => { active = false; };
@@ -148,15 +158,15 @@ export function DocumentCollectionPage() {
     {isOwner && selected.size > 0 && <div className="flex flex-wrap items-center gap-3"><span>{selected.size} Applications selected (maximum 100)</span><Button onClick={() => setAssign(true)}>Assign Selected</Button><Button variant="secondary" onClick={() => setSelected(new Set())}>Clear Selection</Button></div>}
     {result && <div role="status"><p>Assigned: {result.assigned} | Skipped: {result.skipped} | Failed: {result.failed}</p><ul className="text-sm">{result.results.filter(row => row.status !== "assigned").map(row => <li key={row.id} className="break-all">{row.id}: {row.reason}</li>)}</ul></div>}
     {!data && !error && <p role="status">Loading customers...</p>}
-    <div className="overflow-hidden rounded-card border border-border bg-card"><div className="overflow-x-auto"><table aria-label="Document Collection customers" className="w-full min-w-[1200px] text-left font-sans">
-      <thead className="bg-background text-xs uppercase text-textSecondary"><tr>{columns.map((name,i) => <th key={i} scope="col" className="px-4 py-3">{name || "Select"}</th>)}</tr></thead><tbody>
+    <div className="overflow-hidden rounded-card border border-border bg-card"><div className="overflow-x-auto"><table aria-label="Document Collection customers" className="w-full table-fixed min-w-[1599px] text-left font-sans"><ColumnWidths />
+      <thead className="bg-background text-xs uppercase text-textSecondary"><tr>{columns.map((name,i) => <th key={i} scope="col" className="px-3 py-3">{name || <span className="sr-only">Select</span>}</th>)}</tr></thead><tbody>
       {data?.items.map(group => <Fragment key={group.id}>
         <tr data-customer-group={group.id} className="border-t border-border hover:bg-background/50">
           <td className={cell}>{isOwner && <input aria-label={`Select ${group.name}`} type="checkbox" disabled={group.application_count !== 1 || !group.primary?.id || group.primary.record_kind === "lead"} title={group.application_count !== 1 ? "Expand to select individual applications" : undefined} checked={Boolean(group.primary?.id && selected.has(group.primary.id))} onChange={() => { if(group.primary?.id) toggle(group.primary.id); }} />}</td>
-          <RecordCells app={group.primary} group={group} />
-          <td className={cell}><Button variant="secondary" size="sm" aria-expanded={open.has(group.id)} aria-controls={`applications-${group.id}`} onClick={() => setOpen(old => { const next = new Set(old); if(next.has(group.id)) next.delete(group.id); else next.add(group.id); return next; })}>{open.has(group.id) ? "Collapse" : "Expand"}</Button><span className="mt-1 block text-xs text-textSecondary">{group.application_count} applications</span>{group.latest_submission && <small className="mt-1 block text-textSecondary">Latest submitted {formatISTDate(group.latest_submission)}</small>}</td>
+          <RecordCells app={group.application_count > 1 ? undefined : group.primary} group={group} />
+          <td className={cell}>{group.application_count > 1 ? <><Button variant="secondary" size="sm" aria-expanded={open.has(group.id)} aria-controls={`applications-${group.id}`} onClick={() => { setVisited(old => new Set([...old, group.id])); setOpen(old => { const next = new Set(old); if(next.has(group.id)) next.delete(group.id); else next.add(group.id); return next; }); }}>{open.has(group.id) ? "Collapse" : "Expand"}</Button><span className="mt-1 block text-xs text-textSecondary">{group.application_count} Applications</span></> : group.primary && <ApplicationActions app={group.primary} group={group} owner={isOwner} onDelete={setDeleting} onChanged={() => setRevision(v => v+1)} />}{group.latest_submission && <small className="mt-1 block text-textSecondary">Latest submitted {formatISTDate(group.latest_submission)}</small>}</td>
         </tr>
-        {open.has(group.id) && <tr id={`applications-${group.id}`}><td colSpan={11} className="p-0"><Applications group={group} query={query} selected={selected} toggle={toggle} owner={isOwner} onDelete={setDeleting} onChanged={() => setRevision(v => v+1)} /></td></tr>}
+        {group.application_count > 1 && visited.has(group.id) && <tr hidden={!open.has(group.id)} id={`applications-${group.id}`}><td colSpan={11} className="p-0"><Applications group={group} query={query} selected={selected} toggle={toggle} owner={isOwner} onDelete={setDeleting} onChanged={() => setRevision(v => v+1)} /></td></tr>}
       </Fragment>)}
       </tbody></table></div></div>
     {data && data.total === 0 && <p>No matching customers or applications.</p>}

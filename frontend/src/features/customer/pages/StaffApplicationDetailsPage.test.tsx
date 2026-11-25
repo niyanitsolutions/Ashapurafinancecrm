@@ -188,11 +188,11 @@ describe("StaffApplicationDetailsPage document actions", () => {
     expect(downloadLinks[0]).toHaveAttribute("href", uploadedDocument.attachment_url as string);
   });
 
-  it("keeps Verify and Reject but never exposes a password reveal action", async () => {
+  it("keeps Verify and Reject alongside the dedicated authorized password control", async () => {
     renderAt("/applications/app-1");
     await screen.findByText("pan.jpg");
 
-    expect(screen.queryByRole("button", { name: "Show Password" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show Password" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Verify" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reject" })).toBeInTheDocument();
   });

@@ -809,7 +809,13 @@ async def test_report_financial_totals_ignore_follow_up_disburse_labels(
         client,
         owner_headers,
         "follow-ups",
-        {**follow_payload, "status": "DISBURSE", "due_date": None},
+        {
+            **follow_payload,
+            "status": "DISBURSE",
+            "due_date": None,
+            "idempotency_key": "report-separate-activity",
+            "separate_activity_reason": "Independent follow-up for financial totals regression",
+        },
     )
     result = (await client.get(f"{BASE}/progress", headers=owner_headers)).json()[
         "data"

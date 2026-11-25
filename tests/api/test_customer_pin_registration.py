@@ -16,7 +16,13 @@ from app.utils.datetime import utc_now
 from test_pin_mongo_integration import pin_mongo  # noqa: F401
 
 BASE = "/api/v1/customer-registration"
-DETAILS = {"mobile": "9000000088", "pin": "0472", "confirm_pin": "0472"}
+DETAILS = {
+    "full_name": "Test Customer",
+    "terms_accepted": True,
+    "mobile": "9000000088",
+    "pin": "0472",
+    "confirm_pin": "0472",
+}
 
 
 @pytest.fixture
@@ -43,12 +49,12 @@ async def registration(client, pin_mongo, monkeypatch):
     return client, db, sent
 
 
-async def verified(registration):
+async def verified(registration, existing_customers=0):
     client, db, sent = registration
     r = await client.post(BASE + "/start", json=DETAILS)
     assert r.status_code == 200, r.text
     assert await db.users.count_documents({}) == 0
-    assert await db.customers.count_documents({}) == 0
+    assert await db.customers.count_documents({}) == existing_customers
     challenge = r.json()["data"]["challenge_id"]
     code = sent[-1]["message"].split(" is ")[1].split(".")[0]
     assert "dev_otp" not in r.text and code not in r.text
@@ -81,7 +87,17 @@ async def test_register_login_and_single_use(registration, email):
     assert bad.status_code == 401
 
 
-@pytest.mark.parametrize("change", [{"mobile": "123"}, {"email": "invalid"}, {"pin": "abcd"}, {"confirm_pin": "9999"}, {"full_name": "Unexpected"}])
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"mobile": "123"},
+        {"email": "invalid"},
+        {"pin": "abcd"},
+        {"confirm_pin": "9999"},
+        {"full_name": ""},
+        {"terms_accepted": False},
+    ],
+)
 async def test_invalid_details_do_not_send(registration, change):
     client, db, sent = registration
     r = await client.post(BASE + "/start", json=DETAILS | change)
@@ -160,7 +176,7 @@ async def test_rejected_sms_never_claims_sent_or_creates_account(registration, m
     assert (await db.auth_pin_challenges.find_one({}))["state"] == "failed"
 
 
-async def test_registration_links_existing_lead_without_changing_ownership(registration):
+async def test_registration_never_claims_historical_lead_by_mobile_only(registration):
     from app.features.leads.models import Lead
 
     client, db, _ = registration
@@ -174,7 +190,58 @@ async def test_registration_links_existing_lead_without_changing_ownership(regis
     linked = await db.leads.find_one({"_id": lead_id})
     user = await db.users.find_one({"mobile": DETAILS["mobile"]})
     customer = await db.customers.find_one({"user_id": str(user["_id"])})
-    assert linked["user_id"] == str(user["_id"]) and linked["customer_id"] == str(customer["_id"])
-    assert linked["account_created"]
+    assert linked.get("user_id") is None and linked.get("customer_id") is None
+    assert not linked["account_created"]
+    assert customer["full_name"] == DETAILS["full_name"]
     assert linked["assigned_to"] == "fixture-employee" and linked["full_name"] == "Existing Name"
     assert linked["source_id"] == "fixture-source" and linked["product_id"] == "fixture-product"
+
+
+async def test_no_account_disclosure_until_otp_ownership(registration):
+    from app.features.auth.models import User
+
+    client, db, sent = registration
+    user = User(mobile=DETAILS["mobile"], role="employee", status="active")
+    await db.users.insert_one(user.model_dump(by_alias=True, exclude={"id"}))
+    result = await client.post(BASE + "/start", json=DETAILS)
+    assert result.status_code == 200 and len(sent) == 1
+    assert "already" not in result.text and "employee" not in result.text
+    challenge = result.json()["data"]["challenge_id"]
+    code = sent[-1]["message"].split(" is ")[1].split(".")[0]
+    verified = await client.post(
+        "/api/v1/auth/pin/verify",
+        json={
+            "mobile": DETAILS["mobile"],
+            "purpose": "REGISTRATION",
+            "challenge_id": challenge,
+            "otp": code,
+        },
+    )
+    assert verified.status_code == 200
+    assert verified.json()["data"]["next_action"] == "login"
+    assert verified.json()["data"]["authorization"] == ""
+    proof = await db.auth_pin_challenges.find_one({})
+    assert proof["state"] == "consumed" and "authorization_hash" not in proof
+    assert await db.customers.count_documents({}) == 0
+
+
+async def test_existing_customer_requires_review_after_verified_mobile(registration):
+    client, db, _ = registration
+    await db.customers.insert_one(
+        {
+            "customer_code": "HISTORICAL",
+            "user_id": "historical-owner",
+            "mobile": "+91 " + DETAILS["mobile"],
+            "full_name": DETAILS["full_name"],
+            "is_deleted": False,
+        }
+    )
+    proof, _ = await verified(registration, existing_customers=1)
+    response = await client.post(
+        BASE + "/complete", json=DETAILS | {"authorization": proof}
+    )
+    assert response.status_code == 409 and "ownership review" in response.text
+    assert (
+        await db.users.count_documents({}) == 0
+        and await db.customers.count_documents({}) == 1
+    )

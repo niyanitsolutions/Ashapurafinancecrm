@@ -230,12 +230,24 @@ async def test_disburse_no_automatic_links_or_financial_side_effects(
     )
     before = {name: await mock_db[name].find({}).to_list(None) for name in collections}
     a = await bank(client, staff[1], "Independent Bank")
+    rejected = await client.post(
+        BASE + "/follow-ups",
+        headers=staff[1],
+        json=follow(
+            banks=[{"option_id": a["id"]}], bank="", status="DISBURSE", due_date=None
+        ),
+    )
+    assert rejected.status_code == 409 and "Owner" in rejected.text
     record = await create(
         client,
         staff[1],
         "follow-ups",
         follow(
-            banks=[{"option_id": a["id"]}], bank="", status="DISBURSE", due_date=None
+            banks=[{"option_id": a["id"]}],
+            bank="",
+            status="DISBURSE",
+            due_date=None,
+            customer_number="9000000001",
         ),
     )
     assert (
@@ -247,6 +259,7 @@ async def test_disburse_no_automatic_links_or_financial_side_effects(
         BASE + "/follow-ups/" + record["id"],
         headers=staff[1],
         json=follow(
+            customer_number="9000000001",
             banks=record["banks"],
             bank="",
             status="DISBURSE",

@@ -4,7 +4,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Form, Query, Response, UploadFile
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
 from app.config.database import get_database
@@ -564,6 +564,58 @@ async def restore_status_option(
             actor, option_id=option_id, version=payload.version, active=True
         )
     )
+
+
+class IdentityDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    version: int = Field(ge=1)
+    customer_id: str = Field(pattern=r"^[a-fA-F0-9]{24}$")
+    preview_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    reason: str = Field(min_length=5, max_length=1000)
+    confirmed: Literal[True]
+
+
+class IdentityRollback(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    version: int = Field(ge=1)
+    event_id: str = Field(pattern=r"^[a-fA-F0-9]{24}$")
+    reason: str = Field(min_length=5, max_length=1000)
+    confirmed: Literal[True]
+
+
+@router.get("/identity-review/preview")
+async def identity_preview(
+    actor: Actor, db: Db, after: str | None = None, limit: int = Query(default=50, ge=1, le=100)
+) -> ApiResponse[Any]:
+    from app.features.daily_operations.identity import preview
+
+    return ApiResponse.ok(await preview(db, actor, after, limit))
+
+
+@router.post("/identity-review/{record_id}/link")
+async def identity_link(
+    record_id: str, body: IdentityDecision, actor: Actor, db: Db
+) -> ApiResponse[Any]:
+    from bson import ObjectId
+
+    from app.features.daily_operations.identity import apply_link
+
+    if not ObjectId.is_valid(record_id):
+        raise ValidationError("Invalid record ID.")
+    return ApiResponse.ok(await apply_link(db, actor, record_id, body))
+
+
+@router.post("/identity-review/{record_id}/rollback")
+async def identity_rollback(
+    record_id: str, body: IdentityRollback, actor: Actor, db: Db
+) -> ApiResponse[Any]:
+    from bson import ObjectId
+
+    from app.features.daily_operations.identity import rollback_link
+
+    if not ObjectId.is_valid(record_id):
+        raise ValidationError("Invalid record ID.")
+    return ApiResponse.ok(await rollback_link(db, actor, record_id, body))
 
 
 @router.get("/{kind}")

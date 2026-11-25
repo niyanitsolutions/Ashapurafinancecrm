@@ -23,6 +23,8 @@ function mount() { render(<MemoryRouter initialEntries={["/register?return=%2Fap
 async function details(email = "") {
   const user = userEvent.setup();
   await user.type(screen.getByLabelText("Mobile Number"), "9000000088");
+  await user.type(screen.getByLabelText("Full Name"), "Test Customer");
+  await user.click(screen.getByRole("checkbox"));
   if (email) await user.type(screen.getByLabelText("Email Address (optional)"), email);
   await user.type(screen.getByLabelText("Create 4-Digit PIN"), "0472");
   await user.type(screen.getByLabelText("Confirm 4-Digit PIN"), "0472");
@@ -30,20 +32,22 @@ async function details(email = "") {
   return user;
 }
 describe("Customer registration", () => {
-  it("shows only mobile, optional email and two secure PIN inputs", () => {
+  it("collects full name and consent with mobile, optional email and secure PIN inputs", () => {
     mount();
     expect(screen.getAllByLabelText(/Mobile Number|Email Address|Digit PIN/)).toHaveLength(4);
     expect(screen.getByLabelText("Create 4-Digit PIN")).toHaveAttribute("type", "password");
-    expect(screen.queryByLabelText(/Full Name|Password|Address$|City|State|PIN Code/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Full Name")).toBeVisible();
+    expect(screen.getByRole("checkbox")).not.toBeChecked();
   });
   it.each(["", "customer@example.com"])("creates only after verified OTP; email %s", async email => {
     mount(); const user = await details(email);
     await screen.findByLabelText("4-digit SMS OTP");
-    expect(api.startDirectRegistration).toHaveBeenCalledWith({ mobile: "9000000088", email: email || null, pin: "0472", confirm_pin: "0472" });
+    expect(api.startDirectRegistration).toHaveBeenCalledWith({ mobile: "9000000088", full_name: "Test Customer", terms_accepted: true, email: email || null, pin: "0472", confirm_pin: "0472" });
     expect(api.completeDirectRegistration).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: /Resend OTP in/ })).toBeDisabled();
     await user.type(screen.getByLabelText("4-digit SMS OTP"), "8621");
     await user.click(screen.getByRole("button", { name: "Verify OTP" }));
+    await user.click(await screen.findByRole("button", { name: "Create New Account" }));
     await user.click(await screen.findByRole("button", { name: "Complete Registration" }));
     await waitFor(() => expect(navigate).toHaveBeenCalledWith("/apply/fixture", expect.objectContaining({ replace: true })));
     expect(api.completeDirectRegistration).toHaveBeenCalledWith(expect.objectContaining({ authorization: "single-use-proof", email: email || null, pin: "0472" }));

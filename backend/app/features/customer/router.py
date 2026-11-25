@@ -1,6 +1,6 @@
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 
 from app.constants.roles import CUSTOMER, EMPLOYEE, OWNER
 from app.core.exceptions import ForbiddenError
@@ -576,11 +576,10 @@ async def reject_document(
 
 @router.get("/applications/{application_id}/documents/{document_id}/password")
 async def reveal_document_password(
-    application_id: str, document_id: str, service: ServiceDep, actor: CustomerEditDep
+    application_id: str, document_id: str, service: ServiceDep, actor: StaffDep, response: Response
 ) -> ApiResponse[DocumentPasswordResponse]:
-    # Same authorization boundary as Verify/Reject (CustomerEditDep + the assignment-
-    # scoped IDOR check inside the service) — an authorized staff member only, never a
-    # list/get response, never logged.
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     password = await service.reveal_document_password(application_id, document_id, actor)
     return ApiResponse[DocumentPasswordResponse].ok(DocumentPasswordResponse(password=password))
 

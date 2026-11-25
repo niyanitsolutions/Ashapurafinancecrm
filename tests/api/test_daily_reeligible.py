@@ -93,7 +93,12 @@ async def test_actual_worker_midnight_overdue_idempotence_and_resume(
     assert (
         await client.get(BASE + "/follow-ups?workflow=reeligible", headers=headers)
     ).json()["data"]["total"] == 0
-    await create(client, headers)
+    await create(
+        client,
+        headers,
+        idempotency_key="reeligible-separate-activity",
+        separate_activity_reason="Owner-independent second follow-up activity for the same business date",
+    )
     monkeypatch.setattr(
         reeligible, "utc_now", lambda: datetime(2026, 12, 1, tzinfo=timezone.utc)
     )

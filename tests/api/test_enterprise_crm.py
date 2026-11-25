@@ -193,6 +193,10 @@ async def test_bin_customer_dependency_and_retention(mock_db):
     from app.features.bin.service import BinService
 
     customer, application = await seed_identity(mock_db)
+    sibling_data = application.model_dump(by_alias=True, exclude={"id"})
+    sibling_data["application_code"] = "SIBLING-APPLICATION"
+    sibling_id = (await mock_db.applications.insert_one(sibling_data)).inserted_id
+    sibling_before = await mock_db.applications.find_one({"_id": sibling_id})
     row = await mock_db.customers.find_one({"_id": ObjectId(customer.require_id())})
     with pytest.raises(ValidationError):
         await get_resource("customers").guard(row, mock_db)
@@ -201,10 +205,12 @@ async def test_bin_customer_dependency_and_retention(mock_db):
     await service.delete("applications", application.require_id(), owner)
     assert await mock_db.customers.count_documents({"is_deleted": False}) == 1
     assert await mock_db.applications.count_documents({"is_deleted": True}) == 1
+    assert await mock_db.applications.find_one({"_id": sibling_id}) == sibling_before
     entries = await mock_db.bin_entries.find({}).to_list(None)
     assert len(entries) == 1
     await service.restore(str(entries[0]["_id"]), owner)
-    assert await mock_db.applications.count_documents({"is_deleted": False}) == 1
+    assert await mock_db.applications.count_documents({"is_deleted": False}) == 2
+    assert await mock_db.applications.find_one({"_id": sibling_id}) == sibling_before
 
 
 @pytest.mark.parametrize("key", ["pan_number", "pan_card_number"])

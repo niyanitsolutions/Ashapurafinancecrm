@@ -37,7 +37,7 @@ describe("LoginPage default tab", () => {
     expect(screen.queryByText("First-time verification / Create PIN")).not.toBeInTheDocument();
     expect(forgot.compareDocumentPosition(create) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(create.compareDocumentPosition(migration) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(create).toHaveAttribute("href", "/create-account?return=%2Fapply%2Fabc123");
+    expect(create).toHaveAttribute("href", "/register?return=%2Fapply%2Fabc123");
     await userEvent.setup().click(migration);
     expect(document.getElementById("customer-password")).toBeVisible();
     await userEvent.setup().click(screen.getByRole("button", { name: "Use customer PIN sign-in" }));

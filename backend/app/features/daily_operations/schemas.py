@@ -28,6 +28,10 @@ FollowStatus = str
 class FollowUpInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
+    idempotency_key: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_-]{16,100}$")
+    separate_activity_reason: str = Field(default="", max_length=1000)
+    identity_review_reason: str = Field(default="", max_length=1000)
+    review_customer_id: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{24}$")
     date: CalendarDate
     lead_id: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{24}$")
     case_id: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{24}$")

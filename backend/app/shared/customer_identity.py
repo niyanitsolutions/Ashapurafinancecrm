@@ -38,3 +38,9 @@ def pan_search_digest(value: str) -> str:
     settings = get_settings()
     key = (settings.encryption_key or settings.jwt_secret_key).encode()
     return hmac.new(key, b"customer-pan-search-v1:" + value.strip().upper().encode(), hashlib.sha256).hexdigest()
+
+
+def mobile_match_pattern(value: str) -> str:
+    """Anchored comparison for permitted Indian mobile formatting; no suffix matches."""
+    number = normalize_mobile(value)
+    return r"^[\s().-]*(?:(?:\+91|0091|91)[\s().-]*)?" + r"[\s().-]*".join(number) + r"[\s().-]*$"

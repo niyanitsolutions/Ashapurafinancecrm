@@ -16,7 +16,7 @@ export const REFRESH_TOKEN_STORAGE_KEY = "afs_refresh_token";
 // Routes a 401 must never trigger a refresh-and-retry for: a wrong password on /login is
 // a normal 401 with nothing to refresh, and a 401 from /refresh itself means the refresh
 // token is the thing that's invalid — retrying it would recurse forever.
-const NO_REFRESH_PATHS = ["/auth/login", "/auth/refresh"];
+const NO_REFRESH_PATHS = ["/auth/login", "/auth/pin/login", "/auth/refresh"];
 
 export interface ApiErrorDetail {
   code: string;

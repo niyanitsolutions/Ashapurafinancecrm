@@ -462,8 +462,28 @@ class CustomerService:
             "purpose": "REGISTRATION", "mobile": payload.mobile,
             "authorization_expires_at": {"$gt": now},
         }
-        if not await self._db.auth_pin_challenges.find_one(proof_filter):
+        proof = await self._db.auth_pin_challenges.find_one(proof_filter)
+        if not proof:
             raise ValidationError("Mobile verification is invalid, expired or already used.")
+        import hmac
+
+        from app.features.auth.pin_service import otp_digest
+
+        if hmac.compare_digest(
+            proof.get("used_otp_hash", ""), otp_digest(proof["challenge_id"], payload.pin)
+        ):
+            raise ValidationError("Choose a PIN different from the verification code.")
+        if await self._db.users.find_one({"mobile": payload.mobile}, {"_id": 1}):
+            raise ConflictError("An account already exists. Log in or recover your PIN.")
+        from app.shared.customer_identity import mobile_match_pattern
+
+        if await self._db.customers.find_one(
+            {"mobile": {"$regex": mobile_match_pattern(payload.mobile)}, "is_deleted": False},
+            {"_id": 1},
+        ):
+            raise ConflictError(
+                "An existing customer identity requires staff ownership review before registration."
+            )
         hashed = hash_pin(payload.pin)
         user_id = ObjectId()
         user = User(mobile=payload.mobile, role=CUSTOMER, status="active",
@@ -471,8 +491,11 @@ class CustomerService:
                     mobile_verified_at=now, is_mobile_verified=True, created_by=None)
         customer = Customer(
             customer_code=await generate_id(self._db, IdPrefix.CUSTOMER),
-            user_id=str(user_id), full_name="Customer", mobile=payload.mobile,
-            email=str(payload.email) if payload.email else None, created_by=None,
+            user_id=str(user_id),
+            full_name=payload.full_name,
+            mobile=payload.mobile,
+            email=str(payload.email) if payload.email else None,
+            created_by=None,
         )
         try:
             async with await self._db.client.start_session() as session, session.start_transaction():
@@ -485,20 +508,17 @@ class CustomerService:
                     raise ValidationError("Mobile verification is invalid, expired or already used.")
                 await self._db.users.insert_one(user.model_dump(by_alias=True, exclude={"id"}) | {"_id": user_id}, session=session)
                 inserted = await self._db.customers.insert_one(customer.model_dump(by_alias=True, exclude={"id"}), session=session)
-                # Same linkage convention as _link_existing_leads_to_customer,
-                # committed together with the account and its mobile proof.
-                await self._db.leads.update_many(
-                    {"mobile": payload.mobile, "customer_id": None, "is_deleted": False},
-                    [{"$set": {
+                # Public signup never claims historical Leads by mobile-only matching.
+                # Existing identity ownership requires staff review or the secure-link flow.
+                audit = AuditLog(
+                    event_type=AuditEvent.CUSTOMER_REGISTERED,
+                    user_id=str(user_id),
+                    metadata={
                         "customer_id": str(inserted.inserted_id),
-                        "user_id": {"$cond": ["$account_created", "$user_id", str(user_id)]},
-                        "account_created_at": {"$cond": ["$account_created", "$account_created_at", now]},
-                        "account_created": True, "updated_at": now,
-                        "version": {"$add": [{"$ifNull": ["$version", 1]}, 1]},
-                    }}], session=session,
+                        "terms_accepted": True,
+                        "terms_version": "2026-11-25",
+                    },
                 )
-                audit = AuditLog(event_type=AuditEvent.CUSTOMER_REGISTERED, user_id=str(user_id),
-                                 metadata={"customer_id": str(inserted.inserted_id)})
                 await self._db.audit_logs.insert_one(audit.model_dump(by_alias=True, exclude={"id"}), session=session)
         except DuplicateKeyError:
             raise ConflictError("This mobile is already registered. Log in or use Create PIN.") from None
@@ -1877,9 +1897,40 @@ class CustomerService:
         return document
 
     async def reveal_document_password(self, application_id: str, document_id: str, actor: User) -> str:
-        """Retired read path: maintain scope checks, never return a document password."""
-        await self._get_document_for_staff(application_id, document_id, actor)
-        raise ForbiddenError("Document passwords are write-only and cannot be returned by an API.")
+        from app.features.access_control.permission_engine import PermissionEngine
+        from app.features.auth.pin_service import limit
+        from app.security.encryption import decrypt
+
+        if actor.role not in {OWNER, EMPLOYEE} or not await PermissionEngine(
+            self._db
+        ).has_permission(actor, module="customer", resource="document_passwords", action="view"):
+            raise ForbiddenError("Document password reveal permission is required.")
+        if not await PermissionEngine(self._db).has_permission(
+            actor, module="customer", resource="customers", action="view"
+        ):
+            raise ForbiddenError("Customer viewing permission is required.")
+        if actor.role == EMPLOYEE and not await self._db.employees.find_one(
+            {"user_id": actor.require_id(), "status": "active", "is_deleted": False}, {"_id": 1}
+        ):
+            raise ForbiddenError("An active employee profile is required.")
+        document = await self._get_document_for_staff(application_id, document_id, actor)
+        await limit(self._db, "document-password:" + actor.require_id(), 20, 60)
+        if not document.password_encrypted:
+            raise NotFoundError("No document password is stored.")
+        application = await self.get_application_for_staff(application_id, actor)
+        # Fail closed if the append-only audit write fails. Never audit plaintext.
+        await write_audit_log(
+            self._db,
+            event_type="document_password_revealed",
+            user_id=actor.require_id(),
+            metadata={
+                "customer_id": application.customer_id,
+                "application_id": application_id,
+                "document_id": document_id,
+                "document_type_id": document.document_type_id,
+            },
+        )
+        return decrypt(document.password_encrypted)
 
     async def verify_document(
         self, application_id: str, document_id: str, actor: User, *, _authorized_application: Application | None = None,

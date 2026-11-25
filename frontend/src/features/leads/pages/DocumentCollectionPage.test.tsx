@@ -31,7 +31,7 @@ it("renders the reference table, removed filters are absent, and child pages ret
  for(const label of ["Assigned from","Assigned until","Created until","Employee designation"])expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
  fireEvent.click(screen.getByText("Advanced filters"));expect(screen.getByRole("option",{name:"Assigning Owner"})).toHaveValue("staff1");expect(screen.getByRole("option",{name:"Awaiting documents"})).toHaveValue("custom:status1");
  fireEvent.click(screen.getByRole("button",{name:"Expand"}));const region=await screen.findByRole("region",{name:"Applications for Current Customer"});await within(region).findByText("AFS-APP-2");
- expect(within(region).getAllByRole("link",{name:"View"})).toHaveLength(2);fireEvent.click(within(region).getByRole("button",{name:"Next page"}));await waitFor(()=>expect(request).toHaveBeenCalledWith(expect.stringMatching(/group_key=c1.*page=2&page_size=25/)));
+ expect(within(region).getAllByRole("link",{name:"View"})).toHaveLength(2);expect(within(region).queryAllByRole("columnheader")).toHaveLength(0);fireEvent.click(within(region).getByRole("button",{name:"Next page"}));await waitFor(()=>expect(request).toHaveBeenCalledWith(expect.stringMatching(/group_key=c1.*page=2&page_size=25/)));
  fireEvent.click(screen.getByRole("button",{name:"Collapse"}));expect(screen.queryByRole("region")).not.toBeInTheDocument();
 });
 it("debounces live search, resets page and URL, drops removed payload fields, and clears without Enter",async()=>{
@@ -48,4 +48,13 @@ it("ignores an older request that finishes after the current search",async()=>{
  request.mockImplementation((url:string)=>url.includes("search=old")?new Promise(resolve=>{finishOld=resolve;}):Promise.resolve(url.includes("search=new")?{items:[{...groupRow,name:"Newest result"}],total:1}:fixture(url)));
  render(<MemoryRouter><DocumentCollectionPage/></MemoryRouter>);await act(async()=>{});fireEvent.change(screen.getByRole("searchbox"),{target:{value:"old"}});await act(async()=>{await vi.advanceTimersByTimeAsync(351);});fireEvent.change(screen.getByRole("searchbox"),{target:{value:"new"}});await act(async()=>{await vi.advanceTimersByTimeAsync(351);});
  expect(screen.getByText("Newest result")).toBeInTheDocument();await act(async()=>{finishOld({items:[{...groupRow,name:"Stale result"}],total:1});});expect(screen.queryByText("Stale result")).not.toBeInTheDocument();expect(screen.getByText("Newest result")).toBeInTheDocument();
+});
+
+it("shows direct actions for a single application and no duplicate headings for expanded groups",async()=>{
+ request.mockImplementation((url:string)=>Promise.resolve(url.includes("filter-options")?{}:{items:[{...groupRow,application_count:1}],total:1}));
+ render(<MemoryRouter><DocumentCollectionPage/></MemoryRouter>);
+ const view=await screen.findByRole("link",{name:"View"});
+ expect(view).toHaveAttribute("href","/applications/a1?from=document-collection&customer_id=c1");
+ expect(screen.queryByRole("button",{name:"Expand"})).not.toBeInTheDocument();
+ expect(screen.getAllByRole("columnheader")).toHaveLength(11);
 });

@@ -1,3 +1,4 @@
+import { Modal } from "@/components/overlays/Modal";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { FormField } from "./FormField";
@@ -25,6 +26,11 @@ export function PinAuthPanel({ returnTo, onLegacy }: {
   const [challenge, setChallenge] = useState<Challenge | null>(null);
   const [authorization, setAuthorization] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [offerRegistration, setOfferRegistration] = useState(false);
+  const registrationParams = new URLSearchParams();
+  if(/^[0-9]{10}$/.test(mobile)) registrationParams.set("mobile",mobile);
+  if(returnTo) registrationParams.set("return",returnTo);
+  const registrationPath = `/register${registrationParams.size ? `?${registrationParams}` : ""}`;
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
   const [resendAt, setResendAt] = useState(0);
@@ -70,8 +76,11 @@ export function PinAuthPanel({ returnTo, onLegacy }: {
   async function submit() {
     await act(async () => {
       if(mode === "login") {
-        authenticated(await loginPin(mobile, pin, null));
-        setPin("");
+        try { authenticated(await loginPin(mobile, pin, null)); }
+        catch(e) {
+          if(e instanceof ApiError && ["unauthorized", "invalid_credentials"].includes(e.code)) setOfferRegistration(true);
+          throw e;
+        } finally { setPin(""); }
       }
       else if(mode === "start")
         await issue();
@@ -123,6 +132,11 @@ export function PinAuthPanel({ returnTo, onLegacy }: {
   }
   return (
     <>
+    {offerRegistration && <Modal open title="Need a customer account?" onClose={() => setOfferRegistration(false)}>
+      <p className="mb-4 text-sm">Verify your mobile number to check account eligibility and create an account. Existing customers can use Forgot PIN.</p>
+      <Link className="text-primary hover:underline" to={registrationPath}>Create New Account</Link>
+      <button type="button" className="ml-4" onClick={() => setOfferRegistration(false)}>Cancel</button>
+    </Modal>}
     <div className="customer-pin-panel">
       <h2 className="mb-5 text-lg font-semibold">{title}</h2>
       <ErrorBanner message={error} />
@@ -172,7 +186,7 @@ export function PinAuthPanel({ returnTo, onLegacy }: {
       {mode === "login" ? (
         <div className="mt-4 grid gap-3 text-sm">
           <button type="button" className="text-primary" disabled={busy} onClick={() => start("FORGOT_PIN")}>Forgot PIN</button>
-          <Link className="text-primary hover:underline text-center" to={returnTo ? `/create-account?return=${encodeURIComponent(returnTo)}` : "/create-account"}>Create New Account</Link>
+          <Link className="text-primary hover:underline text-center" to={registrationPath}>Create New Account</Link>
         </div>
       ) : mode !== "success" && (
         <button type="button" className="mt-4 text-primary" disabled={busy} onClick={backToLogin}>Back to login</button>

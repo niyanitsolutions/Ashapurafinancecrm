@@ -59,8 +59,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 
-from seed_product_schemas import seed_real_product_schemas
-
 from app.config.database import get_database
 from app.constants.roles import OWNER
 from app.features.access_control.constants import PermissionAction
@@ -99,6 +97,7 @@ from app.features.workflow_engine.constants import (
 from app.features.workflow_engine.models import WorkflowDefinition
 from app.security.password import hash_password
 from app.utils.id_generator import IdPrefix
+from seed_product_schemas import seed_real_product_schemas
 
 
 async def seed_counters() -> None:
@@ -271,6 +270,14 @@ async def seed_permission_catalog() -> None:
             label="Customers",
         )
     )
+    entries.append(
+        Permission(
+            module="customer",
+            resource="document_passwords",
+            actions=[PermissionAction.VIEW],
+            label="Reveal Document Passwords",
+        )
+    )
     # Referral Partner Management's first-ever Employee access path — today Owner-only
     # (require_owner). `module`/`resource` here already matches the dashboard widget
     # catalog's referral_summary row, same forward-compatibility naming precedent as
@@ -300,7 +307,9 @@ async def seed_permission_catalog() -> None:
     # production migration and is never run by the application at startup.
     module_labels = {entry.module: entry.module.replace("_", " ").title() for entry in entries}
     for entry in entries:
-        entry.parent_resource = "__module__"
+        entry.parent_resource = (
+            None if entry.resource == "document_passwords" else "__module__"
+        )
         entry.node_type = "page"
     entries.extend(
         Permission(

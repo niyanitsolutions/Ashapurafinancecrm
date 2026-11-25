@@ -358,6 +358,8 @@ export interface PaginatedResponse<T> {
 // ---- public onboarding ----
 
 export interface RegistrationDetails {
+  full_name: string;
+  terms_accepted: boolean;
   mobile: string;
   email?: string | null;
   pin: string;

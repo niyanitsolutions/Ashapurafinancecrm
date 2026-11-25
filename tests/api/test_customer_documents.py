@@ -437,7 +437,9 @@ async def test_bank_statement_upload_without_password_succeeds(client, mock_db, 
     assert r.json()["data"]["has_password"] is False
 
 
-async def test_bank_statement_upload_with_password_succeeds_but_password_is_write_only(client, mock_db, owner_headers):
+async def test_bank_statement_password_reveals_only_on_dedicated_endpoint(
+    client, mock_db, owner_headers
+):
     """Scenario B - a password-protected statement uploads successfully, is never
     echoed back in any response, including the retired reveal endpoint."""
     product = await _seed_product_with_bank_statement(mock_db, product_name="Personal Loan B")
@@ -451,8 +453,10 @@ async def test_bank_statement_upload_with_password_succeeds_but_password_is_writ
     document_id = data["id"]
 
     r = await client.get(f"/api/v1/applications/{application_id}/documents/{document_id}/password", headers=owner_headers)
-    assert r.status_code == 403, r.text
-    assert "Secret@123" not in r.text
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["password"] == "Secret@123"
+    assert "no-store" in r.headers["cache-control"]
+    assert r.headers["pragma"] == "no-cache"
 
 
 async def test_password_never_appears_in_normal_get_or_list_responses(client, mock_db, owner_headers):
@@ -484,7 +488,7 @@ async def test_password_not_recorded_in_audit_log_metadata(client, mock_db, owne
     for entry in logs:
         assert "NeverLoggedOne" not in str(entry.get("metadata", {}))
     event_types = {entry["event_type"] for entry in logs}
-    assert "document_password_accessed" not in event_types
+    assert "document_password_revealed" in event_types
 
 
 async def test_employee_without_customer_edit_permission_cannot_reveal_password(client, mock_db, owner_headers, master_data):
@@ -545,14 +549,14 @@ async def test_password_ignored_for_document_type_without_password_support(clien
     assert r.json()["data"]["has_password"] is False
 
 
-async def test_password_read_is_blocked_even_when_no_password_exists(client, mock_db, owner_headers):
+async def test_password_reveal_reports_missing_password(client, mock_db, owner_headers):
     product = await _seed_product_with_bank_statement(mock_db, product_name="Personal Loan H")
     headers, application_id = await _start_application(client, product, mobile="9800000109")
     r = await _upload(client, application_id, product["bank_doc_id"], headers, file_name="statement.pdf")
     document_id = r.json()["data"]["id"]
 
     r = await client.get(f"/api/v1/applications/{application_id}/documents/{document_id}/password", headers=owner_headers)
-    assert r.status_code == 403, r.text
+    assert r.status_code == 404, r.text
 
 
 async def test_required_document_response_exposes_supports_password_flag(client, mock_db, owner_headers):
@@ -1155,3 +1159,96 @@ async def test_failed_rejection_creates_no_notification(client, mock_db, owner_h
     r = await client.get("/api/v1/notifications/unread-count", headers=headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["unread_count"] == 0
+
+
+async def test_explicit_document_password_permission_and_rate_limit(
+    client, mock_db, owner_headers, master_data
+):
+    from bson import ObjectId
+
+    product = await _seed_product_with_bank_statement(
+        mock_db, product_name="Explicit reveal"
+    )
+    headers, aid = await _start_application(client, product, mobile="9800000199")
+    response = await _upload(
+        client,
+        aid,
+        product["bank_doc_id"],
+        headers,
+        file_name="statement.pdf",
+        password="RevealFixtureOnly",
+    )
+    did = response.json()["data"]["id"]
+    employee = await _create_employee(
+        client,
+        owner_headers,
+        master_data,
+        mobile="9500000199",
+        email="reveal@example.com",
+    )
+    await client.post(
+        f"/api/v1/applications/{aid}/assign",
+        json={"employee_id": employee["id"]},
+        headers=owner_headers,
+    )
+    await _grant_customer_permission(
+        client,
+        owner_headers,
+        employee["id"],
+        ["view"],
+        role_name="Reveal Customer View",
+    )
+    staff = await _login(client, "9500000199", "InitialPass1!")
+    url = f"/api/v1/applications/{aid}/documents/{did}/password"
+    assert (await client.get(url, headers=staff)).status_code == 403
+    permission = (
+        await client.post(
+            "/api/v1/permissions",
+            json={
+                "module": "customer",
+                "resource": "document_passwords",
+                "actions": ["view"],
+            },
+            headers=owner_headers,
+        )
+    ).json()["data"]["id"]
+    role = (
+        await client.post(
+            "/api/v1/roles", json={"name": "Explicit Reveal"}, headers=owner_headers
+        )
+    ).json()["data"]["id"]
+    await client.put(
+        f"/api/v1/roles/{role}/permissions",
+        json={"grants": [{"permission_id": permission, "granted_actions": ["view"]}]},
+        headers=owner_headers,
+    )
+    await client.post(
+        f"/api/v1/roles/{role}/assign",
+        json={"employee_id": employee["id"]},
+        headers=owner_headers,
+    )
+    response = await client.get(url, headers=staff)
+    assert (
+        response.status_code == 200
+        and response.json()["data"]["password"] == "RevealFixtureOnly"
+    )
+    stored = await mock_db.application_documents.find_one({"_id": ObjectId(did)})
+    assert stored["password_encrypted"] != "RevealFixtureOnly"
+    logs = await mock_db.audit_logs.find(
+        {"event_type": "document_password_revealed"}
+    ).to_list(100)
+    assert len(logs) == 1
+    assert (
+        logs[0]["metadata"]["application_id"] == aid
+        and logs[0]["metadata"]["document_type_id"] == product["bank_doc_id"]
+    )
+    assert "RevealFixtureOnly" not in str(logs)
+    await mock_db.applications.update_one(
+        {"_id": ObjectId(aid)}, {"$set": {"assigned_to": None}}
+    )
+    assert (await client.get(url, headers=staff)).status_code == 403
+    # Only owner reveal hits the limiter now; no real external services are called.
+    codes = [
+        (await client.get(url, headers=owner_headers)).status_code for _ in range(21)
+    ]
+    assert codes.count(200) == 20 and codes[-1] == 429

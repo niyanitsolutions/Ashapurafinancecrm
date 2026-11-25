@@ -144,6 +144,67 @@ async def test_document_collection_table_filters_and_search_responsive(
         option["label"] == "Assigning Owner"
         for option in initial_options["assigned_by"]
     ), initial_options["assigned_by"]
+    from datetime import date
+
+    from app.features.customer.models import ApplicationDocument
+    from app.features.daily_operations.service import ensure_daily_operations_indexes
+    from app.features.system_settings.models import DocumentType
+    from app.security.encryption import encrypt
+    from app.utils.datetime import ist_date_to_utc_midnight
+
+    dtype = DocumentType(name="Browser Protected Statement", supports_password=True)
+    dtype_id = str(
+        (
+            await db.document_types.insert_one(
+                dtype.model_dump(by_alias=True, exclude={"id"})
+            )
+        ).inserted_id
+    )
+    await db.application_form_definitions.update_one(
+        {"_id": ObjectId(application.form_definition_id)},
+        {
+            "$set": {
+                "required_documents": [
+                    {"document_type_id": dtype_id, "required": False}
+                ]
+            }
+        },
+    )
+    document = ApplicationDocument(
+        application_id=application.require_id(),
+        document_type_id=dtype_id,
+        file_name="browser-statement.pdf",
+        s3_key="fixture/statement.pdf",
+        content_type="application/pdf",
+        password_encrypted=encrypt("BrowserFixtureSecret"),
+    )
+    await db.application_documents.insert_one(
+        document.model_dump(by_alias=True, exclude={"id"})
+    )
+    await ensure_daily_operations_indexes(db)
+    day = ist_date_to_utc_midnight(date(2026, 11, 25))
+    await db.daily_follow_ups.insert_one(
+        {
+            "application_id": application.require_id(),
+            "application_oid": ObjectId(application.require_id()),
+            "customer_id": customer.require_id(),
+            "customer_oid": ObjectId(customer.require_id()),
+            "assigned_to": employees[0][0].require_id(),
+            "customer_name": "",
+            "customer_number": customer.mobile,
+            "date": day,
+            "remarks_date": day,
+            "status": "DISBURSE",
+            "remarks": "batch-browser-original",
+            "import_key": "batch-browser-daily",
+            "is_deleted": False,
+            "version": 1,
+            "history": [],
+            "bank": "Test Bank",
+            "source": "crm_linked",
+            "working_key": "batch-browser-working",
+        }
+    )
     original_apps = await db.applications.find({}).sort("_id", 1).to_list(10)
     original_customer = await db.customers.find_one(
         {"_id": ObjectId(customer.require_id())}
@@ -195,6 +256,17 @@ async def test_document_collection_table_filters_and_search_responsive(
             await db.customers.find_one({"_id": ObjectId(customer.require_id())})
             == original_customer
         )
+        daily = await db.daily_follow_ups.find_one(
+            {"import_key": "batch-browser-daily"}
+        )
+        assert daily["customer_name"] == "" and daily["version"] == 4
+        assert len(daily["history"]) == 3
+        assert all(event["before"]["customer_name"] == "" for event in daily["history"])
+        assert daily["customer_id"] == customer.require_id()
+        reveals = await db.audit_logs.find(
+            {"event_type": "document_password_revealed"}
+        ).to_list(10)
+        assert len(reveals) == 3 and "BrowserFixtureSecret" not in str(reveals)
         assert await db.bin_entries.count_documents({}) == 0
         assert (await AutoAssignment(db).settings())["sequence"] == 1
         print(output.decode(errors="replace"))

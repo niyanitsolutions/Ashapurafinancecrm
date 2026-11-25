@@ -19,7 +19,25 @@ from app.features.employee.schemas import AddressSchema
 
 
 class DirectRegisterRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    full_name: str = Field(min_length=2, max_length=200)
+    terms_accepted: bool = Field(strict=True)
+
+    @field_validator("terms_accepted")
+    @classmethod
+    def consent(cls, value: bool) -> bool:
+        if not value:
+            raise ValueError("Accept the applicable terms to continue.")
+        return value
+
+    @field_validator("full_name")
+    @classmethod
+    def name(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        if len(normalized) < 2:
+            raise ValueError("Enter your full name.")
+        return normalized
+
     mobile: str = Field(pattern=r"^[0-9]{10}$")
     email: EmailStr | None = None
     pin: str = Field(pattern=r"^[0-9]{4}$", repr=False)

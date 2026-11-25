@@ -11,12 +11,12 @@ vi.mock("@/features/bulk_import/BulkUploadModal",()=>({BulkUploadModal:()=> <div
 beforeEach(()=>{
  mocks.request.mockReset();mocks.summary.mockReset();mocks.move.mockReset();
  mocks.summary.mockResolvedValue({application_id:"app-1",application_status:"submitted",documents_required:1,documents_verified:1,all_documents_verified:true});
- mocks.request.mockImplementation((url:string)=>Promise.resolve(url.includes("filter-options")?{}:url.includes("group_key")?{items:[{id:"app-1",application_code:"AFS-APP-000001",product_category:"loan",product_name:"Personal Loan",status:"submitted"}],total:1}:{items:[{id:"customer-1",name:"Direct Applicant",customer_code:"AFS-CUS-1",application_count:1}],total:1}));
+ mocks.request.mockImplementation((url:string)=>Promise.resolve(url.includes("filter-options")?{}:url.includes("group_key")?{items:[{id:"app-1",application_code:"AFS-APP-000001",product_category:"loan",product_name:"Personal Loan",status:"submitted"}],total:1}:{items:[{id:"customer-1",name:"Direct Applicant",customer_code:"AFS-CUS-1",application_count:1,primary:{id:"app-1",application_code:"AFS-APP-000001",product_category:"loan",product_name:"Personal Loan",status:"submitted"}}],total:1}));
 });
 function renderPage(){return render(<MemoryRouter><LeadListPage tab="document_collection"/></MemoryRouter>);}
-async function expand(){await userEvent.click(await screen.findByRole("button",{name:"Expand"}));await screen.findByText("AFS-APP-000001");}
-it("selects individual applications after expanding their customer and clears selection",async()=>{
- renderPage();await expand();await userEvent.click(screen.getByRole("checkbox",{name:"Select AFS-APP-000001"}));expect(screen.getByText(/1 Applications selected/)).toBeInTheDocument();await userEvent.click(screen.getByRole("button",{name:"Clear Selection"}));expect(screen.queryByRole("button",{name:"Assign Selected"})).not.toBeInTheDocument();
+async function expand(){await screen.findByText("AFS-APP-000001");expect(screen.queryByRole("button",{name:"Expand"})).not.toBeInTheDocument();}
+it("selects a single application directly and clears selection",async()=>{
+ renderPage();await expand();await userEvent.click(screen.getByRole("checkbox",{name:"Select Direct Applicant"}));expect(screen.getByText(/1 Applications selected/)).toBeInTheDocument();await userEvent.click(screen.getByRole("button",{name:"Clear Selection"}));expect(screen.queryByRole("button",{name:"Assign Selected"})).not.toBeInTheDocument();
 });
 it("preserves the shared bulk upload entry point",async()=>{renderPage();await userEvent.click(screen.getByRole("button",{name:"Bulk Upload"}));expect(screen.getByRole("dialog",{name:"Bulk Upload Leads"})).toBeInTheDocument();});
 it("opens the exact individual application and retains the customer link",async()=>{renderPage();await expand();expect(screen.getByRole("link",{name:"AFS-APP-000001"})).toHaveAttribute("href","/applications/app-1?from=document-collection&customer_id=customer-1");expect(screen.getAllByRole("link",{name:"AFS-CUS-1"})[0]).toHaveAttribute("href","/leads/document-collection?customer_id=customer-1&expand=customer-1");});

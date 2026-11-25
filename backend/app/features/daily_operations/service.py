@@ -39,7 +39,14 @@ def stored_values(payload: FollowUpInput | IssueInput | ProgressInput) -> dict[s
         key: ist_date_to_utc_midnight(value)
         if isinstance(value, date) and not isinstance(value, datetime)
         else value
-        for key, value in payload.model_dump().items()
+        for key, value in payload.model_dump(
+            exclude={
+                "idempotency_key",
+                "identity_review_reason",
+                "review_customer_id",
+                "separate_activity_reason",
+            }
+        ).items()
     }
 
 
@@ -52,7 +59,13 @@ def public(doc: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
             "status": effective_status(doc["status"], doc.get("due_date"), now or utc_now()),
         }
     # Keep retired interest data in MongoDB, but exclude it from the active API/history UI.
-    retired = {"customer_interest_option_id", "customer_interest_status_snapshot"}
+    retired = {
+        "customer_interest_option_id",
+        "customer_interest_status_snapshot",
+        "activity_key",
+        "request_fingerprint",
+        "activity_slot",
+    }
     doc = {key: value for key, value in doc.items() if key not in retired}
     if "remarks_date" in doc and "customer_number" in doc and "banks" not in doc:
         from app.features.daily_operations.bank_options import saved_banks
@@ -79,9 +92,34 @@ def public(doc: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
             for event in doc["history"]
         ]
     return {
-        **{k: v for k, v in doc.items() if k not in {"_id", "import_key", "lead_oid", "case_oid", "application_oid", "customer_oid"}},
+        **{
+            k: v
+            for k, v in doc.items()
+            if k
+            not in {
+                "_id",
+                "import_key",
+                "lead_oid",
+                "case_oid",
+                "application_oid",
+                "customer_oid",
+                "request_fingerprint",
+                "activity_key",
+            }
+        },
         "id": str(doc["_id"]),
     }
+
+
+async def update_activity(
+    collection: Any, query: dict[str, Any], update: dict[str, Any], **kwargs: Any
+) -> Any:
+    try:
+        return await collection.find_one_and_update(query, update, **kwargs)
+    except DuplicateKeyError:
+        raise ConflictError(
+            "An activity already exists for that identity and date. Review the existing follow-up."
+        ) from None
 
 
 class DailyOperationsService:
@@ -226,14 +264,10 @@ class DailyOperationsService:
                 lead = await LeadService(self.db).get_lead_scoped(doc["lead_id"], actor)
                 if not doc.get("application_id"):
                     doc["assigned_to"] = lead.assigned_to
-        if kind == "follow-ups" and doc.get("customer_id"):
-            customer = await self.db.customers.find_one({"_id": ObjectId(doc["customer_id"]), "is_deleted": False},
-                                                       {"full_name": 1, "mobile": 1})
-            if customer:
-                doc.update(customer_name=customer["full_name"], customer_number=customer["mobile"])
-        if kind == "follow-ups" and doc.get("application_id"):
-            from app.features.customer.identity_name import current_application_name
-            doc["customer_name"] = await current_application_name(self.db, application)
+        if kind == "follow-ups":
+            from app.features.daily_operations.identity import resolve_rows
+
+            await resolve_rows(self.db, [doc])
         if kind == "follow-ups" and doc.get("working_key") and doc.get("assigned_to"):
             employee = await self.db.employees.find_one({"_id": ObjectId(doc["assigned_to"])}, {"display_name": 1})
             doc["employee_name"] = (employee or {}).get("display_name", "Owner")
@@ -253,6 +287,20 @@ class DailyOperationsService:
             from app.features.daily_operations.entries import save_progress
 
             return await save_progress(self, actor, payload, record_id, version, import_key)
+        receipt = None
+        request_fingerprint = None
+        if isinstance(payload, FollowUpInput) and not record_id and payload.idempotency_key:
+            from app.features.daily_operations.identity import fingerprint
+
+            receipt = "manual:" + fingerprint([actor.require_id(), payload.idempotency_key])
+            request_fingerprint = fingerprint(payload.model_dump())
+            previous = await self.db.daily_follow_ups.find_one({"import_key": receipt})
+            if previous:
+                if previous.get("request_fingerprint") != request_fingerprint:
+                    raise ConflictError(
+                        "This submission key belongs to different details. Start a new activity."
+                    )
+                return public(await self.get(kind, str(previous["_id"]), actor))
         old = await self.get(kind, record_id, actor) if record_id else None
         if isinstance(payload, FollowUpInput):
             if (payload.lead_id and payload.lead_id != (old or {}).get("lead_id")) or (
@@ -262,9 +310,26 @@ class DailyOperationsService:
                     "Daily Follow-up records are independent; new CRM links are not supported."
                 )
             data = await self.validate_follow_up(payload, actor)
-            if old and old.get("working_key"):
-                data.update(assigned_to=old["assigned_to"], customer_name=old["customer_name"],
-                            customer_number=old["customer_number"])
+            if old and old.get("customer_id"):
+                from app.features.daily_operations.identity import name_key
+                from app.shared.customer_identity import normalize_mobile
+
+                if name_key(payload.customer_name) != name_key(
+                    old["customer_name"]
+                ) or normalize_mobile(payload.customer_number) != normalize_mobile(
+                    old["customer_number"]
+                ):
+                    raise ConflictError(
+                        "Linked customer identity must be reviewed through the Owner identity workflow."
+                    )
+            if old and (old.get("working_key") or old.get("customer_id")):
+                snapshot = old.get("identity_snapshot", {})
+                data.update(
+                    customer_name=snapshot.get("customer_name", old["customer_name"]),
+                    customer_number=snapshot.get("customer_number", old["customer_number"]),
+                )
+                if old.get("working_key"):
+                    data["assigned_to"] = old["assigned_to"]
             from app.features.daily_operations.bank_options import BankOptions
 
             banks = await BankOptions(self).selections(payload.banks, payload.bank, old)
@@ -297,16 +362,46 @@ class DailyOperationsService:
 
         else:
             data = await self.validate_issue(payload, actor, old)
+        if isinstance(payload, FollowUpInput) and not old and not import_key:
+            from app.features.daily_operations.identity import prepare
+
+            try:
+                data.update(await prepare(self, payload, actor))
+            except ConflictError:
+                previous = (
+                    await self.db.daily_follow_ups.find_one(
+                        {"import_key": receipt, "request_fingerprint": request_fingerprint}
+                    )
+                    if receipt
+                    else None
+                )
+                if previous:
+                    return public(await self.get(kind, str(previous["_id"]), actor))
+                raise
         now = utc_now()
         if isinstance(payload, FollowUpInput):
             from app.features.daily_operations.follow_status import effective_status
 
             data["status"] = effective_status(data["status"], data.get("due_date"), now)
+        if isinstance(payload, FollowUpInput) and old and old.get("activity_key"):
+            from app.features.daily_operations.identity import fingerprint, name_key
+            from app.shared.customer_identity import normalize_mobile
+
+            data["activity_key"] = fingerprint(
+                [
+                    old.get("customer_id")
+                    or [name_key(payload.customer_name), normalize_mobile(payload.customer_number)],
+                    payload.date.isoformat(),
+                    old.get("activity_slot", "primary"),
+                ]
+            )
         event = {
             "source": "manual",
             "actor_id": actor.require_id(),
             "at": now,
-            "before": {k: old.get(k) for k in data} if old else None,
+            "before": {k: old.get("identity_snapshot", {}).get(k, old.get(k)) for k in data}
+            if old
+            else None,
             "after": data,
             "import_key": import_key,
         }
@@ -323,7 +418,8 @@ class DailyOperationsService:
                 updates["assignment_notification_pending"] = (
                     str(ObjectId()) if data.get("assigned_to") else None
                 )
-            updated = await collection.find_one_and_update(
+            updated = await update_activity(
+                collection,
                 {"_id": old["_id"], "version": version, "is_deleted": False},
                 {
                     "$set": updates,
@@ -343,17 +439,24 @@ class DailyOperationsService:
                 await write_audit_log(self.db, event_type="daily_follow_up_updated", user_id=actor.require_id(), metadata=metadata)
                 if old.get("lead_id"):
                     await LeadService(self.db).log_activity(old["lead_id"], "daily_follow_up_updated", actor, metadata)
+            if kind == "follow-ups":
+                from app.features.daily_operations.identity import resolve_rows
+
+                await resolve_rows(self.db, [updated])
             return public(updated)
         doc = {
             **BaseDocument(created_by=actor.require_id()).model_dump(exclude={"id"}),
             **data,
             "history": [event],
-            "import_key": import_key or str(ObjectId()),
+            "import_key": receipt or import_key or str(ObjectId()),
+            **({"request_fingerprint": request_fingerprint} if request_fingerprint else {}),
         }
         if kind == "follow-ups" and data.get("lead_id"):
             doc["lead_oid"] = ObjectId(data["lead_id"])
         if kind == "follow-ups" and data.get("case_id"):
             doc["case_oid"] = ObjectId(data["case_id"])
+        if kind == "follow-ups" and data.get("customer_id"):
+            doc["customer_oid"] = ObjectId(data["customer_id"])
         if kind == "issues":
             doc["employee_id"] = await self.employee_id(actor)
             doc["assignment_notification_pending"] = (
@@ -362,7 +465,15 @@ class DailyOperationsService:
         try:
             inserted = await collection.insert_one(doc)
         except DuplicateKeyError:
-            raise ConflictError("This import row has already been processed.") from None
+            if receipt:
+                previous = await collection.find_one(
+                    {"import_key": receipt, "request_fingerprint": request_fingerprint}
+                )
+                if previous:
+                    return public(await self.get(kind, str(previous["_id"]), actor))
+            raise ConflictError(
+                "An activity for this customer and date already exists. Edit the existing follow-up, or explicitly record a separate activity with a reason."
+            ) from None
         doc["_id"] = inserted.inserted_id
         return public(doc)
 
@@ -559,21 +670,85 @@ class DailyOperationsService:
                 ]
             )
         if kind == "follow-ups":
-            pipeline.extend([
-                {"$lookup": {"from": "applications", "localField": "application_oid", "foreignField": "_id", "as": "linked_application"}},
-                {"$unwind": {"path": "$linked_application", "preserveNullAndEmptyArrays": True}},
-                {"$match": {"$or": [{"application_oid": {"$exists": False}}, {"linked_application.is_deleted": False}]}},
-                {"$set": {"assigned_to": {"$cond": [
-                    {"$ne": [{"$ifNull": ["$application_oid", None]}, None]},
-                    "$linked_application.assigned_to", "$assigned_to"]}}},
-                {"$lookup": {"from": "customers", "localField": "customer_oid", "foreignField": "_id", "as": "linked_customer"}},
-                {"$unwind": {"path": "$linked_customer", "preserveNullAndEmptyArrays": True}},
-                {"$set": {"customer_name": {"$cond": [{"$and": [
-                    {"$ne": ["$linked_customer.is_deleted", True]},
-                    {"$or": [{"$eq": [{"$ifNull": ["$application_id", None]}, None]},
-                             {"$eq": ["$linked_application.user_id", "$linked_customer.user_id"]}]},
-                    {"$ne": ["$linked_customer.full_name", "Customer"]}]}, "$linked_customer.full_name", "$customer_name"]}}},
-            ])
+            pipeline.extend(
+                [
+                    {"$set": {"_identity_original_name": {"$ifNull": ["$customer_name", ""]}}},
+                    {
+                        "$lookup": {
+                            "from": "applications",
+                            "localField": "application_oid",
+                            "foreignField": "_id",
+                            "as": "linked_application",
+                        }
+                    },
+                    {
+                        "$unwind": {
+                            "path": "$linked_application",
+                            "preserveNullAndEmptyArrays": True,
+                        }
+                    },
+                    {
+                        "$match": {
+                            "$or": [
+                                {"application_oid": {"$exists": False}},
+                                {"linked_application.is_deleted": False},
+                            ]
+                        }
+                    },
+                    {
+                        "$set": {
+                            "assigned_to": {
+                                "$cond": [
+                                    {"$ne": [{"$ifNull": ["$application_oid", None]}, None]},
+                                    "$linked_application.assigned_to",
+                                    "$assigned_to",
+                                ]
+                            }
+                        }
+                    },
+                    {
+                        "$lookup": {
+                            "from": "customers",
+                            "localField": "customer_oid",
+                            "foreignField": "_id",
+                            "as": "linked_customer",
+                        }
+                    },
+                    {"$unwind": {"path": "$linked_customer", "preserveNullAndEmptyArrays": True}},
+                    {
+                        "$set": {
+                            "customer_name": {
+                                "$cond": [
+                                    {
+                                        "$and": [
+                                            {"$ne": ["$linked_customer.is_deleted", True]},
+                                            {
+                                                "$or": [
+                                                    {
+                                                        "$eq": [
+                                                            {"$ifNull": ["$application_id", None]},
+                                                            None,
+                                                        ]
+                                                    },
+                                                    {
+                                                        "$eq": [
+                                                            "$linked_application.user_id",
+                                                            "$linked_customer.user_id",
+                                                        ]
+                                                    },
+                                                ]
+                                            },
+                                            {"$ne": ["$linked_customer.full_name", "Customer"]},
+                                        ]
+                                    },
+                                    "$linked_customer.full_name",
+                                    "$customer_name",
+                                ]
+                            }
+                        }
+                    },
+                ]
+            )
         pipeline.extend(
             [
                 {"$match": query},
@@ -647,11 +822,9 @@ class DailyOperationsService:
             ).to_list(page_size * 2)
         }
         if kind == "follow-ups":
-            from app.features.customer.identity_name import batch_application_names
-            names = await batch_application_names(self.db, [item["application_id"] for item in result["items"] if item.get("application_id")])
-            for item in result["items"]:
-                if item.get("application_id") in names:
-                    item["customer_name"] = names[item["application_id"]]
+            from app.features.daily_operations.identity import resolve_rows
+
+            await resolve_rows(self.db, result["items"])
         for item in result["items"]:
             item["employee_name"] = (
                 item.get("employee_name")
@@ -689,6 +862,11 @@ class DailyOperationsService:
 
 
 async def ensure_daily_operations_indexes(db: AsyncIOMotorDatabase[Any]) -> None:
+    await db.daily_follow_ups.create_index(
+        "activity_key",
+        unique=True,
+        partialFilterExpression={"activity_key": {"$type": "string"}, "is_deleted": False},
+    )
     await db.daily_follow_ups.create_index("working_key", unique=True,
         partialFilterExpression={"working_key": {"$type": "string"}})
     await db.daily_follow_ups.create_index("application_oid")

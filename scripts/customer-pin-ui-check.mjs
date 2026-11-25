@@ -11,7 +11,7 @@ const input=createInterface({input:process.stdin,terminal:false});
 async function code() { console.log('NEED_MOCK_OTP'); return new Promise(resolve=>input.once('line',resolve)); }
 const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
 const results=[];
-let stage='start';
+let stage='start';let activePage;
 try {
  for (const [index,width] of widths.entries()) {
   const mobile='90000000'+(88+index);
@@ -25,14 +25,25 @@ try {
       await route.fulfill({response});
     } catch { await route.abort().catch(()=>{}); }
   });
-  const page=await context.newPage(); page.on('pageerror',e=>errors.push(e.message));
-  stage=`register-${width}`; await page.goto(origin+'/register');
+  const page=await context.newPage(); activePage=page;page.on('pageerror',e=>errors.push(e.message));
+  stage=`register-${width}`; await page.goto(origin+'/login');
+  await page.getByLabel('Registered mobile number',{exact:true}).fill(mobile);
+  await page.getByLabel('4-digit PIN',{exact:true}).fill('0472');
+  await page.getByRole('button',{name:'Log in',exact:true}).click();
+  stage=`login-popup-${width}`;const offer=page.getByRole('dialog'); await offer.waitFor();
+  assert.equal(await page.getByText('Customer Account Not Found',{exact:true}).count(),0);
+  await offer.getByRole('link',{name:'Create New Account',exact:true}).click();
+  stage=`prefill-${width}`;await page.getByLabel('Mobile Number',{exact:true}).waitFor();
+  assert.equal(new URL(page.url()).pathname,'/register');assert.equal(await page.getByLabel('Owner Name',{exact:true}).count(),0);
+  assert.equal(await page.getByLabel('Mobile Number',{exact:true}).inputValue(),mobile);
   await page.getByLabel('Mobile Number',{exact:true}).waitFor();
-  assert.equal(await page.locator('input').count(),4);
+  assert.equal(await page.locator('input').count(),6);
   assert.equal(await page.getByLabel('Create 4-Digit PIN',{exact:true}).getAttribute('type'),'password');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   await page.screenshot({path:`${output}/register-${width}.png`,fullPage:true,animations:'disabled'});
   await page.getByLabel('Mobile Number',{exact:true}).fill(mobile);
+  await page.getByLabel('Full Name',{exact:true}).fill('Browser Customer '+index);
+  await page.getByRole('checkbox').check();
   if(index===0) await page.getByLabel('Email Address (optional)',{exact:true}).fill('browser@example.com');
   await page.getByLabel('Create 4-Digit PIN',{exact:true}).fill('0472');
   await page.getByLabel('Confirm 4-Digit PIN',{exact:true}).fill('0472');
@@ -41,6 +52,7 @@ try {
   assert.equal(await page.getByRole('button',{name:/Resend OTP in/}).isDisabled(),true);
   await page.getByLabel('4-digit SMS OTP',{exact:true}).fill(await code());
   await page.getByRole('button',{name:'Verify OTP',exact:true}).click();
+  await page.getByRole('dialog').getByRole('button',{name:'Create New Account',exact:true}).click();
   stage=`complete-${width}`; await page.getByRole('button',{name:'Complete Registration',exact:true}).click();
   await page.waitForURL('**/portal');
   await page.evaluate(()=>localStorage.clear());
@@ -68,18 +80,19 @@ try {
   await page.getByRole('button',{name:'Return to login',exact:true}).click();
   await page.getByLabel('4-digit PIN',{exact:true}).fill('0472');
   const rejected=page.waitForResponse(r=>r.url().includes('/auth/pin/login') && r.status()===401);
-  await page.getByRole('button',{name:'Log in',exact:true}).click(); await rejected;
+  await page.getByRole('button',{name:'Log in',exact:true}).click(); await rejected; await page.getByRole('button',{name:'Cancel',exact:true}).click();
   await page.getByLabel('4-digit PIN',{exact:true}).fill('5938');
   await page.getByRole('button',{name:'Log in',exact:true}).click();
   await page.waitForURL('**/portal');
   assert.deepEqual(errors,[]);
   assert.equal(await page.evaluate(()=>Object.keys(localStorage).some(key=>/pin|otp/i.test(key))),false);
-  results.push({width,result:'passed',provider:'mocked; no SMS',checks:['four-field-registration','optional-email','otp-before-account','mobile-pin-login','forgot-pin','old-pin-rejected','new-pin-login','staff-password-tab-preserved','no-page-overflow','no-runtime-errors']});
+  results.push({width,result:'passed',provider:'mocked; no SMS',checks:['full-name-and-consent-registration','optional-email','otp-before-account','mobile-pin-login','forgot-pin','old-pin-rejected','new-pin-login','staff-password-tab-preserved','no-page-overflow','no-runtime-errors']});
   await context.unrouteAll({behavior:'ignoreErrors'}); await context.close();
  }
  await writeFile(output+'/results.json',JSON.stringify(results,null,2));
  console.log(JSON.stringify(results));
 } catch(error) {
+  if(activePage) await activePage.screenshot({path:output+'/failure.png',fullPage:true}).catch(()=>{});
   console.error(`${stage}: ${error.name}: ${String(error.message).split('\n')[0]}`);
   process.exitCode=1;
 } finally { input.close(); await browser.close(); }
