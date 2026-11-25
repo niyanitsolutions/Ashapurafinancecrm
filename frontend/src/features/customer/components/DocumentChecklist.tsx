@@ -240,7 +240,7 @@ function DocumentRow({
   const passwordField = doc.supports_password && (
     <div className="mb-2">
       <label className="mb-1 block text-xs font-medium text-text/60" htmlFor={`doc-password-${typeId}`}>
-        {doc.front_back_optional || doc.requirement_group ? "Document Password (Optional)" : "Bank Statement Password (if applicable)"}
+        {`${doc.document_type_name} Password (if applicable)`}
       </label>
       <input
         id={`doc-password-${typeId}`}
@@ -248,11 +248,11 @@ function DocumentRow({
         autoComplete="off"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
-        placeholder={doc.front_back_optional || doc.requirement_group ? "Enter password if the document is protected" : "Enter statement password"}
+        placeholder="Enter password only if this document is protected"
         className="w-full rounded-lg border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
       />
       <p className="mt-1 text-2xs text-text/40">
-        {doc.front_back_optional || doc.requirement_group ? "Leave blank if the document is not password protected." : "Enter the password only if your bank statement is password protected. Leave this blank if the statement is not password protected."}
+        Leave blank if this document is not password protected.
       </p>
     </div>
   );

@@ -46,7 +46,7 @@ describe("DocumentChecklist — Bank Statement password field", () => {
     expect(input).toHaveAttribute("type", "password");
     expect(input).not.toBeRequired();
     expect(
-      screen.getByText(/Enter the password only if your bank statement is password protected/i),
+      screen.getByText(/Leave blank if this document is not password protected/i),
     ).toBeInTheDocument();
   });
 

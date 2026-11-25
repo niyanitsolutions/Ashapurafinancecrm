@@ -6,6 +6,9 @@ from pymongo.errors import OperationFailure
 
 async def ensure_customer_indexes(db: AsyncIOMotorDatabase[Any]) -> None:
     await db["customers"].create_index("customer_code", unique=True)
+    await db.customers.create_index("pan_search_digest", sparse=True)
+    await db.audit_logs.create_index([("metadata.application_id", 1), ("event_type", 1), ("created_at", -1)], name="application_assignment_history")
+    await db.audit_logs.create_index([("metadata.collection", 1), ("metadata.record_id", 1), ("created_at", -1)], name="record_assignment_history")
     await db["customers"].create_index("user_id", unique=True)
     await db["customers"].create_index("converted_from_lead_id")
 
@@ -18,6 +21,9 @@ async def ensure_customer_indexes(db: AsyncIOMotorDatabase[Any]) -> None:
     await db["applications"].create_index("lead_id")
     await db["applications"].create_index("assigned_to")
     await db["applications"].create_index("status")
+    await db.applications.create_index([("is_deleted", 1), ("assigned_to", 1), ("status", 1), ("created_at", -1), ("_id", -1)], name="intake_scope_page")
+    await db.applications.create_index([("customer_id", 1), ("product_id", 1), ("is_deleted", 1)], name="customer_product_intake")
+    await db.application_documents.create_index([("application_id", 1), ("is_current", 1), ("is_deleted", 1)], name="current_document_intake")
 
     await db["application_documents"].create_index("application_id")
 

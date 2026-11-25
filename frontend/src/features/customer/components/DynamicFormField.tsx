@@ -1,3 +1,4 @@
+import { DateInput } from "@/components/forms/DateInput";
 import { useQuery } from "@tanstack/react-query";
 import { normalizeFieldValue } from "@/components/forms/fieldValidation";
 import type { FormField } from "@/features/customer/api";
@@ -31,6 +32,7 @@ export function DynamicFormField({
   const { data: apiOptions, isLoading: isLoadingOptions } = useApiOptions(field.options_endpoint, isApiSelect);
   const options = isApiSelect ? apiOptions ?? [] : field.options ?? [];
 
+  const TextInput = field.field_type === "date" ? DateInput : "input";
   const commonProps = {
     id: field.key,
     required: field.required,
@@ -82,7 +84,7 @@ export function DynamicFormField({
           className="rounded border border-border"
         />
       ) : (
-        <input
+        <TextInput
           {...commonProps}
           type={field.field_type === "number" ? "number" : field.field_type === "date" ? "date" : "text"}
           placeholder={field.field_type === "date" ? undefined : placeholder}

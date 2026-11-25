@@ -1,3 +1,4 @@
+import { StaffCustomerProfile } from "@/features/customer/components/StaffCustomerProfile";
 import { useEffect, useState } from "react";
 import { OpenLinkedFollowUp } from "@/features/daily_operations/OpenLinkedFollowUp";
 import { Link, useParams } from "react-router-dom";
@@ -16,7 +17,6 @@ import {
   getDocumentUploadUrl,
   listDocuments,
   rejectDocument,
-  revealDocumentPassword,
   verifyDocument,
   type ApplicationDetail,
   type ApplicationDocument,
@@ -174,29 +174,10 @@ export function StaffApplicationDetailsPage() {
     }
   };
 
-  // Bank Statement password — staff-only, on-demand reveal (never included in the
-  // document list itself). Fetched fresh every click, never cached in component state
-  // beyond the alert dialog's own lifetime, so it isn't sitting in memory longer than
-  // necessary and is never written to localStorage/sessionStorage.
-  const onShowPassword = async (documentId: string) => {
-    setError(null);
-    try {
-      const { password } = await revealDocumentPassword(applicationId, documentId);
-      window.alert(`Bank statement password: ${password}`);
-    } catch (err) {
-      setError(getErrorMessage(err));
-    }
-  };
-
   const documentExtraActions = (doc: ApplicationDocument) => (
     <>
       {/* Preview/Download are already rendered by the shared UploadedDocumentCard
           (DocumentChecklist.tsx) — only staff-only actions belong here. */}
-      {doc.has_password && (
-        <button type="button" onClick={() => onShowPassword(doc.id)} className="text-xs font-medium text-text/60 hover:underline">
-          Show Password
-        </button>
-      )}
       {doc.verification_status === "pending" && (
         <>
           <button type="button" onClick={() => onVerify(doc.id)} className="text-xs font-medium text-success hover:underline">
@@ -218,6 +199,7 @@ export function StaffApplicationDetailsPage() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2 space-y-6">
+          {application.customer_id && <StaffCustomerProfile customerId={application.customer_id} />}
           <div className="bg-card border border-border rounded-card shadow-card p-6">
             <h2 className="text-sm font-semibold text-text/70 mb-3">Details</h2>
             <p className="text-sm text-text/60 mb-2 capitalize">

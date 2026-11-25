@@ -1,0 +1,53 @@
+[
+  {
+    "width": 390,
+    "result": "passed",
+    "provider": "mocked; no SMS",
+    "checks": [
+      "four-field-registration",
+      "optional-email",
+      "otp-before-account",
+      "mobile-pin-login",
+      "forgot-pin",
+      "old-pin-rejected",
+      "new-pin-login",
+      "staff-password-tab-preserved",
+      "no-page-overflow",
+      "no-runtime-errors"
+    ]
+  },
+  {
+    "width": 768,
+    "result": "passed",
+    "provider": "mocked; no SMS",
+    "checks": [
+      "four-field-registration",
+      "optional-email",
+      "otp-before-account",
+      "mobile-pin-login",
+      "forgot-pin",
+      "old-pin-rejected",
+      "new-pin-login",
+      "staff-password-tab-preserved",
+      "no-page-overflow",
+      "no-runtime-errors"
+    ]
+  },
+  {
+    "width": 1366,
+    "result": "passed",
+    "provider": "mocked; no SMS",
+    "checks": [
+      "four-field-registration",
+      "optional-email",
+      "otp-before-account",
+      "mobile-pin-login",
+      "forgot-pin",
+      "old-pin-rejected",
+      "new-pin-login",
+      "staff-password-tab-preserved",
+      "no-page-overflow",
+      "no-runtime-errors"
+    ]
+  }
+]

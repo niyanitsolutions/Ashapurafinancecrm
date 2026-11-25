@@ -67,7 +67,7 @@ def normalize_field_value(field: FormFieldDefinition, value: Any) -> Any:
         return value
     if validation.trim:
         value = value.strip()
-    if validation.auto_uppercase:
+    if validation.auto_uppercase or validation.format == FieldFormat.PAN:
         value = value.upper()
     return value
 

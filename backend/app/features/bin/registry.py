@@ -54,6 +54,8 @@ class DeletableResource:
 
 async def _guard_customer(doc: dict[str, Any], db: AsyncIOMotorDatabase[Any]) -> None:
     customer_id = str(doc["_id"])
+    if await db.applications.find_one({"customer_id": customer_id, "is_deleted": False}):
+        raise ValidationError("This customer has active applications. Archive or delete each application explicitly first.")
     open_case = await db["application_workflows"].find_one(
         {
             "customer_id": customer_id, "is_deleted": False,
@@ -62,6 +64,17 @@ async def _guard_customer(doc: dict[str, Any], db: AsyncIOMotorDatabase[Any]) ->
     )
     if open_case is not None:
         raise ValidationError("This customer still has an open loan/insurance case. Close or delete that case first.")
+
+
+async def _guard_lead(doc: dict[str, Any], db: AsyncIOMotorDatabase[Any]) -> None:
+    if await db.applications.find_one({"lead_id": str(doc["_id"]), "is_deleted": False}):
+        raise ValidationError("This Lead has active applications. Review those applications before deleting their Lead.")
+
+
+async def _guard_application(doc: dict[str, Any], db: AsyncIOMotorDatabase[Any]) -> None:
+    terminal = [status for values in TERMINAL_STATUSES_BY_CASE_TYPE.values() for status in values]
+    if await db.application_workflows.find_one({"application_id": str(doc["_id"]), "is_deleted": False, "current_status": {"$nin": terminal}}):
+        raise ValidationError("This application has an open case. Complete its dependency workflow before deleting it.")
 
 
 async def _guard_employee(doc: dict[str, Any], db: AsyncIOMotorDatabase[Any]) -> None:
@@ -109,6 +122,7 @@ _RESOURCES: tuple[DeletableResource, ...] = (
     ),
     DeletableResource(
         key="leads", collection="leads", module_label="Leads",
+        guard=_guard_lead,
         stage_field="stage", code_field="lead_code", summary_fields=("full_name", "mobile"),
         child_collections=(("lead_notes", "lead_id"), ("lead_activities", "lead_id")),
     ),
@@ -141,6 +155,7 @@ _RESOURCES: tuple[DeletableResource, ...] = (
     ),
     DeletableResource(
         key="applications", collection="applications", module_label="Applications",
+        guard=_guard_application,
         stage_field="status", code_field="application_code", summary_fields=("application_code",),
         child_collections=(("application_documents", "application_id"),),
     ),

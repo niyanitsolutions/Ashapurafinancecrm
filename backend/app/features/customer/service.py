@@ -1,3 +1,5 @@
+from app.shared.customer_identity import pan_search_digest
+
 """Module 6B — Customer Onboarding & Application Flow business logic.
 
 Reuses, read-only unless noted: Module 6A's `LeadRepository`, Module 2's
@@ -109,7 +111,7 @@ from app.features.workflow_engine.repository import (
     ApplicationWorkflowRepository,
     WorkflowDefinitionRepository,
 )
-from app.security.encryption import decrypt, encrypt
+from app.security.encryption import encrypt
 from app.security.password import hash_password
 from app.services.storage.client import (
     generate_presigned_download_url,
@@ -544,6 +546,7 @@ class CustomerService:
             updates["date_of_birth"] = _date_to_datetime(payload.date_of_birth)
         if payload.pan_number is not None:
             updates["pan_number_encrypted"] = encrypt(payload.pan_number)
+            updates["pan_search_digest"] = pan_search_digest(payload.pan_number)
         if payload.aadhaar_number is not None:
             updates["aadhaar_number_encrypted"] = encrypt(payload.aadhaar_number)
         if payload.address is not None:
@@ -567,6 +570,7 @@ class CustomerService:
             date_of_birth=_date_to_datetime(payload.date_of_birth),
             gender=payload.gender,
             pan_number_encrypted=encrypt(payload.pan_number) if payload.pan_number else None,
+            pan_search_digest=pan_search_digest(payload.pan_number) if payload.pan_number else None,
             aadhaar_number_encrypted=encrypt(payload.aadhaar_number) if payload.aadhaar_number else None,
             address=Address(**payload.address.model_dump()) if payload.address else None,
             converted_from_lead_id=converted_from_lead_id,
@@ -1873,22 +1877,9 @@ class CustomerService:
         return document
 
     async def reveal_document_password(self, application_id: str, document_id: str, actor: User) -> str:
-        """Staff-only, on-demand decrypt of a bank statement's password — reuses the
-        exact same `_get_document_for_staff` IDOR check (Owner unrestricted, an
-        Employee only for an application assigned to them) `verify_document`/
-        `reject_document` already enforce, and is gated the same way at the router
-        (`CustomerEditDep`). Never returned from any list/get endpoint — this is the
-        only code path that ever decrypts `password_encrypted` back to plaintext, and
-        every call is audited (who/when/which document — never the password value
-        itself)."""
-        document = await self._get_document_for_staff(application_id, document_id, actor)
-        if document.password_encrypted is None:
-            raise NotFoundError("This document has no password on file.")
-        await write_audit_log(
-            self._db, event_type=AuditEvent.DOCUMENT_PASSWORD_ACCESSED, user_id=actor.require_id(),
-            metadata={"application_id": application_id, "document_id": document_id},
-        )
-        return decrypt(document.password_encrypted)
+        """Retired read path: maintain scope checks, never return a document password."""
+        await self._get_document_for_staff(application_id, document_id, actor)
+        raise ForbiddenError("Document passwords are write-only and cannot be returned by an API.")
 
     async def verify_document(
         self, application_id: str, document_id: str, actor: User, *, _authorized_application: Application | None = None,
@@ -2003,7 +1994,7 @@ class CustomerService:
             raise NotFoundError("Application not found.")
         if await self._employees.find_by_id(employee_id) is None:
             raise ValidationError("Unknown employee_id.")
-        updated = await self._applications.update(application_id, {"assigned_to": employee_id}, updated_by=actor.require_id())
+        updated = await self._applications.update(application_id, {"assigned_to": employee_id, "assigned_by": actor.require_id(), "assigned_at": utc_now()}, updated_by=actor.require_id())
         if updated is None:
             raise NotFoundError("Application not found.")
         await write_audit_log(

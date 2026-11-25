@@ -2,6 +2,7 @@ from datetime import date
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.response import ApiResponse
 from app.features.dashboard import mappers
@@ -82,7 +83,20 @@ async def get_notifications(service: ServiceDep, current_user: CurrentUserDep) -
 
 @router.get("/search")
 async def search(
-    service: ServiceDep, current_user: CurrentUserDep, q: Annotated[str, Query(min_length=1)]
+    service: ServiceDep, current_user: CurrentUserDep, q: Annotated[str, Query(min_length=2, max_length=120)], page: Annotated[int, Query(ge=1, le=1000)] = 1
 ) -> ApiResponse[SearchResponse]:
-    results = await service.search(current_user, q)
+    results = await service.search(current_user, q, page)
+    return ApiResponse[SearchResponse].ok(SearchResponse(results=[SearchResultItem(**r) for r in results]))
+
+
+class SearchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    q: str = Field(min_length=2, max_length=120)
+    page: int = Field(default=1, ge=1, le=1000)
+
+
+@router.post("/search")
+async def private_search(payload: SearchRequest, service: ServiceDep, current_user: CurrentUserDep) -> ApiResponse[SearchResponse]:
+    # POST keeps identity queries out of normal URL/access-log query strings.
+    results = await service.search(current_user, payload.q, payload.page)
     return ApiResponse[SearchResponse].ok(SearchResponse(results=[SearchResultItem(**r) for r in results]))

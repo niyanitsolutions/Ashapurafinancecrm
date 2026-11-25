@@ -1,0 +1,16 @@
+{
+  "baseline_commit": "eac107a96ee5846bf3e1044159e7e2e27afd3590",
+  "production_access": false,
+  "data_backfill": false,
+  "protected_source_scopes": {
+    "backend/app/features/integrations/": [],
+    "backend/app/security/": [],
+    "backend/app/features/access_control/": [],
+    "backend/app/features/employee/": [],
+    "backend/app/features/loan_management/": [],
+    "backend/app/features/insurance_management/": [],
+    "backend/app/features/workflow_engine/": []
+  },
+  "auth_change": "Uniform PIN login failure message only; no OTP/session/credential algorithm changes.",
+  "historical_screenshots": "Restored to HEAD; new OTP evidence is under this batch directory."
+}

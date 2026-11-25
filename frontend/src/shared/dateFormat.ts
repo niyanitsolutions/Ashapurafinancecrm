@@ -19,7 +19,7 @@ const IST_UTC_OFFSET_MINUTES = 5 * 60 + 30; // fixed +05:30 — India observes n
 const _dateTimeFormatter = new Intl.DateTimeFormat("en-IN", {
   timeZone: IST_TIME_ZONE,
   day: "2-digit",
-  month: "short",
+  month: "2-digit",
   year: "numeric",
   hour: "2-digit",
   minute: "2-digit",
@@ -29,7 +29,7 @@ const _dateTimeFormatter = new Intl.DateTimeFormat("en-IN", {
 const _dateFormatter = new Intl.DateTimeFormat("en-IN", {
   timeZone: IST_TIME_ZONE,
   day: "2-digit",
-  month: "short",
+  month: "2-digit",
   year: "numeric",
 });
 

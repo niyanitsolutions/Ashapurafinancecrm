@@ -1,95 +1,48 @@
 import { useEffect, useRef, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { search, type SearchResult } from "@/features/dashboard/api";
-
-// `/dashboard/search` only covers Employees today (Module 5's own limitation — see
-// docs/KNOWN_LIMITATIONS.md). Rather than show a "Search employees…" box on every page
-// regardless of relevance (the source of the "search placeholder is unrelated to the
-// current page" complaint), only render it where an employee lookup is actually a
-// plausible action: the Dashboard itself, and the Administration cluster (Employees/
-// Roles/Temporary Access/Geo Exceptions/Lead Capture — same route set navConfig.ts's
-// Administration leaf treats as one module). Hidden everywhere else rather than invented
-// a Lead/Customer search that doesn't exist on the backend.
-const EMPLOYEE_SEARCH_PREFIXES = [
-  "/employees",
-  "/roles",
-  "/temporary-access",
-  "/geo-exceptions",
-  "/settings/departments",
-  "/settings/designations",
-  "/lead-capture",
-];
-
-export function isEmployeeSearchRelevant(pathname: string): boolean {
-  if (pathname === "/") return true;
-  return EMPLOYEE_SEARCH_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
-}
 
 export function QuickSearch() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
-  const [isOpen, setIsOpen] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [active, setActive] = useState(-1);
+  const [page, setPage] = useState(1);
   const ref = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
-  const location = useLocation();
-  const relevant = isEmployeeSearchRelevant(location.pathname);
-
   useEffect(() => {
-    const trimmed = query.trim();
-    if (!relevant || trimmed.length < 2) {
-      setResults([]);
-      return;
-    }
-    const handle = setTimeout(() => {
-      search(trimmed)
-        .then((r) => {
-          setResults(r.results);
-          setIsOpen(true);
-        })
-        .catch(() => setResults([]));
-    }, 250);
-    return () => clearTimeout(handle);
-  }, [query, relevant]);
-
+    let current = true;
+    if (query.trim().length < 2) { setResults([]); setLoading(false); return; }
+    setLoading(true); setError("");
+    const timer = setTimeout(() => {
+      search(query.trim(), page).then(r => { if (current) { setResults(r.results); setActive(-1); } })
+        .catch(() => { if (current) { setResults([]); setError("Search is unavailable. Please try again."); } })
+        .finally(() => { if (current) setLoading(false); });
+    },250);
+    return () => { current = false; clearTimeout(timer); };
+  },[query,page]);
   useEffect(() => {
-    const onClickOutside = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setIsOpen(false);
-    };
-    document.addEventListener("mousedown", onClickOutside);
-    return () => document.removeEventListener("mousedown", onClickOutside);
-  }, []);
-
-  if (!relevant) return null;
-
-  return (
-    <div className="relative w-full max-w-sm" ref={ref}>
-      <input
-        type="search"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        onFocus={() => results.length > 0 && setIsOpen(true)}
-        placeholder="Search employees by name, code, mobile…"
-        className="w-full rounded border border-border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
-      />
-      {isOpen && results.length > 0 && (
-        <div className="absolute left-0 mt-1 w-full bg-card border border-border rounded-card shadow-card py-1 text-sm z-20">
-          {results.map((r) => (
-            <button
-              key={`${r.type}-${r.id}`}
-              type="button"
-              className="w-full text-left px-4 py-2 hover:bg-background"
-              onClick={() => {
-                setIsOpen(false);
-                setQuery("");
-                navigate(r.route);
-              }}
-            >
-              <div className="text-text">{r.label}</div>
-              {r.subtitle && <div className="text-text/50 text-xs">{r.subtitle}</div>}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+    const close = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown",close); return () => document.removeEventListener("mousedown",close);
+  },[]);
+  const choose = (result: SearchResult) => { setOpen(false); setQuery(""); navigate(result.route); };
+  return <div ref={ref} className="relative w-full max-w-md">
+    <input role="combobox" aria-label="Search CRM" aria-expanded={open && query.trim().length >= 2} aria-controls="crm-search-results" aria-activedescendant={active >= 0 ? `crm-search-${active}` : undefined}
+      type="search" maxLength={120} value={query} placeholder="Search customers, applications, leads..."
+      className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm" onFocus={() => setOpen(true)}
+      onChange={e => { setQuery(e.target.value); setPage(1); setOpen(true); }}
+      onKeyDown={e => { if (e.key === "Escape") setOpen(false); if (e.key === "ArrowDown") { e.preventDefault(); setActive(i => Math.min(i+1,results.length-1)); } if (e.key === "ArrowUp") { e.preventDefault(); setActive(i => Math.max(i-1,0)); } if (e.key === "Enter" && results[active]) { e.preventDefault(); choose(results[active]); } }} />
+    {open && query.trim().length >= 2 && <div className="absolute left-0 right-0 z-50 mt-1 max-h-[65vh] overflow-y-auto rounded-card border border-border bg-card p-2 shadow-card">
+      {loading && <p role="status" className="p-2 text-sm">Searching...</p>}{error && <p role="alert" className="p-2 text-sm text-danger">{error}</p>}
+      {!loading && !error && results.length === 0 && <p className="p-2 text-sm">No authorized matches. Try another name or ID.</p>}
+      <div role="listbox" id="crm-search-results">{results.map((result,i) => <div key={`${result.type}-${result.id}`}>
+        {(i === 0 || results[i-1].type !== result.type) && <p className="px-2 pt-2 text-xs font-semibold uppercase text-textSecondary">{result.type}s</p>}
+        <button id={`crm-search-${i}`} role="option" aria-selected={i === active} className={`w-full rounded p-2 text-left text-sm ${i === active ? "bg-primary/10" : "hover:bg-background"}`} onClick={() => choose(result)}>
+          <span className="block font-medium">{result.label}</span><span className="block break-words text-xs text-textSecondary">{result.subtitle}</span>
+        </button></div>)}</div>
+      <div className="mt-2 flex justify-between gap-2"><button className="text-sm text-primary disabled:opacity-40" disabled={page === 1 || loading} onClick={() => setPage(p => p-1)}>Previous</button><span className="text-xs">Page {page}</span><button className="text-sm text-primary disabled:opacity-40" disabled={loading || results.length === 0} onClick={() => setPage(p => p+1)}>Next</button></div>
+    </div>}
+  </div>;
 }

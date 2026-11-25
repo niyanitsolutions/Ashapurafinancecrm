@@ -58,6 +58,6 @@ export function getDashboard(filters: DashboardFilters) {
   return apiRequest<Widget[]>(`/dashboard?${params.toString()}`);
 }
 
-export function search(q: string) {
-  return apiRequest<{ results: SearchResult[] }>(`/dashboard/search?q=${encodeURIComponent(q)}`);
+export function search(q: string, page = 1) {
+  return apiRequest<{ results: SearchResult[] }>("/dashboard/search", { method: "POST", body: JSON.stringify({ q, page }) });
 }

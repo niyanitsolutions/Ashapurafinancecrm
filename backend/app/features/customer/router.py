@@ -44,6 +44,7 @@ from app.features.customer.schemas import (
     SchemaAuditEntryResponse,
     SchemaCompareResponse,
     SecureLinkResponse,
+    StaffProfileUpdate,
     StartApplicationRequest,
     SubmitApplicationRequest,
     SupportRequestResponse,
@@ -631,4 +632,14 @@ async def list_customers(service: ServiceDep, current_user: CurrentUserDep, _sta
 @router.get("/customers/{customer_id}")
 async def get_customer(customer_id: str, service: ServiceDep, current_user: CurrentUserDep, _staff: CustomerViewDep) -> ApiResponse[CustomerResponse]:
     customer = await service.get_customer_for_staff(customer_id, current_user)
+    return ApiResponse[CustomerResponse].ok(await _resolve_customer_response(service, customer))
+
+
+@router.patch("/customers/{customer_id}")
+async def edit_customer_profile(customer_id: str, payload: "StaffProfileUpdate", service: ServiceDep,
+                                current_user: CurrentUserDep,
+                                _staff: Annotated[User, _customer_perm("edit")]) -> ApiResponse[CustomerResponse]:
+    from app.features.customer.profile_edit import update_profile
+
+    customer = await update_profile(service, service._db, customer_id, current_user, payload)
     return ApiResponse[CustomerResponse].ok(await _resolve_customer_response(service, customer))

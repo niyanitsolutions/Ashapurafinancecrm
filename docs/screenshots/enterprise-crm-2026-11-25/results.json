@@ -1,0 +1,42 @@
+{
+  "results": [
+    {
+      "width": 390,
+      "result": "passed",
+      "journeys": [
+        "grouped expansion",
+        "default 200",
+        "filters",
+        "authorized global search",
+        "versioned profile edit",
+        "Owner delete confirmation"
+      ]
+    },
+    {
+      "width": 768,
+      "result": "passed",
+      "journeys": [
+        "grouped expansion",
+        "default 200",
+        "filters",
+        "authorized global search",
+        "versioned profile edit",
+        "Owner delete confirmation"
+      ]
+    },
+    {
+      "width": 1366,
+      "result": "passed",
+      "journeys": [
+        "grouped expansion",
+        "default 200",
+        "filters",
+        "authorized global search",
+        "versioned profile edit",
+        "Owner delete confirmation"
+      ]
+    }
+  ],
+  "backend": "real local API and disposable MongoDB",
+  "external_calls": "none"
+}

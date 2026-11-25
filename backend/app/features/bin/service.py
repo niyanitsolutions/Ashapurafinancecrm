@@ -185,6 +185,8 @@ class BinService:
         failed = 0
         for entry in due:
             try:
+                if entry.resource_key in {"customers", "applications"}:
+                    continue  # Shared identity, documents and application facts require explicit retention review.
                 resource = get_resource(entry.resource_key)
                 if resource.purge_guard is not None:
                     doc = await self._db[entry.target_collection].find_one({"_id": to_object_id(entry.document_id)})

@@ -23,7 +23,7 @@ export function MoveApplicationToLoanManagementModal({
   onClose,
   onChanged,
 }: {
-  lead: LeadListItem;
+  lead: Pick<LeadListItem, "application_id" | "lead_code">;
   onClose: () => void;
   onChanged: () => void;
 }) {

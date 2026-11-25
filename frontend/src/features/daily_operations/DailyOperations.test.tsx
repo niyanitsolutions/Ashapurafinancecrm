@@ -76,7 +76,7 @@ describe("daily operations", () => {
     mount(<DailyOperationsPage area="follow-ups" />);
     expect(await screen.findByText(/No records match these filters/)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Search"), { target: { value: "document" } });
-    fireEvent.change(screen.getByLabelText("From date"), { target: { value: "2026-10-01" } });
+    fireEvent.change(screen.getByLabelText("From date"), { target: { value: "01/10/2026" } });
     await waitFor(() => expect(mocks.list).toHaveBeenLastCalledWith("follow-ups", expect.stringContaining("date_from=2026-10-01")));
   });
   it("shows permission denial and does not request records", async () => {

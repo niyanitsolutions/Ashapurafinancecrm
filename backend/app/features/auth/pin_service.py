@@ -397,7 +397,7 @@ class PinService:
                 metadata={"mobile_hash": digest(body.mobile)},
             )
             raise UnauthorizedError(
-                "Invalid mobile/PIN, unavailable PIN or temporary lock. Try later or use PIN recovery."
+                "Unable to sign in. Check the 10-digit mobile number and 4-digit PIN. Use Forgot PIN to verify ownership and reset it, or Create New Account to register. After repeated attempts, wait 15 minutes."
             )
         fresh = await self.db.users.find_one_and_update(
             {

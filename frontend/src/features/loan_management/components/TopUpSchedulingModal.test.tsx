@@ -40,7 +40,7 @@ describe("TopUpSchedulingModal", () => {
     renderModal();
     await waitFor(() => expect(screen.getAllByText(hasText("dummy lead")).length).toBeGreaterThan(0));
     await waitFor(() => expect(screen.getAllByText(hasText("AFS-LOAN-000015")).length).toBeGreaterThan(0));
-    await waitFor(() => expect(screen.getAllByText(hasText("25-Aug-2026")).length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getAllByText(hasText("25/08/2026")).length).toBeGreaterThan(0));
   });
 
   it("selecting 3 Months shows the calculated eligibility date (calendar months, not a fixed day count)", async () => {
@@ -48,8 +48,8 @@ describe("TopUpSchedulingModal", () => {
     renderModal();
     await screen.findByLabelText("3 Months");
     await user.click(screen.getByLabelText("3 Months"));
-    // 25 Aug 2026 + 3 calendar months = 25 Nov 2026.
-    await waitFor(() => expect(screen.getAllByText(hasText("25-Nov-2026")).length).toBeGreaterThan(0));
+    // 25/08/2026 + 3 calendar months = 25/11/2026.
+    await waitFor(() => expect(screen.getAllByText(hasText("25/11/2026")).length).toBeGreaterThan(0));
   });
 
   it("selecting Custom reveals a date field; a date before disbursement is rejected client-side", async () => {
@@ -57,7 +57,7 @@ describe("TopUpSchedulingModal", () => {
     renderModal();
     await user.click(await screen.findByLabelText("Custom"));
     const dateInput = await screen.findByLabelText(/custom eligibility date/i);
-    await user.type(dateInput, "2026-08-20");
+    await user.type(dateInput, "20/08/2026");
 
     expect(screen.getByText(/cannot be earlier than the disbursed date/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /submit/i })).toBeDisabled();
@@ -67,7 +67,7 @@ describe("TopUpSchedulingModal", () => {
     const user = userEvent.setup();
     renderModal();
     await user.click(await screen.findByLabelText("Custom"));
-    await user.type(await screen.findByLabelText(/custom eligibility date/i), "2026-12-15");
+    await user.type(await screen.findByLabelText(/custom eligibility date/i), "15/12/2026");
 
     expect(screen.queryByText(/cannot be earlier than the disbursed date/i)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /submit/i })).toBeEnabled();

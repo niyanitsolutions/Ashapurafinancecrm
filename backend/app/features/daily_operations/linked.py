@@ -124,7 +124,12 @@ async def open_linked(
     )
     if not customer and not lead:
         raise NotFoundError("Customer profile not found.")
+    if application and customer and customer.get("user_id") != application.user_id:
+        raise ForbiddenError("The application customer relationship needs Owner review.")
     source = customer or (lead.model_dump() if lead else {})
+    if application:
+        from app.features.customer.identity_name import current_application_name
+        source = {**source, "full_name": await current_application_name(db, application)}
     now = utc_now()
     day = ist_date_to_utc_midnight(to_ist(now).date())
     employee = await db.employees.find_one({"_id": ObjectId(assigned_to)}, {"display_name": 1})

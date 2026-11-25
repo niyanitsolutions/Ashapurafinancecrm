@@ -1,7 +1,15 @@
 from datetime import date, datetime
 from typing import Any, Self
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from app.features.customer.constants import ConditionOperator, FieldFormat, FieldType, OptionsSource
 from app.features.employee.schemas import AddressSchema
@@ -99,6 +107,19 @@ class CompleteProfileRequest(BaseModel):
     address: AddressSchema | None = None
 
 
+    @field_validator("pan_number", mode="before")
+    @classmethod
+    def normalize_pan(cls, value: Any) -> Any:
+        import re
+
+        if value is None:
+            return value
+        normalized = str(value).strip().upper()
+        if not re.fullmatch(r"[A-Z]{5}[0-9]{4}[A-Z]", normalized):
+            raise ValueError("Enter a valid PAN.")
+        return normalized
+
+
 class UpdateProfileRequest(BaseModel):
     full_name: str | None = None
     email: EmailStr | None = None
@@ -109,7 +130,21 @@ class UpdateProfileRequest(BaseModel):
     address: AddressSchema | None = None
 
 
+    @field_validator("pan_number", mode="before")
+    @classmethod
+    def normalize_pan(cls, value: Any) -> Any:
+        import re
+
+        if value is None:
+            return value
+        normalized = str(value).strip().upper()
+        if not re.fullmatch(r"[A-Z]{5}[0-9]{4}[A-Z]", normalized):
+            raise ValueError("Enter a valid PAN.")
+        return normalized
+
+
 class CustomerResponse(BaseModel):
+    version: int = 1
     id: str
     customer_code: str
     full_name: str
@@ -605,3 +640,9 @@ class SupportRequestResponse(BaseModel):
     created_task: bool
     # False when there was no assigned Relationship Manager yet — an Owner was notified
     # instead (see CustomerService.raise_support_request).
+
+
+class StaffProfileUpdate(UpdateProfileRequest):
+    model_config = ConfigDict(extra="forbid")
+    version: int = Field(ge=1)
+    reason: str = Field(min_length=3, max_length=500)

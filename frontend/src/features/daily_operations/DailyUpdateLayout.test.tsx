@@ -127,7 +127,7 @@ describe("Daily Update navigation", () => {
     const first = mount(path);
     await waitFor(() => expect(mocks.list).toHaveBeenCalledWith("issues", expect.stringContaining("page=2")));
     expect(screen.getByLabelText("Search")).toHaveValue("Internal");
-    expect(screen.getByLabelText("From date")).toHaveValue("2026-10-01");
+    expect(screen.getByLabelText("From date")).toHaveValue("01/10/2026");
     first.unmount(); mocks.list.mockClear(); mount(path);
     await waitFor(() => expect(mocks.list).toHaveBeenCalledWith("issues", expect.stringContaining("status=OPEN")));
     expect(screen.getByLabelText("Search")).toHaveValue("Internal");

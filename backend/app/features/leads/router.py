@@ -42,6 +42,9 @@ from app.features.leads.schemas import (
 from app.features.leads.service import LeadService
 
 router = APIRouter(prefix="/leads", tags=["leads"])
+from app.features.leads.document_collection import router as collection_router
+
+router.include_router(collection_router)
 router.include_router(assignment_router)
 router.include_router(bulk_assignment_router)
 

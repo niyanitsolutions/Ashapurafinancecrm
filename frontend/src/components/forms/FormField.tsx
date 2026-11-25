@@ -1,3 +1,4 @@
+import { DateInput } from "./DateInput";
 import { useId, type InputHTMLAttributes } from "react";
 
 // New shared home for generic form primitives (see docs/UI_UX.md) — populates the
@@ -11,13 +12,14 @@ interface FormFieldProps extends InputHTMLAttributes<HTMLInputElement> {
 export function FormField({ label, error, id, ...inputProps }: FormFieldProps) {
   const generatedId = useId();
   const fieldId = id ?? inputProps.name ?? generatedId;
+  const Input = inputProps.type === "date" ? DateInput : "input";
   const errorId = `${fieldId}-error`;
   return (
     <div className="mb-4">
       <label htmlFor={fieldId} className="block text-sm font-medium text-text mb-1.5">
         {label}
       </label>
-      <input
+      <Input
         {...inputProps}
         id={fieldId}
         aria-invalid={error ? true : inputProps["aria-invalid"]}

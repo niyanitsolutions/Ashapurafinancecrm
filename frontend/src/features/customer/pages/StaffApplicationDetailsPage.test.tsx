@@ -188,11 +188,11 @@ describe("StaffApplicationDetailsPage document actions", () => {
     expect(downloadLinks[0]).toHaveAttribute("href", uploadedDocument.attachment_url as string);
   });
 
-  it("still renders the staff-only Show Password / Verify / Reject actions alongside it", async () => {
+  it("keeps Verify and Reject but never exposes a password reveal action", async () => {
     renderAt("/applications/app-1");
     await screen.findByText("pan.jpg");
 
-    expect(screen.getByRole("button", { name: "Show Password" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show Password" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Verify" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reject" })).toBeInTheDocument();
   });

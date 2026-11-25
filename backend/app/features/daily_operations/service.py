@@ -201,6 +201,8 @@ class DailyOperationsService:
                     raise ForbiddenError("Customer viewing permission is required for this linked application.")
                 application = await CustomerService(self.db, get_redis()).get_application_for_staff(doc["application_id"], actor)
                 doc["assigned_to"] = application.assigned_to
+                if doc.get("customer_id") and doc["customer_id"] != application.customer_id:
+                    raise ForbiddenError("The linked customer relationship needs Owner review.")
             if (
                 not doc.get("lead_id")
                 and not doc.get("case_id")
@@ -229,6 +231,9 @@ class DailyOperationsService:
                                                        {"full_name": 1, "mobile": 1})
             if customer:
                 doc.update(customer_name=customer["full_name"], customer_number=customer["mobile"])
+        if kind == "follow-ups" and doc.get("application_id"):
+            from app.features.customer.identity_name import current_application_name
+            doc["customer_name"] = await current_application_name(self.db, application)
         if kind == "follow-ups" and doc.get("working_key") and doc.get("assigned_to"):
             employee = await self.db.employees.find_one({"_id": ObjectId(doc["assigned_to"])}, {"display_name": 1})
             doc["employee_name"] = (employee or {}).get("display_name", "Owner")
@@ -563,7 +568,11 @@ class DailyOperationsService:
                     "$linked_application.assigned_to", "$assigned_to"]}}},
                 {"$lookup": {"from": "customers", "localField": "customer_oid", "foreignField": "_id", "as": "linked_customer"}},
                 {"$unwind": {"path": "$linked_customer", "preserveNullAndEmptyArrays": True}},
-                {"$set": {"customer_name": {"$ifNull": ["$linked_customer.full_name", "$customer_name"]}}},
+                {"$set": {"customer_name": {"$cond": [{"$and": [
+                    {"$ne": ["$linked_customer.is_deleted", True]},
+                    {"$or": [{"$eq": [{"$ifNull": ["$application_id", None]}, None]},
+                             {"$eq": ["$linked_application.user_id", "$linked_customer.user_id"]}]},
+                    {"$ne": ["$linked_customer.full_name", "Customer"]}]}, "$linked_customer.full_name", "$customer_name"]}}},
             ])
         pipeline.extend(
             [
@@ -637,6 +646,12 @@ class DailyOperationsService:
                 {"display_name": 1},
             ).to_list(page_size * 2)
         }
+        if kind == "follow-ups":
+            from app.features.customer.identity_name import batch_application_names
+            names = await batch_application_names(self.db, [item["application_id"] for item in result["items"] if item.get("application_id")])
+            for item in result["items"]:
+                if item.get("application_id") in names:
+                    item["customer_name"] = names[item["application_id"]]
         for item in result["items"]:
             item["employee_name"] = (
                 item.get("employee_name")

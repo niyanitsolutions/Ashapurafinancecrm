@@ -131,7 +131,7 @@ describe("DisbursementsPage", () => {
     expect(await screen.findByRole("heading", { name: "Top Up Loan" })).toBeInTheDocument();
     expect(getLoanCase).toHaveBeenCalledWith("case-1");
     await waitFor(() =>
-      expect(screen.getAllByText((_, el) => Boolean(el?.textContent?.includes("25-Aug-2026"))).length).toBeGreaterThan(0),
+      expect(screen.getAllByText((_, el) => Boolean(el?.textContent?.includes("25/08/2026"))).length).toBeGreaterThan(0),
     );
   });
 });

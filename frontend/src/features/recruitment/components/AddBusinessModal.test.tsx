@@ -17,7 +17,7 @@ async function fill(user: ReturnType<typeof userEvent.setup>, category = "saving
   await user.type(screen.getByLabelText("Premium"), "50000");
   await user.type(screen.getByLabelText("PPT (years)"), "10");
   await user.type(screen.getByLabelText("PT (years)"), "20");
-  await user.type(screen.getByLabelText("Policy Issue Date"), "2026-09-01");
+  await user.type(screen.getByLabelText("Policy Issue Date"), "01/09/2026");
 }
 
 describe("AddBusinessModal", () => {
@@ -33,7 +33,7 @@ describe("AddBusinessModal", () => {
     await user.type(screen.getByLabelText("Premium"), "100");
     await user.type(screen.getByLabelText("PPT (years)"), "5");
     await user.type(screen.getByLabelText("PT (years)"), "10");
-    await user.type(screen.getByLabelText("Policy Issue Date"), "2026-09-01");
+    await user.type(screen.getByLabelText("Policy Issue Date"), "01/09/2026");
     // Still blocked — custom category is empty.
     expect(screen.getByRole("button", { name: /^save$/i })).toBeDisabled();
     await user.type(screen.getByLabelText("Custom Category"), "Micro");

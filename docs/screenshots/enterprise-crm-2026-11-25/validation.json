@@ -1,0 +1,66 @@
+{
+  "frontend_full": {
+    "passed": 500,
+    "failed": 0
+  },
+  "frontend_final_affected": {
+    "passed": 15,
+    "failed": 0
+  },
+  "backend_focused": {
+    "passed": 98,
+    "failed": 0
+  },
+  "backend_regression": {
+    "passed": 173,
+    "failed": 0
+  },
+  "backend_schema": {
+    "passed": 22,
+    "failed": 0
+  },
+  "backend_final_filters_and_identity": {
+    "passed": 10,
+    "failed": 0
+  },
+  "backend_bin": {
+    "passed": 12,
+    "failed": 0
+  },
+  "browser_staff": {
+    "passed": 1,
+    "widths": [
+      390,
+      768,
+      1366
+    ],
+    "real_local_api_and_mongo": true
+  },
+  "browser_customer_otp": {
+    "passed": 1,
+    "widths": [
+      390,
+      768,
+      1366
+    ],
+    "sms_transport": "mocked"
+  },
+  "typescript": "passed via production build",
+  "eslint": {
+    "errors": 0,
+    "existing_warnings": 8
+  },
+  "ruff": "passed; final format check recorded in report",
+  "new_module_mypy": {
+    "files": 4,
+    "errors": 0
+  },
+  "project_mypy": {
+    "baseline_errors": 117,
+    "current_errors": 117,
+    "added_diagnostics": 0
+  },
+  "production_deployment": false,
+  "real_sms_sent": false,
+  "note": "Backend counts overlap. Do not add them into a distinct test total."
+}

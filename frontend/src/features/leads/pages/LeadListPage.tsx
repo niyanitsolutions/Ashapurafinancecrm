@@ -1,3 +1,4 @@
+import { DocumentCollectionPage } from "./DocumentCollectionPage";
 import { BulkUploadModal } from "@/features/bulk_import/BulkUploadModal";
 import { BulkAssignmentModal, type AssignmentResult } from "@/features/leads/components/BulkAssignmentModal";
 import { useEffect, useState } from "react";
@@ -127,6 +128,10 @@ async function downloadLeadsCsv(setError: (msg: string | null) => void) {
 }
 
 export function LeadListPage({ tab }: { tab: LeadTab }) {
+  return tab === "document_collection" ? <DocumentCollectionPage /> : <UngroupedLeadListPage tab={tab} />;
+}
+
+function UngroupedLeadListPage({ tab }: { tab: LeadTab }) {
   const { can, isOwner } = usePermissions();
   const canBulkAssign = tab === "fresh" ? can("leads:leads", "assign") : tab === "document_collection" && isOwner;
   const [assignmentSelection, setAssignmentSelection] = useState<Set<string>>(new Set());

@@ -26,3 +26,15 @@ def normalized_name(value: str) -> str:
             c if c.isalnum() else " " for c in unicodedata.normalize("NFKC", value).casefold()
         ).split()
     )
+
+
+def pan_search_digest(value: str) -> str:
+    """Domain-separated keyed exact lookup; never store a plaintext PAN search key."""
+    import hashlib
+    import hmac
+
+    from app.config.settings import get_settings
+
+    settings = get_settings()
+    key = (settings.encryption_key or settings.jwt_secret_key).encode()
+    return hmac.new(key, b"customer-pan-search-v1:" + value.strip().upper().encode(), hashlib.sha256).hexdigest()

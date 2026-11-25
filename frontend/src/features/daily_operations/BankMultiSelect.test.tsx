@@ -60,11 +60,11 @@ it.each([false,true])("requires an eligibility date for add/edit without changin
  fireEvent.change(select,{target:{value:"Re-Eligible"}});
  expect(screen.getByLabelText("Re-Eligible Date")).toBeRequired();
  expect(screen.queryByLabelText("Next follow-up date")).not.toBeInTheDocument();
- fireEvent.change(screen.getByLabelText("Re-Eligible Date"),{target:{value:"2026-11-20"}});
+ fireEvent.change(screen.getByLabelText("Re-Eligible Date"),{target:{value:"20/11/2026"}});
  fireEvent.change(select,{target:{value:"DISBURSE"}});
  expect(screen.queryByLabelText("Re-Eligible Date")).not.toBeInTheDocument();
  fireEvent.change(select,{target:{value:"Re-Eligible"}});
- expect(screen.getByLabelText("Re-Eligible Date")).toHaveValue("2026-11-20");
+ expect(screen.getByLabelText("Re-Eligible Date")).toHaveValue("20/11/2026");
  expect(within(select).getAllByRole("option").map(option=>option.textContent).filter(value=>value)).toEqual(expect.arrayContaining(["FOLLOW UP PENDING","NEXT FOLLOW UP","DISBURSE","REJECTED WITH REASON"]));
 });
 it("uses the selected workflow for list queries and export, and resets pagination",async()=>{

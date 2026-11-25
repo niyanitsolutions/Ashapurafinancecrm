@@ -5,7 +5,7 @@ import { useProfile } from "@/features/auth/useProfile";
 import { useAuth } from "@/features/auth/useAuth";
 import { NotificationBell } from "@/features/dashboard/components/NotificationBell";
 import { ProfileMenu } from "@/features/dashboard/components/ProfileMenu";
-import { isEmployeeSearchRelevant, QuickSearch } from "@/features/dashboard/components/QuickSearch";
+import { QuickSearch } from "@/features/dashboard/components/QuickSearch";
 import { currentISTHour } from "@/shared/dateFormat";
 import { Icon } from "@/theme/icons";
 
@@ -31,7 +31,7 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
   // frontend/src/shared/dateFormat.ts.
   const greeting = greetingForHour(currentISTHour());
   const roleLabel = (role && ROLE_LABELS[role]) || null;
-  const showSearch = isEmployeeSearchRelevant(location.pathname);
+  const showSearch = role === "owner" || role === "employee";
 
   return (
     <header className="bg-card border-b border-border px-4 py-4 lg:px-8 lg:py-5">
@@ -70,6 +70,7 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
           <ProfileMenu displayName={profile?.name || mobile || "Account"} />
         </div>
       </div>
+      {showSearch && <div className="mt-3 xl:hidden"><QuickSearch /></div>}
       {location.pathname === "/dashboard" && <div className="mt-3 flex flex-wrap items-center justify-between gap-2 sm:hidden"><DateScopePill /><FiltersButton /></div>}
     </header>
   );

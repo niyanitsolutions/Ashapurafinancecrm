@@ -19,7 +19,7 @@ describe("Insurance documents", () => {
     const onUpload = vi.fn().mockResolvedValue(undefined);
     const user = userEvent.setup();
     const { container } = render(<DocumentChecklist requiredDocuments={[pan]} uploadedDocuments={[]} onUpload={onUpload} uploadingFor={null} />);
-    await user.type(screen.getByLabelText("Document Password (Optional)"), "paired-secret");
+    await user.type(screen.getByLabelText(/Password \(if applicable\)/), "paired-secret");
     await user.click(screen.getByRole("checkbox", { name: "Document has Front & Back" }));
     const uploadButton = screen.getByRole("button", { name: "Upload Front & Back" });
     expect(uploadButton).toBeDisabled();
@@ -34,7 +34,7 @@ describe("Insurance documents", () => {
     await waitFor(() => expect(onUpload).toHaveBeenCalledTimes(2));
     expect(onUpload).toHaveBeenNthCalledWith(1, "pan", front, "paired-secret", "front");
     expect(onUpload).toHaveBeenNthCalledWith(2, "pan", back, "paired-secret", "back");
-    expect(screen.getByLabelText("Document Password (Optional)")).toHaveValue("");
+    expect(screen.getByLabelText(/Password \(if applicable\)/)).toHaveValue("");
   });
 
   it("shows one bank requirement and keeps both upload options", () => {
@@ -42,7 +42,7 @@ describe("Insurance documents", () => {
     expect(screen.getByRole("heading", { name: /Bank Statement or Cancelled Cheque/ })).toBeInTheDocument();
     expect(screen.getByText("Bank Statement")).toBeInTheDocument();
     expect(screen.getByText("Cancelled Cheque")).toBeInTheDocument();
-    expect(screen.getAllByLabelText("Document Password (Optional)")).toHaveLength(2);
+    expect(screen.getAllByLabelText(/Password \(if applicable\)/)).toHaveLength(2);
   });
 
   it.each([[[], 0], [["0"], 1], [["1"], 1], [["0", "1"], 1]] as [string[], number][])("counts bank alternatives %j", (types, completed) => {

@@ -39,9 +39,9 @@ describe("EditAdvisorModal", () => {
     render(<EditAdvisorModal advisor={{ ...advisor, joining_date: "2026-09-20T18:30:00Z" }} onClose={vi.fn()} onSaved={vi.fn()} />);
     expect(screen.getAllByLabelText("Agency Code")).toHaveLength(1);
     const date = screen.getByLabelText("Joining Date");
-    expect(date).toHaveValue("2026-09-21");
+    expect(date).toHaveValue("21/09/2026");
     await user.clear(date);
-    await user.type(date, "2026-09-22");
+    await user.type(date, "22/09/2026");
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(updateAdvisor).toHaveBeenCalledWith("a1", { joining_date: "2026-09-22" }));
   });

@@ -47,7 +47,7 @@ export function normalizeFieldValue(field: FormField, value: unknown): unknown {
   if (!validation || typeof value !== "string") return value;
   let next = value;
   if (validation.trim) next = next.trim();
-  if (validation.auto_uppercase) next = next.toUpperCase();
+  if (validation.auto_uppercase || validation.format === "pan") next = next.toUpperCase();
   return next;
 }
 

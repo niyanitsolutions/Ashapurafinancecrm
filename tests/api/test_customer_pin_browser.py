@@ -1,6 +1,7 @@
 # ruff: noqa: F811
 """Opt-in real local API/database browser journey; Airtel HTTP is mocked."""
 import asyncio
+import json
 import os
 from pathlib import Path
 
@@ -45,9 +46,10 @@ async def test_customer_registration_login_forgot_pin_browser(registration, monk
 
         output = await asyncio.wait_for(journey(), 180)
         assert process.returncode == 0, output
-        assert len(sent) == 4
-        assert await db.users.count_documents({"role": "customer"}) == 2
-        assert await db.customers.count_documents({}) == 2
+        widths = json.loads(os.environ.get("AFS_PIN_BROWSER_WIDTHS", "[1440,390]"))
+        assert len(sent) == 2 * len(widths)
+        assert await db.users.count_documents({"role": "customer"}) == len(widths)
+        assert await db.customers.count_documents({}) == len(widths)
         print(output)
     finally:
         if process and process.returncode is None:

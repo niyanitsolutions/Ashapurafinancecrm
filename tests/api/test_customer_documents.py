@@ -402,7 +402,7 @@ async def test_unassigned_employee_denied_assigned_employee_and_owner_allowed(cl
     customer_headers, application_id = await _start_application(client, product, mobile="9800000012")
     await _upload(client, application_id, product["pan_doc_id"], customer_headers)
 
-    bystander = await _create_employee(client, owner_headers, master_data, mobile="9500000021", email="bystander-doc@example.com")
+    await _create_employee(client, owner_headers, master_data, mobile="9500000021", email="bystander-doc@example.com")
     bystander_headers = await _login(client, "9500000021", "InitialPass1!")
     r = await client.get(f"/api/v1/applications/{application_id}/documents", headers=bystander_headers)
     assert r.status_code == 403, r.text
@@ -437,10 +437,9 @@ async def test_bank_statement_upload_without_password_succeeds(client, mock_db, 
     assert r.json()["data"]["has_password"] is False
 
 
-async def test_bank_statement_upload_with_password_succeeds_and_staff_can_reveal_it(client, mock_db, owner_headers):
+async def test_bank_statement_upload_with_password_succeeds_but_password_is_write_only(client, mock_db, owner_headers):
     """Scenario B - a password-protected statement uploads successfully, is never
-    echoed back in the confirm response, and an authorized staff member can retrieve
-    the exact original value via the dedicated reveal endpoint."""
+    echoed back in any response, including the retired reveal endpoint."""
     product = await _seed_product_with_bank_statement(mock_db, product_name="Personal Loan B")
     headers, application_id = await _start_application(client, product, mobile="9800000102")
 
@@ -452,8 +451,8 @@ async def test_bank_statement_upload_with_password_succeeds_and_staff_can_reveal
     document_id = data["id"]
 
     r = await client.get(f"/api/v1/applications/{application_id}/documents/{document_id}/password", headers=owner_headers)
-    assert r.status_code == 200, r.text
-    assert r.json()["data"]["password"] == "Secret@123"
+    assert r.status_code == 403, r.text
+    assert "Secret@123" not in r.text
 
 
 async def test_password_never_appears_in_normal_get_or_list_responses(client, mock_db, owner_headers):
@@ -485,7 +484,7 @@ async def test_password_not_recorded_in_audit_log_metadata(client, mock_db, owne
     for entry in logs:
         assert "NeverLoggedOne" not in str(entry.get("metadata", {}))
     event_types = {entry["event_type"] for entry in logs}
-    assert "document_password_accessed" in event_types
+    assert "document_password_accessed" not in event_types
 
 
 async def test_employee_without_customer_edit_permission_cannot_reveal_password(client, mock_db, owner_headers, master_data):
@@ -518,7 +517,7 @@ async def test_unassigned_employee_cannot_reveal_password_even_with_permission(c
     assert r.status_code == 403, r.text
 
 
-async def test_assigned_employee_with_permission_can_reveal_password(client, mock_db, owner_headers, master_data):
+async def test_assigned_employee_cannot_reveal_write_only_password(client, mock_db, owner_headers, master_data):
     product = await _seed_product_with_bank_statement(mock_db, product_name="Personal Loan G")
     headers, application_id = await _start_application(client, product, mobile="9800000107")
     r = await _upload(client, application_id, product["bank_doc_id"], headers, file_name="statement.pdf", password="GuardedFour")
@@ -530,8 +529,8 @@ async def test_assigned_employee_with_permission_can_reveal_password(client, moc
     assignee_headers = await _login(client, "9500000107", "InitialPass1!")
 
     r = await client.get(f"/api/v1/applications/{application_id}/documents/{document_id}/password", headers=assignee_headers)
-    assert r.status_code == 200, r.text
-    assert r.json()["data"]["password"] == "GuardedFour"
+    assert r.status_code == 403, r.text
+    assert "GuardedFour" not in r.text
 
 
 async def test_password_ignored_for_document_type_without_password_support(client, mock_db, owner_headers):
@@ -546,14 +545,14 @@ async def test_password_ignored_for_document_type_without_password_support(clien
     assert r.json()["data"]["has_password"] is False
 
 
-async def test_reveal_password_404_when_document_has_no_password(client, mock_db, owner_headers):
+async def test_password_read_is_blocked_even_when_no_password_exists(client, mock_db, owner_headers):
     product = await _seed_product_with_bank_statement(mock_db, product_name="Personal Loan H")
     headers, application_id = await _start_application(client, product, mobile="9800000109")
     r = await _upload(client, application_id, product["bank_doc_id"], headers, file_name="statement.pdf")
     document_id = r.json()["data"]["id"]
 
     r = await client.get(f"/api/v1/applications/{application_id}/documents/{document_id}/password", headers=owner_headers)
-    assert r.status_code == 404, r.text
+    assert r.status_code == 403, r.text
 
 
 async def test_required_document_response_exposes_supports_password_flag(client, mock_db, owner_headers):
@@ -654,7 +653,7 @@ async def test_reject_requires_authorization_same_as_verify(client, mock_db, own
     r = await _upload(client, application_id, product["pan_doc_id"], customer_headers)
     document_id = r.json()["data"]["id"]
 
-    bystander = await _create_employee(client, owner_headers, master_data, mobile="9500000203", email="bystander-reject@example.com")
+    await _create_employee(client, owner_headers, master_data, mobile="9500000203", email="bystander-reject@example.com")
     bystander_headers = await _login(client, "9500000203", "InitialPass1!")
     r = await client.patch(
         f"/api/v1/applications/{application_id}/documents/{document_id}/reject", json={"reason": "Not valid."}, headers=bystander_headers,
@@ -1146,7 +1145,7 @@ async def test_failed_rejection_creates_no_notification(client, mock_db, owner_h
     upload = await _upload(client, application_id, product["pan_doc_id"], headers, file_name="pan.jpg")
     document_id = upload.json()["data"]["id"]
 
-    bystander = await _create_employee(client, owner_headers, master_data, mobile="9500000222", email="bystander-notify@example.com")
+    await _create_employee(client, owner_headers, master_data, mobile="9500000222", email="bystander-notify@example.com")
     bystander_headers = await _login(client, "9500000222", "InitialPass1!")
     r = await client.patch(
         f"/api/v1/applications/{application_id}/documents/{document_id}/reject", json={"reason": "Blurry."}, headers=bystander_headers,

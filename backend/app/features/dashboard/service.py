@@ -139,28 +139,7 @@ class DashboardService:
 
     # ---------------------------------------------------------------- quick search
 
-    async def search(self, user: User, query: str) -> list[dict[str, Any]]:
-        query = query.strip()
-        if not query:
-            return []
+    async def search(self, user: User, query: str, page: int = 1) -> list[dict[str, Any]]:
+        from app.features.search.service import search_records
 
-        results: list[dict[str, Any]] = []
-        # Employees: only surfaced if the searcher can see employee_management:employee_records
-        # (Owner always can; an Employee needs it granted — Module 2's own list/get API
-        # stays require_owner-only regardless, this is Dashboard's own read path).
-        if await self._is_permitted(user, required_module="employee_management", required_resource="employee_records", required_action="view"):
-            employees, _ = await self._employees.search_and_filter(
-                search=query, department_id=None, designation_id=None, branch_id=None, status=None,
-                skip=0, limit=_SEARCH_LIMIT, sort=None,
-            )
-            results.extend(
-                {
-                    "type": "employee",
-                    "id": e.require_id(),
-                    "label": e.display_name,
-                    "subtitle": e.employee_code,
-                    "route": f"/employees/{e.require_id()}",
-                }
-                for e in employees
-            )
-        return results
+        return await search_records(self._db, user, query, page)

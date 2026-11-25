@@ -58,6 +58,7 @@ class Customer(BaseDocument):
     gender: str | None = None
 
     pan_number_encrypted: str | None = None
+    pan_search_digest: str | None = None
     aadhaar_number_encrypted: str | None = None
 
     address: Address | None = None
@@ -187,6 +188,16 @@ class FormFieldDefinition(BaseModel):
     master_key: str | None = None  # the FormTemplateMaster field this was cloned from
     placeholder: str | None = None  # real, Owner-editable — falls back to a label-derived one client-side
     hidden: bool = False  # the only way to "remove" a master field from the live form
+
+    @model_validator(mode="after")
+    def _enforce_canonical_pan_field(self) -> "FormFieldDefinition":
+        # These two keys are verified against the shipped Personal/Home/Business schemas.
+        if self.key in {"pan_number", "pan_card_number"}:
+            self.validation = self.validation or FieldValidation()
+            self.validation.format = "pan"
+            self.validation.auto_uppercase = True
+            self.validation.trim = True
+        return self
 
     @model_validator(mode="after")
     def _enforce_canonical_gender_field(self) -> "FormFieldDefinition":

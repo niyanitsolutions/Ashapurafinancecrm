@@ -1,120 +1,24 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
+import { beforeEach, expect, it, vi } from "vitest";
 import { LeadListPage } from "./LeadListPage";
-import type { LeadListItem } from "@/features/leads/api";
-
-// Production fix "DC vs LM" — the Document Collection tab now renders a mix of real
-// Lead rows and synthesized Lead-less rows (`is_lead_less: true`, no Lead ever created).
-// A Lead-less row has no Lead to view/edit/generate-a-link-for/follow-up-on — its Code
-// links straight to the Application, and its only action is "Update", which opens
-// `MoveApplicationToLoanManagementModal` instead of `UpdateStageModal`.
-
-vi.mock("@/features/access_control/usePermissions", () => ({
-  usePermissions: () => ({ isOwner: true, loading: false, can: () => true }),
-}));
-
-vi.mock("@/features/system_settings/api", () => ({
-  leadSourcesApi: { list: vi.fn(() => Promise.resolve([])) },
-}));
-
-const leadLessRow: LeadListItem = {
-  id: "app-1", lead_code: "AFS-APP-000001", full_name: "Direct Applicant", mobile: "9611170001", email: null,
-  source_id: "", source_name: "Direct", product_category: "loan", product_id: "prod-1", product_name: "Personal Loan",
-  assigned_to: null, assigned_to_name: null, status: "pending", stage: "document_collection",
-  salary_in_hand: null, next_follow_up_date: null, assigned_by: null, assigned_by_name: null, assigned_at: null,
-  rejected_reason: null, rejected_by: null, rejected_by_name: null, rejected_at: null,
-  application_id: "app-1", application_status: "submitted", is_potential_duplicate: false, created_at: "2026-08-20T10:00:00Z",
-  is_lead_less: true,
-};
-
-const leadRow: LeadListItem = {
-  ...leadLessRow, id: "lead-2", lead_code: "AFS-LEAD-000002", full_name: "Ravi Kumar", mobile: "9611170002",
-  source_name: "Website", application_id: "app-2", is_lead_less: false,
-};
-
-const listLeads = vi.fn(() => Promise.resolve({ data: [leadLessRow, leadRow], pagination: { total: 2 } }));
-const getLeadLessApplicationSummary = vi.fn(() =>
-  Promise.resolve({ application_id: "app-1", application_status: "submitted", documents_required: 1, documents_verified: 1, all_documents_verified: true }),
-);
-const moveLeadLessApplicationToLoanManagement = vi.fn((_id: string) => Promise.resolve(null));
-
-vi.mock("@/features/leads/api", async () => {
-  const actual = await vi.importActual<typeof import("@/features/leads/api")>("@/features/leads/api");
-  return {
-    ...actual,
-    listLeads: () => listLeads(),
-    getLeadLessApplicationSummary: () => getLeadLessApplicationSummary(),
-    moveLeadLessApplicationToLoanManagement: (id: string) => moveLeadLessApplicationToLoanManagement(id),
-  };
+const mocks=vi.hoisted(() => ({request:vi.fn(),summary:vi.fn(),move:vi.fn()}));
+vi.mock("@/shared/api/client",()=>({apiRequest:mocks.request, apiRequestRaw:vi.fn()}));
+vi.mock("@/features/access_control/usePermissions",()=>({usePermissions:()=>({isOwner:true,can:()=>true})}));
+vi.mock("@/features/leads/api",async()=>({...await vi.importActual<typeof import("@/features/leads/api")>("@/features/leads/api"),getLeadLessApplicationSummary:mocks.summary,moveLeadLessApplicationToLoanManagement:mocks.move}));
+vi.mock("@/features/bulk_import/BulkUploadModal",()=>({BulkUploadModal:()=> <div role="dialog" aria-label="Bulk Upload Leads"/>}));
+beforeEach(()=>{
+ mocks.request.mockReset();mocks.summary.mockReset();mocks.move.mockReset();
+ mocks.summary.mockResolvedValue({application_id:"app-1",application_status:"submitted",documents_required:1,documents_verified:1,all_documents_verified:true});
+ mocks.request.mockImplementation((url:string)=>Promise.resolve(url.includes("filter-options")?{}:url.includes("group_key")?{items:[{id:"app-1",application_code:"AFS-APP-000001",product_category:"loan",product_name:"Personal Loan",status:"submitted"}],total:1}:{items:[{id:"customer-1",name:"Direct Applicant",customer_code:"AFS-CUS-1",application_count:1}],total:1}));
 });
-
-function renderDocumentCollectionTab() {
-  return render(
-    <MemoryRouter initialEntries={["/leads/document-collection"]}>
-      <Routes>
-        <Route element={<Outlet context={{ refreshCounts: vi.fn() }} />}>
-          <Route path="/leads/document-collection" element={<LeadListPage tab="document_collection" />} />
-        </Route>
-      </Routes>
-    </MemoryRouter>,
-  );
-}
-
-describe("LeadListPage — Document Collection tab, Lead-less rows", () => {
-  it("selects applications on the current page for bulk assignment and clears selection", async () => {
-    renderDocumentCollectionTab();
-    await screen.findByText("AFS-APP-000001");
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("checkbox", { name: "Select all" }));
-    expect(screen.getByText("2 Applications Selected")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Clear Selection" }));
-    expect(screen.queryByText("2 Applications Selected")).not.toBeInTheDocument();
-  });
-  it("opens the shared bulk upload dialog from Leads", async () => {
-    renderDocumentCollectionTab();
-    await screen.findByText("AFS-APP-000001");
-    await userEvent.setup().click(screen.getByRole("button", { name: "Bulk Upload" }));
-    expect(screen.getByRole("dialog", { name: "Bulk Upload Leads" })).toBeInTheDocument();
-  });
-  it("Lead-less row's Code links to its Application, not a Lead page", async () => {
-    renderDocumentCollectionTab();
-    await screen.findByText("AFS-APP-000001");
-
-    const link = screen.getByRole("link", { name: "AFS-APP-000001" });
-    expect(link).toHaveAttribute("href", "/applications/app-1?from=document-collection");
-
-    const leadLink = screen.getByRole("link", { name: "AFS-LEAD-000002" });
-    expect(leadLink).toHaveAttribute("href", "/leads/lead-2");
-  });
-
-  it("Lead-less row hides Generate Link and Edit actions; the real Lead row keeps them", async () => {
-    renderDocumentCollectionTab();
-    await screen.findByText("AFS-APP-000001");
-
-    const rows = screen.getAllByRole("row");
-    const leadLessRowEl = rows[1];
-    const leadRowEl = rows[2];
-
-    expect(within(leadLessRowEl).queryByRole("button", { name: /generate link/i })).not.toBeInTheDocument();
-    expect(within(leadLessRowEl).queryByRole("link", { name: /^edit$/i })).not.toBeInTheDocument();
-
-    expect(within(leadRowEl).getByRole("button", { name: /generate link/i })).toBeInTheDocument();
-    expect(within(leadRowEl).getByRole("link", { name: /^edit$/i })).toBeInTheDocument();
-  });
-
-  it("Lead-less row's Update action opens MoveApplicationToLoanManagementModal, not UpdateStageModal", async () => {
-    const user = userEvent.setup();
-    renderDocumentCollectionTab();
-    await screen.findByText("AFS-APP-000001");
-
-    const rows = screen.getAllByRole("row");
-    const updateButton = within(rows[1]).getByRole("button", { name: /update/i });
-    await user.click(updateButton);
-
-    expect(await screen.findByRole("heading", { name: /move to loan management/i })).toBeInTheDocument();
-    await waitFor(() => expect(getLeadLessApplicationSummary).toHaveBeenCalled());
-    expect(screen.getByRole("button", { name: /move to loan management/i })).toBeEnabled();
-  });
+function renderPage(){return render(<MemoryRouter><LeadListPage tab="document_collection"/></MemoryRouter>);}
+async function expand(){await userEvent.click(await screen.findByRole("button",{name:"Expand"}));await screen.findByText("AFS-APP-000001");}
+it("selects individual applications after expanding their customer and clears selection",async()=>{
+ renderPage();await expand();await userEvent.click(screen.getByRole("checkbox",{name:"Select AFS-APP-000001"}));expect(screen.getByText(/1 Applications selected/)).toBeInTheDocument();await userEvent.click(screen.getByRole("button",{name:"Clear Selection"}));expect(screen.queryByRole("button",{name:"Assign Selected"})).not.toBeInTheDocument();
 });
+it("preserves the shared bulk upload entry point",async()=>{renderPage();await userEvent.click(screen.getByRole("button",{name:"Bulk Upload"}));expect(screen.getByRole("dialog",{name:"Bulk Upload Leads"})).toBeInTheDocument();});
+it("opens the exact individual application and retains the customer link",async()=>{renderPage();await expand();expect(screen.getByRole("link",{name:"AFS-APP-000001"})).toHaveAttribute("href","/applications/app-1?from=document-collection");expect(screen.getByRole("link",{name:"AFS-CUS-1"})).toHaveAttribute("href","/customers/customer-1");});
+it("does not offer Lead-only actions for an independent application",async()=>{renderPage();await expand();expect(screen.queryByRole("button",{name:"Generate Link"})).not.toBeInTheDocument();expect(screen.queryByRole("link",{name:"Edit Lead"})).not.toBeInTheDocument();});
+it("retains the existing Move to Loan Management eligibility workflow",async()=>{renderPage();await expand();await userEvent.click(screen.getByRole("button",{name:"Update"}));expect(await screen.findByRole("heading",{name:"Move to Loan Management"})).toBeInTheDocument();await waitFor(()=>expect(mocks.summary).toHaveBeenCalledWith("app-1"));});

@@ -28,6 +28,7 @@ from app.features.workflow_engine.models import ApplicationWorkflow
 
 def customer_to_response(customer: Customer, lead_code: str | None = None, lead_source_name: str | None = None) -> CustomerResponse:
     return CustomerResponse(
+        version=customer.version,
         id=customer.require_id(),
         customer_code=customer.customer_code,
         full_name=customer.full_name,
@@ -54,6 +55,12 @@ def customer_to_list_item(customer: Customer) -> CustomerListItem:
         registration_source="lead" if customer.converted_from_lead_id else "direct",
         created_at=customer.created_at,
     )
+
+
+def document_label(value: str) -> str:
+    if "passport size" in value.lower() and "photo" in value.lower():
+        return "Recent Selfie Photo"
+    return value
 
 
 def field_to_response(f: FormFieldDefinition) -> FormFieldResponse:
@@ -99,8 +106,8 @@ def required_document_to_response(
     if insurance:
         effective_password = password_supported(name, effective_password)
     return RequiredDocumentResponse(
-        document_type_id=d.document_type_id, document_type_name=names.get(d.document_type_id, ""), section=d.section, note=d.note,
-        name_override=d.name_override, required=False if bank else d.required, allowed_types=d.allowed_types, max_size_mb=d.max_size_mb,
+        document_type_id=d.document_type_id, document_type_name=document_label(names.get(d.document_type_id, "")), section=document_label(d.section) if d.section else None, note=d.note,
+        name_override=document_label(d.name_override) if d.name_override else None, required=False if bank else d.required, allowed_types=d.allowed_types, max_size_mb=d.max_size_mb,
         multiple_upload=d.multiple_upload, preview_enabled=d.preview_enabled, source=d.source, hidden=d.hidden,
         front_back_upload=d.front_back_upload and not (insurance and document_kind(name) == "photo"), supports_password=effective_password,
         front_back_optional=insurance and front_back_supported(name) and not d.multiple_upload,
@@ -208,7 +215,7 @@ def document_to_response(
         id=document.require_id(),
         application_id=document.application_id,
         document_type_id=document.document_type_id,
-        document_type_name=document_type_name,
+        document_type_name=document_label(document_type_name),
         file_name=document.file_name,
         content_type=document.content_type,
         download_url=download_url,

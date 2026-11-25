@@ -1,0 +1,21 @@
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+import { beforeEach, expect, it, vi } from "vitest";
+import { DocumentCollectionPage } from "./DocumentCollectionPage";
+const request = vi.hoisted(() => vi.fn());
+vi.mock("@/shared/api/client", () => ({ apiRequest: request }));
+vi.mock("@/features/access_control/usePermissions", () => ({ usePermissions: () => ({ isOwner: false, can: () => false }) }));
+beforeEach(() => { request.mockReset(); });
+it("defaults to 200 customer rows, expands applications and applies filters server-side", async () => {
+  request.mockImplementation((url: string) => Promise.resolve(url.includes("filter-options") ? {} : url.includes("group_key") ? { items: [{ id: "a1", application_code: "AFS-APP-1", product_name: "Home Loan", status: "submitted" }], total: 1 } : { items: [{ id: "c1", name: "Current Customer", customer_code: "AFS-CUS-1", application_count: 2 }], total: 1 }));
+  render(<MemoryRouter><DocumentCollectionPage /></MemoryRouter>);
+  await screen.findByText("Current Customer");
+  expect(request).toHaveBeenCalledWith(expect.stringContaining("page_size=200"));
+  fireEvent.click(screen.getByRole("button", {name:"Expand"}));
+  expect(await screen.findByRole("link",{name:"AFS-APP-1"})).toHaveAttribute("href","/applications/a1?from=document-collection");
+  fireEvent.change(screen.getByRole("searchbox"),{target:{value:"AFS-CUS-1"}});
+  fireEvent.click(screen.getByRole("button",{name:"Apply Filters"}));
+  await waitFor(() => expect(request).toHaveBeenCalledWith(expect.stringContaining("search=AFS-CUS-1")));
+  fireEvent.click(screen.getByRole("button",{name:"Clear Filters"}));
+  await waitFor(() => expect(screen.getByRole("searchbox")).toHaveValue(""));
+});

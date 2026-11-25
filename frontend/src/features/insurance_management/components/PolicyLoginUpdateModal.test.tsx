@@ -57,7 +57,7 @@ describe("PolicyLoginUpdateModal", () => {
     render(<PolicyLoginUpdateModal detail={detail()} onCancel={vi.fn()} onConfirm={vi.fn()} />);
     await screen.findByLabelText("Product");
     expect(screen.getByLabelText("Issue Date")).toBeInTheDocument();
-    expect(screen.getByLabelText("Issue Date")).toHaveAttribute("type", "date");
+    expect(screen.getByLabelText("Issue Date")).toHaveAttribute("placeholder", "DD/MM/YYYY");
   });
 
   it("loads an existing saved Issue Date into the form", async () => {
@@ -69,7 +69,7 @@ describe("PolicyLoginUpdateModal", () => {
       />,
     );
     await screen.findByLabelText("Product");
-    expect(screen.getByLabelText("Issue Date")).toHaveValue("2026-09-10");
+    expect(screen.getByLabelText("Issue Date")).toHaveValue("10/09/2026");
     expect(screen.getByLabelText("Policy Number")).toHaveValue("POL123456789");
   });
 
@@ -83,7 +83,7 @@ describe("PolicyLoginUpdateModal", () => {
     await user.type(screen.getByLabelText("PPT (years)"), "10");
     await user.type(screen.getByLabelText("PT (years)"), "10");
     await user.type(screen.getByLabelText("Policy Number"), "POL123456789");
-    await user.type(screen.getByLabelText("Issue Date"), "2026-09-10");
+    await user.type(screen.getByLabelText("Issue Date"), "10/09/2026");
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() =>

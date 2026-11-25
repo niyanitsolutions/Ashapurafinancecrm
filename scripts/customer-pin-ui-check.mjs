@@ -4,7 +4,8 @@ import {createInterface} from 'node:readline/promises';
 import {chromium} from '../frontend/node_modules/.cache/voice-ui-audit/node_modules/playwright/index.mjs';
 
 const origin='http://127.0.0.1:5175';
-const output='docs/screenshots/customer-portal-modernisation/registration';
+const output=process.env.AFS_PIN_BROWSER_OUTPUT || 'docs/screenshots/customer-portal-modernisation/registration';
+const widths=JSON.parse(process.env.AFS_PIN_BROWSER_WIDTHS || '[1440,390]');
 await mkdir(output,{recursive:true});
 const input=createInterface({input:process.stdin,terminal:false});
 async function code() { console.log('NEED_MOCK_OTP'); return new Promise(resolve=>input.once('line',resolve)); }
@@ -12,7 +13,7 @@ const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chr
 const results=[];
 let stage='start';
 try {
- for (const [index,width] of [1440,390].entries()) {
+ for (const [index,width] of widths.entries()) {
   const mobile='90000000'+(88+index);
   const context=await browser.newContext({viewport:{width,height:1000},reducedMotion:'reduce'});
   const errors=[];
