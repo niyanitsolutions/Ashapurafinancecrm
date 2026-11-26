@@ -112,7 +112,7 @@ export function DocumentCollectionPage() {
   const query = new URLSearchParams(applied).toString();
   const focusedGroup = params.get("expand");
   const selectedApplication = params.get("application");
-  const closeApplication = () => {setOpen(new Set());setParams({});};
+  const closeApplication = () => {setOpen(new Set());const next=new URLSearchParams(params);next.delete("application");setParams(next);};
   useEffect(()=>{if(!selectedApplication)setOpen(new Set());},[selectedApplication]);
   useEffect(() => {
     const text = draft.search || "";

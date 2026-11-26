@@ -1,7 +1,7 @@
 from datetime import date
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Query, Response
 
 from app.core.pagination import PageParams, page_params
 from app.core.response import ApiResponse, ResponseMeta
@@ -40,6 +40,21 @@ PageParamsDep = Annotated[PageParams, Depends(page_params)]
 
 # ---------------------------------------------------------------------- self-service ("me")
 # Declared before "/{employee_id}" routes so "me" isn't swallowed as a path param.
+
+
+@router.get("/identity-preview", dependencies=[Depends(require_owner)])
+async def employee_identity_preview(
+    service: EmployeeServiceDep,
+    current_user: CurrentUserDep,
+    mobile: str = Query(min_length=10, max_length=40),
+) -> ApiResponse[dict[str, Any]]:
+    from app.core.exceptions import ValidationError
+    from app.features.employee.identity import preview
+
+    try:
+        return ApiResponse.ok(await preview(service._db, mobile, current_user))
+    except ValueError:
+        raise ValidationError("Enter a valid Indian mobile number.") from None
 
 
 @router.get("/me")

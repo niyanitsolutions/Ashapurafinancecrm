@@ -55,10 +55,24 @@ async def test_daily_default_200_bounded_backend_pages(client, mock_db, staff):
     record = await create(client, staff[1], "follow-ups", follow())
     raw = await mock_db.daily_follow_ups.find_one({"_id": ObjectId(record["id"])})
     clones = []
-    for _ in range(204):
+    for index in range(204):
         row = copy.deepcopy(raw)
         row["_id"] = ObjectId()
         row["import_key"] = str(row["_id"])
+        # Seed different standalone prospects, not duplicate activities for one identity.
+        from app.features.daily_operations.identity import fingerprint, name_key
+        from app.utils.datetime import to_ist
+
+        row["customer_name"] = f"Pagination Prospect {index}"
+        row["customer_number"] = f"900099{index:04d}"
+        row["activity_key"] = fingerprint(
+            [
+                [name_key(row["customer_name"]), row["customer_number"]],
+                to_ist(row["date"]).date().isoformat(),
+                "primary",
+            ]
+        )
+        row["history"] = []
         clones.append(row)
     await mock_db.daily_follow_ups.insert_many(clones)
     first = await client.get(BASE + "/follow-ups", headers=staff[1])

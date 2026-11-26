@@ -17,7 +17,7 @@ function mount(area: "follow-ups" | "progress" | "issues" | "sessions") {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks(); mocks.request.mockImplementation(async (path:string)=>path.includes("/bank-options")?[{id:"aaaaaaaaaaaaaaaaaaaaaaaa",name:"Synthetic Bank",is_active:true,version:1}]:["FOLLOW UP PENDING","NEXT FOLLOW UP","DISBURSE","REJECTED WITH REASON"].map((name,index)=>({id:String(index),value:name,name,color:"#FFF0C2",display_order:index,is_system:true,is_active:true}))); mocks.owner = false;
+  vi.clearAllMocks(); mocks.request.mockImplementation(async (path:string)=>path.includes("/follow-up-identities")?{items:[],has_more:false}:path.includes("/bank-options")?[{id:"aaaaaaaaaaaaaaaaaaaaaaaa",name:"Synthetic Bank",is_active:true,version:1}]:["FOLLOW UP PENDING","NEXT FOLLOW UP","DISBURSE","REJECTED WITH REASON"].map((name,index)=>({id:String(index),value:name,name,color:"#FFF0C2",display_order:index,is_system:true,is_active:true}))); mocks.owner = false;
   mocks.list.mockResolvedValue({ items: [], total: 0 });
   mocks.lookup.mockResolvedValue({ self_id: "synthetic-user", employees: [{ id: "synthetic-user", name: "Synthetic Employee" }], leads: [], cases: [] });
   mocks.save.mockResolvedValue({ id: "synthetic-row", version: 1 }); mocks.remove.mockResolvedValue({ deleted: true });
@@ -37,6 +37,9 @@ describe("simple daily entry", () => {
 
   it("adds a manual follow-up with a typed employee name and no CRM IDs", async () => {
     mount("follow-ups"); fireEvent.click(screen.getByRole("button", { name: /Add record/ }));
+    fireEvent.change(screen.getByLabelText("Customer name, mobile, Customer ID, Application ID or Lead code"), {target:{value:"Synthetic Customer"}});
+    fireEvent.click(screen.getByRole("button",{name:"Search existing identities"}));
+    fireEvent.click(await screen.findByRole("button",{name:"Create Standalone / Unlinked record"}));
     const dialog = within(screen.getByRole("dialog"));
     await waitFor(() => expect(dialog.getByLabelText("Employee name")).toHaveValue("Synthetic Employee"));
     fireEvent.change(dialog.getByLabelText("Employee name"), { target: { value: "Synthetic manual label" } });

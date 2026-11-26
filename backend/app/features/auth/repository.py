@@ -9,12 +9,38 @@ class UserRepository(BaseRepository[User]):
     collection_name = "users"
     model = User
 
+    async def require_available_mobile(self, mobile: str, *, session: Any = None) -> None:
+        from app.core.exceptions import ConflictError
+        from app.shared.customer_identity import mobile_match_pattern
+
+        # Include deleted identities and legacy formatting; neither may be silently replaced.
+        existing = await self.collection.find_one(
+            {"mobile": {"$regex": mobile_match_pattern(mobile)}}, {"_id": 1}, session=session
+        )
+        if existing:
+            raise ConflictError(
+                "This mobile belongs to an existing identity. Owner review is required."
+            )
+
+    async def insert(self, document: User) -> str:
+        from app.shared.customer_identity import normalize_mobile
+
+        document = document.model_copy(update={"mobile": normalize_mobile(document.mobile)})
+        await self.require_available_mobile(document.mobile)
+        return await super().insert(document)
+
     async def find_by_mobile(self, mobile: str, *, include_deleted: bool = False) -> User | None:
-        query: dict[str, Any] = {"mobile": mobile}
+        from app.core.exceptions import ConflictError
+        from app.shared.customer_identity import mobile_match_pattern, normalize_mobile
+
+        mobile = normalize_mobile(mobile)
+        query: dict[str, Any] = {"mobile": {"$regex": mobile_match_pattern(mobile)}}
         if not include_deleted:
             query["is_deleted"] = False
-        doc = await self.collection.find_one(query)
-        return self.model.model_validate(doc) if doc else None
+        rows = await self.collection.find(query).limit(2).to_list(2)
+        if len(rows) > 1:
+            raise ConflictError("Conflicting historical mobile identities require Owner review.")
+        return self.model.model_validate(rows[0]) if rows else None
 
 
 class SessionRepository(BaseRepository[Session]):

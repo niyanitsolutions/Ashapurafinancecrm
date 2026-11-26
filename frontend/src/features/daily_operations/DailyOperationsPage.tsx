@@ -1,3 +1,4 @@
+import { FollowUpIdentitySearch } from "./FollowUpIdentitySearch";
 import { IdentityReview } from "./IdentityReview";
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
@@ -57,6 +58,8 @@ export function DailyOperationsPage({ area }: { area: Area }) {
   const [removing, setRemoving] = useState<Row | null>(null);
   const [requesting, setRequesting] = useState<Row | null>(null);
   const [requestReason, setRequestReason] = useState("");
+  const [standaloneIdentity,setStandaloneIdentity]=useState<Record<string,string>|undefined>();
+  const [identitySearch,setIdentitySearch]=useState(false);
   const [identityReview,setIdentityReview] = useState(false);
   const [extraColumns, setExtraColumns] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -104,7 +107,7 @@ export function DailyOperationsPage({ area }: { area: Area }) {
     {can(`daily_operations:${area}`, "export") && <details ref={exportMenu} className="relative"><summary className="cursor-pointer rounded-lg border border-border bg-card px-4 py-2.5 text-sm">Export</summary><div className="absolute right-0 z-10 mt-1 grid rounded-lg border border-border bg-card shadow-card p-1"><Button variant="ghost" onClick={() => void exportFile("xlsx")}>Excel</Button><Button variant="ghost" onClick={() => void exportFile("csv")}>CSV</Button></div></details>}
     {area === "follow-ups" && allowed && <Button variant={reeligibleView ? "primary" : "secondary"} aria-pressed={reeligibleView} onClick={() => filter("workflow", "reeligible")}>Re-Eligible</Button>}
     {reeligibleView && <Button variant="secondary" onClick={() => filter("workflow", "")}>Daily Follow-up Data</Button>}
-    {area !== "sessions" && can(`daily_operations:${area}`, "create") && <Button onClick={() => { setNotice(""); setEditing(null); }}>+ Add record</Button>}
+    {area !== "sessions" && can(`daily_operations:${area}`, "create") && <Button onClick={() => { setNotice(""); setStandaloneIdentity(undefined); if(area === "follow-ups")setIdentitySearch(true);else setEditing(null); }}>+ Add record</Button>}
   </>}>
     {!loading && !allowed ? <p role="alert">You do not have permission to view this work area.</p> : <>
       {isOwner && area === "follow-ups" && <Button variant="secondary" onClick={()=>setIdentityReview(true)}>Preview identity review</Button>}
@@ -128,7 +131,7 @@ export function DailyOperationsPage({ area }: { area: Area }) {
       {query.isLoading || loading ? <p role="status">Loading records…</p> : query.isError ? <Button variant="secondary" onClick={() => void query.refetch()}>Retry</Button> : <>
         <TableContainer><Table aria-label={`${areas[area]} records`}><TableHead><TableHeadRow>{visibleColumns.map(([key, label]) => <Th key={key}>{label}</Th>)}<Th className="sticky right-0 bg-card">Actions</Th></TableHeadRow></TableHead><TableBody>
           {!query.data?.items.length ? <TableRow><Td colSpan={visibleColumns.length + 1}><div className="py-8 text-center text-textSecondary">No records match these filters.{area !== "sessions" && " Use Add record to enter your first row."}</div></Td></TableRow> : query.data.items.map(row => <TableRow key={row.id} style={area === "follow-ups" ? statusRowStyle(text(row.status),statuses.data??[]) : undefined} className={area === "follow-ups" ? "[&>td]:!bg-inherit hover:brightness-95 focus-within:outline focus-within:outline-2 focus-within:outline-current" : ""}>
-            {visibleColumns.map(([key]) => <Td key={key} className="py-2.5 max-w-xs"><span title={key==="bank"&&area==="follow-ups"?cell("banks",row.banks):undefined} className={key === "status" ? "inline-block rounded-md bg-primary/5 px-2 py-1 text-xs font-medium" : key==="bank"?"line-clamp-2":""}>{cell(key, area==="follow-ups"&&key==="status"?(row.status_display||row.status):area==="follow-ups"&&key==="bank"?(row.banks||row.bank):row[key])}</span>{key === "customer_name" && Boolean(row.identity_warning) && <span role="status" className="block text-xs text-orange-700">{String(row.identity_warning)}</span>}{area === "progress" && key === "customer_name" && row.source === "manual" && <span className="block text-xs text-textSecondary">Daily entry</span>}</Td>)}
+            {visibleColumns.map(([key]) => <Td key={key} className="py-2.5 max-w-xs"><span title={key==="bank"&&area==="follow-ups"?cell("banks",row.banks):undefined} className={key === "status" ? "inline-block rounded-md bg-primary/5 px-2 py-1 text-xs font-medium" : key==="bank"?"line-clamp-2":""}>{cell(key, area==="follow-ups"&&key==="status"?(row.status_display||row.status):area==="follow-ups"&&key==="bank"?(row.banks||row.bank):row[key])}</span>{key === "customer_name" && area === "follow-ups" && <span className="mt-1 block text-xs font-medium">{text(row.relationship_label) || (row.application_id ? "Linked - Application" : row.customer_id ? "Linked - Customer" : row.lead_id ? "Linked - Lead" : "Standalone - Unlinked")}</span>}{key === "customer_name" && Boolean(row.identity_warning) && <span role="status" className="block text-xs text-orange-700">{String(row.identity_warning)}</span>}{area === "progress" && key === "customer_name" && row.source === "manual" && <span className="block text-xs text-textSecondary">Daily entry</span>}</Td>)}
             <Td className={`sticky right-0 py-2 ${area === "follow-ups" ? "bg-inherit" : "bg-card"}`}><div className="flex items-center gap-1">
               {(area !== "sessions" && can(`daily_operations:${area}`, "edit")) && <Button variant="ghost" size="sm" className={area === "follow-ups" ? "!text-inherit focus-visible:!outline-current" : ""} onClick={() => void inspect(row, true)}>Edit</Button>}
               <Button variant="ghost" size="sm" className={area === "follow-ups" ? "!text-inherit focus-visible:!outline-current" : ""} onClick={() => void inspect(row, false)}>{area === "sessions" ? "Session history" : "History"}</Button>
@@ -142,13 +145,14 @@ export function DailyOperationsPage({ area }: { area: Area }) {
       {area === "sessions" && <p className="mt-3 text-xs text-textSecondary">Eligible session time includes the existing inactivity allowance and is not verified productive work. Times use {query.data?.business_timezone ?? "the business timezone"}.</p>}
       {query.data?.metrics && <details className="mt-4 text-sm"><summary className="cursor-pointer text-textSecondary">Official loan totals</summary><p className="mt-2">Approved offers: {money(query.data.metrics.approved_amount)} · Verified disbursed: {money(query.data.metrics.disbursed_amount)}. Manual daily entries do not change these totals.</p></details>}
     </>}
+    {identitySearch && <FollowUpIdentitySearch onClose={()=>setIdentitySearch(false)} onSelected={row=>{setIdentitySearch(false);setEditing(row);}} onStandalone={identity=>{setIdentitySearch(false);setStandaloneIdentity(identity);setEditing(null);}}/>}
     <Modal open={editing !== undefined} title={editing ? "Edit record" : "Add record"} onClose={() => setEditing(undefined)} size="lg">
       {editing && Boolean(editing.working_key) && <p className="mb-4 flex flex-wrap gap-3 text-sm">
         {editing.lead_id ? <Link className="text-primary underline" to={`/leads/${String(editing.lead_id)}`}>Original lead</Link> : null}
         {editing.application_id ? <Link className="text-primary underline" to={`/applications/${String(editing.application_id)}`}>Original application</Link> : null}
         <span>Linked workspace · business status changes remain in the original record.</span>
       </p>}
-      {editing !== undefined && <RecordForm key={editing?.id ?? "new"} area={area} record={editing ?? undefined} onCancel={() => setEditing(undefined)} onSaved={() => { setEditing(undefined); setNotice("Record saved."); refresh(); }} />}
+      {editing !== undefined && <RecordForm initialIdentity={editing ? undefined : standaloneIdentity} key={editing?.id ?? "new"} area={area} record={editing ?? undefined} onCancel={() => setEditing(undefined)} onSaved={() => { setEditing(undefined); setNotice("Record saved."); refresh(); }} />}
     </Modal>
     <Modal open={!!history} title="Record history" onClose={() => setHistory(null)} size="lg">
       {area === "sessions" && <div className="space-y-3">{((history?.sessions ?? []) as Row[]).map(session => <div key={session.id} className="rounded-lg border border-border p-3 text-sm">

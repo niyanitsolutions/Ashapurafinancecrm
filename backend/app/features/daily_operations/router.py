@@ -125,6 +125,15 @@ async def lookups(
     )
 
 
+@router.get("/follow-up-identities")
+async def follow_up_identities(
+    actor: Actor, db: Db, search: str = Query(default="", max_length=120)
+) -> ApiResponse[Any]:
+    from app.features.daily_operations.resolution import search as resolve
+
+    return ApiResponse.ok(await resolve(DailyOperationsService(db), actor, search))
+
+
 @router.post("/linked-follow-up")
 async def linked_follow_up(payload: OpenLinkedRequest, actor: Actor, db: Db) -> ApiResponse[dict[str, Any]]:
     return ApiResponse[dict[str, Any]].ok(await open_linked(DailyOperationsService(db), payload, actor))
@@ -567,6 +576,7 @@ async def restore_status_option(
 
 
 class IdentityDecision(BaseModel):
+    application_id: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{24}$")
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     version: int = Field(ge=1)
     customer_id: str = Field(pattern=r"^[a-fA-F0-9]{24}$")
@@ -581,6 +591,87 @@ class IdentityRollback(BaseModel):
     event_id: str = Field(pattern=r"^[a-fA-F0-9]{24}$")
     reason: str = Field(min_length=5, max_length=1000)
     confirmed: Literal[True]
+
+
+class IdentityReviewDisposition(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    version: int = Field(ge=1)
+    decision: Literal["reject_suggestion", "leave_standalone", "manual_review"]
+    reason: str = Field(min_length=5, max_length=1000)
+
+
+@router.post("/identity-review/{record_id}/decision")
+async def identity_review_decision(
+    record_id: str, body: IdentityReviewDisposition, actor: Actor, db: Db
+) -> ApiResponse[Any]:
+    from bson import ObjectId
+
+    from app.core.exceptions import ConflictError, ForbiddenError
+    from app.shared.audit_log import AuditLog
+
+    if actor.role != "owner":
+        raise ForbiddenError("Owner review is required.")
+    if not ObjectId.is_valid(record_id):
+        raise ValidationError("Invalid record ID.")
+    async with await db.client.start_session() as session, session.start_transaction():
+        row = await db.daily_follow_ups.find_one(
+            {"_id": ObjectId(record_id), "version": body.version, "is_deleted": False},
+            session=session,
+        )
+        if not row:
+            raise ConflictError("Record changed. Generate a fresh preview.")
+        if body.decision == "manual_review":
+            from app.utils.datetime import utc_now
+
+            if len(row.get("history", [])) >= 250:
+                raise ConflictError("History limit reached; review archival first.")
+            changed = await db.daily_follow_ups.update_one(
+                {"_id": row["_id"], "version": body.version},
+                {
+                    "$set": {
+                        "identity_review_state": "pending",
+                        "updated_by": actor.require_id(),
+                        "updated_at": utc_now(),
+                    },
+                    "$inc": {"version": 1},
+                    "$push": {
+                        "history": {
+                            "source": "identity_review",
+                            "actor_id": actor.require_id(),
+                            "at": utc_now(),
+                            "before": {"identity_review_state": row.get("identity_review_state")},
+                            "after": {"identity_review_state": "pending"},
+                            "reason": body.reason,
+                        }
+                    },
+                },
+                session=session,
+            )
+            if not changed.modified_count:
+                raise ConflictError("Record changed. Generate a fresh preview.")
+        audit = AuditLog(
+            event_type="daily_identity_review_decision",
+            user_id=actor.require_id(),
+            metadata={
+                "record_id": record_id,
+                "version": body.version,
+                "decision": body.decision,
+                "reason": body.reason,
+            },
+        )
+        await db.audit_logs.insert_one(
+            audit.model_dump(by_alias=True, exclude={"id"}), session=session
+        )
+    return ApiResponse.ok(
+        {"decision": body.decision, "record_unchanged": body.decision != "manual_review"}
+    )
+
+
+@router.get("/identity-review/duplicates")
+async def identity_duplicates(actor: Actor, db: Db) -> ApiResponse[Any]:
+    from app.features.daily_operations.duplicate_report import preview
+
+    return ApiResponse.ok(await preview(db, actor))
 
 
 @router.get("/identity-review/preview")

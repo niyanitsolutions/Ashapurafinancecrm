@@ -11,7 +11,7 @@ import { SubmitButton } from "@/components/forms/SubmitButton";
 import { SimplePageLayout } from "@/components/layout/SimplePageLayout";
 import { PermissionMatrixSection } from "@/features/employee/components/PermissionMatrixSection";
 import {
-  createEmployee,
+  createEmployee, previewEmployeeIdentity, type EmployeeIdentityPreview,
   listBranches,
   listDepartments,
   listDesignations,
@@ -35,6 +35,9 @@ const todayIso = () => todayISTDateString();
 export function CreateEmployeePage() {
   const [onboardingMode,setOnboardingMode]=useState<"account_only"|"owner_complete">("account_only");
   const navigate = useNavigate();
+  const [identity,setIdentity]=useState<EmployeeIdentityPreview|null>(null);
+  const [identityReason,setIdentityReason]=useState("");
+  const [identityConfirmed,setIdentityConfirmed]=useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
   const [departments, setDepartments] = useState<MasterDataItem[]>([]);
   const [designations, setDesignations] = useState<MasterDataItem[]>([]);
@@ -79,7 +82,15 @@ export function CreateEmployeePage() {
     }
 
     try {
+      const resolved = await previewEmployeeIdentity(values.mobile);
+      setIdentity(resolved);
+      if(resolved.state !== "new" && (!resolved.can_add_employee || !identityConfirmed || identityReason.trim().length<5 || identity?.user_id!==resolved.user_id || identity?.version!==resolved.version || identity?.mobile!==resolved.mobile)) {
+        setIdentityConfirmed(false);
+        setApiError(resolved.state==="employee" ? "An Employee already exists. Open their existing profile." : resolved.message || `This mobile number is already registered as a ${resolved.account_type === "customer" ? "Customer" : resolved.account_type === "referral_partner" ? "Partner" : "User"}. Review the account below, verify that it is the intended person and explicitly authorize Employee access.`);
+        return;
+      }
       const employee = await createEmployee({
+        ...(resolved.state!=="new" ? {existing_user_id:resolved.user_id,identity_version:resolved.version,identity_confirmed:true,identity_reason:identityReason} : {}),
         ...values,
         onboarding_mode:onboardingMode,
         joining_date: todayIso(),
@@ -109,7 +120,17 @@ export function CreateEmployeePage() {
     <SimplePageLayout title="Add Employee" subtitle="Just the essentials — detailed HR information can be added later from their profile." backTo="/employees">
       <form onSubmit={handleSubmit(onSubmit)} noValidate className="max-w-4xl mx-auto space-y-6">
         <ErrorBanner message={apiError} />
-        <label className="block">Creation workflow<select value={onboardingMode} onChange={e=>setOnboardingMode(e.target.value as "account_only"|"owner_complete")} className="ml-3 rounded border border-border p-2"><option value="account_only">Account only ? employee completes profile after login</option><option value="owner_complete">Owner completes profile and documents before activation</option></select></label>
+        {identity && identity.state!=="new" && <section className="rounded-card border border-border bg-card p-4 space-y-3">
+          <h2 className="font-semibold">Existing account identity</h2>
+          <p>{[identity.display_name,identity.account_type,identity.mobile,identity.status,identity.customer_code,identity.partner_code,identity.employee_code].filter(Boolean).join(" | ")}</p>
+          {identity.employee_id && <a className="text-primary underline" href={`/employees/${identity.employee_id}`}>Open existing Employee</a>}
+          {identity.customer_id && <a className="block text-primary underline" href={`/customers/${identity.customer_id}`} target="_blank" rel="noopener noreferrer">View existing Customer account</a>}
+          {identity.partner_id && <a className="block text-primary underline" href="/referral-partners" target="_blank" rel="noopener noreferrer">View existing Partner accounts</a>}
+          {identity.can_add_employee && <><p className="text-sm">Add Employee access only after verifying this is the intended person. Customer / Partner profile and credentials remain intact. The password above is for the added Employee access.</p><FormField label="Identity verification reason" value={identityReason} maxLength={1000} onChange={e=>setIdentityReason(e.target.value)}/><label className="flex gap-2"><input type="checkbox" checked={identityConfirmed} onChange={e=>setIdentityConfirmed(e.target.checked)}/>I verified the existing identity and authorize adding Employee access.</label></>}
+          <Button type="button" variant="secondary" onClick={()=>{setIdentity(null);setIdentityConfirmed(false);setApiError(null);}}>Change mobile number / cancel association</Button>
+        </section>}
+
+        <label className="block">Creation workflow<select value={onboardingMode} onChange={e=>setOnboardingMode(e.target.value as "account_only"|"owner_complete")} className="mt-2 block w-full min-w-0 rounded border border-border p-2"><option value="account_only">Account only ? employee completes profile after login</option><option value="owner_complete">Owner completes profile and documents before activation</option></select></label>
 
         <div className="bg-card border border-border rounded-card shadow-card p-6">
           <h2 className="text-sm font-semibold text-text mb-1">Basic Information</h2>

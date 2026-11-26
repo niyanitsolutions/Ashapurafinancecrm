@@ -169,9 +169,38 @@ async def daily_sessions(
                 "user_id": {"$in": [day["user_id"] for day in days]},
             }
         )
+    membership_users = [
+        str(user["_id"])
+        for user in await service.db.users.find(
+            {
+                "_id": {
+                    "$in": [
+                        ObjectId(day["user_id"])
+                        for day in days
+                        if ObjectId.is_valid(day["user_id"])
+                    ]
+                },
+                "employee_access": {"$type": "object"},
+            },
+            {"_id": 1},
+        ).to_list(len(days))
+    ]
     families = await service.db.sessions.aggregate(
         [
-            {"$match": {"is_deleted": False, "$or": bounds}},
+            {
+                "$match": {
+                    "is_deleted": False,
+                    "$or": bounds,
+                    "$and": [
+                        {
+                            "$or": [
+                                {"active_role": "employee"},
+                                {"active_role": None, "user_id": {"$nin": membership_users}},
+                            ]
+                        }
+                    ],
+                }
+            },
             {"$sort": {"updated_at": 1, "_id": 1}},
             {
                 "$group": {

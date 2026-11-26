@@ -51,6 +51,7 @@ export function ForceChangePasswordPage() {
       <form onSubmit={onSubmit} noValidate>
         <ErrorBanner message={error} />
         <FormField
+          id="employee-temporary-password"
           label="Temporary Password"
           type="password"
           value={currentPassword}
@@ -58,6 +59,7 @@ export function ForceChangePasswordPage() {
           required
         />
         <FormField
+          id="employee-new-password"
           label="New Password"
           type="password"
           minLength={8}
@@ -67,6 +69,7 @@ export function ForceChangePasswordPage() {
         />
         <PasswordStrengthChecklist password={newPassword} />
         <FormField
+          id="employee-confirm-new-password"
           label="Confirm New Password"
           type="password"
           value={confirmPassword}

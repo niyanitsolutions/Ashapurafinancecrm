@@ -1,6 +1,6 @@
 from typing import Annotated, Any
 
-from fastapi import Depends
+from fastapi import Depends, Request
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.config.database import get_database
@@ -23,6 +23,7 @@ def get_advisor_service(db: Annotated[AsyncIOMotorDatabase[Any], Depends(get_dat
 
 
 async def require_insurance_management_read_access(
+    request: Request,
     subject: Annotated[str, Depends(get_current_subject)],
     db: Annotated[AsyncIOMotorDatabase[Any], Depends(get_database)],
 ) -> User:
@@ -38,6 +39,9 @@ async def require_insurance_management_read_access(
         raise ForbiddenError("Account no longer exists.")
     if user.status != ACCOUNT_STATUS_ACTIVE:
         raise UnauthorizedError("Account is not active.")
+    from app.features.auth.role_context import effective_user
+
+    user = await effective_user(db, user, getattr(request.state, "active_role", None))
 
     engine = PermissionEngine(db)
     resources = ["advisors"]

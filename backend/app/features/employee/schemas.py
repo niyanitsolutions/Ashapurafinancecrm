@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from app.features.employee.constants import DocumentType, EmploymentStatus, EmploymentType, Gender
 from app.security.password import PasswordStr
@@ -39,6 +39,18 @@ class BankDetailsResponse(BaseModel):
 
 
 class CreateEmployeeRequest(BaseModel):
+    existing_user_id: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{24}$")
+    identity_version: int | None = Field(default=None, ge=1)
+    identity_confirmed: bool = False
+    identity_reason: str = Field(default="", max_length=1000)
+
+    @field_validator("mobile", mode="before")
+    @classmethod
+    def canonical_mobile(cls, value: str) -> str:
+        from app.shared.customer_identity import normalize_mobile
+
+        return normalize_mobile(value)
+
     onboarding_mode: Literal["account_only", "owner_complete"] = "account_only"
     mobile: str = Field(pattern=r"^[6-9]\d{9}$")
     initial_password: PasswordStr

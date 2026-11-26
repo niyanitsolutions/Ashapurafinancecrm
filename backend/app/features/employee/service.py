@@ -130,8 +130,11 @@ class EmployeeService:
     # ---------------------------------------------------------------- create / update
 
     async def create_employee(self, payload: CreateEmployeeRequest, owner: User) -> Employee:
-        if await self._users.find_by_mobile(payload.mobile) is not None:
-            raise ConflictError("This mobile number is already registered.")
+        if owner.role != OWNER:
+            raise ForbiddenError("Only the Owner can create Employee access.")
+        from app.features.employee.identity import resolve_existing
+
+        existing = await resolve_existing(self._db, payload, owner)
         if await self._employees.find_by_email(payload.email) is not None:
             raise ConflictError("This email is already registered.")
         await self._validate_master_data_refs(
@@ -152,7 +155,9 @@ class EmployeeService:
             must_change_password=True,
             created_by=owner.require_id(),
         )
-        user_id = await self._users.insert(user)
+        from bson import ObjectId
+
+        user_id = existing.require_id() if existing else str(ObjectId())
 
         employee_code = await generate_id(self._db, IdPrefix.EMPLOYEE)
         display_name = payload.display_name or f"{payload.first_name} {payload.last_name}"
@@ -183,17 +188,9 @@ class EmployeeService:
             product_ids=payload.product_ids,
             created_by=owner.require_id(),
         )
-        employee_id = await self._employees.insert(employee)
-        from bson import ObjectId
-        await self._db.employees.update_one({"_id":ObjectId(employee_id)},{"$set":{"onboarding":{"mode":payload.onboarding_mode,"status":"incomplete","version":0,"history":[]}}})
+        from app.features.employee.identity import commit_employee
 
-        await write_audit_log(
-            self._db,
-            event_type=AuditEvent.EMPLOYEE_CREATED,
-            user_id=owner.require_id(),
-            metadata={"employee_id": employee_id, "employee_code": employee_code},
-        )
-        return await self._employees.find_by_id(employee_id) or employee
+        return await commit_employee(self._db, payload, owner, user, existing, employee)
 
     async def update_employee(self, employee_id: str, payload: UpdateEmployeeRequest, owner: User) -> Employee:
         employee = await self._get_or_404(employee_id)
@@ -287,6 +284,7 @@ class EmployeeService:
 
     async def _validate_initial_hr_activation(self, employee_id: str, changes: dict[str,Any] | None = None) -> None:
         from bson import ObjectId
+
         from app.features.employee.hr_documents import HrDocuments
         raw = await self._db.employees.find_one({"_id":ObjectId(employee_id),"is_deleted":False})
         if not raw:
@@ -327,7 +325,13 @@ class EmployeeService:
         """Pairs employment status with login access — see docs/KNOWN_LIMITATIONS.md for
         the ON_LEAVE-does-not-block-login judgment call."""
         new_account_status = ACCOUNT_STATUS_DISABLED if employment_status in EmploymentStatus.LOGIN_BLOCKED else ACCOUNT_STATUS_ACTIVE
-        await self._users.update(user_id, {"status": new_account_status})
+        user = await self._users.find_by_id(user_id)
+        if user and user.role != EMPLOYEE and user.employee_access:
+            await self._users.update(
+                user_id, {"employee_access.enabled": new_account_status == ACCOUNT_STATUS_ACTIVE}
+            )
+        else:
+            await self._users.update(user_id, {"status": new_account_status})
 
     # ---------------------------------------------------------------- read / list / export
 
@@ -337,6 +341,8 @@ class EmployeeService:
         return employee
 
     async def get_own_employee(self, actor: User) -> Employee:
+        if actor.role not in {OWNER, EMPLOYEE}:
+            raise ForbiddenError("Employee sign-in is required.")
         employee = await self._employees.find_by_user_id(actor.require_id())
         if employee is None:
             raise NotFoundError("No employee profile found for this account.")
@@ -398,6 +404,11 @@ class EmployeeService:
         """Triggers the existing public forgot-password flow for this employee's mobile —
         reuses AuthService unmodified rather than adding a new Auth capability."""
         employee = await self._get_or_404(employee_id)
+        identity = await self._users.find_by_id(employee.user_id)
+        if identity and identity.role != EMPLOYEE and identity.employee_access:
+            raise ValidationError(
+                "Added Employee access uses a separate password. Use Change Password while signed in with Employee access. The existing SMS recovery action cannot reset this credential or the primary Customer/Partner credential."
+            )
         await self._auth.forgot_password(mobile=employee.mobile)
         await write_audit_log(
             self._db, event_type=AuditEvent.EMPLOYEE_PASSWORD_RESET_TRIGGERED, user_id=owner.require_id(),
@@ -474,7 +485,8 @@ class EmployeeService:
     # frontend page consumes this yet; see docs/KNOWN_LIMITATIONS.md.
 
     async def get_document_upload_url(self, employee_id: str, document_type: str, file_name: str, owner: User, content_type: str | None) -> tuple[str, str]:
-        from app.features.employee.hr_documents import HrDocuments, UploadInput, MAX_SIZE
+        from app.features.employee.hr_documents import MAX_SIZE, HrDocuments, UploadInput
+
         intent = await HrDocuments(self).upload(employee_id, UploadInput.model_validate({"category":document_type,"file_name":file_name,"content_type":content_type or "application/pdf","size":MAX_SIZE}), owner)
         saved = await self._db.employee_upload_intents.find_one({"_id":intent["ticket"]})
         assert saved is not None
@@ -482,7 +494,9 @@ class EmployeeService:
 
     async def confirm_employee_document(self, employee_id: str, document_type: str, file_name: str, s3_key: str, content_type: str | None, owner: User) -> EmployeeDocument:
         from bson import ObjectId
-        from app.features.employee.hr_documents import HrDocuments, ConfirmInput
+
+        from app.features.employee.hr_documents import ConfirmInput, HrDocuments
+
         await self._get_or_404(employee_id)
         raw = await self._db.employees.find_one({"_id":ObjectId(employee_id)})
         intent = await self._db.employee_upload_intents.find_one({"key":s3_key,"employee_id":employee_id,"actor_id":owner.require_id(),"category":document_type,"state":"pending","expires_at":{"$gt":utc_now()}})
@@ -580,6 +594,8 @@ class EmployeeService:
         self._ensure_self(employee, actor)
 
     def _ensure_self(self, employee: Employee, actor: User) -> None:
+        if actor.role not in {OWNER, EMPLOYEE}:
+            raise ForbiddenError("Employee sign-in is required.")
         if employee.user_id != actor.require_id():
             raise ForbiddenError("You can only access your own profile.")
 

@@ -59,7 +59,13 @@ export interface EmployeeDetail extends EmployeeListItem {
   updated_at: string;
 }
 
+export interface EmployeeIdentityPreview { state: "new"|"existing"|"employee"|"conflict"; mobile?:string; user_id?:string; version?:number; account_type?:string; status?:string; display_name?:string; customer_id?:string; customer_code?:string; partner_id?:string; partner_code?:string; employee_id?:string; employee_code?:string; can_add_employee?:boolean; message?:string }
+export function previewEmployeeIdentity(mobile:string) {return apiRequest<EmployeeIdentityPreview>(`/employees/identity-preview?mobile=${encodeURIComponent(mobile)}`);}
 export interface CreateEmployeeInput {
+  existing_user_id?:string;
+  identity_version?:number;
+  identity_confirmed?:boolean;
+  identity_reason?:string;
   onboarding_mode?: "account_only"|"owner_complete";
   mobile: string;
   initial_password: string;

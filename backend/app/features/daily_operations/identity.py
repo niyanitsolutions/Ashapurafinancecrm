@@ -94,16 +94,10 @@ async def prepare(service: Any, payload: Any, actor: Any) -> dict[str, Any]:
         raise ConflictError(
             "Possible duplicate identity: name-only, mobile-only or ambiguous match. Ask the Owner to verify the identity; enter an Owner review reason to record a distinct customer decision."
         )
-    elif len(matches["exact"]) == 1:
-        chosen = matches["exact"][0]
-        # Employees may reuse only a customer reachable through their current assignments.
-        if actor.role != OWNER:
-            assignment = await service.employee_id(actor)
-            linked = await service.db.applications.find_one(
-                {"customer_id": chosen, "assigned_to": assignment, "is_deleted": False}, {"_id": 1}
-            )
-            if not linked:
-                raise ConflictError("This identity requires Owner review before linking.")
+    elif matches["exact"]:
+        raise ConflictError(
+            "An existing CRM identity matches. Search and explicitly select its Application or Lead to open the linked workspace; ask the Owner to review a customer without applications."
+        )
     data: dict[str, Any] = {
         "identity_state": "reviewed_distinct"
         if ambiguous and not chosen
@@ -126,6 +120,26 @@ async def prepare(service: Any, payload: Any, actor: Any) -> dict[str, Any]:
         if not user:
             raise ConflictError("Customer ownership relationship needs Owner review.")
         data.update(customer_id=chosen, user_id=uid)
+    if chosen and await service.db.applications.find_one(
+        {"customer_id": chosen, "is_deleted": False}, {"_id": 1}
+    ):
+        raise ConflictError(
+            "Select the intended Application and update its existing linked workspace."
+        )
+    # A manually entered prospect must not bypass an existing Lead relationship.
+    if await service.db.leads.find_one(
+        {
+            "is_deleted": False,
+            "$or": [
+                {"mobile": {"$regex": mobile_pattern(mobile)}},
+                {"full_name": {"$regex": name_pattern(payload.customer_name), "$options": "i"}},
+            ],
+        },
+        {"_id": 1},
+    ) and not (actor.role == OWNER and reason and not chosen):
+        raise ConflictError(
+            "A CRM identity requires review. Search and select the intended Lead or Application; no automatic linking was performed."
+        )
     activity = payload.separate_activity_reason.strip()
     if not activity:
         from app.utils.datetime import ist_date_to_utc_midnight
@@ -299,6 +313,28 @@ async def resolve_rows(db: Any, rows: list[dict[str, Any]]) -> None:
                 row["identity_warning"] = "Customer name is missing; verify the linked identity."
 
 
+async def review_matches(db: Any, row: dict[str, Any]) -> dict[str, Any]:
+    try:
+        matches = await candidates(db, row.get("customer_name", ""), row.get("customer_number", ""))
+    except ValueError:
+        matches = {"exact": [], "partial": [], "truncated": False}
+    reference_ids = [row.get("customer_id")]
+    if ObjectId.is_valid(row.get("application_id")):
+        application = await db.applications.find_one(
+            {"_id": ObjectId(row["application_id"]), "is_deleted": False}, {"customer_id": 1}
+        )
+        reference_ids.append((application or {}).get("customer_id"))
+    for cid in reference_ids:
+        if ObjectId.is_valid(cid) and await db.customers.find_one(
+            {"_id": ObjectId(cid), "is_deleted": False}, {"_id": 1}
+        ):
+            if cid not in matches["exact"]:
+                matches["exact"].append(cid)
+            if cid in matches["partial"]:
+                matches["partial"].remove(cid)
+    return matches
+
+
 async def preview(db: Any, actor: Any, after: str | None = None, limit: int = 50) -> dict[str, Any]:
     if actor.role != OWNER:
         raise ForbiddenError("Owner review is required.")
@@ -321,15 +357,7 @@ async def preview(db: Any, actor: Any, after: str | None = None, limit: int = 50
         await resolve_rows(db, [resolved])
         missing = name_key(row.get("customer_name", "")) in {"", "customer", "name unavailable"}
         counts["missing_names"] += int(missing)
-        matches: dict[str, Any]
-        try:
-            matches = (
-                await candidates(db, row.get("customer_name", ""), row.get("customer_number", ""))
-                if not missing
-                else {"exact": [], "partial": [], "truncated": False}
-            )
-        except ValueError:
-            matches = {"exact": [], "partial": [], "truncated": False}
+        matches = await review_matches(db, row)
         state = resolved.get("identity_state", "independent")
         safe = len(matches["exact"]) == 1 and not matches["truncated"] and state != "manual_review"
         counts["valid_linked"] += int(state == "linked_current")
@@ -357,6 +385,54 @@ async def preview(db: Any, actor: Any, after: str | None = None, limit: int = 50
                 "version": row.get("version", 1),
                 "missing_name": missing,
                 "identity_state": state,
+                "customer_name": row.get("customer_name", ""),
+                "customer_number": row.get("customer_number", ""),
+                "customer_id": row.get("customer_id"),
+                "application_id": row.get("application_id"),
+                "candidate_details": [
+                    {
+                        "id": str(c["_id"]),
+                        "name": c.get("full_name", ""),
+                        "mobile": c.get("mobile", ""),
+                        "code": c.get("customer_code", ""),
+                        "reason": "Exact normalized mobile and name"
+                        if str(c["_id"]) in matches["exact"]
+                        else "Partial identity match ? verify ownership",
+                        "applications": [
+                            {
+                                "id": str(a["_id"]),
+                                "code": a.get("application_code", str(a["_id"])),
+                                "status": a.get("status", ""),
+                                "workspace_exists": bool(
+                                    await db.daily_follow_ups.find_one(
+                                        {
+                                            "application_id": str(a["_id"]),
+                                            "_id": {"$ne": row["_id"]},
+                                        },
+                                        {"_id": 1},
+                                    )
+                                ),
+                            }
+                            for a in await db.applications.find(
+                                {"customer_id": str(c["_id"]), "is_deleted": False},
+                                {"application_code": 1, "status": 1},
+                            )
+                            .limit(51)
+                            .to_list(51)
+                        ],
+                    }
+                    for c in await db.customers.find(
+                        {
+                            "_id": {
+                                "$in": [
+                                    ObjectId(cid) for cid in matches["exact"] + matches["partial"]
+                                ]
+                            }
+                        }
+                    )
+                    .limit(200)
+                    .to_list(200)
+                ],
                 "matches": matches,
                 "preview_fingerprint": token,
             }
@@ -378,7 +454,7 @@ async def apply_link(db: Any, actor: Any, record_id: str, body: Any) -> dict[str
     )
     if not row:
         raise ConflictError("Record changed. Generate a fresh preview.")
-    matches = await candidates(db, row.get("customer_name", ""), row.get("customer_number", ""))
+    matches = await review_matches(db, row)
     expected = fingerprint(
         [
             str(row["_id"]),
@@ -422,8 +498,58 @@ async def apply_link(db: Any, actor: Any, record_id: str, body: Any) -> dict[str
                 raise ConflictError(
                     "Choose the authoritative source customer; source records are never rewritten here."
                 )
-    before = {field: row[field] for field in ("customer_id", "user_id") if field in row}
-    after = {"customer_id": body.customer_id, "user_id": uid}
+    application_id = getattr(body, "application_id", None)
+    application = None
+    if application_id:
+        application = await db.applications.find_one(
+            {
+                "_id": ObjectId(application_id),
+                "customer_id": body.customer_id,
+                "user_id": uid,
+                "is_deleted": False,
+            }
+        )
+        if not application or (
+            row.get("application_id") and row["application_id"] != application_id
+        ):
+            raise ConflictError(
+                "Select an Application owned by the verified Customer; existing source relationships cannot be replaced."
+            )
+        if row.get("lead_id") and row["lead_id"] != application.get("lead_id"):
+            raise ConflictError(
+                "Existing Lead and selected Application disagree. Review separately."
+            )
+        if row.get("assigned_to") != application.get("assigned_to"):
+            raise ConflictError(
+                "Record and Application assignments differ. Review assignment separately before linking."
+            )
+        if await db.daily_follow_ups.find_one(
+            {
+                "_id": {"$ne": row["_id"]},
+                "$or": [
+                    {"application_id": application_id},
+                    {"working_key": f"application:{application_id}"},
+                ],
+            },
+            {"_id": 1},
+        ):
+            raise ConflictError(
+                "This Application already has a workspace. Histories cannot be merged or copied; leave this record standalone for review."
+            )
+    elif await db.applications.find_one(
+        {"customer_id": body.customer_id, "is_deleted": False}, {"_id": 1}
+    ):
+        raise ConflictError("Select the correct Application explicitly before linking this record.")
+    fields = ("customer_id", "user_id", "application_id", "working_key", "identity_review_state")
+    before = {field: row[field] for field in fields if field in row}
+    after = {
+        **before,
+        "customer_id": body.customer_id,
+        "user_id": uid,
+        "identity_review_state": "resolved",
+    }
+    if application:
+        after.update(application_id=application_id, working_key=f"application:{application_id}")
     return await correction(db, actor, row, before, after, body.reason, "identity_link")
 
 
@@ -457,9 +583,24 @@ async def correction(
             ObjectId(after["customer_id"]) if after.get("customer_id") else None
         )
     update = {"$set": changes, "$inc": {"version": 1}, "$push": {"history": event}}
-    absent = {key: "" for key in ("customer_id", "user_id") if key not in after}
+    if after.get("application_id"):
+        changes["application_oid"] = ObjectId(after["application_id"])
+    absent: dict[str, Any] = {
+        key: ""
+        for key in (
+            "customer_id",
+            "user_id",
+            "application_id",
+            "application_oid",
+            "working_key",
+            "identity_review_state",
+        )
+        if key not in after and (key in before or key in {"customer_id", "user_id"})
+    }
     if "customer_id" not in after:
         absent["customer_oid"] = ""
+    if "application_id" in before and "application_id" not in after:
+        absent["application_oid"] = ""
     if absent:
         update["$unset"] = absent
     audit = AuditLog(
@@ -467,18 +608,29 @@ async def correction(
         user_id=actor.require_id(),
         metadata={"record_id": str(row["_id"]), "event_id": event_id, "reason": reason},
     )
+    from pymongo.errors import DuplicateKeyError, OperationFailure
+
     # A supported replica-set transaction is mandatory; there is no partial-write fallback.
-    async with await db.client.start_session() as session, session.start_transaction():
-        updated = await db.daily_follow_ups.update_one(
-            {"_id": row["_id"], "version": row["version"], "is_deleted": False},
-            update,
-            session=session,
-        )
-        if not updated.modified_count:
-            raise ConflictError("Record changed. Generate a fresh preview.")
-        await db.audit_logs.insert_one(
-            audit.model_dump(by_alias=True, exclude={"id"}), session=session
-        )
+    try:
+        async with await db.client.start_session() as session, session.start_transaction():
+            updated = await db.daily_follow_ups.update_one(
+                {"_id": row["_id"], "version": row["version"], "is_deleted": False},
+                update,
+                session=session,
+            )
+            if not updated.modified_count:
+                raise ConflictError("Record changed. Generate a fresh preview.")
+            await db.audit_logs.insert_one(
+                audit.model_dump(by_alias=True, exclude={"id"}), session=session
+            )
+    except DuplicateKeyError:
+        raise ConflictError(
+            "The Application already has a workspace. Refresh the preview."
+        ) from None
+    except OperationFailure as exc:
+        if exc.code == 112 or exc.has_error_label("TransientTransactionError"):
+            raise ConflictError("Concurrent identity change. Generate a fresh preview.") from None
+        raise
     return {"id": str(row["_id"]), "version": row["version"] + 1, "event_id": event_id}
 
 

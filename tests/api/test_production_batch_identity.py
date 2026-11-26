@@ -104,30 +104,51 @@ def owner():
 
 async def test_activity_retry_distinct_days_and_manual_review(mock_db):
     await ensure_daily_operations_indexes(mock_db)
-    cid, _ = await seed(mock_db)
+    await seed(mock_db)
     service = DailyOperationsService(mock_db)
     actor = owner()
-    body = payload(idempotency_key="stable-submission-0001")
+    body = payload(
+        customer_name="Independent Prospect",
+        customer_number="9876543299",
+        idempotency_key="stable-submission-0001",
+    )
     first = await service.save("follow-ups", body, actor)
     retry = await service.save("follow-ups", body, actor)
-    assert first["id"] == retry["id"] and first["customer_id"] == cid
+    assert first["id"] == retry["id"] and not first.get("customer_id")
     assert "request_fingerprint" not in first and "activity_key" not in first
     with pytest.raises(ConflictError):
         await service.save(
-            "follow-ups", payload(idempotency_key="stable-submission-0002"), actor
+            "follow-ups",
+            payload(
+                customer_name="Independent Prospect",
+                customer_number="9876543299",
+                idempotency_key="stable-submission-0002",
+            ),
+            actor,
         )
     separate = await service.save(
         "follow-ups",
         payload(
+            customer_name="Independent Prospect",
+            customer_number="9876543299",
             idempotency_key="stable-submission-0002",
             separate_activity_reason="Second bank discussion",
         ),
         actor,
     )
     tomorrow = await service.save(
-        "follow-ups", payload(date="2026-11-26", remarks_date="2026-11-26"), actor
+        "follow-ups",
+        payload(
+            customer_name="Independent Prospect",
+            customer_number="9876543299",
+            date="2026-11-26",
+            remarks_date="2026-11-26",
+        ),
+        actor,
     )
     assert len({first["id"], separate["id"], tomorrow["id"]}) == 3
+    with pytest.raises(ConflictError):
+        await service.save("follow-ups", payload(), actor)
     with pytest.raises(ConflictError):
         await service.save("follow-ups", payload(customer_name="Suresh"), actor)
     reviewed = await service.save(
@@ -178,10 +199,14 @@ async def test_preview_is_bounded_read_only_and_owner_only(mock_db):
 async def test_real_concurrency_and_reconciliation_rollback(pin_mongo):
     db = pin_mongo
     await ensure_daily_operations_indexes(db)
-    cid, _ = await seed(db)
+    cid, aid = await seed(db)
     actor = owner()
     service = DailyOperationsService(db)
-    body = payload(idempotency_key="concurrent-submission-0001")
+    body = payload(
+        customer_name="Independent Prospect",
+        customer_number="9876543299",
+        idempotency_key="concurrent-submission-0001",
+    )
     results = await asyncio.gather(
         *(service.save("follow-ups", body, actor) for _ in range(6))
     )
@@ -203,6 +228,7 @@ async def test_real_concurrency_and_reconciliation_rollback(pin_mongo):
     body = IdentityDecision(
         version=1,
         customer_id=cid,
+        application_id=aid,
         preview_fingerprint=item["preview_fingerprint"],
         reason="Owner verified identity using original application",
         confirmed=True,

@@ -217,6 +217,7 @@ class PermissionEngine:
 
 def require_permission(module: str, resource: str, action: str) -> Any:
     async def dependency(
+        request: Request,
         subject: Annotated[str, Depends(get_current_subject)],
         db: Annotated[AsyncIOMotorDatabase[Any], Depends(get_database)],
     ) -> User:
@@ -231,6 +232,9 @@ def require_permission(module: str, resource: str, action: str) -> Any:
         # reports, settings — even though `/employees/me` and friends already reject them.
         if user.status != ACCOUNT_STATUS_ACTIVE:
             raise UnauthorizedError("Account is not active.")
+        from app.features.auth.role_context import effective_user
+
+        user = await effective_user(db, user, getattr(request.state, "active_role", None))
 
         engine = PermissionEngine(db)
         if not await engine.has_permission(user, module=module, resource=resource, action=action):
@@ -249,6 +253,7 @@ def require_any_permission(module: str, resource: str, actions: tuple[str, ...])
     just an alternate authorization dependency over the existing action set."""
 
     async def dependency(
+        request: Request,
         subject: Annotated[str, Depends(get_current_subject)],
         db: Annotated[AsyncIOMotorDatabase[Any], Depends(get_database)],
     ) -> User:
@@ -257,6 +262,9 @@ def require_any_permission(module: str, resource: str, actions: tuple[str, ...])
             raise ForbiddenError("Account no longer exists.")
         if user.status != ACCOUNT_STATUS_ACTIVE:
             raise UnauthorizedError("Account is not active.")
+        from app.features.auth.role_context import effective_user
+
+        user = await effective_user(db, user, getattr(request.state, "active_role", None))
 
         engine = PermissionEngine(db)
         for action in actions:
@@ -300,6 +308,9 @@ def require_stage_permission(
             raise ForbiddenError("Account no longer exists.")
         if user.status != ACCOUNT_STATUS_ACTIVE:
             raise UnauthorizedError("Account is not active.")
+        from app.features.auth.role_context import effective_user
+
+        user = await effective_user(db, user, getattr(request.state, "active_role", None))
 
         stage = request.query_params.get(query_status) if query_status else None
         record_id = request.path_params.get(path_id)
@@ -375,6 +386,9 @@ def require_any_stage_permission(
             raise ForbiddenError("Account no longer exists.")
         if user.status != ACCOUNT_STATUS_ACTIVE:
             raise UnauthorizedError("Account is not active.")
+        from app.features.auth.role_context import effective_user
+
+        user = await effective_user(db, user, getattr(request.state, "active_role", None))
 
         query_status = stage_options.get("query_status")
         stage = request.query_params.get(query_status) if query_status else None

@@ -5,8 +5,9 @@ collections, not here.
 """
 
 from datetime import datetime
+from typing import Any
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from app.constants.roles import ALL_ROLES
 from app.shared.base_document import BaseDocument
@@ -21,7 +22,15 @@ ACCOUNT_STATUS_DISABLED = "disabled"
 
 
 class User(BaseDocument):
+    @field_validator("mobile", mode="before")
+    @classmethod
+    def normalize_identity_mobile(cls, value: str) -> str:
+        from app.shared.customer_identity import normalize_mobile
+
+        return normalize_mobile(value)
+
     mobile: str
+    employee_access: dict[str, Any] | None = Field(default=None, repr=False)
     role: str = Field(pattern=f"^({'|'.join(ALL_ROLES)})$")
     password_hash: str | None = None
     pin_hash: str | None = Field(default=None, repr=False)
@@ -57,6 +66,7 @@ class Session(BaseDocument):
     """
 
     user_id: str
+    active_role: str | None = None
     family_id: str
     token_id: str
     auth_epoch: int = 0

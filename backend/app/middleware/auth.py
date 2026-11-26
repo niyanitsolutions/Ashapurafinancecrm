@@ -30,6 +30,11 @@ async def get_current_subject(
         raise UnauthorizedError("Invalid or expired token.") from exc
     if not payload.get("sid"):
         raise UnauthorizedError("Please login again to establish a secure session.")
-    await validate_family(db, str(payload["sub"]), str(payload["sid"]),
-                          activity=request.url.path.endswith("/auth/activity"))
+    session = await validate_family(
+        db,
+        str(payload["sub"]),
+        str(payload["sid"]),
+        activity=request.url.path.endswith("/auth/activity"),
+    )
+    request.state.active_role = session.get("active_role")
     return str(payload["sub"])

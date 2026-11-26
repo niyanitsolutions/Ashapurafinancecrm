@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/buttons/Button";
 import { StatusBadge } from "@/components/badges/Badge";
 import { Modal } from "@/components/overlays/Modal";
@@ -27,6 +27,7 @@ export function MoveApplicationToLoanManagementModal({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const location=useLocation();
   const [summary, setSummary] = useState<ApplicationDocumentSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -85,7 +86,7 @@ export function MoveApplicationToLoanManagementModal({
               {summary.documents_not_available > 0 && ` ${summary.documents_not_available} marked not available.`}
             </p>
           )}
-          <Link onClick={onClose} to={`/leads/document-collection?application=${lead.application_id}`} className="inline-block text-sm font-medium text-primary hover:underline">
+          <Link onClick={onClose} to={`/leads/document-collection?${new URLSearchParams({...Object.fromEntries(new URLSearchParams(location.pathname === "/leads/document-collection" ? location.search : "")),application:lead.application_id})}`} className="inline-block text-sm font-medium text-primary hover:underline">
             View Full Application →
           </Link>
 

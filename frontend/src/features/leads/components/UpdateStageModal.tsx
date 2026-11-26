@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { StatusBadge } from "@/components/badges/Badge";
 import { Button } from "@/components/buttons/Button";
 import { CheckboxField } from "@/components/forms/CheckboxField";
@@ -76,6 +76,7 @@ export function UpdateStageModal({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const location=useLocation();
   const { can } = usePermissions();
   const canEdit = can("leads:leads", "edit");
   // An employee who can already manage this lead (`edit`) sees Reject Lead exactly like
@@ -404,7 +405,7 @@ export function UpdateStageModal({
                     </p>
                   )}
                   <Link
-                    onClick={onClose} to={`/leads/document-collection?application=${detail.application_id}`}
+                    onClick={onClose} to={`/leads/document-collection?${new URLSearchParams({...Object.fromEntries(new URLSearchParams(location.pathname === "/leads/document-collection" ? location.search : "")),application:detail.application_id})}`}
                     className="inline-block text-sm font-medium text-primary hover:underline"
                   >
                     View Full Application →

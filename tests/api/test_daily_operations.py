@@ -28,8 +28,8 @@ async def follow_payload(client, mock_db, owner_headers):
     return {
         "date": "2026-10-25",
         "lead_id": None,
-        "customer_name": lead["full_name"],
-        "customer_number": lead["mobile"],
+        "customer_name": "Synthetic Unlinked Prospect",
+        "customer_number": "9000700099",
         "bank": "Test Bank",
         "status": "NEXT FOLLOW UP",
         "remarks": "Initial attempt",

@@ -39,6 +39,7 @@ interface LoginFormProps {
 export function LoginForm({ hidden, idPrefix, expectedRoles, wrongRoleMessage, returnTo, returnQuery, showCreateAccount }: LoginFormProps) {
   const navigate = useNavigate();
   const { setSession } = useAuth();
+  const [employeeAccess,setEmployeeAccess]=useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
   const {
     register,
@@ -59,7 +60,7 @@ export function LoginForm({ hidden, idPrefix, expectedRoles, wrongRoleMessage, r
       // coordinates (denied, not silently bypassed, only when a login-scoped Geo
       // Fence is actually configured).
       const coordinates = idPrefix === "internal" ? await getCurrentCoordinates() : null;
-      const result = await login(values.mobile, values.password, coordinates);
+      const result = await login(values.mobile, values.password, coordinates, employeeAccess ? "employee" : undefined);
       if (!expectedRoles.includes(result.role)) {
         setApiError(wrongRoleMessage);
         return;
@@ -101,6 +102,7 @@ export function LoginForm({ hidden, idPrefix, expectedRoles, wrongRoleMessage, r
             Forgot password?
           </Link>
         </div>
+        {idPrefix === "internal" && <label className="mb-4 flex items-center gap-2 text-sm text-white/70"><input type="checkbox" checked={employeeAccess} onChange={e=>setEmployeeAccess(e.target.checked)}/>Use Employee access added to an existing Customer / Partner account</label>}
         <SubmitButton isSubmitting={isSubmitting}>Log in</SubmitButton>
       </form>
       {showCreateAccount && (

@@ -14,7 +14,7 @@ from redis.asyncio import Redis
 
 from app.config.security import get_security_policy
 from app.config.settings import get_settings
-from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
+from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, UnauthorizedError
 from app.features.auth import lockout_service, otp_service
 from app.features.auth.constants import (
     INVITABLE_ROLES,
@@ -248,25 +248,59 @@ class AuthService:
         mobile = await self.consume_otp_verified_ticket(otp_verified_token, expected_purposes=OtpPurpose.ALL)
         await self.activate_user_with_password(mobile=mobile, new_password=new_password)
 
-    async def change_password(self, *, user_id: str, current_password: str, new_password: str) -> None:
+    async def change_password(
+        self,
+        *,
+        user_id: str,
+        current_password: str,
+        new_password: str,
+        active_role: str | None = None,
+    ) -> None:
         user = await self._users.find_by_id(user_id)
+        membership = bool(user and user.role != "employee" and active_role == "employee")
+        if user and membership:
+            from app.features.auth.role_context import effective_user
+
+            user = await effective_user(self._db, user, active_role)
         if user and user.role == "customer" and user.pin_hash:
             raise ForbiddenError("This account uses a PIN. Use Forgot PIN to change it.")
         if user is None or user.password_hash is None or not verify_password(current_password, user.password_hash):
             raise InvalidCredentialsError("Current password is incorrect.")
 
-        await self._users.update(user.require_id(), {"password_hash": hash_password(new_password), "must_change_password": False})
+        changes = (
+            {
+                "employee_access.password_hash": hash_password(new_password),
+                "employee_access.must_change_password": False,
+            }
+            if membership
+            else {"password_hash": hash_password(new_password), "must_change_password": False}
+        )
+        await self._users.update(user.require_id(), changes)
         await write_audit_log(self._db, event_type=AuditEvent.PASSWORD_CHANGE, user_id=user.require_id(), mobile=user.mobile)
 
     # ---------------------------------------------------------------- login / logout / refresh
 
     async def login(
-        self, *, mobile: str, password: str, ctx: RequestContext, latitude: float | None = None, longitude: float | None = None
+        self,
+        *,
+        mobile: str,
+        password: str,
+        ctx: RequestContext,
+        latitude: float | None = None,
+        longitude: float | None = None,
+        login_role: str | None = None,
     ) -> LoginResponse:
         if await lockout_service.is_locked(self._redis, mobile):
             raise AccountLockedError("Account is temporarily locked due to too many failed attempts.")
 
         user = await self._users.find_by_mobile(mobile)
+        if user and login_role:
+            from app.features.auth.role_context import effective_user
+
+            try:
+                user = await effective_user(self._db, user, login_role)
+            except UnauthorizedError:
+                user = None  # Generic credential failure; retain normal lockout accounting.
         from app.features.auth.pin_service import policy
         if user and user.role == "customer" and (user.pin_hash or await policy(self._db) == "pin_only"):
             raise InvalidCredentialsError("Use mobile number and PIN to log in.")
@@ -322,7 +356,7 @@ class AuthService:
                 raise InvalidCredentialsError("PIN changed. Please log in again.")
         user_id = user.require_id()
         request_key = (
-            hashlib.sha256(f"{user_id}:{ctx.login_request_key}".encode()).hexdigest()
+            hashlib.sha256(f"{user_id}:{user.role}:{ctx.login_request_key}".encode()).hexdigest()
             if ctx.login_request_key
             else None
         )
@@ -353,6 +387,7 @@ class AuthService:
         session = Session(
             user_id=user_id,
             auth_epoch=user.pin_epoch,
+            active_role=user.role,
             attendance_day_id=day_id,
             family_id=family_id,
             token_id=token_id,
@@ -518,6 +553,9 @@ class AuthService:
         from app.features.auth.session_lifecycle import validate_family
 
         await validate_family(self._db, session.user_id, session.family_id)
+        from app.features.auth.role_context import effective_user
+
+        user = await effective_user(self._db, user, session.active_role)
         user_id = user.require_id()
         new_token_id = secrets.token_urlsafe(16)
         access_token = create_access_token(user_id, claims={"role": user.role, "sid": session.family_id})
@@ -543,6 +581,7 @@ class AuthService:
                 user_id=user_id,
                 family_id=session.family_id,
                 auth_epoch=session.auth_epoch,
+                active_role=session.active_role,
                 attendance_day_id=session.attendance_day_id,
                 token_id=new_token_id,
                 refresh_token_hash=hash_value(new_refresh_token),
@@ -569,11 +608,14 @@ class AuthService:
 
     # ---------------------------------------------------------------- profile
 
-    async def get_profile(self, *, user_id: str) -> ProfileResponse:
+    async def get_profile(self, *, user_id: str, active_role: str | None = None) -> ProfileResponse:
         user = await self._users.find_by_id(user_id)
         if user is None:
             raise InvalidCredentialsError("Account no longer exists.")
 
+        from app.features.auth.role_context import effective_user
+
+        user = await effective_user(self._db, user, active_role)
         name: str | None = None
         if user.role == "owner":
             owner_profile = await self._owner_profiles.find_by_user_id(user_id)

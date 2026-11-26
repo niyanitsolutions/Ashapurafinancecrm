@@ -19,8 +19,8 @@ import { base, businessTime, followStatuses, getLookups, issueStatuses, saveReco
 
 const dateValue = (value: unknown) => value ? /^\d{4}-\d{2}-\d{2}$/.test(String(value)) ? String(value) : istDateKey(String(value)) : "";
 
-export function RecordForm({ area, record, onSaved, onCancel, onSavingChange }: {
-  area: Area; record?: Row; onSaved: () => void; onCancel: () => void; onSavingChange?: (saving:boolean)=>void;
+export function RecordForm({ area, record, onSaved, onCancel, onSavingChange, initialIdentity }: {
+  area: Area; record?: Row; initialIdentity?:Record<string,string>; onSaved: () => void; onCancel: () => void; onSavingChange?: (saving:boolean)=>void;
 }) {
   const { userId } = useAuth();
   const { isOwner } = usePermissions();
@@ -31,6 +31,7 @@ export function RecordForm({ area, record, onSaved, onCancel, onSavingChange }: 
       date: today, remarks_date: today, due_date: today, priority: "medium",
       status: area === "issues" ? "OPEN" : area === "progress" ? "Application login" : "FOLLOW UP PENDING",
     };
+    Object.assign(defaults,initialIdentity);
     for (const [key, value] of Object.entries(record ?? {})) {
       if (value != null && typeof value !== "object") defaults[key] = String(value);
     }

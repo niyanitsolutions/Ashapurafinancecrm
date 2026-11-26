@@ -39,10 +39,13 @@ def get_request_context(request: Request) -> RequestContext:
 
 
 async def get_current_active_user(
+    request: Request,
     subject: Annotated[str, Depends(get_current_subject)],
     db: Annotated[AsyncIOMotorDatabase[Any], Depends(get_database)],
 ) -> User:
     user = await UserRepository(db).find_by_id(subject)
     if user is None or user.status != ACCOUNT_STATUS_ACTIVE:
         raise UnauthorizedError("Account is not active.")
-    return user
+    from app.features.auth.role_context import effective_user
+
+    return await effective_user(db, user, getattr(request.state, "active_role", None))

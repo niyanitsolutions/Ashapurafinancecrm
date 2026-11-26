@@ -11,6 +11,7 @@ from app.features.auth.models import User
 from app.features.customer.identity_name import mongo_application_name
 from app.features.leads.document_collection import lookup
 from app.features.leads.service import LeadService
+from app.shared.customer_identity import mobile_match_pattern, normalize_mobile
 
 
 async def search_records(
@@ -22,6 +23,13 @@ async def search_records(
     if len(query) < 2 or len(query) > 120:
         return []
     regex = {"$regex": re.escape(query), "$options": "i"}
+    mobile_regex = regex
+    mobile_query: str | None = None
+    try:
+        mobile_query = normalize_mobile(query)
+        mobile_regex = {"$regex": mobile_match_pattern(mobile_query), "$options": "i"}
+    except ValueError:
+        pass  # Non-phone text keeps the existing partial/name/code search behavior.
     from datetime import UTC, datetime
 
     from app.features.leads.document_collection import date_range
@@ -47,7 +55,10 @@ async def search_records(
     if await engine.has_permission(actor, module="customer", resource="customers", action="view"):
         customer_query: dict[str, Any] = {
             "is_deleted": False,
-            "$or": [{key: regex} for key in ["customer_code", "full_name", "mobile", "email"]],
+            "$or": [
+                {key: mobile_regex if key == "mobile" else regex}
+                for key in ["customer_code", "full_name", "mobile", "email"]
+            ],
         }
         if actor.role == OWNER and re.fullmatch(r"[A-Za-z]{5}[0-9]{4}[A-Za-z]", query):
             from app.shared.customer_identity import pan_search_digest
@@ -99,9 +110,7 @@ async def search_records(
                     "mobile": "$mobile",
                     "route": {
                         "$concat": [
-                            "/leads/document-collection?customer_id=",
-                            {"$toString": "$_id"},
-                            "&expand=",
+                            "/customers/",
                             {"$toString": "$_id"},
                         ]
                     },
@@ -150,7 +159,7 @@ async def search_records(
             {
                 "$match": {
                     "$or": [
-                        {key: regex}
+                        {key: mobile_regex if key.endswith("mobile") else regex}
                         for key in [
                             "application_code",
                             "lead.lead_code",
@@ -210,8 +219,7 @@ async def search_records(
                             "$concat": [
                                 "/applications/",
                                 {"$toString": "$_id"},
-                                "?from=document-collection&customer_id=",
-                                {"$toString": "$customer._id"},
+                                "?from=document-collection",
                             ]
                         },
                     }
@@ -241,9 +249,7 @@ async def search_records(
                         "mobile": 1,
                         "route": {
                             "$concat": [
-                                "/leads/document-collection?customer_id=",
-                                {"$toString": "$_id"},
-                                "&expand=",
+                                "/customers/",
                                 {"$toString": "$_id"},
                             ]
                         },
@@ -257,7 +263,7 @@ async def search_records(
     if await engine.has_permission(actor, module="leads", resource="leads", action="view"):
         service = LeadService(db)
         leads, _ = await service.list_leads(
-            search=query,
+            search=mobile_query or query,
             source_id=None,
             product_category=None,
             product_id=None,
@@ -286,7 +292,10 @@ async def search_records(
             await db.employees.find(
                 {
                     "is_deleted": False,
-                    "$or": [{key: regex} for key in ["display_name", "employee_code", "mobile"]],
+                    "$or": [
+                        {key: mobile_regex if key == "mobile" else regex}
+                        for key in ["display_name", "employee_code", "mobile"]
+                    ],
                 },
                 {"display_name": 1, "employee_code": 1, "designation_id": 1},
             )

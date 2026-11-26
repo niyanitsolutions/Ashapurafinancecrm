@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -49,6 +49,7 @@ class ChangePasswordRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
+    login_role: Literal["employee"] | None = None
     mobile: MobileStr
     password: str
     # Optional — only meaningful for an Employee actor when an Owner has configured an

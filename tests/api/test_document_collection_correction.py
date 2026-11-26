@@ -151,13 +151,18 @@ async def test_search_projection_and_navigation_keep_identity_private(real_invoi
     )
     assert record["product_name"] == "Personal Loan" and record["status"] == "submitted"
     assert (
-        record["route"]
-        == f"/applications/{app.require_id()}?from=document-collection&customer_id={customer.require_id()}"
+        record["route"] == f"/applications/{app.require_id()}?from=document-collection"
     )
     person = next(row for row in rows if row["type"] == "customer")
-    assert (
-        person["route"]
-        == f"/leads/document-collection?customer_id={customer.require_id()}&expand={customer.require_id()}"
+    assert person["route"] == f"/customers/{customer.require_id()}"
+    canonical = await search_records(db, owner, customer.mobile)
+    formatted = await search_records(db, owner, "+91 " + customer.mobile)
+    assert {(row["type"], row["id"]) for row in canonical} == {
+        (row["type"], row["id"]) for row in formatted
+    }
+    foreign = await search_records(db, owner, "+44 " + customer.mobile)
+    assert not any(
+        row["id"] in {customer.require_id(), app.require_id()} for row in foreign
     )
     assert (
         person["customer_code"] == customer.customer_code

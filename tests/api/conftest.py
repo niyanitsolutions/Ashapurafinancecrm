@@ -16,9 +16,6 @@ os.environ.setdefault("OTP_MODE", "development")
 
 import fakeredis.aioredis
 import pytest
-from httpx import ASGITransport, AsyncClient
-from mongomock_motor import AsyncMongoMockClient
-
 from app.config.database import get_database
 from app.config.redis import get_redis
 from app.features.auth.indexes import ensure_auth_indexes
@@ -27,13 +24,17 @@ from app.features.employee.indexes import ensure_employee_indexes
 from app.features.employee.models import Branch, Department, Designation
 from app.main import create_app
 from app.security.password import hash_password
+from httpx import ASGITransport, AsyncClient
+from mongomock_motor import AsyncMongoMockClient
 
 
 @pytest.fixture
-def mock_db():
-    # tz_aware=True matches the real client (app/config/database.py:get_client()) —
-    # verified mongomock_motor honors this identically, decoding stored datetimes as
-    # tz-aware UTC instead of naive.
+def mock_db(monkeypatch):
+    # Unit mocks cannot establish MongoDB transaction guarantees. Mandatory replica-set
+    # tests use pin_mongo / real_invoice_db instead, including audit-failure rollback.
+    from mongo_unit_transactions import enable_unit_sessions
+
+    enable_unit_sessions(monkeypatch)
     return AsyncMongoMockClient(tz_aware=True)["afs_crm_test"]
 
 
@@ -69,7 +70,9 @@ def _stub_document_object_size(monkeypatch):
 
     # `InsuranceCaseService.confirm_other_document_upload` does the same real S3 HEAD
     # for the same reason — same stub, same invariant.
-    from app.features.insurance_management import service as insurance_management_service
+    from app.features.insurance_management import (
+        service as insurance_management_service,
+    )
 
     monkeypatch.setattr(insurance_management_service, "get_object_size", lambda key: 1024)
 

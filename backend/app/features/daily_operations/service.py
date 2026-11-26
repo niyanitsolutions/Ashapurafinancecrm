@@ -73,6 +73,19 @@ def public(doc: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
         doc["banks"] = saved_banks(doc)
     if "customer_number" in doc and "status" in doc:
         doc["status_display"] = doc.get("status_label") or doc["status"]
+    if "customer_number" in doc:
+        doc["relationship_label"] = (
+            "Pending Identity Review"
+            if doc.get("identity_state") == "manual_review"
+            or doc.get("identity_review_state") == "pending"
+            else "Linked - Application"
+            if doc.get("application_id")
+            else "Linked - Customer"
+            if doc.get("customer_id")
+            else "Linked - Lead"
+            if doc.get("lead_id")
+            else "Standalone - Unlinked"
+        )
     doc = calendar_values(doc)
     if "history" in doc:
         doc["history"] = [
@@ -362,7 +375,7 @@ class DailyOperationsService:
 
         else:
             data = await self.validate_issue(payload, actor, old)
-        if isinstance(payload, FollowUpInput) and not old and not import_key:
+        if isinstance(payload, FollowUpInput) and not old:
             from app.features.daily_operations.identity import prepare
 
             try:
@@ -389,7 +402,7 @@ class DailyOperationsService:
 
             data["activity_key"] = fingerprint(
                 [
-                    old.get("customer_id")
+                    old.get("working_key") or old.get("customer_id")
                     or [name_key(payload.customer_name), normalize_mobile(payload.customer_number)],
                     payload.date.isoformat(),
                     old.get("activity_slot", "primary"),
@@ -418,27 +431,30 @@ class DailyOperationsService:
                 updates["assignment_notification_pending"] = (
                     str(ObjectId()) if data.get("assigned_to") else None
                 )
-            updated = await update_activity(
-                collection,
-                {"_id": old["_id"], "version": version, "is_deleted": False},
-                {
-                    "$set": updates,
-                    "$inc": {"version": 1},
-                    "$push": {"history": event},
-                },
-                return_document=ReturnDocument.AFTER,
-            )
-            if not updated:
-                raise ConflictError("This record changed. Reload it before saving again.")
             if kind == "follow-ups" and old.get("working_key"):
-                from app.shared.audit_log import write_audit_log
+                from app.features.daily_operations.workspace_activity import commit
 
-                metadata = {"daily_follow_up_id": str(updated["_id"]), "lead_id": old.get("lead_id"),
-                            "application_id": old.get("application_id"), "customer_id": old.get("customer_id"),
-                            "fields": [key for key, value in data.items() if old.get(key) != value]}
-                await write_audit_log(self.db, event_type="daily_follow_up_updated", user_id=actor.require_id(), metadata=metadata)
-                if old.get("lead_id"):
-                    await LeadService(self.db).log_activity(old["lead_id"], "daily_follow_up_updated", actor, metadata)
+                metadata = {
+                    "daily_follow_up_id": str(old["_id"]),
+                    "lead_id": old.get("lead_id"),
+                    "application_id": old.get("application_id"),
+                    "customer_id": old.get("customer_id"),
+                    "fields": [key for key, value in data.items() if old.get(key) != value],
+                }
+                updated = await commit(self.db, old, version, updates, event, actor, metadata)
+            else:
+                updated = await update_activity(
+                    collection,
+                    {"_id": old["_id"], "version": version, "is_deleted": False},
+                    {
+                        "$set": updates,
+                        "$inc": {"version": 1},
+                        "$push": {"history": event},
+                    },
+                    return_document=ReturnDocument.AFTER,
+                )
+                if not updated:
+                    raise ConflictError("This record changed. Reload it before saving again.")
             if kind == "follow-ups":
                 from app.features.daily_operations.identity import resolve_rows
 

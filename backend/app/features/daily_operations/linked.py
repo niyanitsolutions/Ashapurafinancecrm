@@ -12,7 +12,6 @@ from app.features.auth.models import User
 from app.features.customer.service import CustomerService
 from app.features.daily_operations.service import DailyOperationsService, public
 from app.features.leads.service import LeadService
-from app.shared.audit_log import write_audit_log
 from app.shared.base_document import BaseDocument
 from app.utils.datetime import ist_date_to_utc_midnight, to_ist, utc_now
 
@@ -48,6 +47,19 @@ async def open_linked(
         )
         if application.lead_id:
             lead = await LeadService(db).get_lead_scoped(application.lead_id, actor)
+    if application and application.customer_id:
+        identity = await db.customers.find_one(
+            {
+                "_id": ObjectId(application.customer_id),
+                "user_id": application.user_id,
+                "is_deleted": False,
+            },
+            {"_id": 1},
+        )
+        if not identity:
+            raise ConflictError(
+                "Application ownership needs Owner review. No workspace was created."
+            )
     key = f"{payload.entity}:{payload.record_id}"
     if lead and not application:
         # Prefer the exact application relationship; never infer a case by phone/name.
@@ -68,6 +80,19 @@ async def open_linked(
             raise ConflictError(
                 "This lead has multiple applications. Open the intended application to start its Daily Follow-up."
             )
+    if application:
+        historical = (
+            await db.daily_follow_ups.find(
+                {"application_id": application.require_id(), "working_key": {"$ne": key}},
+                {"_id": 1},
+            )
+            .limit(1)
+            .to_list(1)
+        )
+        if historical:
+            raise ConflictError(
+                "Existing historical follow-up references this Application. Ask the Owner to review it before opening a new workspace; no duplicate was created."
+            )
     existing = await db.daily_follow_ups.find_one({"working_key": key})
     if existing:
         if existing.get("is_deleted"):
@@ -82,33 +107,49 @@ async def open_linked(
         from pymongo.errors import DuplicateKeyError
 
         try:
-            earlier = await db.daily_follow_ups.find_one_and_update(
-                {
-                    "working_key": f"lead:{lead.require_id()}",
-                    "application_id": None,
-                    "is_deleted": False,
-                },
-                {
-                    "$set": {
-                        "working_key": key,
-                        "application_id": application.require_id(),
-                        "application_oid": ObjectId(application.require_id()),
-                        "updated_at": utc_now(),
-                        "updated_by": actor.require_id(),
+            async with await db.client.start_session() as session, session.start_transaction():
+                earlier = await db.daily_follow_ups.find_one_and_update(
+                    {
+                        "working_key": f"lead:{lead.require_id()}",
+                        "application_id": None,
+                        "is_deleted": False,
                     },
-                    "$push": {
-                        "history": {
-                            "source": "application_linked",
-                            "actor_id": actor.require_id(),
-                            "at": utc_now(),
-                            "before": None,
-                            "after": {"application_id": application.require_id()},
-                        }
+                    {
+                        "$set": {
+                            "working_key": key,
+                            "application_id": application.require_id(),
+                            "application_oid": ObjectId(application.require_id()),
+                            "updated_at": utc_now(),
+                            "updated_by": actor.require_id(),
+                        },
+                        "$push": {
+                            "history": {
+                                "source": "application_linked",
+                                "actor_id": actor.require_id(),
+                                "at": utc_now(),
+                                "before": None,
+                                "after": {"application_id": application.require_id()},
+                            }
+                        },
+                        "$inc": {"version": 1},
                     },
-                    "$inc": {"version": 1},
-                },
-                return_document=ReturnDocument.AFTER,
-            )
+                    return_document=ReturnDocument.AFTER,
+                    session=session,
+                )
+                if earlier:
+                    from app.shared.audit_log import AuditLog
+
+                    audit = AuditLog(
+                        event_type="daily_workspace_application_linked",
+                        user_id=actor.require_id(),
+                        metadata={
+                            "application_id": application.require_id(),
+                            "record_id": str(earlier["_id"]),
+                        },
+                    )
+                    await db.audit_logs.insert_one(
+                        audit.model_dump(by_alias=True, exclude={"id"}), session=session
+                    )
         except DuplicateKeyError:
             earlier = await db.daily_follow_ups.find_one({"working_key": key})
         if earlier:
@@ -181,27 +222,36 @@ async def open_linked(
         doc["customer_oid"] = ObjectId(customer_id)
     # Existing unique import_key also protects this upsert on deployments before the
     # additive working_key index is installed. A duplicate click never adds history.
-    from pymongo.errors import DuplicateKeyError
+    from pymongo.errors import DuplicateKeyError, OperationFailure
 
+    from app.shared.audit_log import AuditLog
+
+    audit = AuditLog(
+        event_type="daily_follow_up_linked",
+        user_id=actor.require_id(),
+        metadata={
+            "working_key": key,
+            "application_id": doc["application_id"],
+            "customer_id": customer_id,
+        },
+    )
     try:
-        result = await db.daily_follow_ups.update_one(
-            {"working_key": key}, {"$setOnInsert": doc}, upsert=True
-        )
+        async with await db.client.start_session() as session, session.start_transaction():
+            result = await db.daily_follow_ups.update_one(
+                {"working_key": key}, {"$setOnInsert": doc}, upsert=True, session=session
+            )
+            if result.upserted_id:
+                await db.audit_logs.insert_one(
+                    audit.model_dump(by_alias=True, exclude={"id"}), session=session
+                )
     except DuplicateKeyError:
-        result = None
+        pass  # A committed concurrent creator owns this canonical workspace.
+    except OperationFailure as exc:
+        if exc.code != 112 and not exc.has_error_label("TransientTransactionError"):
+            raise
+        if not await db.daily_follow_ups.find_one({"working_key": key}):
+            raise ConflictError("Concurrent workspace change. Reload before continuing.") from None
     row = await db.daily_follow_ups.find_one({"working_key": key})
     if not row:
         raise ConflictError("The linked record changed. Reload before continuing.")
-    if result and result.upserted_id:
-        await write_audit_log(
-            db,
-            event_type="daily_follow_up_linked",
-            user_id=actor.require_id(),
-            metadata={
-                "daily_follow_up_id": str(row["_id"]),
-                "lead_id": doc["lead_id"],
-                "application_id": doc["application_id"],
-                "customer_id": customer_id,
-            },
-        )
     return public(await service.get("follow-ups", str(row["_id"]), actor))

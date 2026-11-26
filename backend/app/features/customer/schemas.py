@@ -20,9 +20,16 @@ from app.features.employee.schemas import AddressSchema
 
 class DirectRegisterRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    mobile: str = Field(pattern=r"^[0-9]{10}$")
+    mobile: str = Field(pattern=r"^[6-9][0-9]{9}$")
     pin: str = Field(pattern=r"^[0-9]{4}$", repr=False)
     confirm_pin: str = Field(pattern=r"^[0-9]{4}$", repr=False)
+
+    @field_validator("mobile", mode="before")
+    @classmethod
+    def canonical_mobile(cls, value: str) -> str:
+        from app.shared.customer_identity import normalize_mobile
+
+        return normalize_mobile(value)
 
     @model_validator(mode="after")
     def matching(self) -> Self:

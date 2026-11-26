@@ -153,14 +153,6 @@ async def test_document_collection_table_filters_and_search_responsive(
             "is_active": True,
         }
     )
-    await db.daily_follow_ups.insert_one(
-        {
-            "application_id": application.require_id(),
-            "is_deleted": False,
-            "status": custom,
-            "assigned_to": employees[0][0].require_id(),
-        }
-    )
     from app.features.leads.document_collection import filter_options
 
     initial_options = (await filter_options(db, owner)).data
@@ -218,7 +210,7 @@ async def test_document_collection_table_filters_and_search_responsive(
             "customer_number": customer.mobile,
             "date": day,
             "remarks_date": day,
-            "status": "DISBURSE",
+            "status": custom,
             "remarks": "batch-browser-original",
             "import_key": "batch-browser-daily",
             "is_deleted": False,
@@ -233,6 +225,38 @@ async def test_document_collection_table_filters_and_search_responsive(
     original_customer = await db.customers.find_one(
         {"_id": ObjectId(customer.require_id())}
     )
+    from app.features.auth.models import User
+    from app.features.customer.models import Customer
+    from app.features.employee.indexes import ensure_employee_indexes
+    from app.features.employee.models import Branch, Department, Designation
+    from app.security.pin import hash_pin
+
+    await ensure_employee_indexes(db)
+    for collection, model in (
+        ("departments", Department(name="Identity Review Department")),
+        ("designations", Designation(name="Identity Review Designation")),
+        ("branches", Branch(name="Identity Review Branch", code="SYN-IDENTITY")),
+    ):
+        await db[collection].insert_one(model.model_dump(exclude={"id"}))
+    identity_originals = []
+    for width in (390, 768, 1366):
+        identity_user = User(
+            mobile="900095" + str(width).zfill(4),
+            role="customer",
+            is_mobile_verified=True,
+            pin_hash=hash_pin("4826"),
+        )
+        uid = (
+            await db.users.insert_one(identity_user.model_dump(exclude={"id"}))
+        ).inserted_id
+        identity_profile = Customer(
+            user_id=str(uid),
+            customer_code=f"SYN-EMP-CUS-{width}",
+            full_name=f"Synthetic Identity {width}",
+            mobile=identity_user.mobile,
+        )
+        await db.customers.insert_one(identity_profile.model_dump(exclude={"id"}))
+        identity_originals.append(await db.users.find_one({"_id": uid}))
     app = client._transport.app
     app.dependency_overrides[get_database] = lambda: db
     server = uvicorn.Server(
@@ -270,7 +294,7 @@ async def test_document_collection_table_filters_and_search_responsive(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
-        output, _ = await asyncio.wait_for(process.communicate(), 240)
+        output, _ = await asyncio.wait_for(process.communicate(), 360)
         assert process.returncode == 0, output.decode(errors="replace")
         assert await db.leads.count_documents({}) == 1
         saved_apps = await db.applications.find({}).sort("_id", 1).to_list(10)
@@ -309,6 +333,23 @@ async def test_document_collection_table_filters_and_search_responsive(
             {"event_type": "document_password_revealed"}
         ).to_list(10)
         assert len(reveals) == 3 and "BrowserFixtureSecret" not in str(reveals)
+        for original in identity_originals:
+            current = await db.users.find_one({"_id": original["_id"]})
+            assert (
+                current["role"] == "customer"
+                and current["pin_hash"] == original["pin_hash"]
+            )
+            assert current["password_hash"] == original["password_hash"]
+            assert current["employee_access"]["enabled"]
+            assert not current["employee_access"]["must_change_password"]
+            assert (
+                await db.employees.count_documents({"user_id": str(original["_id"])})
+                == 1
+            )
+        assert (
+            await db.audit_logs.count_documents({"event_type": "employee_access_added"})
+            == 3
+        )
         assert await db.bin_entries.count_documents({}) == 0
         assert (await AutoAssignment(db).settings())["sequence"] == 1
         print(output.decode(errors="replace"))

@@ -77,6 +77,7 @@ async def change_password(
         user_id=current_user.require_id(),
         current_password=payload.current_password,
         new_password=payload.new_password,
+        active_role=current_user.role,
     )
     return ApiResponse[None].ok()
 
@@ -84,7 +85,12 @@ async def change_password(
 @router.post("/login", dependencies=[rate_limited(limit=10)])
 async def login(payload: LoginRequest, auth: AuthServiceDep, ctx: RequestContextDep) -> ApiResponse[LoginResponse]:
     result = await auth.login(
-        mobile=payload.mobile, password=payload.password, ctx=ctx, latitude=payload.latitude, longitude=payload.longitude
+        mobile=payload.mobile,
+        password=payload.password,
+        ctx=ctx,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+        login_role=payload.login_role,
     )
     return ApiResponse[LoginResponse].ok(result)
 
@@ -105,7 +111,9 @@ async def refresh(
 
 @router.get("/profile")
 async def get_profile(auth: AuthServiceDep, current_user: CurrentUserDep) -> ApiResponse[ProfileResponse]:
-    result = await auth.get_profile(user_id=current_user.require_id())
+    result = await auth.get_profile(
+        user_id=current_user.require_id(), active_role=current_user.role
+    )
     return ApiResponse[ProfileResponse].ok(result)
 
 

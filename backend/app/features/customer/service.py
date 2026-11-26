@@ -498,6 +498,7 @@ class CustomerService:
                 )
                 if not proof:
                     raise ValidationError("Mobile verification is invalid, expired or already used.")
+                await self._users.require_available_mobile(payload.mobile, session=session)
                 await self._db.users.insert_one(
                     user.model_dump(by_alias=True, exclude={"id"})
                     | {"_id": user_id, "registration_method": "mobile_pin"},
