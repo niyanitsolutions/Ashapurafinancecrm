@@ -447,7 +447,7 @@ class LeadService:
             search=search, customer_id=None, assigned_to=scoped_assigned_to, unassigned_only=False, status=None,
             product_category="loan", skip=0, limit=1000, sort=[("created_at", -1)], lead_id_is_none=True,
         )
-        candidates = [a for a in candidates if a.status in (ApplicationStatus.DRAFT, ApplicationStatus.SUBMITTED) and a.customer_id]
+        candidates = [a for a in candidates if a.status in (ApplicationStatus.DRAFT, ApplicationStatus.SUBMITTED) and a.customer_id and not a.daily_followup_moved_at]
         if product_id:
             candidates = [a for a in candidates if a.product_id == product_id]
         if not candidates:
@@ -741,6 +741,21 @@ class LeadService:
             actor, search=None, source_id=None, product_category=None, product_id=None, assigned_to=None,
         )
         document_collection = document_collection_leads + len(document_collection_lead_less)
+        if await self._db.applications.find_one(
+            {"daily_followup_moved_at": {"$ne": None}, "is_deleted": False}, {"_id": 1}
+        ):
+            # Once the additive movement feature is used, the current pool is authoritative.
+            # Preserve the existing legacy count path on untouched databases.
+            from app.features.leads.document_collection import CollectionFilters, pipeline
+
+            current_pool = await self._db.applications.aggregate(
+                [
+                    *(await pipeline(self._db, actor, CollectionFilters())),
+                    {"$group": {"_id": "$group_key"}},
+                    {"$count": "value"},
+                ]
+            ).to_list(1)
+            document_collection=current_pool[0]["value"] if current_pool else 0
 
         rej_assigned_to, rej_created_by = await self._scope_query(actor, None, LeadStage.REJECTED)
         rejected = await self._leads.count_filtered(assigned_to=rej_assigned_to, created_by=rej_created_by, stage=LeadStage.REJECTED)

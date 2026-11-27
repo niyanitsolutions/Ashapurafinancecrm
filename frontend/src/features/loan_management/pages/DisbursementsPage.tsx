@@ -1,5 +1,6 @@
+import { TransferScope, TransferCheck, TransferTag } from "@/features/daily_operations/HandoverTools";
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/buttons/Button";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { EmptyState } from "@/components/layout/EmptyState";
@@ -58,12 +59,13 @@ function presetRange(preset: DatePreset): { from: string; to: string } {
 // disagree (the backend computes list + count + total from a single aggregation).
 export function DisbursementsPage() {
   const { can } = usePermissions();
+  const [deepLink] = useSearchParams();
   const canEdit = can("loan_management:applications.disbursed", "edit");
   const [topUpCaseId, setTopUpCaseId] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [preset, setPreset] = useState<DatePreset>("this_month");
-  const [customFrom, setCustomFrom] = useState(presetRange("this_month").from);
-  const [customTo, setCustomTo] = useState(presetRange("this_month").to);
+  const [preset, setPreset] = useState<DatePreset>(deepLink.get("date_from")&&deepLink.get("date_to")?"custom":"this_month");
+  const [customFrom, setCustomFrom] = useState(deepLink.get("date_from")||presetRange("this_month").from);
+  const [customTo, setCustomTo] = useState(deepLink.get("date_to")||presetRange("this_month").to);
   const [productId, setProductId] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -111,7 +113,7 @@ export function DisbursementsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <TransferScope collection="application_workflows" ids={items.map(r=>r.id)} allowed={can("loan_management:applications.disbursed","assign")||can("loan_management:applications","assign")} onTransferred={()=>setRefreshKey(k=>k+1)}><div className="min-h-screen bg-background">
       <div className="p-6">
         <ErrorBanner message={error} />
 
@@ -248,7 +250,7 @@ export function DisbursementsPage() {
                 {items.map((item) => (
                   <TableRow key={item.id}>
                     <Td className="whitespace-nowrap">
-                      <Link to={`/loan-management/cases/${item.id}`} className="text-primary font-medium hover:underline">
+                      <TransferCheck id={item.id}/><TransferTag id={item.id}/><Link to={`/loan-management/cases/${item.id}`} className="text-primary font-medium hover:underline">
                         {item.case_code}
                       </Link>
                     </Td>
@@ -291,6 +293,6 @@ export function DisbursementsPage() {
           onScheduled={() => setRefreshKey((k) => k + 1)}
         />
       )}
-    </div>
+    </div></TransferScope>
   );
 }

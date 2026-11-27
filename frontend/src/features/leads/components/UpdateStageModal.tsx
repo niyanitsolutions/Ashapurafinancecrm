@@ -1,3 +1,4 @@
+import { MoveToDailyFollowUp } from "@/features/daily_operations/MoveToDailyFollowUp";
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { StatusBadge } from "@/components/badges/Badge";
@@ -432,27 +433,7 @@ export function UpdateStageModal({
                   Move back to My Leads
                 </Button>
               )}
-              {canEdit && stage === "document_collection" && (
-                <>
-                  <Button
-                    className="w-full"
-                    loading={isSubmitting}
-                    disabled={!detail?.all_documents_verified}
-                    onClick={() => moveStage("loan_management")}
-                  >
-                    Move to Loan Management
-                  </Button>
-                  {!detail?.all_documents_verified && (
-                    <p className="text-xs text-textSecondary">
-                      {detail?.application_status !== "submitted"
-                        ? "The customer must submit their application before this lead can move to Loan Management."
-                        : `${detail?.documents_verified ?? 0} of ${detail?.documents_required ?? 0} required documents verified${
-                            detail?.documents_not_available ? ` (${detail.documents_not_available} not available)` : ""
-                          } — all must be verified or marked unavailable first.`}
-                    </p>
-                  )}
-                </>
-              )}
+              {canEdit && stage === "document_collection" && detail?.application_id && <MoveToDailyFollowUp applicationId={detail.application_id} onMoved={()=>{onChanged();onClose();}}/>}
               {canReject && (
                 <Button variant="danger" className="w-full" onClick={() => setIsRejecting(true)}>
                   Reject Lead

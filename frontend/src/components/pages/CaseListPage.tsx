@@ -1,3 +1,5 @@
+import { TransferScope, TransferCheck, TransferTag } from "@/features/daily_operations/HandoverTools";
+import { usePermissions } from "@/features/access_control/usePermissions";
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { ActionButton } from "@/components/tables/ActionButton";
@@ -137,6 +139,7 @@ export function CaseListPage<T extends CaseListItem>({
   showFollowUp?: boolean;
 }) {
   const { role } = useAuth();
+  const {can:canTransfer}=usePermissions();
   const [searchParams] = useSearchParams();
   const [deleteRefresh, setDeleteRefresh] = useState(0);
   const del = useListDelete(deleteResourceKey ?? "", () => setDeleteRefresh((k) => k + 1));
@@ -242,7 +245,7 @@ export function CaseListPage<T extends CaseListItem>({
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <TransferScope collection={entityLabel === "Loan" ? "application_workflows" : undefined} ids={items.map(r=>r.id)} allowed={entityLabel === "Loan" && (canTransfer("loan_management:applications","assign")||Boolean(fixedStatus&&canTransfer(`loan_management:applications.${fixedStatus}`,"assign")))} onTransferred={()=>setDeleteRefresh(k=>k+1)}><div className="min-h-screen bg-background">
       <div className="p-6">
         <ErrorBanner message={error} />
         <ErrorBanner message={del.error} />
@@ -387,7 +390,7 @@ export function CaseListPage<T extends CaseListItem>({
                         />
                       </Td>
                     )}
-                    <Td className="whitespace-nowrap">
+                    <Td className="whitespace-nowrap"><TransferCheck id={c.id}/><TransferTag id={c.id}/>
                       <Link to={`${detailBasePath}/${c.id}`} className="text-primary font-medium hover:underline">
                         {c.case_code}
                       </Link>
@@ -441,6 +444,6 @@ export function CaseListPage<T extends CaseListItem>({
         )}
       </div>
       {del.dialog}
-    </div>
+    </div></TransferScope>
   );
 }

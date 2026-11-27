@@ -66,7 +66,7 @@ class WorkflowEngine:
     async def transition(
         self, workflow: ApplicationWorkflow, to_status: str, actor: User | None, *,
         updates: dict[str, Any] | None = None, remarks: str | None = None, force: bool = False,
-        expected: dict[str, Any] | None = None,
+        expected: dict[str, Any] | None = None, session: Any = None,
     ) -> ApplicationWorkflow:
         """`force=True` skips ONLY the transition-graph check (`assert_transition_allowed`)
         — used exclusively by Loan Management's deliberate "Staff Override — Skip Stage
@@ -83,6 +83,60 @@ class WorkflowEngine:
             await self.assert_transition_allowed(workflow.case_type, from_status, to_status)
         target_definition = await self.get_definition(workflow.case_type, to_status)
 
+        if session is not None:
+            from bson import ObjectId
+            from pymongo import ReturnDocument
+
+            from app.shared.audit_log import AuditLog
+            from app.utils.datetime import utc_now
+
+            actor_id = actor.require_id() if actor is not None else None
+            values = {
+                **(updates or {}),
+                "current_status": to_status,
+                "updated_at": utc_now(),
+                "updated_by": actor_id,
+            }
+            row = await self._db.application_workflows.find_one_and_update(
+                {
+                    "_id": ObjectId(workflow.require_id()),
+                    "version": workflow.version,
+                    "assigned_to": workflow.assigned_to,
+                    "current_status": from_status,
+                    "is_deleted": False,
+                    **(expected or {}),
+                },
+                {"$set": values, "$inc": {"version": 1}},
+                return_document=ReturnDocument.AFTER,
+                session=session,
+            )
+            if not row:
+                raise ConflictError("Case ownership or status changed. Refresh before continuing.")
+            history = ApplicationStatusHistory(
+                application_workflow_id=workflow.require_id(),
+                case_type=workflow.case_type,
+                from_status=from_status,
+                to_status=to_status,
+                remarks=remarks,
+                created_by=actor_id,
+            )
+            await self._db.application_status_history.insert_one(
+                history.model_dump(by_alias=True, exclude={"id"}), session=session
+            )
+            audit = AuditLog(
+                event_type=target_definition.audit_event,
+                user_id=actor_id,
+                metadata={
+                    "application_workflow_id": workflow.require_id(),
+                    "from_status": from_status,
+                    "to_status": to_status,
+                },
+            )
+            await self._db.audit_logs.insert_one(
+                audit.model_dump(by_alias=True, exclude={"id"}), session=session
+            )
+            # Caller publishes existing status-change side effects only after commit.
+            return ApplicationWorkflow.model_validate(row)
         actor_id = actor.require_id() if actor is not None else None
         set_updates: dict[str, Any] = {**(updates or {}), "current_status": to_status}
         # Manual Mark Re-Eligible and the scheduler must compete for the same atomic

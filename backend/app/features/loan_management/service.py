@@ -858,15 +858,17 @@ class LoanCaseService:
         )
         return updated
 
-    async def disburse(self, case_id: str, payload: DisburseRequest, actor: User) -> ApplicationWorkflow:
-        case = await self.get_case(case_id, actor)
-        if case.current_status != LoanStatus.SEND_FOR_DISBURSEMENT:
-            raise ConflictError("This case is not ready for disbursement.")
-        assert case.loan_details is not None
-        details = case.loan_details.model_copy(
-            update={"disbursed_amount": payload.disbursed_amount, "disbursed_reference": payload.disbursed_reference, "disbursed_at": utc_now()}
-        )
-        return await self._engine.transition(case, LoanStatus.DISBURSED, actor, updates={"loan_details": details.model_dump()})
+    async def disburse(
+        self,
+        case_id: str,
+        payload: DisburseRequest,
+        actor: User,
+        *,
+        followup: tuple[dict[str, Any], dict[str, Any]] | None = None,
+    ) -> ApplicationWorkflow:
+        from app.features.loan_management.financial_commit import disburse
+
+        return await disburse(self, case_id, payload, actor, followup=followup)
 
     # ---------------------------------------------------------------- Top Up Loan
 
@@ -911,7 +913,7 @@ class LoanCaseService:
             if eligibility_date < disbursed_at:
                 raise ValidationError("The custom eligibility date cannot be earlier than the disbursed date.")
         else:
-            eligibility_date = add_calendar_months(disbursed_at, TopUpPeriod.MONTHS_BY_PERIOD[payload.period])
+            eligibility_date = ensure_utc(add_calendar_months(to_ist(disbursed_at), TopUpPeriod.MONTHS_BY_PERIOD[payload.period]))
 
         details = case.loan_details.model_copy(
             update={
@@ -919,22 +921,9 @@ class LoanCaseService:
                 "top_up_remarks": payload.remarks, "top_up_scheduled_at": utc_now(), "top_up_scheduled_by": actor.require_id(),
             }
         )
-        updated = await self._workflows.update(case_id, {"loan_details": details.model_dump()}, updated_by=actor.require_id())
-        assert updated is not None
-        await write_audit_log(
-            self._db, event_type=LoanAuditEvent.TOP_UP_SCHEDULED, user_id=actor.require_id(),
-            metadata={
-                "application_workflow_id": case_id, "period": payload.period,
-                "eligibility_date": eligibility_date.isoformat() if eligibility_date else None,
-            },
-        )
-        await self._notes.insert(
-            ApplicationNote(
-                application_workflow_id=case_id, created_by=actor.require_id(),
-                text=self._top_up_note_text(payload.period, eligibility_date, payload.remarks),
-            )
-        )
-        return updated
+        from app.features.loan_management.financial_commit import schedule_top_up
+
+        return await schedule_top_up(self, case, details, payload, actor)
 
     async def move_top_up_to_document_collection(self, case_id: str, actor: User) -> Application:
         """Top Up Loan's "Move to Document Collection" action. Per spec, this must enter
@@ -1205,6 +1194,9 @@ class LoanCaseService:
         customer_map = {c.require_id(): c.full_name for c in customers if c.require_id() in customer_ids}
         product_map = {p.require_id(): p.name for p in products if p.require_id() in product_ids}
         employee_map = {e.require_id(): e.display_name for e in employees if e.require_id() in employee_ids}
+        from app.shared.assignee_names import owner_names
+
+        employee_map.update(await owner_names(self._db,employee_ids-set(employee_map)))
         return customer_map, product_map, employee_map
 
     # ---------------------------------------------------------------- disbursements report

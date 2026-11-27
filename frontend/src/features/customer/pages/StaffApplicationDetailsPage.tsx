@@ -1,3 +1,6 @@
+import { ApplicationOperationsContext } from "@/features/daily_operations/ApplicationOperationsContext";
+import { MoveToDailyFollowUp } from "@/features/daily_operations/MoveToDailyFollowUp";
+import { TransferScope, TransferTag } from "@/features/daily_operations/HandoverTools";
 import { SubmittedApplicationDetails } from "../components/SubmittedApplicationDetails";
 import { DocumentPassword } from "@/features/customer/components/DocumentPassword";
 import { StaffCustomerProfile } from "@/features/customer/components/StaffCustomerProfile";
@@ -202,7 +205,8 @@ export function StaffApplicationDetailsPage({applicationIdOverride,onClose,onApp
   );
 
   return (
-    <SimplePageLayout title={application.application_code} backTo={embedded ? undefined : backTo} backLabel={backLabel}>
+    <SimplePageLayout title={application.application_code} backTo={embedded ? undefined : backTo} backLabel={backLabel}><TransferScope collection="applications" ids={[application.id]} allowed={false} onTransferred={()=>{}}>
+      <div className="mb-4"><MoveToDailyFollowUp applicationId={application.id}/><TransferTag id={application.id}/></div>
       <div className="mb-4"><OpenLinkedFollowUp entity="application" recordId={applicationId} mode={fromDocumentCollection ? "modal" : "navigate"} onSaved={onFollowupSaved || onClose || (fromDocumentCollection ? ()=>navigate("/leads/document-collection",{replace:true}) : undefined)} /></div>
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
       <ErrorBanner message={error || (schemaError ? getErrorMessage(schemaError) : null)} />
@@ -262,6 +266,6 @@ export function StaffApplicationDetailsPage({applicationIdOverride,onClose,onApp
           onConfirm={(reason) => onReject(rejectingDoc.id, reason)}
         />
       )}
-    </SimplePageLayout>
+    <ApplicationOperationsContext id={application.id}/><MoveToDailyFollowUp applicationId={application.id}/></TransferScope></SimplePageLayout>
   );
 }

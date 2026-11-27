@@ -17,11 +17,15 @@ AREAS = {
 async def install_catalog(db: AsyncIOMotorDatabase[Any]) -> None:
     """Register definitions; default own-record access is enforced by PermissionEngine."""
     await ensure_daily_operations_indexes(db)
+    # Add a grantable operation; never grant it to an Employee role automatically.
+    await db.permissions.update_one({"module":"customer","resource":"customers","is_deleted":False}, {"$addToSet":{"actions":"assign"}})
     for order, (resource, label) in enumerate(AREAS.items(), 70):
         actions = ["view", "create", "edit", "import", "export"]
         if resource == "sessions":
             actions = ["view", "edit", "import", "export"]
         actions += ["delete"]
+        if resource == "follow-ups":
+            actions += ["assign"]  # Explicit Owner-granted handover permission; no default grant.
         if resource == "issues":
             actions += ["assign", "approve"]
         permission = Permission(

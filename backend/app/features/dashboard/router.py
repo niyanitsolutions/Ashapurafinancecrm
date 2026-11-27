@@ -23,6 +23,28 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 ServiceDep = Annotated[DashboardService, Depends(get_dashboard_service)]
 
 
+@router.get("/followup-metrics")
+async def followup_metrics(
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+    date_range: Annotated[str, Query(alias="range")] = "this_month",
+    start_date: date | None = None,
+    end_date: date | None = None,
+    product_category: str | None = None,
+    source_id: str | None = None,
+) -> ApiResponse[Any]:
+    from app.features.dashboard.followup_metrics import summary
+
+    criteria = resolve_dashboard_filters(
+        date_range=date_range,
+        start_date=start_date,
+        end_date=end_date,
+        product_category=product_category,
+        source_id=source_id,
+    )
+    return ApiResponse.ok(await summary(service._db, current_user, criteria))
+
+
 @router.get("/operations")
 async def operations(
     service: ServiceDep, current_user: CurrentUserDep,

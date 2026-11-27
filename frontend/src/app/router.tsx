@@ -1,3 +1,5 @@
+import { HandoverQueue } from "@/features/daily_operations/HandoverQueue";
+import { DailyTopUpPage } from "@/features/daily_operations/DailyTopUpPage";
 import { LegacyCustomerListRedirect } from "./LegacyCustomerListRedirect";
 import { PortalNotificationsPage } from "@/features/customer/pages/PortalNotificationsPage";
 import {EmployeeHrSettingsPage} from "@/features/employee/pages/EmployeeHrSettingsPage";
@@ -379,6 +381,8 @@ export const router = createBrowserRouter([
               { path: "sessions", element: <DailyOperationsPage key="daily-sessions" area="sessions" /> },
               { path: "issues", element: <DailyOperationsPage key="daily-issues" area="issues" /> },
               { path: "transfers", element: <TransferCentre /> },
+              { path: "handover", element: <HandoverQueue /> },
+              { path: "top-up", element: <DailyTopUpPage /> },
             ],
           },
           { path: "/tasks", element: <TaskListPage /> },

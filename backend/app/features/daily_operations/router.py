@@ -15,6 +15,9 @@ from app.features.auth.models import User
 from app.features.bulk_import.files import MAX_BYTES
 from app.features.daily_operations import entries, transfers, views
 from app.features.daily_operations.bank_options import BankEdit, BankName, BankOptions
+from app.features.daily_operations.handover import ContextRequest, ReceiverQuery
+from app.features.daily_operations.handover import RecordType as HandoverType
+from app.features.daily_operations.handover import TransferRequest as HandoverRequest
 from app.features.daily_operations.linked import OpenLinkedRequest, open_linked
 from app.features.daily_operations.loan_options import LoanOptions
 from app.features.daily_operations.schemas import (
@@ -33,6 +36,7 @@ from app.features.daily_operations.status_options import (
     OptionVersion,
     StatusOptions,
 )
+from app.features.loan_management.schemas import DisburseRequest
 from app.shared.audit_log import write_audit_log
 
 router = APIRouter(prefix="/daily-operations", tags=["daily-operations"])
@@ -53,6 +57,7 @@ class Filters(BaseModel):
     date_from: date | None = None
     date_to: date | None = None
     overdue: bool = False
+    outcome: Literal["", "completed"] = ""
     workflow: Literal["normal", "reeligible"] = "normal"
     sort: str = "-date"
     old_days: int = 0
@@ -71,6 +76,7 @@ def filters(
     date_from: date | None = None,
     date_to: date | None = None,
     overdue: bool = False,
+    outcome: Literal["", "completed"] = "",
     workflow: Literal["normal", "reeligible"] = "normal",
     sort: Annotated[str, Query(max_length=30)] = "-date",
     old_days: Annotated[int, Query(ge=0, le=36500)] = 0,
@@ -104,6 +110,7 @@ async def list_area(
         )
     values.pop("month")
     if kind == "progress":
+        values.pop("outcome")
         values.pop("workflow")
         values.pop("overdue")
         if values["sort"] == "-date":
@@ -111,6 +118,71 @@ async def list_area(
         return await views.progress(service, actor, **values)
     values.pop("old_days")
     return await service.list_records(kind, actor, **values)
+
+
+@router.post("/handovers/context")
+async def handover_context(payload: ContextRequest, actor: Actor, db: Db) -> ApiResponse[Any]:
+    from app.features.daily_operations.handover import contexts
+
+    return ApiResponse.ok(await contexts(db, actor, payload))
+
+
+@router.post("/handovers/receivers")
+async def eligible_handover_receivers(
+    payload: ReceiverQuery, actor: Actor, db: Db
+) -> ApiResponse[Any]:
+    from app.features.daily_operations.handover import eligible_receivers
+
+    return ApiResponse.ok(await eligible_receivers(db, actor, payload))
+
+
+@router.post("/handovers")
+async def create_handover(payload: "HandoverRequest", actor: Actor, db: Db) -> ApiResponse[Any]:
+    from app.features.daily_operations.handover import transfer
+
+    return ApiResponse.ok(await transfer(db, actor, payload))
+
+
+@router.get("/handovers")
+async def handover_queue(
+    actor: Actor,
+    db: Db,
+    page: int = Query(1, ge=1, le=100000),
+    search: str = Query("", max_length=100),
+    direction: Literal["all", "sent", "received"] = "all",
+    collection: str = "",
+    date_from: date | None = None,
+    date_to: date | None = None,
+    sort: Literal["newest", "oldest"] = "newest",
+) -> ApiResponse[Any]:
+    from app.features.daily_operations.handover import queue
+
+    return ApiResponse.ok(
+        await queue(
+            db,
+            actor,
+            page=page,
+            search=search,
+            direction=direction,
+            collection=collection,
+            date_from=date_from,
+            date_to=date_to,
+            sort=sort,
+        )
+    )
+
+
+@router.get("/handovers/{collection}/{record_id}/history")
+async def handover_history(
+    collection: "HandoverType", record_id: str, actor: Actor, db: Db
+) -> ApiResponse[Any]:
+    from bson import ObjectId
+
+    from app.features.daily_operations.handover import history
+
+    if not ObjectId.is_valid(record_id):
+        raise ValidationError("Invalid record ID.")
+    return ApiResponse.ok(await history(db, actor, collection, record_id))
 
 
 @router.get("/lookups")
@@ -132,6 +204,95 @@ async def follow_up_identities(
     from app.features.daily_operations.resolution import search as resolve
 
     return ApiResponse.ok(await resolve(DailyOperationsService(db), actor, search))
+
+
+class DailyDisbursement(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    followup: FollowUpUpdate
+    details: "DisburseRequest"
+
+
+@router.post("/follow-ups/{record_id}/disburse")
+async def daily_disburse(
+    record_id: str, payload: DailyDisbursement, actor: Actor, db: Db
+) -> ApiResponse[Any]:
+    from app.core.exceptions import ConflictError, ForbiddenError
+    from app.features.daily_operations.bank_options import BankOptions
+    from app.features.loan_management.service import LoanCaseService
+
+    service = DailyOperationsService(db)
+    if (
+        payload.details.approved_amount is None
+        or payload.details.disbursement_date is None
+        or not (payload.details.remarks or "").strip()
+    ):
+        raise ValidationError("Approved Amount, Disbursement Date and Remarks are required.")
+    await service.authorize(actor, "follow-ups", "edit")
+    row = await service.get("follow-ups", record_id, actor)
+    if row["version"] != payload.followup.version or not row.get("application_id"):
+        raise ConflictError("Refresh the linked Application workspace before disbursing.")
+    case = await db.application_workflows.find_one(
+        {"application_id":row["application_id"],"case_type":"loan","is_deleted":False},
+        {"_id":1,"case_type":1,"current_status":1,"branch_id":1,"department_id":1})
+    if not case:
+        raise ConflictError("Complete the existing Loan Management lifecycle before disbursement.")
+    from app.features.daily_operations.handover import permit
+    try:
+        await permit(db,actor,"application_workflows",case,"edit")
+    except ForbiddenError:
+        await permit(db,actor,"application_workflows",case,"approve")
+    values = await service.validate_follow_up(
+        FollowUpInput.model_validate(payload.followup.model_dump(exclude={"version"})), actor
+    )
+    # Original linked identity and assignment are immutable in this financial action.
+    if (
+        values["customer_name"] != row["customer_name"]
+        or values["customer_number"] != row["customer_number"]
+    ):
+        raise ConflictError("Linked identity changed. Refresh before disbursement.")
+    snapshot = row.get("identity_snapshot", {})
+    values.update(
+        customer_name=snapshot.get("customer_name", row["customer_name"]),
+        customer_number=snapshot.get("customer_number", row["customer_number"]),
+    )
+    banks = await BankOptions(service).selections(
+        payload.followup.banks, payload.followup.bank, row
+    )
+    values.update(
+        banks=banks, bank=", ".join(b["name"] for b in banks), assigned_to=row["assigned_to"]
+    )
+    await LoanCaseService(db).disburse(
+        str(case["_id"]), payload.details, actor, followup=(row, values)
+    )
+    return ApiResponse.ok(public(await service.get("follow-ups", record_id, actor)))
+
+
+@router.get("/applications/{application_id}/workspace")
+async def application_workspace(application_id: str, actor: Actor, db: Db) -> ApiResponse[Any]:
+    from app.config.redis import get_redis
+    from app.features.customer.service import CustomerService
+
+    await CustomerService(db, get_redis()).get_application_for_staff(application_id, actor)
+    row = await db.daily_follow_ups.find_one(
+        {"working_key": "application:" + application_id, "is_deleted": False}, {"_id": 1}
+    )
+    if not row:
+        return ApiResponse.ok({"movement_status": "Not moved", "application_id": application_id})
+    service = DailyOperationsService(db)
+    record = await service.get("follow-ups", str(row["_id"]), actor)
+    return ApiResponse.ok(public(record))
+
+
+@router.post("/applications/{application_id}/move")
+async def move_application(application_id: str, actor: Actor, db: Db) -> ApiResponse[Any]:
+    return ApiResponse.ok(
+        await open_linked(
+            DailyOperationsService(db),
+            OpenLinkedRequest(entity="application", record_id=application_id),
+            actor,
+            move=True,
+        )
+    )
 
 
 @router.post("/linked-follow-up")
@@ -348,7 +509,7 @@ async def progress(
     db: Db,
     criteria: Annotated[Filters, Depends(filters)],
 ) -> ApiResponse[dict[str, Any]]:
-    values = criteria.model_dump(exclude={"overdue", "month", "workflow"})
+    values = criteria.model_dump(exclude={"overdue", "month", "workflow", "outcome"})
     if values["sort"] == "-date":
         values["sort"] = "-updated_at"
     return ApiResponse[dict[str, Any]].ok(

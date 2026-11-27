@@ -28,7 +28,7 @@ class OpenLinkedRequest(BaseModel):
 
 
 async def open_linked(
-    service: DailyOperationsService, payload: OpenLinkedRequest, actor: User
+    service: DailyOperationsService, payload: OpenLinkedRequest, actor: User, *, move: bool = False
 ) -> dict[str, Any]:
     await service.authorize(actor, "follow-ups", "create")
     await service.authorize_lead_view(actor)
@@ -60,6 +60,13 @@ async def open_linked(
             raise ConflictError(
                 "Application ownership needs Owner review. No workspace was created."
             )
+    if move:
+        if not application or application.status != "submitted":
+            raise ConflictError("Submit the Application before moving it to Daily Follow-up.")
+        if not await PermissionEngine(db).has_permission(
+            actor, module="customer", resource="customers", action="edit"
+        ):
+            raise ForbiddenError("Application edit permission is required to move it.")
     key = f"{payload.entity}:{payload.record_id}"
     if lead and not application:
         # Prefer the exact application relationship; never infer a case by phone/name.
@@ -99,6 +106,9 @@ async def open_linked(
             raise ConflictError(
                 "The linked working record is archived. Ask the Owner to review its history."
             )
+        if move:
+            async with await db.client.start_session() as session, session.start_transaction():
+                await guard_source(db, application, lead, actor, session, move=True, record_id=str(existing["_id"]))
         return public(await service.get("follow-ups", str(existing["_id"]), actor))
     if application and lead:
         # Bind an earlier lead-only workspace to its first exact application, keeping
@@ -137,6 +147,7 @@ async def open_linked(
                     session=session,
                 )
                 if earlier:
+                    await guard_source(db, application, lead, actor, session, move=move, record_id=str(earlier["_id"]))
                     from app.shared.audit_log import AuditLog
 
                     audit = AuditLog(
@@ -237,16 +248,63 @@ async def open_linked(
     )
     try:
         async with await db.client.start_session() as session, session.start_transaction():
+            # An already disbursed Loan must not acquire a fresh pending follow-up status.
+            loan_case = (
+                await db.application_workflows.find_one(
+                    {
+                        "application_id": application.require_id(),
+                        "case_type": "loan",
+                        "is_deleted": False,
+                    },
+                    session=session,
+                )
+                if application
+                else None
+            )
+            if loan_case:
+                touched = await db.application_workflows.update_one(
+                    {
+                        "_id": loan_case["_id"],
+                        "version": loan_case.get("version", 1),
+                        "assigned_to": assigned_to,
+                    },
+                    {"$inc": {"workspace_epoch": 1}},
+                    session=session,
+                )
+                if not touched.matched_count:
+                    raise ConflictError(
+                        "Loan ownership changed. Refresh before opening its workspace."
+                    )
+                if loan_case.get("current_status") == "disbursed" and (
+                    loan_case.get("loan_details") or {}
+                ).get("disbursed_amount"):
+                    doc.update(
+                        status="DISBURSE",
+                        due_date=None,
+                        next_action="",
+                        case_id=str(loan_case["_id"]),
+                        case_oid=loan_case["_id"],
+                    )
+                    doc["history"][0]["after"]["status"]="DISBURSE"
             result = await db.daily_follow_ups.update_one(
                 {"working_key": key}, {"$setOnInsert": doc}, upsert=True, session=session
             )
             if result.upserted_id:
+                await guard_source(db, application, lead, actor, session, move=move, record_id=str(result.upserted_id))
                 await db.audit_logs.insert_one(
                     audit.model_dump(by_alias=True, exclude={"id"}), session=session
                 )
     except DuplicateKeyError:
-        pass  # A committed concurrent creator owns this canonical workspace.
+        if move:
+            raise ConflictError(
+                "Concurrent movement. Refresh its status before continuing."
+            ) from None
+        # A committed concurrent creator owns this canonical workspace.
     except OperationFailure as exc:
+        if move and (exc.code == 112 or exc.has_error_label("TransientTransactionError")):
+            raise ConflictError(
+                "Concurrent movement. Refresh its status before continuing."
+            ) from None
         if exc.code != 112 and not exc.has_error_label("TransientTransactionError"):
             raise
         if not await db.daily_follow_ups.find_one({"working_key": key}):
@@ -255,3 +313,50 @@ async def open_linked(
     if not row:
         raise ConflictError("The linked record changed. Reload before continuing.")
     return public(await service.get("follow-ups", str(row["_id"]), actor))
+
+
+async def guard_source(
+    db: Any,
+    application: Any,
+    lead: Any,
+    actor: User,
+    session: Any,
+    *,
+    move: bool = False,
+    record_id: str = "",
+) -> None:
+    from app.shared.audit_log import AuditLog
+
+    source = application or lead
+    collection = "applications" if application else "leads"
+    query = {
+        "_id": ObjectId(source.require_id()),
+        "assigned_to": source.assigned_to,
+        "is_deleted": False,
+    }
+    if move:
+        query["status"] = "submitted"
+    row = await db[collection].find_one(query, {"daily_followup_moved_at": 1}, session=session)
+    if not row:
+        raise ConflictError("Source assignment or status changed. Refresh before continuing.")
+    values: dict[str, Any] = {"$inc": {"workspace_epoch": 1}}
+    if move and not row.get("daily_followup_moved_at"):
+        now = utc_now()
+        values["$set"] = {
+            "daily_followup_moved_at": now,
+            "daily_followup_moved_by": actor.require_id(),
+        }
+        values["$inc"]["version"] = 1
+        audit = AuditLog(
+            event_type="application_moved_to_daily_followup",
+            user_id=actor.require_id(),
+            metadata={
+                "application_id": source.require_id(),
+                "record_id": record_id,
+                "documents_unchanged": True,
+            },
+        )
+        await db.audit_logs.insert_one(
+            audit.model_dump(by_alias=True, exclude={"id"}), session=session
+        )
+    await db[collection].update_one(query, values, session=session)

@@ -78,3 +78,16 @@ Archived or conflicting historical workspaces require individual Owner resolutio
 ## Additional compatibility guards
 
 All User insertion paths refuse existing deleted or historically formatted mobile identities before canonical insertion. New canonical writes remain protected by the existing unique mobile index; no backfill is performed. Global full-mobile search uses the same anchored Indian-mobile compatibility matching and does not treat a foreign prefix as an Indian suffix. Historical records linked to an Application retain their original ID/history and compute subsequent activity keys from their Application workspace, allowing sibling Applications to have independent same-day activities.
+
+
+## Daily movement and employee handovers (2026-11-26)
+
+The coordinated Daily Follow-up enhancement adds an explicit movement marker to the original submitted Application and reuses its canonical workspace. Movement, workspace creation and audit commit together; uploaded documents, verification and Application lifecycle remain unchanged. Original customer submission remains required, while document verification is not a movement prerequisite. Moved Applications leave the Document Collection pool.
+
+Current assigned_to remains the single ownership source. A handover validates selected record versions, sender assignment and explicit assignment permission, active receiving Employee access and view/edit grants. It synchronizes exact Application/Case/follow-up and unique Lead references in one transaction. Shared Leads with multiple Applications are refused for individual Owner review. No historical assignment is treated as a new transfer automatically.
+
+Immutable transfer events and idempotency receipts reuse audit_logs; per-record history uses the existing record_assignment_history index via metadata.collection and metadata.record_id. Two additive nonunique partial indexes support sender/receiver queue lookups; two additional nonunique relationship indexes cover historical string Application/Lead links. last_transfer is only a display summary. Previous participants can read the transfer chain but cannot use that history to edit a record. Queue grouping uses a canonical work key to avoid repeating the same Application as its Case and follow-up mirrors.
+
+The existing LoanCaseService remains the financial authority. Its disbursement and Top-up paths now commit case details, timeline/audit and any linked follow-up change transactionally. Daily status labels alone never create official money. Disbursement requires the existing Send for Disbursement stage; no new approval bypass is introduced. Top-up uses IST business dates and retains calendar-month eligibility and the same embedded case details and scheduling dialog. Dashboard totals read each persisted disbursed case once; approval totals describe that same disbursed cohort. Financial edits remain separate from identity and authentication.
+
+See DAILY_FOLLOWUP_TRANSFER_DISBURSEMENT_ENHANCEMENT_REPORT.md for validation, API changes, deployment prerequisites, index rollout and rollback. No production rollout or data migration was executed.

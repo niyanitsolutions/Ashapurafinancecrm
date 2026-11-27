@@ -112,7 +112,9 @@ export function RecordForm({ area, record, onSaved, onCancel, onSavingChange, in
         if(area === "follow-ups" && !record) Object.assign(payload, { idempotency_key: submissionKey,
           separate_activity_reason: values.separate_activity_reason || "", identity_review_reason: values.identity_review_reason || "", review_customer_id: values.review_customer_id || null });
         if (record) payload.version = record.version ?? 0;
-        await saveRecord(area, payload, record?.id);
+        if(area==="follow-ups" && record?.application_id && values.status==="DISBURSE" && !record.disbursed_at) {
+          await apiRequest(`${base}/follow-ups/${record.id}/disburse`,{method:"POST",body:JSON.stringify({followup:payload,details:{approved_amount:Number(values.approved_amount),disbursed_amount:Number(values.disbursed_amount),disbursement_date:values.disbursement_date,disbursed_reference:values.disbursed_reference,remarks:values.remarks}})});
+        } else await saveRecord(area, payload, record?.id);
       }
       onSaved();
     } catch (err) { setError(err instanceof Error ? err.message : "Unable to save this row."); }
@@ -191,6 +193,7 @@ export function RecordForm({ area, record, onSaved, onCancel, onSavingChange, in
         </>}
       </details>
     </>}
+    {area==="follow-ups"&&Boolean(record?.application_id)&&values.status==="DISBURSE"&&!record?.disbursed_at&&<section aria-label="Disbursement details" className="mb-4 rounded-lg border border-border p-3"><h3 className="font-semibold">Disbursement details</h3><p className="text-sm">The existing Loan Management case must be ready for disbursement. These details and the follow-up save together.</p>{field("approved_amount","Approved Amount",true,"number")}{field("disbursed_amount","Disbursed Amount",true,"number")}{field("disbursement_date","Disbursement Date",true,"date")}{field("disbursed_reference","Disbursement reference",true)}<TextareaField label="Disbursement remarks" required value={values.remarks||""} onChange={e=>change("remarks",e.target.value)}/></section>}
     <div className="flex justify-end gap-2 border-t border-border pt-4">
       <Button variant="secondary" onClick={onCancel}>Cancel</Button>
       <Button type="submit" loading={saving}>{record ? "Save changes" : "Save record"}</Button>

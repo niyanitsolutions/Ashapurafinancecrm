@@ -323,6 +323,8 @@ class FormTemplateMaster(BaseDocument):
 
 
 class Application(BaseDocument):
+    daily_followup_moved_at: datetime | None = None
+    daily_followup_moved_by: str | None = None
     auto_assignment_eligible: bool = False
     assignment_pending: bool = False
     application_code: str  # AFS-APP-000001

@@ -94,7 +94,7 @@ async def pipeline(
     assigned, _ = await LeadService(db)._scope_query(
         actor, f.assigned_to, LeadStage.DOCUMENT_COLLECTION
     )
-    match: dict[str, Any] = {"is_deleted": False, "status": {"$in": ["draft", "submitted"]}}
+    match: dict[str, Any] = {"is_deleted": False, "daily_followup_moved_at": None, "status": {"$in": ["draft", "submitted"]}}
     if assigned:
         # Use the same actor-derived employee scope as the existing intake list.
         match["assigned_to"] = None if assigned == "__unassigned__" else assigned

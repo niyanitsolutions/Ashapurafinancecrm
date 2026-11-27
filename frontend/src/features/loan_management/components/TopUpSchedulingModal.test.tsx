@@ -80,7 +80,7 @@ describe("TopUpSchedulingModal", () => {
     expect(screen.getByRole("button", { name: /submit/i })).toBeEnabled();
 
     await user.click(screen.getByRole("button", { name: /submit/i }));
-    await waitFor(() => expect(scheduleTopUp).toHaveBeenCalledWith("case-1", { period: "no", custom_date: undefined, remarks: undefined }));
+    await waitFor(() => expect(scheduleTopUp).toHaveBeenCalledWith("case-1", { period: "no", custom_date: undefined, remarks: undefined, request_id:expect.any(String) }));
   });
 
   it("Submit calls the API with the selected period/remarks and reports success to the caller", async () => {
@@ -94,7 +94,7 @@ describe("TopUpSchedulingModal", () => {
     await user.click(screen.getByRole("button", { name: /submit/i }));
 
     await waitFor(() =>
-      expect(scheduleTopUp).toHaveBeenCalledWith("case-1", { period: "6_months", custom_date: undefined, remarks: "Customer requested a review" }),
+      expect(scheduleTopUp).toHaveBeenCalledWith("case-1", { period: "6_months", custom_date: undefined, remarks: "Customer requested a review", request_id:expect.any(String) }),
     );
     await waitFor(() => expect(onScheduled).toHaveBeenCalled());
     expect(onClose).toHaveBeenCalled();
@@ -105,4 +105,11 @@ describe("TopUpSchedulingModal", () => {
     await screen.findByLabelText("3 Months");
     expect(screen.getByRole("button", { name: /submit/i })).toBeDisabled();
   });
+});
+
+it("uses the business-calendar disbursement date and clamps the Top-up month end",async()=>{
+ getLoanCase.mockResolvedValueOnce({id:"case-1",case_code:"AFS-LOAN-000015",customer:{full_name:"dummy lead"},customer_name:"dummy lead",loan_details:{disbursed_at:"2026-01-30T18:30:00.000Z"}});
+ const user=userEvent.setup();renderModal();await user.click(await screen.findByLabelText("3 Months"));
+ expect(screen.getAllByText(hasText("31/01/2026")).length).toBeGreaterThan(0);
+ expect(screen.getAllByText(hasText("30/04/2026")).length).toBeGreaterThan(0);
 });

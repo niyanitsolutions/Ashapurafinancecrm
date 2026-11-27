@@ -1,0 +1,51 @@
+{
+  "results": [
+    {
+      "width": 390,
+      "result": "passed",
+      "checks": [
+        "Owner moves zero-verified Application preserving documents",
+        "top and bottom movement controls",
+        "bulk-selection transfer from Daily workspace",
+        "sender loses record access and retains history",
+        "receiver edits transferred workspace",
+        "existing Loan Case disbursement form and persisted status",
+        "shared Top-up scheduling",
+        "original Application financial and follow-up context",
+        "no document-level horizontal overflow"
+      ]
+    },
+    {
+      "width": 768,
+      "result": "passed",
+      "checks": [
+        "Owner moves zero-verified Application preserving documents",
+        "top and bottom movement controls",
+        "bulk-selection transfer from Daily workspace",
+        "sender loses record access and retains history",
+        "receiver edits transferred workspace",
+        "existing Loan Case disbursement form and persisted status",
+        "shared Top-up scheduling",
+        "original Application financial and follow-up context",
+        "no document-level horizontal overflow"
+      ]
+    },
+    {
+      "width": 1366,
+      "result": "passed",
+      "checks": [
+        "Owner moves zero-verified Application preserving documents",
+        "top and bottom movement controls",
+        "bulk-selection transfer from Daily workspace",
+        "sender loses record access and retains history",
+        "receiver edits transferred workspace",
+        "existing Loan Case disbursement form and persisted status",
+        "shared Top-up scheduling",
+        "original Application financial and follow-up context",
+        "no document-level horizontal overflow"
+      ]
+    }
+  ],
+  "api": "real local FastAPI / disposable replica-set MongoDB",
+  "external_calls": "blocked"
+}

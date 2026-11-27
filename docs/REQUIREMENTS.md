@@ -184,3 +184,10 @@ Statuses, Loan Types, Insurance Types, Permissions, Departments, Notification Te
 ## Open Business-Logic Questions
 
 See `docs/roadmap/TODO.md` — commission rules, geo-fencing's concrete use case (still open as of Module 3 — Geo Exceptions are administrative-only pending this), and rejection-branching stages are not yet defined and must not be invented. As of Module 4, this also covers concrete Status Master values (Loan/Insurance/Customer status pipelines) and Notification Template copy — the collections and full CRUD UI exist, but no example rows were invented; the Owner defines them via the UI when the underlying pipeline/copy decisions are made.
+
+
+## Daily Follow-up handover and financial workspace ? 2026-11-26
+
+Confirmed enhancement: submitted Applications move to the existing Daily workspace without document-verification gating; no new Customer/Application or automatic approval. Explicit staff handovers use one current assignment, all-or-nothing bulk writes, request receipts and permanent per-record audit history. Previous owners retain authorized transfer history only. Daily Disbursed and Top-up reuse the existing Loan lifecycle, financial fields and calendar rules. Date-filtered Dashboard metrics use persisted cases without counting operational labels as money. Transfer and Top-up are additional Daily Update tabs; file import/export remains separate.
+
+Scope remains the existing single-company database. Shared Leads with multiple Applications and inconsistent historical relationships require Owner review; no automatic merge or reassignment is allowed. Identity, sessions, Customer/Partner authentication, Airtel/DLT and production configuration are unchanged. Details, acceptance mapping and validation are in REQUIREMENTS_TRACEABILITY.md and DAILY_FOLLOWUP_TRANSFER_DISBURSEMENT_ENHANCEMENT_REPORT.md. Local implementation does not imply deployment approval.

@@ -1,4 +1,5 @@
-import { act, render, screen, waitFor, fireEvent, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, render as rtlRender, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DocumentCollectionPage } from "./DocumentCollectionPage";
@@ -58,3 +59,7 @@ it("shows direct actions for a single application and no duplicate headings for 
  expect(screen.queryByRole("button",{name:"Expand"})).not.toBeInTheDocument();
  expect(screen.getAllByRole("columnheader")).toHaveLength(11);
 });
+
+function render(ui: React.ReactElement) { return rtlRender(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}>{ui}</QueryClientProvider>); }
+
+vi.mock("@/features/auth/useAuth",()=>({useAuth:()=>({role:"owner",userId:"synthetic-owner"})}));

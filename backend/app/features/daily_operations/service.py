@@ -160,7 +160,7 @@ class DailyOperationsService:
         if actor.role != OWNER:
             employee_id = await self.employee_id(actor)
             if kind == "issues":
-                query["$or"] = [{"assigned_to": employee_id}, {"created_by": actor.require_id()}]
+                query["$or"] = [{"assigned_to": employee_id}, {"created_by": actor.require_id(), "last_transfer": {"$exists": False}}]
             else:
                 # Scope against CURRENT lead ownership, not a stale assignment snapshot.
                 # A lookup-based list query below enforces this without an unbounded ID list.
@@ -281,6 +281,9 @@ class DailyOperationsService:
             from app.features.daily_operations.identity import resolve_rows
 
             await resolve_rows(self.db, [doc])
+            from app.features.daily_operations.workspace_context import enrich
+
+            await enrich(self.db, [doc],actor)
         if kind == "follow-ups" and doc.get("working_key") and doc.get("assigned_to"):
             employee = await self.db.employees.find_one({"_id": ObjectId(doc["assigned_to"])}, {"display_name": 1})
             doc["employee_name"] = (employee or {}).get("display_name", "Owner")
@@ -355,6 +358,21 @@ class DailyOperationsService:
             from app.features.daily_operations.status_options import StatusOptions
 
             data.update(await StatusOptions(self).record_value(payload.status, old))
+            if old and old.get("application_id") and data["status"] == "DISBURSE":
+                case = await self.db.application_workflows.find_one(
+                    {
+                        "application_id": old["application_id"],
+                        "case_type": "loan",
+                        "is_deleted": False,
+                    },
+                    {"current_status": 1, "loan_details.disbursed_amount": 1},
+                )
+                if (
+                    not case
+                    or case.get("current_status") != "disbursed"
+                    or not case.get("loan_details", {}).get("disbursed_amount")
+                ):
+                    raise ConflictError("Record disbursement through the Disbursement details form; a status alone cannot disburse a loan.")
             from app.features.daily_operations.reeligible import is_reeligible
 
             eligible = is_reeligible(data["status"], data.get("status_label"))
@@ -511,6 +529,7 @@ class DailyOperationsService:
         page_size: int = 20,
         sort: str = "-date",
         workflow: str = "normal",
+        outcome: str = "",
     ) -> dict[str, Any]:
         await self.authorize(actor, kind)
         now = utc_now()
@@ -562,6 +581,8 @@ class DailyOperationsService:
                 query["date"]["$gte"] = ist_date_to_utc_midnight(date_from)
             if date_to:
                 query["date"]["$lte"] = ist_date_to_utc_midnight(date_to)
+        if kind == "follow-ups" and outcome == "completed":
+            query["status"]={"$in":["DISBURSE","REJECTED WITH REASON"]}
         if overdue:
             query["due_date"] = {
                 "$lt": ist_date_to_utc_midnight(to_ist(utc_now()).date()),
@@ -841,6 +862,9 @@ class DailyOperationsService:
             from app.features.daily_operations.identity import resolve_rows
 
             await resolve_rows(self.db, result["items"])
+            from app.features.daily_operations.workspace_context import enrich
+
+            await enrich(self.db, result["items"],actor)
         for item in result["items"]:
             item["employee_name"] = (
                 item.get("employee_name")
@@ -878,6 +902,23 @@ class DailyOperationsService:
 
 
 async def ensure_daily_operations_indexes(db: AsyncIOMotorDatabase[Any]) -> None:
+    # String references also cover historical rows without the newer *_oid mirrors.
+    for reference in ("application_id", "lead_id"):
+        await db.daily_follow_ups.create_index(
+            [(reference, 1), ("is_deleted", 1)],
+            name="followup_" + reference.removesuffix("_id") + "relationship",
+        )
+    # Existing audit record_assignment_history covers per-record history via metadata.collection.
+    # Recipient/sender queues need bounded indexed participant scans, absent from old indexes.
+    for participant in ("from_employee_id", "to_employee_id"):
+        await db.audit_logs.create_index(
+            [("metadata." + participant, 1), ("created_at", -1)],
+            name="handover_" + participant,
+            partialFilterExpression={
+                "event_type": "crm_record_transferred",
+                "metadata.primary": True,
+            },
+        )
     await db.daily_follow_ups.create_index(
         "activity_key",
         unique=True,

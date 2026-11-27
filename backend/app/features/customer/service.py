@@ -2161,6 +2161,9 @@ class CustomerService:
         product_map = {p.require_id(): p.name for p in loan_products if p.require_id() in loan_ids}
         product_map.update({p.require_id(): p.name for p in insurance_products if p.require_id() in insurance_ids})
         employee_map = {e.require_id(): e.display_name for e in employees if e.require_id() in employee_ids}
+        from app.shared.assignee_names import owner_names
+
+        employee_map.update(await owner_names(self._db,employee_ids-set(employee_map)))
         return customer_map, product_map, employee_map
 
     async def resolve_document_type_names(self, documents: list[ApplicationDocument]) -> dict[str, str]:

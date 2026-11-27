@@ -165,8 +165,11 @@ class FinalEvaluationRequest(_ReEligibilitySchedulingFields):
 
 
 class DisburseRequest(BaseModel):
-    disbursed_amount: float
-    disbursed_reference: str
+    disbursed_amount: float = Field(gt=0, allow_inf_nan=False)
+    disbursed_reference: str = Field(min_length=1, max_length=200)
+    approved_amount: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    disbursement_date: date | None = None
+    remarks: str | None = Field(default=None, max_length=4000)
 
 
 class LoanCaseDetailsResponse(BaseModel):
@@ -205,6 +208,7 @@ class LoanCaseDetailsResponse(BaseModel):
     disbursed_amount: float | None
     disbursed_at: datetime | None
     disbursed_reference: str | None
+    disbursement_remarks: str | None = None
     top_up_period: str | None = None
     top_up_eligibility_date: datetime | None = None
     top_up_remarks: str | None = None
@@ -230,6 +234,9 @@ class LoanCaseListItem(BaseModel):
     disbursed_amount: float | None = None
     disbursed_at: datetime | None = None
     next_follow_up_date: datetime | None = None
+    top_up_period: str | None = None
+    top_up_eligibility_date: datetime | None = None
+    top_up_remarks: str | None = None
     created_at: datetime
 
 
@@ -353,6 +360,7 @@ class LoanFollowUpRequest(BaseModel):
 
 
 class ScheduleTopUpRequest(BaseModel):
+    request_id: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_-]{16,100}$")
     """Backs both entry points into the Top Up scheduling popup: the "Top Up" action on
     a Disbursed row (initial scheduling) and "Rejected" on a Top Up Loan row (reject +
     reschedule) — same popup, same request shape, same endpoint (`LoanCaseService.

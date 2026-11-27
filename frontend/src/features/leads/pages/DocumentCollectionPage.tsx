@@ -1,3 +1,4 @@
+import { TransferScope, TransferCheck, TransferTag } from "@/features/daily_operations/HandoverTools";
 import { StaffApplicationDetailsPage } from "@/features/customer/pages/StaffApplicationDetailsPage";
 import { useLocation } from "react-router-dom";
 import { UpdateStageModal } from "@/features/leads/components/UpdateStageModal";
@@ -33,7 +34,7 @@ function sourceName(app?: Application) { return app?.source_name || (app?.submis
 const cell = "px-3 py-2.5 align-middle break-words";
 function RecordCells({ app, group }: { app?: Application; group: Group }) { const location=useLocation();return <>
   <td className={`${cell} whitespace-nowrap`}>{app?.id ? <Link className="font-medium text-primary hover:underline" to={app.record_kind === "lead" ? `/leads/${app.id}` : `/leads/document-collection?${new URLSearchParams({...Object.fromEntries(new URLSearchParams(location.search)),application:app.id})}`}>{app.application_code}</Link> : group.customer_code ? <Link className="font-medium text-primary hover:underline" to={`/leads/document-collection?customer_id=${encodeURIComponent(group.id)}&expand=${encodeURIComponent(group.id)}`}>{group.customer_code}</Link> : "Not recorded"}{app?.id && group.customer_code && <Link className="mt-1 block text-xs text-textSecondary hover:underline" to={`/leads/document-collection?customer_id=${encodeURIComponent(group.id)}&expand=${encodeURIComponent(group.id)}`}>{group.customer_code}</Link>}</td>
-  <td className={`${cell} font-semibold`}>{app?.customer_name || group.name}</td><td className={`${cell} whitespace-nowrap`}>{app?.mobile || group.mobile || "Not recorded"}</td>
+  <td className={`${cell} font-semibold`}>{app?.id&&<TransferCheck id={app.id} collection={app.record_kind==="lead"?"leads":"applications"}/>} {app?.customer_name || group.name}{app?.id&&<TransferTag id={app.id} collection={app.record_kind==="lead"?"leads":"applications"}/>}</td><td className={`${cell} whitespace-nowrap`}>{app?.mobile || group.mobile || "Not recorded"}</td>
   <td className={cell}><span className="inline-flex max-w-full whitespace-normal rounded-full bg-blue-50 px-2 py-0.5 text-xs capitalize text-blue-700">{app ? sourceName(app) : "Per application"}</span></td>
   <td className={`${cell}`}>{app?.product_name || "See applications"}</td><td className={cell}>{app ? app.assigned_to_name || "Unassigned" : "Per application"}</td><td className={cell}>{app ? <Status value={app.status} /> : <span className="text-xs text-textSecondary">Per application</span>}</td><td className={cell}><Status value={app?.customer_status || group.primary?.customer_status} /></td>
   <td className={`${cell} whitespace-nowrap`}>{app?.created_at ? formatISTDate(app.created_at) : "See applications"}</td>
@@ -63,6 +64,7 @@ function ColumnWidths() { return <colgroup>{widths.map((width,i) => <col key={i}
 const control = "w-full rounded-lg border border-border bg-card px-3 py-2 text-sm";
 
 function Applications({ group, query, selected, toggle, onDelete, owner, onChanged }: { group: Group; query: string; selected: Set<string>; toggle: (id: string) => void; onDelete: (id: string) => void; owner: boolean; onChanged: () => void }) {
+  const {can}=usePermissions();
   const [page, setPage] = useState(1);
   const [data, setData] = useState<Page<Application> | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -73,7 +75,7 @@ function Applications({ group, query, selected, toggle, onDelete, owner, onChang
       .then(result => { if (active) setData(result); }).catch(err => { if (active) setError(err.message); });
     return () => { active = false; };
   }, [group.id, page, query]);
-  return <div role="region" aria-label={`Applications for ${group.name}`} className="space-y-3 border-t border-border bg-background py-3">
+  return <TransferScope collection="applications" ids={(data?.items||[]).filter(a=>a.record_kind!=="lead").map(a=>a.id)} allowed={can("customer:customers","assign")} onTransferred={onChanged}><div role="region" aria-label={`Applications for ${group.name}`} className="space-y-3 border-t border-border bg-background py-3">
     <ErrorBanner message={error} />
     {!data && !error && <p role="status">Loading applications...</p>}
     <div className="overflow-x-auto"><table className="w-full table-fixed min-w-[1403px] text-left text-sm"><ColumnWidths /><tbody>
@@ -84,7 +86,7 @@ function Applications({ group, query, selected, toggle, onDelete, owner, onChang
     </tr>)}
     </tbody></table></div>
     {data && <Pagination page={page} totalPages={Math.max(1, Math.ceil(data.total / 25))} totalItems={data.total} pageSize={25} onPageChange={setPage} itemLabel="applications" />}
-  </div>;
+  </div></TransferScope>;
 }
 
 export function DocumentCollectionPage() {
@@ -144,7 +146,7 @@ export function DocumentCollectionPage() {
   function navigate(changes: Filters) { setParams({ ...applied, page: String(page), page_size: String(pageSize), ...changes }); }
   const update = (key: string, value: string) => setDraft(old => ({ ...old, [key]: value }));
   const toggle = (id: string) => setSelected(old => { const next = new Set(old); if (next.has(id)) next.delete(id); else if (next.size < 100) next.add(id); return next; });
-  return <section className="space-y-4 p-4 sm:p-6 lg:p-8">
+  return <TransferScope collection="leads" ids={(data?.items||[]).filter(g=>g.primary?.record_kind==="lead").map(g=>g.primary?.id||"").filter(Boolean)} allowed={can("leads:leads","assign")||can("leads:leads.document_collection","assign")} onTransferred={()=>setRevision(v=>v+1)}><TransferScope collection="applications" ids={(data?.items||[]).filter(g=>g.application_count===1&&g.primary?.record_kind!=="lead").map(g=>g.primary?.id||"").filter(Boolean)} allowed={can("customer:customers","assign")} onTransferred={()=>setRevision(v=>v+1)}><section className="space-y-4 p-4 sm:p-6 lg:p-8">
     <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold">Document Collection</h2>{can("leads:leads","create") && <div className="flex gap-3"><Button variant="secondary" onClick={() => setBulk(true)}>Bulk Upload</Button><Link className="rounded-lg bg-primary px-4 py-2 text-sm text-white" to="/leads/create">Create Lead</Link></div>}</div>
     {bulk && <BulkUploadModal kind="leads" onClose={() => setBulk(false)} onImported={() => { setBulk(false); setRevision(v => v+1); }} />}
     <ErrorBanner message={error || optionsError} />
@@ -183,5 +185,5 @@ export function DocumentCollectionPage() {
     {selectedApplication && <Modal open size="lg" title="Application details" onClose={closeApplication}><StaffApplicationDetailsPage applicationIdOverride={selectedApplication} onClose={closeApplication} onFollowupSaved={()=>{setFollowupNotice("Daily follow-up saved.");setRevision(v=>v+1);closeApplication();}} onApplicationSaved={()=>setRevision(v=>v+1)} /></Modal>}
     {assign && <BulkAssignmentModal collection="applications" ids={[...selected]} onClose={() => setAssign(false)} onDone={r => { setResult(r); setAssign(false); setSelected(new Set(r.results.filter(row => row.status !== "assigned").map(row => row.id))); setRevision(v => v + 1); }} />}
     {deleting && <Modal open title="Delete application?" onClose={() => { if (!busy) setDeleting(null); }}><p className="mb-4 text-sm">Move this application to Bin. Its Customer and other applications remain intact. Recovery follows the existing retention policy.</p><div className="flex gap-3"><Button variant="danger" loading={busy} onClick={async () => { setBusy(true); try { await deleteRecord("applications",deleting); setDeleting(null); setRevision(v => v+1); } catch(err) { setError(err instanceof Error ? err.message : "Deletion failed."); } finally { setBusy(false); } }}>Confirm Delete</Button><Button variant="secondary" disabled={busy} onClick={() => setDeleting(null)}>Cancel</Button></div></Modal>}
-  </section>;
+  </section></TransferScope></TransferScope>;
 }

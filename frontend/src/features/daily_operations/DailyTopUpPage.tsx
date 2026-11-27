@@ -1,0 +1,9 @@
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import { CaseListPage } from "@/components/pages/CaseListPage";
+import { Button } from "@/components/buttons/Button";
+import { usePermissions } from "@/features/access_control/usePermissions";
+import { listLoanCases } from "@/features/loan_management/api";
+import { TopUpSchedulingModal } from "@/features/loan_management/components/TopUpSchedulingModal";
+import { LOAN_STATUS_LABELS } from "@/features/loan_management/constants";
+export function DailyTopUpPage(){const {can}=usePermissions();const [id,setId]=useState<string|null>(null);const [revision,setRevision]=useState(0);return <><Link className="m-4 inline-block text-primary underline" to="/loan-management/top-up">Open existing eligible Top Up Loan queue</Link><CaseListPage entityLabel="Loan" icon="loan" detailBasePath="/loan-management/cases" itemLabel="disbursed loan" statusLabels={LOAN_STATUS_LABELS} fixedStatus="disbursed" titleOverride="Top-up" descriptionOverride="Schedule or review Top-up using the existing Loan Management case and history." defaultDescription="" reEligibleDescription="" emptyStateDescription="No disbursed loans in your authorized workload." listFn={listLoanCases} refreshToken={revision} extraColumns={[{key:"disbursed_amount",label:"Disbursed amount",render:r=>String(r.disbursed_amount??"Not recorded")},{key:"top_up_period",label:"Top-up eligibility",render:r=>String(r.top_up_period??"Not scheduled")},{key:"top_up_date",label:"Eligibility date",render:r=>String(r.top_up_eligibility_date??"Not scheduled")}]} rowActions={can("loan_management:applications.disbursed","edit")?r=><Button size="sm" variant="secondary" onClick={()=>setId(r.id)}>Top Up</Button>:undefined}/>{id&&<TopUpSchedulingModal caseId={id} onClose={()=>setId(null)} onScheduled={()=>{setId(null);setRevision(v=>v+1);}}/>}</>;}

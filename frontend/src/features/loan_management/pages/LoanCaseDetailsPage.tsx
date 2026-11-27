@@ -1,3 +1,4 @@
+import { TransferScope, TransferTag } from "@/features/daily_operations/HandoverTools";
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Button } from "@/components/buttons/Button";
@@ -142,7 +143,8 @@ export function LoanCaseDetailsPage() {
       backTo={backTo}
       backLabel={backLabel}
       actions={canUpdate && <Button onClick={() => setShowUpdateModal(true)}>Update</Button>}
-    >
+    ><TransferScope collection="application_workflows" ids={[caseId!]} allowed={can("loan_management:applications","assign")} onTransferred={load}><TransferTag id={caseId!}/>
+
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
       <ErrorBanner message={error} />
       <CallbacksPanel key={loanCase.id} entityType="loan_case" entityId={loanCase.id} />
@@ -411,7 +413,7 @@ export function LoanCaseDetailsPage() {
           onUpdated={load}
         />
       )}
-    </SimplePageLayout>
+    </TransferScope></SimplePageLayout>
   );
 }
 

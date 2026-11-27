@@ -5,7 +5,7 @@ import { TextareaField } from "@/components/forms/TextareaField";
 import { Modal } from "@/components/overlays/Modal";
 import { getErrorMessage } from "@/features/customer/errors";
 import { getLoanCase, scheduleTopUp, type LoanCaseDetail } from "@/features/loan_management/api";
-import { formatISTDate } from "@/shared/dateFormat";
+import { formatISTDate, istDateKey } from "@/shared/dateFormat";
 
 // Top Up Loan (production add-on) — the ONE scheduling popup reused by every entry
 // point per spec: the Disbursed list's "Top Up" action (initial scheduling), the
@@ -61,6 +61,7 @@ export function TopUpSchedulingModal({
   const [period, setPeriod] = useState("");
   const [customDate, setCustomDate] = useState("");
   const [remarks, setRemarks] = useState("");
+  const [requestId]=useState(()=>crypto.randomUUID());
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -71,7 +72,7 @@ export function TopUpSchedulingModal({
       .finally(() => setIsLoading(false));
   }, [caseId]);
 
-  const disbursedAtIsoDate = loanCase?.loan_details.disbursed_at ? loanCase.loan_details.disbursed_at.slice(0, 10) : null;
+  const disbursedAtIsoDate = loanCase?.loan_details.disbursed_at ? istDateKey(loanCase.loan_details.disbursed_at) : null;
 
   const eligibilityPreview: string | null =
     disbursedAtIsoDate && period in PERIOD_MONTHS
@@ -89,7 +90,7 @@ export function TopUpSchedulingModal({
     setIsSubmitting(true);
     try {
       await scheduleTopUp(caseId, {
-        period, custom_date: period === "custom" ? customDate : undefined, remarks: remarks.trim() || undefined,
+        period, custom_date: period === "custom" ? customDate : undefined, remarks: remarks.trim() || undefined, request_id:requestId,
       });
       onScheduled();
       onClose();

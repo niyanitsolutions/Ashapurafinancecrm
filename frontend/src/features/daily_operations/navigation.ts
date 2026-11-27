@@ -7,7 +7,10 @@ interface DailyUpdateTab extends ModuleTab {
 }
 
 export const DAILY_UPDATE_TABS: DailyUpdateTab[] = [
-  ...Object.entries(areas).map(([area, label]) => ({
+  {area:"follow-ups",label:areas["follow-ups"],to:"/daily-operations/follow-ups"},
+  {label:"Transfer",to:"/daily-operations/handover"},
+  {label:"Top-up",to:"/daily-operations/top-up"},
+  ...Object.entries(areas).filter(([area])=>area!=="follow-ups").map(([area, label]) => ({
     area: area as Area,
     label,
     to: `/daily-operations/${area}`,
@@ -20,6 +23,8 @@ export function permittedDailyUpdateTabs(can: PermissionsApi["can"]): DailyUpdat
   // Owner bypass. ModuleTabs needs no extra nav-key gate after this filtering.
   return DAILY_UPDATE_TABS.filter((tab) => tab.area
     ? can(`daily_operations:${tab.area}`, "view")
+    : tab.to.endsWith("/handover") ? ["leads:leads","customer:customers","loan_management:applications","daily_operations:follow-ups"].some(key=>can(key,"view"))
+    : tab.to.endsWith("/top-up") ? can("loan_management:applications.disbursed","view")
     : Object.keys(areas).some((area) => can(`daily_operations:${area}`, "view")
       && (can(`daily_operations:${area}`, "import") || can(`daily_operations:${area}`, "export"))));
 }

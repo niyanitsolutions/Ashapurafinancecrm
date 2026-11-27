@@ -1,3 +1,4 @@
+import { TransferScope, TransferCheck, TransferTag } from "@/features/daily_operations/HandoverTools";
 import { DocumentCollectionPage } from "./DocumentCollectionPage";
 import { BulkUploadModal } from "@/features/bulk_import/BulkUploadModal";
 import { BulkAssignmentModal, type AssignmentResult } from "@/features/leads/components/BulkAssignmentModal";
@@ -276,7 +277,7 @@ function UngroupedLeadListPage({ tab }: { tab: LeadTab }) {
   const meta = TAB_META[tab];
 
   return (
-    <div className="min-h-screen bg-background">
+    <TransferScope collection={tab === "document_collection" ? "applications" : "leads"} ids={items.map(r=>tab === "document_collection" ? r.application_id || "" : r.id).filter(Boolean)} allowed={can(tab === "document_collection" ? "customer:customers" : "leads:leads","assign")||can(`leads:leads.${tab === "my" ? "assigned" : tab}`,"assign")} onTransferred={refreshAfterAction}><div className="min-h-screen bg-background">
       {showBulk && <BulkUploadModal kind="leads" onClose={() => setShowBulk(false)} onImported={refreshAfterAction} />}
       {assignmentIds && <BulkAssignmentModal collection={tab === "document_collection" ? "applications" : "leads"} ids={assignmentIds} onClose={() => setAssignmentIds(null)} onDone={result => {
         setAssignmentResult(result); setAssignmentIds(null);
@@ -480,7 +481,7 @@ function UngroupedLeadListPage({ tab }: { tab: LeadTab }) {
                           <span className="ml-2 inline-block rounded-full bg-warning/10 text-warning text-xs px-2 py-0.5">Possible duplicate</span>
                         )}
                       </Td>
-                      <Td className="font-semibold text-text">{lead.full_name}</Td>
+                      <Td className="font-semibold text-text"><TransferCheck id={tab === "document_collection" ? lead.application_id||"" : lead.id}/>{lead.full_name}<TransferTag id={tab === "document_collection" ? lead.application_id||"" : lead.id}/></Td>
                       {isVisible("mobile") && (
                         <Td>
                           <span className="inline-flex items-center gap-1.5 text-text">
@@ -622,6 +623,6 @@ function UngroupedLeadListPage({ tab }: { tab: LeadTab }) {
           <UpdateStageModal lead={updateStageLead} onClose={() => setUpdateStageLead(null)} onChanged={refreshAfterAction} />
         ))}
       {del.dialog}
-    </div>
+    </div></TransferScope>
   );
 }

@@ -50,14 +50,14 @@ beforeEach(() => {
 });
 
 describe("Daily Update navigation", () => {
-  it("opens the module from a single sidebar entry and keeps all five tabs outside the sidebar", async () => {
+  it("opens the module from a single sidebar entry and keeps all seven tabs outside the sidebar", async () => {
     mount("/");
     const sidebar = document.querySelector("aside")!;
     expect(within(sidebar).getAllByRole("link", { name: "Daily Update" })).toHaveLength(1);
     expect(within(sidebar).queryByRole("link", { name: "Daily Follow-up Data" })).not.toBeInTheDocument();
     fireEvent.click(within(sidebar).getByRole("link", { name: "Daily Update" }));
     const bar = await screen.findByRole("navigation", { name: "Daily Update tabs" });
-    expect(within(bar).getAllByRole("link")).toHaveLength(5);
+    expect(within(bar).getAllByRole("link")).toHaveLength(7);
     expect(sidebar.contains(bar)).toBe(false);
     expect(bar).toHaveClass("overflow-x-auto");
     expect(screen.getByText("Existing greeting")).toBeInTheDocument();

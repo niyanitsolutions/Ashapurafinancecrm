@@ -1,4 +1,5 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render as rtlRender, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, expect, it, vi } from "vitest";
@@ -21,4 +22,8 @@ it("selects a single application directly and clears selection",async()=>{
 it("preserves the shared bulk upload entry point",async()=>{renderPage();await userEvent.click(screen.getByRole("button",{name:"Bulk Upload"}));expect(screen.getByRole("dialog",{name:"Bulk Upload Leads"})).toBeInTheDocument();});
 it("opens the exact individual application and retains the customer link",async()=>{renderPage();await expand();expect(screen.getByRole("link",{name:"AFS-APP-000001"})).toHaveAttribute("href","/leads/document-collection?application=app-1");expect(screen.getAllByRole("link",{name:"AFS-CUS-1"})[0]).toHaveAttribute("href","/leads/document-collection?customer_id=customer-1&expand=customer-1");});
 it("does not offer Lead-only actions for an independent application",async()=>{renderPage();await expand();expect(screen.queryByRole("button",{name:"Generate Link"})).not.toBeInTheDocument();expect(screen.queryByRole("link",{name:"Edit Lead"})).not.toBeInTheDocument();});
-it("retains the existing Move to Loan Management eligibility workflow",async()=>{renderPage();await expand();await userEvent.click(screen.getByRole("button",{name:"Update"}));expect(await screen.findByRole("heading",{name:"Move to Loan Management"})).toBeInTheDocument();await waitFor(()=>expect(mocks.summary).toHaveBeenCalledWith("app-1"));});
+it("opens the replacement Move to Daily Follow-up workflow",async()=>{renderPage();await expand();await userEvent.click(screen.getByRole("button",{name:"Update"}));expect(await screen.findByRole("heading",{name:"Move to Daily Follow-up"})).toBeInTheDocument();await waitFor(()=>expect(mocks.request).toHaveBeenCalledWith("/daily-operations/applications/app-1/workspace"));});
+
+function render(ui: React.ReactElement) { return rtlRender(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}>{ui}</QueryClientProvider>); }
+
+vi.mock("@/features/auth/useAuth",()=>({useAuth:()=>({role:"owner",userId:"synthetic-owner"})}));

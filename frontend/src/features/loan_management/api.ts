@@ -52,6 +52,9 @@ export interface LoanCaseDetails {
 }
 
 export interface LoanCaseListItem {
+  top_up_period?: string | null;
+  top_up_eligibility_date?: string | null;
+  top_up_remarks?: string | null;
   id: string;
   case_code: string;
   application_id: string;
@@ -502,7 +505,7 @@ export function disburseLoanCase(caseId: string, payload: { disbursed_amount: nu
 // case's own stored disbursed_at, never from whatever date the popup happened to be
 // opened on. Backs BOTH the Disbursed list's "Top Up" action and the Top Up Loan
 // list's "Rejected" (reject + reschedule) action — same endpoint, same popup.
-export function scheduleTopUp(caseId: string, payload: { period: string; custom_date?: string; remarks?: string }) {
+export function scheduleTopUp(caseId: string, payload: { period: string; custom_date?: string; remarks?: string; request_id?: string }) {
   return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/top-up/schedule`, { method: "POST", body: JSON.stringify(payload) });
 }
 

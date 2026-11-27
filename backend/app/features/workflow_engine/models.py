@@ -114,6 +114,7 @@ class LoanCaseDetails(BaseModel):
     disbursed_amount: float | None = None
     disbursed_at: datetime | None = None
     disbursed_reference: str | None = None
+    disbursement_remarks: str | None = None
 
     # Top Up Loan — a disbursed case remains `current_status=DISBURSED` forever (a Top
     # Up decision is never a WorkflowEngine status transition); eligibility is a
