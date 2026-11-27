@@ -20,6 +20,33 @@ beforeEach(() => { vi.clearAllMocks(); mocks.request.mockResolvedValue(["FOLLOW 
 
 describe("daily operations", () => {
   it.each([
+    ["application-123", "Linked - Application"],
+    [null, "Standalone - Unlinked"],
+  ])("shows only the name and backend relationship for application_id %s", async (applicationId, label) => {
+    mocks.list.mockResolvedValue({ items: [{
+      id: "relationship-row", customer_name: "Asis Marjit", application_id: applicationId,
+      customer_id: "customer-123", lead_id: "lead-123", relationship_label: "Manually entered label",
+      application_code: "AFS-APP-HIDDEN", customer_code: "AFS-CUS-HIDDEN",
+      email: "hidden@example.com", application_status: "submitted", account_status: "active",
+      movement_status: "Moved", application_created_at: "2026-11-25T10:00:00Z",
+      identity_warning: "Hidden identity metadata", disbursed_at: "2026-11-26T10:00:00Z",
+      approved_amount: 100000, disbursed_amount: 90000, top_up_period: "3_months",
+    }], total: 1 });
+    mount(<DailyOperationsPage area="follow-ups" />);
+    const name = await screen.findByText("Asis Marjit");
+    const cell = name.closest("td")!;
+    expect(name).toHaveClass("font-bold");
+    expect(cell.children).toHaveLength(2);
+    expect(cell.textContent).toBe(`Asis Marjit${label}`);
+    expect(within(cell).getByText(label)).toBeInTheDocument();
+    const row = name.closest("tr")!;
+    if (applicationId) {
+      expect(within(row).getByRole("link", { name: "View Application" })).toHaveAttribute("href", `/applications/${applicationId}`);
+    } else {
+      expect(within(row).queryByRole("link", { name: "View Application" })).not.toBeInTheDocument();
+    }
+  });
+  it.each([
     ["FOLLOW UP PENDING", "#FFF0C2"], ["NEXT FOLLOW UP", "#DCEBFF"],
     ["DISBURSE", "#D9F5E3"], ["REJECTED WITH REASON", "#FFE0E0"],
   ])("colors the whole %s row and retains its label", async (status, color) => {
