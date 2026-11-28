@@ -154,6 +154,7 @@ def application_to_list_item(
     case: ApplicationWorkflow | None = None, case_status_label: str | None = None,
 ) -> ApplicationListItem:
     return ApplicationListItem(
+        partner_review_pending=bool(application.referral_attribution and not application.referral_attribution.get("submitted_to_afs_at") and application.status == "submitted"),
         id=application.require_id(),
         application_code=application.application_code,
         submission_source=application.submission_source,

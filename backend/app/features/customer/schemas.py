@@ -445,6 +445,7 @@ class AssignApplicationRequest(BaseModel):
 
 
 class ApplicationListItem(BaseModel):
+    partner_review_pending: bool = False
     submission_source: str = "unknown"
     last_customer_activity_at: datetime | None = None
     id: str

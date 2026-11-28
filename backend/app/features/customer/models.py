@@ -323,6 +323,7 @@ class FormTemplateMaster(BaseDocument):
 
 
 class Application(BaseDocument):
+    referral_attribution: dict[str, Any] | None = None
     daily_followup_moved_at: datetime | None = None
     daily_followup_moved_by: str | None = None
     auto_assignment_eligible: bool = False

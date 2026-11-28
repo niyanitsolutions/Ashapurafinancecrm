@@ -22,6 +22,12 @@ from app.shared.base_document import BaseDocument
 
 
 class ReferralPartner(BaseDocument):
+    kyc_status: str = "pending"
+    account_active: bool = True
+    submission_mode: str = "partner_review"
+    applicable_product_ids: list[str] = Field(default_factory=list)
+    current_kyc_id: str | None = None
+    restrictions: str = ""
     partner_code: str  # AFS-REF-000001
     user_id: str  # ref: users (Auth) — login identity stays there, same pattern as Customer/Employee
 
@@ -47,6 +53,15 @@ class ReferralLead(BaseDocument):
 
 
 class CommissionRule(BaseDocument):
+    fixed_event_policy: str | None = None
+    product_id: str | None = None
+    effective_from: datetime | None = None
+    effective_until: datetime | None = None
+    rule_version: int = 1
+    previous_rule_id: str | None = None
+    terms: str = ""
+    fixed_contract_confirmed: bool = False
+
     """One collection, Owner-configurable — the scheduler never hardcodes a rate.
     `partner_id=None` means "default rule for this product_category, applies to any
     Referral Partner without a more specific rule of their own"; a rule with `partner_id`
@@ -63,6 +78,23 @@ class CommissionRule(BaseDocument):
 
 
 class CommissionEntry(BaseDocument):
+    financial_at: datetime | None = None
+    approved_amount: float | None = None
+    fixed_event_policy: str | None = None
+    reserved_amount: float = 0
+    additional_earned_amount: float = 0
+    disbursement_event_source: str = "application_status_history"
+    application_id: str | None = None
+    customer_id: str | None = None
+    referral_id: str | None = None
+    product_id: str | None = None
+    disbursement_event_id: str | None = None
+    rule_version: int = 1
+    adjusted_amount: float = 0
+    recovery_due_amount: float = 0
+    paid_amount: float = 0
+    outstanding_amount: float | None = None
+    hold_reason: str | None = None
     partner_id: str
     lead_id: str
     case_type: str  # "loan" | "insurance" (workflow_engine.constants.CaseType)

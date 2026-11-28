@@ -14,23 +14,11 @@ export function ReferralPartnerPortalLayout({ children }: { children?: ReactNode
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="bg-card border-b border-border h-16 flex items-center justify-between px-6">
-        <Link to="/referral-portal" className="text-lg font-semibold text-primary">
-          AFS Referral Partner Portal
-        </Link>
-        <nav className="flex items-center gap-6 text-sm">
-          <Link to="/referral-portal" className="text-text/70 hover:text-primary">
-            Dashboard
-          </Link>
-          <Link to="/referral-portal/leads" className="text-text/70 hover:text-primary">
-            My Leads
-          </Link>
-          <Link to="/referral-portal/commissions" className="text-text/70 hover:text-primary">
-            Commission History
-          </Link>
-          <button type="button" onClick={onLogout} className="text-danger hover:underline">
-            Logout
-          </button>
+      <header className="border-b border-border bg-card px-4 py-4 sm:px-6">
+        <Link to="/referral-portal" className="text-lg font-semibold text-primary">AFS Partner Portal</Link>
+        <nav aria-label="Partner navigation" className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-3 text-sm">
+          {[["Dashboard","/referral-portal"],["Complete KYC","/referral-portal/kyc"],["My Referrals","/referral-portal/leads"],["Add Customer","/referral-portal/add-customer"],["Generate Customer Link","/referral-portal/links"],["Commission Rules","/referral-portal/rules"],["My Commissions","/referral-portal/commissions"],["Payout History","/referral-portal/payouts"],["Profile & Security","/referral-portal/security"],["Notifications","/referral-portal/notifications"]].map(([label,to])=><Link className="text-text/70 hover:text-primary" to={to} key={to}>{label}</Link>)}
+          <button type="button" onClick={onLogout} className="text-danger hover:underline">Log out</button>
         </nav>
       </header>
       <main className="p-6">{children ?? <Outlet />}</main>

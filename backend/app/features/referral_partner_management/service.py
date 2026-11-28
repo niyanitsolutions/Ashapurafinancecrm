@@ -1,37 +1,29 @@
-"""Module 7 — Referral Partner Portal business logic.
+"""Partner lifecycle facade over existing identity, referral and financial services.
 
-Reuses, unmodified: Auth's `AuthService.send_otp` (decisions 003/011's own invite
-mechanism — a Referral Partner's `User` account and OTP invite are created by *calling*
-that existing method, not reimplementing it) and Leads' `LeadService.create_lead`/
-`update_lead` (Module 6A, frozen — a Referral Partner's "Add Lead"/edit-own-lead actions
-are the exact same service calls Owner/Employee use, just invoked with the Referral
-Partner's own `User` as actor). `Lead`'s own schema is never modified — `ReferralLead` is
-a separate mapping collection, and external status is computed on read, never stored.
+Owner password provisioning uses accounts.py. Canonical reviewed Applications use
+referrals.py. Historical Lead mappings retain their authorized read/edit cutoff.
+finance.py is the single commission calculator; Loan earnings run in the confirmed
+disbursement transaction, while the legacy worker retains confirmed Insurance events.
 """
 
 from typing import Any
 
+from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from redis.asyncio import Redis
 
-from app.constants.roles import REFERRAL_PARTNER as REFERRAL_PARTNER_ROLE
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
 from app.features.auth.models import User
 from app.features.auth.repository import UserRepository
-from app.features.auth.service import AuthService
 from app.features.customer.repository import ApplicationRepository
 from app.features.leads.models import Lead
 from app.features.leads.repository import LeadRepository
-from app.features.leads.schemas import CreateLeadRequest, UpdateLeadRequest
+from app.features.leads.schemas import UpdateLeadRequest
 from app.features.leads.service import LeadService
 from app.features.referral_partner_management.constants import (
-    REFERRAL_LEAD_SOURCE_NAME,
     ApprovalStatus,
     AuditEvent,
-    CalculationType,
-    CommissionEntryStatus,
     ExternalLeadStatus,
-    TriggerEvent,
 )
 from app.features.referral_partner_management.mappers import referral_lead_to_response
 from app.features.referral_partner_management.models import (
@@ -63,9 +55,7 @@ from app.features.system_settings.repository import (
 )
 from app.features.workflow_engine.constants import CaseType, InsuranceStatus, LoanStatus
 from app.features.workflow_engine.repository import ApplicationWorkflowRepository
-from app.shared.audit_log import write_audit_log
 from app.utils.datetime import utc_now
-from app.utils.id_generator import IdPrefix, generate_id
 
 
 class ReferralPartnerManagementService:
@@ -93,45 +83,48 @@ class ReferralPartnerManagementService:
     # ================================================================== Owner: partner lifecycle
 
     async def create_partner(self, payload: CreateReferralPartnerRequest, actor: User) -> ReferralPartner:
-        assert self._redis is not None  # only the real HTTP-driven path (which has a Redis client) reaches here
-        auth = AuthService(self._db, self._redis)
-        await auth.send_otp(mobile=payload.mobile, role=REFERRAL_PARTNER_ROLE, inviter=actor)
-        user = await self._users.find_by_mobile(payload.mobile)
-        assert user is not None  # send_otp just created (or resent to) this exact mobile/role
+        from app.features.referral_partner_management.accounts import create_account
 
-        partner_code = await generate_id(self._db, IdPrefix.REFERRAL_PARTNER)
-        partner = ReferralPartner(
-            partner_code=partner_code, user_id=user.require_id(), full_name=payload.full_name, mobile=payload.mobile,
-            email=payload.email, business_name=payload.business_name, created_by=actor.require_id(),
-        )
-        partner_id = await self._partners.insert(partner)
-        await write_audit_log(self._db, event_type=AuditEvent.PARTNER_CREATED, user_id=actor.require_id(), metadata={"partner_id": partner_id})
-        found = await self._partners.find_by_id(partner_id)
-        assert found is not None
-        return found
+        return await create_account(self._db, payload, actor)
 
     async def approve_partner(self, partner_id: str, actor: User) -> ReferralPartner:
+        from app.core.exceptions import ConflictError
+        from app.features.referral_partner_management.kyc import event, oid
+        if actor.role != "owner":
+            raise ForbiddenError("Only Owner can activate Partner accounts.")
         partner = await self.get_partner(partner_id)
-        if partner.approval_status == ApprovalStatus.ACTIVE:
-            raise ValidationError("This Referral Partner is already active.")
-        updated = await self._partners.update(
-            partner_id, {"approval_status": ApprovalStatus.ACTIVE, "approved_at": utc_now(), "approved_by": actor.require_id()}, updated_by=actor.require_id()
-        )
-        assert updated is not None
-        await write_audit_log(self._db, event_type=AuditEvent.PARTNER_APPROVED, user_id=actor.require_id(), metadata={"partner_id": partner_id})
-        return updated
+        if partner.approval_status == ApprovalStatus.ACTIVE and partner.account_active:
+            raise ValidationError("Partner is already active.")
+        if partner.kyc_status != "approved":
+            raise ValidationError("Complete and approve the versioned KYC review first.")
+        async with await self._db.client.start_session() as session, session.start_transaction():
+            row = await self._db.referral_partners.find_one_and_update(
+                {"_id": oid(partner_id), "version": partner.version, "kyc_status": "approved", "is_deleted": False},
+                {"$set": {"approval_status": ApprovalStatus.ACTIVE, "account_active": True, "approved_at": utc_now(), "approved_by": actor.require_id()}, "$inc": {"version": 1}}, return_document=True, session=session)
+            if not row:
+                raise ConflictError("Partner changed; reload before activating.")
+            await event(self._db, actor, AuditEvent.PARTNER_APPROVED, partner_id, session=session)
+        return ReferralPartner.model_validate(row)
 
     async def deactivate_partner(self, partner_id: str, actor: User) -> ReferralPartner:
-        await self.get_partner(partner_id)
-        updated = await self._partners.update(partner_id, {"approval_status": ApprovalStatus.DEACTIVATED}, updated_by=actor.require_id())
-        assert updated is not None
-        await write_audit_log(self._db, event_type=AuditEvent.PARTNER_DEACTIVATED, user_id=actor.require_id(), metadata={"partner_id": partner_id})
-        return updated
+        from app.core.exceptions import ConflictError
+        from app.features.referral_partner_management.kyc import event, oid
+        if actor.role != "owner":
+            raise ForbiddenError("Only Owner can suspend Partner accounts.")
+        partner = await self.get_partner(partner_id)
+        async with await self._db.client.start_session() as session, session.start_transaction():
+            row = await self._db.referral_partners.find_one_and_update(
+                {"_id": oid(partner_id), "version": partner.version, "is_deleted": False},
+                {"$set": {"approval_status": ApprovalStatus.DEACTIVATED, "account_active": False}, "$inc": {"version": 1}}, return_document=True, session=session)
+            if not row:
+                raise ConflictError("Partner changed; reload before suspending.")
+            await event(self._db, actor, AuditEvent.PARTNER_DEACTIVATED, partner_id, session=session)
+        return ReferralPartner.model_validate(row)
 
     async def list_partners(
-        self, *, search: str | None, approval_status: str | None, skip: int, limit: int, sort: list[tuple[str, int]] | None
+        self, *, search: str | None, approval_status: str | None, skip: int, limit: int, sort: list[tuple[str, int]] | None, kyc_status: str | None = None
     ) -> tuple[list[ReferralPartner], int]:
-        return await self._partners.search_and_filter(search=search, approval_status=approval_status, skip=skip, limit=limit, sort=sort)
+        return await self._partners.search_and_filter(search=search, approval_status=approval_status, skip=skip, limit=limit, sort=sort, kyc_status=kyc_status)
 
     async def get_partner(self, partner_id: str) -> ReferralPartner:
         partner = await self._partners.find_by_id(partner_id)
@@ -149,7 +142,7 @@ class ReferralPartnerManagementService:
 
     async def _require_active_partner(self, actor: User) -> ReferralPartner:
         partner = await self.get_own_partner(actor)
-        if partner.approval_status != ApprovalStatus.ACTIVE:
+        if not partner.account_active or partner.kyc_status != "approved" or partner.approval_status != ApprovalStatus.ACTIVE:
             raise ForbiddenError("Your Referral Partner account is not yet approved by the Owner.")
         return partner
 
@@ -165,26 +158,8 @@ class ReferralPartnerManagementService:
         return await repo.find_many({}, limit=200)
 
     async def add_lead(self, payload: AddReferralLeadRequest, actor: User) -> tuple[Lead, ReferralLead]:
-        partner = await self._require_active_partner(actor)
-        source = await self._lead_sources.find_by_name(REFERRAL_LEAD_SOURCE_NAME)
-        if source is None:
-            raise ValidationError("The 'Referral' lead source is not configured.")
-
-        lead = await self._lead_service.create_lead(
-            CreateLeadRequest(
-                full_name=payload.full_name, mobile=payload.mobile, email=payload.email, source_id=source.require_id(),
-                product_category=payload.product_category, product_id=payload.product_id, remarks=payload.remarks,
-                product_form_data=payload.product_form_data,
-            ),
-            actor,
-        )
-        referral_lead = ReferralLead(partner_id=partner.require_id(), lead_id=lead.require_id(), created_by=actor.require_id())
-        await self._referral_leads.insert(referral_lead)
-        await write_audit_log(
-            self._db, event_type=AuditEvent.REFERRAL_LEAD_ADDED, user_id=actor.require_id(),
-            metadata={"partner_id": partner.require_id(), "lead_id": lead.require_id()},
-        )
-        return lead, referral_lead
+        await self._require_active_partner(actor)
+        raise ValidationError("Create a canonical referral Application draft and review it before Submit to AFS. Immediate Lead submission is no longer supported.")
 
     async def update_own_lead(self, lead_id: str, payload: UpdateReferralLeadRequest, actor: User) -> Lead:
         partner = await self._require_active_partner(actor)
@@ -280,12 +255,8 @@ class ReferralPartnerManagementService:
     # ================================================================== Owner: commission rules
 
     async def create_commission_rule(self, payload: CreateCommissionRuleRequest, actor: User) -> CommissionRule:
-        rule = CommissionRule(**payload.model_dump(), created_by=actor.require_id())
-        rule_id = await self._rules.insert(rule)
-        await write_audit_log(self._db, event_type=AuditEvent.COMMISSION_RULE_CREATED, user_id=actor.require_id(), metadata={"rule_id": rule_id})
-        found = await self._rules.find_by_id(rule_id)
-        assert found is not None
-        return found
+        from app.features.referral_partner_management.finance import save_rule
+        return await save_rule(self._db, payload, actor)
 
     async def list_commission_rules(self) -> list[CommissionRule]:
         return await self._rules.find_many({}, limit=200, sort=[("created_at", 1)])
@@ -297,18 +268,13 @@ class ReferralPartnerManagementService:
         return rule
 
     async def update_commission_rule(self, rule_id: str, payload: UpdateCommissionRuleRequest, actor: User) -> CommissionRule:
-        updates = payload.model_dump(exclude_unset=True)
-        updated = await self._rules.update(rule_id, updates, updated_by=actor.require_id()) if updates else await self._rules.find_by_id(rule_id)
-        if updated is None:
-            raise NotFoundError("Commission rule not found.")
-        await write_audit_log(self._db, event_type=AuditEvent.COMMISSION_RULE_UPDATED, user_id=actor.require_id(), metadata={"rule_id": rule_id})
-        return updated
+        from app.features.referral_partner_management.finance import save_rule
+        return await save_rule(self._db, payload, actor, await self.get_commission_rule(rule_id))
 
     async def set_commission_rule_active(self, rule_id: str, *, active: bool, actor: User) -> CommissionRule:
-        updated = await self._rules.update(rule_id, {"status": "active" if active else "inactive"}, updated_by=actor.require_id())
-        if updated is None:
-            raise NotFoundError("Commission rule not found.")
-        return updated
+        from app.features.referral_partner_management.finance import save_rule
+        previous = await self.get_commission_rule(rule_id)
+        return await save_rule(self._db, previous.model_copy(update={"status": "active" if active else "inactive"}), actor, previous)
 
     # ================================================================== Owner: commission ledger
 
@@ -321,32 +287,51 @@ class ReferralPartnerManagementService:
         partner_ids = {e.partner_id for e in entries}
         if not partner_ids:
             return {}
-        partners = await self._partners.find_many({}, limit=1000)
+        partners = await self._partners.find_many({"_id": {"$in": [ObjectId(value) for value in partner_ids]}}, limit=len(partner_ids))
         return {p.require_id(): p.full_name for p in partners if p.require_id() in partner_ids}
 
     async def approve_commission_entry(self, entry_id: str, actor: User) -> CommissionEntry:
-        entry = await self._get_entry(entry_id)
-        if entry.status != CommissionEntryStatus.PENDING:
-            raise ValidationError("Only a pending commission entry can be approved.")
-        updated = await self._entries.update(
-            entry_id, {"status": CommissionEntryStatus.APPROVED, "approved_at": utc_now(), "approved_by": actor.require_id()}, updated_by=actor.require_id()
-        )
-        assert updated is not None
-        await write_audit_log(self._db, event_type=AuditEvent.COMMISSION_ENTRY_APPROVED, user_id=actor.require_id(), metadata={"entry_id": entry_id})
-        return updated
+        from app.core.exceptions import ConflictError
+        from app.features.referral_partner_management.kyc import event, oid
+        if actor.role != "owner":
+            raise ForbiddenError("Only Owner can approve commissions.")
+        from decimal import Decimal
+
+        from pymongo.errors import OperationFailure
+
+        from app.features.referral_partner_management.finance import money
+        try:
+            async with await self._db.client.start_session() as session, session.start_transaction():
+                current = await self._db.commission_entries.find_one({"_id": oid(entry_id), "status": "pending", "is_deleted": False}, session=session)
+                if not current:
+                    raise ConflictError("Only a current pending commission can be approved.")
+                amount = money(current["commission_amount"]) + money(current.get("additional_earned_amount", 0)) + Decimal(str(current.get("adjusted_amount", 0)))
+                entry = await self._db.commission_entries.find_one_and_update(
+                    {"_id": current["_id"], "version": current["version"], "status": "pending", "is_deleted": False},
+                    {"$set": {"status": "approved", "approved_amount": float(max(Decimal(0), amount)), "approved_at": utc_now(), "approved_by": actor.require_id()}, "$inc": {"version": 1}},
+                    return_document=True, session=session)
+                if not entry:
+                    raise ConflictError("Commission changed; reload before approving.")
+                await event(self._db, actor, "commission_entry_approved", entry["partner_id"], session=session, detail={"entry_id": entry_id, "approved_version": entry["version"], "approved_earned_amount": entry["commission_amount"] + entry.get("additional_earned_amount", 0), "approved_adjustment": entry.get("adjusted_amount", 0), "approved_amount": entry["approved_amount"]})
+        except OperationFailure as exc:
+            if exc.code == 112 or exc.has_error_label("TransientTransactionError"):
+                raise ConflictError("Commission or payment changed concurrently. Refresh; no automatic retry.") from None
+            raise
+        return CommissionEntry.model_validate(entry)
 
     async def settle_commission_entry(self, entry_id: str, payload: SettleCommissionEntryRequest, actor: User) -> CommissionEntry:
+        import hashlib
+
+        from app.features.referral_partner_management.finance import PayoutInput, payout
+        from app.utils.datetime import to_ist
         entry = await self._get_entry(entry_id)
-        if entry.status != CommissionEntryStatus.APPROVED:
-            raise ValidationError("Only an approved commission entry can be settled/paid.")
-        updated = await self._entries.update(
-            entry_id,
-            {"status": CommissionEntryStatus.PAID, "paid_at": utc_now(), "paid_by": actor.require_id(), "payment_reference": payload.payment_reference},
-            updated_by=actor.require_id(),
-        )
-        assert updated is not None
-        await write_audit_log(self._db, event_type=AuditEvent.COMMISSION_ENTRY_PAID, user_id=actor.require_id(), metadata={"entry_id": entry_id})
-        return updated
+        amount = entry.commission_amount + entry.additional_earned_amount + entry.adjusted_amount - entry.paid_amount - entry.reserved_amount
+        await payout(self._db, entry_id, PayoutInput(
+            request_id=hashlib.sha256((entry_id + ":" + payload.payment_reference).encode()).hexdigest(),
+            amount=amount, payment_reference=payload.payment_reference,
+            payment_method="recorded_payment", payment_date=to_ist(utc_now()).date().isoformat(),
+            confirmed=True), actor)
+        return await self._get_entry(entry_id)
 
     async def _get_entry(self, entry_id: str) -> CommissionEntry:
         entry = await self._entries.find_by_id(entry_id)
@@ -362,54 +347,23 @@ class ReferralPartnerManagementService:
         commission amount once, from whichever rule applies right now, and stores that
         snapshot — a later edit to `CommissionRule` never changes an already-created
         entry (docs/decisions/DECISIONS.md)."""
-        application = await self._applications.find_by_id(case.application_id)
-        if application is None or application.lead_id is None:
+        existing = await self._entries.find_existing_for_case(case.require_id())
+        if existing or case.case_type != CaseType.INSURANCE:
+            # Loan earnings belong to the disbursement transaction; no historical Loan backfill.
+            return existing
+        from app.features.referral_partner_management.finance import calculate
+        from app.features.referral_partner_management.kyc import oid
+        history = await self._db.application_status_history.find_one({"application_workflow_id": case.require_id(), "to_status": InsuranceStatus.POLICY_ISSUED}, sort=[("created_at", -1)])
+        if not history:
             return None
-        mapping = await self._referral_leads.find_by_lead_id(application.lead_id)
-        if mapping is None:
-            return None  # not a referral-sourced lead — nothing to do
-        if await self._entries.find_existing_for_case(case.require_id()):
-            return None  # already created for this case
-
-        trigger, base_amount = self._trigger_and_base_amount(case)
-        if trigger is None or base_amount is None:
-            return None
-
-        candidates = await self._rules.find_candidates(product_category=case.product_category, partner_id=mapping.partner_id)
-        rule = self._pick_rule(candidates, trigger_event=trigger)
-        if rule is None:
-            return None  # Owner hasn't configured an applicable Commission Rule yet
-
-        commission_amount = base_amount * (rule.rate_or_amount / 100) if rule.calculation_type == CalculationType.PERCENTAGE else rule.rate_or_amount
-
-        entry = CommissionEntry(
-            partner_id=mapping.partner_id, lead_id=mapping.lead_id, case_type=case.case_type, case_id=case.require_id(),
-            rule_id=rule.require_id(), calculation_type=rule.calculation_type, rate_or_amount=rule.rate_or_amount,
-            base_amount=base_amount, commission_amount=commission_amount,
-        )
-        entry_id = await self._entries.insert(entry)
-        await write_audit_log(
-            self._db, event_type=AuditEvent.COMMISSION_ENTRY_CREATED, user_id=mapping.partner_id,
-            metadata={"entry_id": entry_id, "case_id": case.require_id(), "commission_amount": commission_amount},
-        )
-        found = await self._entries.find_by_id(entry_id)
-        assert found is not None
-        return found
-
-    @staticmethod
-    def _trigger_and_base_amount(case: Any) -> tuple[str | None, float | None]:
-        if case.case_type == CaseType.LOAN and case.current_status == LoanStatus.DISBURSED and case.loan_details is not None:
-            return TriggerEvent.LOAN_DISBURSED, case.loan_details.disbursed_amount
-        if case.case_type == CaseType.INSURANCE and case.current_status == InsuranceStatus.POLICY_ISSUED and case.insurance_details is not None:
-            return TriggerEvent.INSURANCE_POLICY_ISSUED, case.insurance_details.premium_amount
-        return None, None
-
-    @staticmethod
-    def _pick_rule(candidates: list[CommissionRule], *, trigger_event: str) -> CommissionRule | None:
-        matching = [r for r in candidates if r.trigger_event == trigger_event]
-        if not matching:
-            return None
-        # Most specific first: partner-specific + product-specific, then partner-specific
-        # + all-products, then default + product-specific, then default + all-products.
-        matching.sort(key=lambda r: (r.partner_id is None, r.product_category is None))
-        return matching[0]
+        class SystemActor:
+            role = "system"
+            def require_id(self) -> None:
+                return None
+        async with await self._db.client.start_session() as session, session.start_transaction():
+            current = await self._db.application_workflows.find_one({"_id": oid(case.require_id()), "current_status": InsuranceStatus.POLICY_ISSUED, "is_deleted": False}, session=session)
+            if not current:
+                return None
+            await self._db.application_workflows.update_one({"_id": current["_id"], "version": current["version"]}, {"$inc": {"commission_guard": 1}}, session=session)
+            await calculate(self._db, current, SystemActor(), session, str(history["_id"]))
+        return await self._entries.find_existing_for_case(case.require_id())

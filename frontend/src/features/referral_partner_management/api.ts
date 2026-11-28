@@ -1,6 +1,9 @@
 import { apiRequest, apiRequestRaw, type PaginationMeta } from "@/shared/api/client";
 
 export interface ReferralPartner {
+  kyc_status?: string;
+  account_active?: boolean;
+  submission_mode?: string;
   id: string;
   partner_code: string;
   full_name: string;
@@ -26,6 +29,14 @@ export interface ReferralLead {
 }
 
 export interface CommissionRule {
+  previous_rule_id?: string | null;
+  product_id?: string | null;
+  effective_from?: string | null;
+  effective_until?: string | null;
+  rule_version?: number;
+  terms?: string;
+  fixed_contract_confirmed?: boolean;
+  fixed_event_policy?: string | null;
   id: string;
   label: string;
   product_category: string | null;
@@ -39,6 +50,17 @@ export interface CommissionRule {
 }
 
 export interface CommissionEntry {
+  approved_amount?: number|null;
+  reserved_amount?: number;
+  version?: number;
+  additional_earned_amount?: number;
+  total_earned_amount?: number;
+  adjusted_amount?: number;
+  recovery_due_amount?: number;
+  paid_amount?: number;
+  outstanding_amount?: number | null;
+  application_id?: string | null;
+  rule_version?: number;
   id: string;
   partner_id: string;
   partner_name: string | null;
@@ -84,11 +106,11 @@ function toQuery(params: Record<string, string | number | undefined>): string {
 
 // ---- Owner: partner lifecycle ----
 
-export function createReferralPartner(payload: { full_name: string; mobile: string; email?: string; business_name?: string }) {
+export function createReferralPartner(payload: { full_name: string; mobile: string; email?: string; business_name?: string; initial_password?: string; confirm_password?: string; temporary_password: boolean; request_id: string; reuse_existing_identity?: boolean }) {
   return apiRequest<ReferralPartner>("/referral-partners", { method: "POST", body: JSON.stringify(payload) });
 }
 
-export async function listReferralPartners(params: { page?: number; page_size?: number; search?: string; approval_status?: string }): Promise<PaginatedResponse<ReferralPartner>> {
+export async function listReferralPartners(params: { page?: number; page_size?: number; search?: string; approval_status?: string; kyc_status?: string }): Promise<PaginatedResponse<ReferralPartner>> {
   const envelope = await apiRequestRaw<ReferralPartner[]>(`/referral-partners${toQuery(params)}`);
   return { data: envelope.data ?? [], pagination: envelope.meta?.pagination ?? null };
 }
@@ -104,7 +126,7 @@ export function deactivateReferralPartner(partnerId: string) {
 // ---- Owner: commission rules ----
 
 export function createCommissionRule(payload: {
-  label: string; product_category?: string; partner_id?: string; calculation_type: string; rate_or_amount: number; trigger_event: string;
+  label: string; product_category?: string | null; partner_id?: string | null; calculation_type: string; rate_or_amount: number; trigger_event: string; product_id?: string | null; effective_from?: string | null; effective_until?: string | null; terms?: string; fixed_contract_confirmed?: boolean; fixed_event_policy?: string | null; status?: string;
 }) {
   return apiRequest<CommissionRule>("/commission-rules", { method: "POST", body: JSON.stringify(payload) });
 }

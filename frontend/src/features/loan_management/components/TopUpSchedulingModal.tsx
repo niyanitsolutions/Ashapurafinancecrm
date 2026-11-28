@@ -72,7 +72,7 @@ export function TopUpSchedulingModal({
       .finally(() => setIsLoading(false));
   }, [caseId]);
 
-  const disbursedAtIsoDate = loanCase?.loan_details.disbursed_at ? istDateKey(loanCase.loan_details.disbursed_at) : null;
+  const disbursedAtIsoDate = (loanCase?.loan_details.last_disbursed_at||loanCase?.loan_details.disbursed_at) ? istDateKey((loanCase.loan_details.last_disbursed_at||loanCase.loan_details.disbursed_at)!) : null;
 
   const eligibilityPreview: string | null =
     disbursedAtIsoDate && period in PERIOD_MONTHS
@@ -83,7 +83,7 @@ export function TopUpSchedulingModal({
 
   const customDateInvalid = period === "custom" && Boolean(customDate) && Boolean(disbursedAtIsoDate) && customDate < (disbursedAtIsoDate as string);
 
-  const canSubmit = Boolean(period) && (period !== "custom" || (Boolean(customDate) && !customDateInvalid));
+  const canSubmit = Boolean(loanCase) && loanCase?.loan_details.disbursement_final !== false && Boolean(period) && (period !== "custom" || (Boolean(customDate) && !customDateInvalid));
 
   const onSubmit = async () => {
     setError(null);

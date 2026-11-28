@@ -1,7 +1,6 @@
 import re
 from typing import Any
 
-from app.features.referral_partner_management.constants import CommissionEntryStatus
 from app.features.referral_partner_management.models import (
     CommissionEntry,
     CommissionRule,
@@ -22,11 +21,17 @@ class ReferralPartnerRepository(BaseRepository[ReferralPartner]):
         return self.model.model_validate(doc) if doc else None
 
     async def search_and_filter(
-        self, *, search: str | None, approval_status: str | None, skip: int, limit: int, sort: list[tuple[str, int]] | None
+        self, *, search: str | None, approval_status: str | None, skip: int, limit: int, sort: list[tuple[str, int]] | None, kyc_status: str | None = None
     ) -> tuple[list[ReferralPartner], int]:
         query: dict[str, Any] = {"is_deleted": False}
         if approval_status:
             query["approval_status"] = approval_status
+        if kyc_status == "pending":
+            query["kyc_status"] = {"$in": [None, "pending"]}
+        elif kyc_status == "suspended":
+            query["account_active"] = False
+        elif kyc_status:
+            query["kyc_status"] = kyc_status
         if search:
             pattern = re.compile(re.escape(search), re.IGNORECASE)
             query["$or"] = [{field: pattern} for field in _PARTNER_SEARCH_FIELDS]
@@ -98,18 +103,10 @@ class CommissionEntryRepository(BaseRepository[CommissionEntry]):
         return items, total
 
     async def summary_for_partner(self, partner_id: str) -> dict[str, float]:
-        pending = await self._sum(partner_id, CommissionEntryStatus.PENDING)
-        approved = await self._sum(partner_id, CommissionEntryStatus.APPROVED)
-        paid = await self._sum(partner_id, CommissionEntryStatus.PAID)
-        return {"pending": pending, "approved": approved, "paid": paid, "balance": pending + approved}
-
-    async def _sum(self, partner_id: str, status: str) -> float:
-        cursor = self.collection.aggregate(
-            [
-                {"$match": {"partner_id": partner_id, "status": status, "is_deleted": False}},
-                {"$group": {"_id": None, "total": {"$sum": "$commission_amount"}}},
-            ]
-        )
-        async for doc in cursor:
-            return float(doc["total"])
-        return 0.0
+        rows = [row async for row in self.collection.aggregate([
+            {"$match": {"partner_id": partner_id, "is_deleted": False}},
+            {"$set": {"actual_paid": {"$ifNull": ["$paid_amount", {"$cond": [{"$eq": ["$status", "paid"]}, "$commission_amount", 0]}]}, "gross": {"$add": ["$commission_amount", {"$ifNull": ["$additional_earned_amount", 0]}, {"$ifNull": ["$adjusted_amount", 0]}]}}},
+            {"$group": {"_id": "$status", "balance": {"$sum": {"$max": [0, {"$subtract": ["$gross", "$actual_paid"]}]}}, "paid": {"$sum": "$actual_paid"}}},
+        ])]
+        totals = {row["_id"]: round(row["balance"], 2) for row in rows}
+        return {"pending": totals.get("pending", 0), "approved": totals.get("approved", 0), "paid": round(sum(row["paid"] for row in rows), 2), "balance": round(sum(totals.values()), 2)}

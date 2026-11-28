@@ -52,6 +52,11 @@ class DeletableResource:
 # ---------------------------------------------------------------------- guards
 
 
+async def _guard_partner(_doc: dict[str, Any], _db: AsyncIOMotorDatabase[Any]) -> None:
+    # Partner identity, KYC consent and financial history use a retained lifecycle.
+    raise ValidationError("Suspend the Partner instead. Partner identities and audit history are retained.")
+
+
 async def _guard_customer(doc: dict[str, Any], db: AsyncIOMotorDatabase[Any]) -> None:
     customer_id = str(doc["_id"])
     if await db.applications.find_one({"customer_id": customer_id, "is_deleted": False}):
@@ -161,6 +166,7 @@ _RESOURCES: tuple[DeletableResource, ...] = (
     ),
     DeletableResource(
         key="referral_partners", collection="referral_partners", module_label="Referral Partners",
+        guard=_guard_partner, purge_guard=_guard_partner,
         stage_field="status", code_field="partner_code", summary_fields=("full_name", "mobile"),
     ),
     DeletableResource(

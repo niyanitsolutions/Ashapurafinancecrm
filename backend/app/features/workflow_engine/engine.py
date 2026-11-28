@@ -135,6 +135,10 @@ class WorkflowEngine:
             await self._db.audit_logs.insert_one(
                 audit.model_dump(by_alias=True, exclude={"id"}), session=session
             )
+            from app.features.referral_partner_management.notifications import (
+                notify_application_status,
+            )
+            await notify_application_status(self._db, ApplicationWorkflow.model_validate(row), session=session)
             # Caller publishes existing status-change side effects only after commit.
             return ApplicationWorkflow.model_validate(row)
         actor_id = actor.require_id() if actor is not None else None
@@ -165,6 +169,16 @@ class WorkflowEngine:
                 **({"automatic": True, "actor_type": "system"} if actor is None else {}),
             },
         )
+        # Other existing transitions retain their persistence semantics. Inbox failure
+        # must not turn an already committed status transition into a failed action.
+        try:
+            from app.features.referral_partner_management.notifications import (
+                notify_application_status,
+            )
+            await notify_application_status(self._db, updated)
+        except Exception:  # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).warning("Partner status inbox notice unavailable; review the persisted workflow audit.")
         await publish(
             STATUS_CHANGED_EVENT,
             {

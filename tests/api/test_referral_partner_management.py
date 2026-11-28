@@ -1,21 +1,22 @@
-"""End-to-end tests for Module 7 (Referral Partner Portal): Owner-creates ->
-invite-and-set-password -> Owner-approval-gate lifecycle, Add Lead / View Submitted
-Leads with the external (never-internal) status mapping and the "editable until
-processing starts" edit cutoff (docs/decisions/DECISIONS.md), Commission Rules (Owner,
-percentage/flat, product+partner scoping), and the Commission Ledger — including the
-"snapshot, never recompute" guarantee: editing a CommissionRule after an entry exists
-must never change that entry's stored amount.
+"""Partner API regression: Owner credentials, KYC activation and RBAC; retained
+legacy Lead history/privacy/edit cutoff; rule snapshots and approval/settlement.
+Real canonical referral/KYC/financial atomicity lives in the replica-set enhancement tests.
 """
 
-from bson import ObjectId
+from datetime import UTC, datetime
+from uuid import uuid4
 
-from app.features.auth.models import ACCOUNT_STATUS_ACTIVE
+from app.features.auth.models import ACCOUNT_STATUS_ACTIVE, User
 from app.features.customer.models import Application
+from app.features.leads.models import Lead
+from app.features.referral_partner_management.models import ReferralLead
 from app.features.system_settings.models import LeadSource, LoanProduct
 from app.features.workflow_engine.constants import CaseType, LoanStatus
 from app.features.workflow_engine.models import ApplicationWorkflow, LoanCaseDetails
 from app.security.password import hash_password
 from app.worker.tasks.referral_partner import check_commission_triggers
+from bson import ObjectId
+from httpx import Response
 
 
 async def _seed_referral_source_and_loan_product(mock_db) -> dict:
@@ -50,7 +51,7 @@ async def _create_and_approve_partner(client, mock_db, owner_headers, *, mobile=
     shortcut `_seed_staff_user` (conftest.py) already takes for Owner/Employee. Returns
     (partner_response, partner_headers), already Owner-approved."""
     r = await client.post(
-        "/api/v1/referral-partners", json={"full_name": "Referral Co", "mobile": mobile, "business_name": "Referral Co Pvt Ltd"}, headers=owner_headers
+        "/api/v1/referral-partners", json={"full_name": "Referral Co", "mobile": mobile, "business_name": "Referral Co Pvt Ltd", "initial_password": password, "confirm_password": password, "request_id": uuid4().hex}, headers=owner_headers
     )
     assert r.status_code == 200, r.text
     partner = r.json()["data"]
@@ -59,6 +60,7 @@ async def _create_and_approve_partner(client, mock_db, owner_headers, *, mobile=
 
     await mock_db["users"].update_one({"mobile": mobile}, {"$set": {"password_hash": hash_password(password), "status": ACCOUNT_STATUS_ACTIVE}})
 
+    await mock_db.referral_partners.update_one({"_id": ObjectId(partner["id"])}, {"$set": {"kyc_status": "approved"}})
     r = await client.post(f"/api/v1/referral-partners/{partner['id']}/approve", json={}, headers=owner_headers)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["approval_status"] == "active"
@@ -71,7 +73,7 @@ async def _create_and_approve_partner(client, mock_db, owner_headers, *, mobile=
 
 
 async def test_partner_approval_lifecycle_and_pre_approval_restrictions(client, mock_db, owner_headers, employee_headers):
-    r = await client.post("/api/v1/referral-partners", json={"full_name": "New Partner", "mobile": "9700000002"}, headers=owner_headers)
+    r = await client.post("/api/v1/referral-partners", json={"full_name": "New Partner", "mobile": "9700000002", "initial_password": "PartnerPass1!", "confirm_password": "PartnerPass1!", "request_id": uuid4().hex}, headers=owner_headers)
     assert r.status_code == 200, r.text
     partner = r.json()["data"]
 
@@ -100,6 +102,7 @@ async def test_partner_approval_lifecycle_and_pre_approval_restrictions(client, 
     r = await client.post(f"/api/v1/referral-partners/{partner['id']}/approve", json={}, headers=employee_headers)
     assert r.status_code == 403, r.text
 
+    await mock_db.referral_partners.update_one({"_id": ObjectId(partner["id"])}, {"$set": {"kyc_status": "approved"}})
     r = await client.post(f"/api/v1/referral-partners/{partner['id']}/approve", json={}, headers=owner_headers)
     assert r.status_code == 200, r.text
     r = await client.post(f"/api/v1/referral-partners/{partner['id']}/approve", json={}, headers=owner_headers)
@@ -124,10 +127,8 @@ async def test_add_lead_view_and_edit_until_processing_starts(client, mock_db, o
     refs = await _seed_referral_source_and_loan_product(mock_db)
     _partner, partner_headers = await _create_and_approve_partner(client, mock_db, owner_headers)
 
-    r = await client.post(
-        "/api/v1/referral-partners/me/leads",
+    r = await _legacy_lead(client, mock_db, refs, partner_headers,
         json={"full_name": "Prospect One", "mobile": "9800000001", "product_category": refs["product_category"], "product_id": refs["product_id"], "remarks": "hot lead"},
-        headers=partner_headers,
     )
     assert r.status_code == 200, r.text
     added = r.json()["data"]
@@ -179,10 +180,8 @@ async def test_external_status_approved_and_rejected_never_expose_internal_statu
     _partner, partner_headers = await _create_and_approve_partner(client, mock_db, owner_headers, mobile="9700000003")
 
     async def _add_and_wire_case(mobile: str, current_status: str) -> str:
-        r = await client.post(
-            "/api/v1/referral-partners/me/leads",
+        r = await _legacy_lead(client, mock_db, refs, partner_headers,
             json={"full_name": "Prospect", "mobile": mobile, "product_category": refs["product_category"], "product_id": refs["product_id"]},
-            headers=partner_headers,
         )
         assert r.status_code == 200, r.text
         lead_id = r.json()["data"]["lead_id"]
@@ -227,11 +226,11 @@ async def test_external_status_approved_and_rejected_never_expose_internal_statu
 async def test_commission_rule_crud_entry_creation_and_snapshot_is_immutable(client, mock_db, owner_headers, monkeypatch):
     monkeypatch.setattr("app.worker.tasks.referral_partner.get_database", lambda: mock_db)
     refs = await _seed_referral_source_and_loan_product(mock_db)
-    partner, partner_headers = await _create_and_approve_partner(client, mock_db, owner_headers, mobile="9700000004")
+    _partner, partner_headers = await _create_and_approve_partner(client, mock_db, owner_headers, mobile="9700000004")
 
     r = await client.post(
         "/api/v1/commission-rules",
-        json={"label": "Personal Loan default", "product_category": "loan", "calculation_type": "percentage", "rate_or_amount": 2.0, "trigger_event": "loan_disbursed"},
+        json={"effective_from": "2026-01-01T00:00:00Z", "label": "Personal Loan default", "product_category": "loan", "calculation_type": "percentage", "rate_or_amount": 2.0, "trigger_event": "loan_disbursed"},
         headers=owner_headers,
     )
     assert r.status_code == 200, r.text
@@ -242,10 +241,8 @@ async def test_commission_rule_crud_entry_creation_and_snapshot_is_immutable(cli
     assert r.status_code == 200, r.text
     assert len(r.json()["data"]) == 1
 
-    r = await client.post(
-        "/api/v1/referral-partners/me/leads",
+    r = await _legacy_lead(client, mock_db, refs, partner_headers,
         json={"full_name": "Big Ticket", "mobile": "9800000004", "product_category": "loan", "product_id": refs["product_id"]},
-        headers=partner_headers,
     )
     assert r.status_code == 200, r.text
     lead_id = r.json()["data"]["lead_id"]
@@ -258,11 +255,19 @@ async def test_commission_rule_crud_entry_creation_and_snapshot_is_immutable(cli
     case = ApplicationWorkflow(
         case_code="AFS-LOAN-COMM", case_type=CaseType.LOAN, application_id=str(app_result.inserted_id), customer_id="000000000000000000000003",
         product_id=refs["product_id"], product_category="loan", current_status=LoanStatus.DISBURSED,
-        loan_details=LoanCaseDetails(disbursed_amount=100000.0),
+        loan_details=LoanCaseDetails(disbursed_amount=100000.0, disbursed_at=datetime(2026, 11, 26, tzinfo=UTC)),
     )
     await mock_db["application_workflows"].insert_one(case.model_dump(by_alias=True, exclude={"id"}))
 
+    # Historical polling must not fabricate earnings. Calculate from a confirmed
+    # event here; real workflow transaction integration is covered by replica-set tests.
     await check_commission_triggers({})
+    assert await mock_db.commission_entries.count_documents({}) == 0
+    from app.features.referral_partner_management.finance import calculate
+    persisted = await mock_db.application_workflows.find_one({"case_code": case.case_code})
+    owner = User.model_validate(await mock_db.users.find_one({"role": "owner"}))
+    async with await mock_db.client.start_session() as session, session.start_transaction():
+        await calculate(mock_db, persisted, owner, session, str(ObjectId()))
     r = await client.get("/api/v1/commission-entries", headers=owner_headers)
     assert r.status_code == 200, r.text
     entries = r.json()["data"]
@@ -285,7 +290,7 @@ async def test_commission_rule_crud_entry_creation_and_snapshot_is_immutable(cli
     assert r.json()["data"][0]["commission_amount"] == 2000.0  # unchanged, not recomputed at 5%
 
     r = await client.post(f"/api/v1/commission-entries/{entry_id}/settle", json={"payment_reference": "REF1"}, headers=owner_headers)
-    assert r.status_code == 422, r.text  # pending, not approved yet
+    assert r.status_code == 409, r.text  # pending, not approved yet
 
     r = await client.post(f"/api/v1/commission-entries/{entry_id}/approve", json={}, headers=owner_headers)
     assert r.status_code == 200, r.text
@@ -334,7 +339,7 @@ async def _grant_partner_permission(client, owner_headers, employee_id, actions,
 
 async def test_employee_denied_partner_list_without_permission(client, mock_db, owner_headers, master_data):
     await _create_and_approve_partner(client, mock_db, owner_headers, mobile="9700000101")
-    employee = await _create_employee(client, owner_headers, master_data, "9500000101", "noperm.partner@example.com")
+    _employee = await _create_employee(client, owner_headers, master_data, "9500000101", "noperm.partner@example.com")
     headers = await _login(client, "9500000101", "InitialPass1!")
 
     r = await client.get("/api/v1/referral-partners", headers=headers)
@@ -355,30 +360,19 @@ async def test_employee_granted_partner_view_via_role(client, mock_db, owner_hea
     assert r.status_code == 200, r.text
 
 
-async def test_employee_granted_partner_create_permission_still_blocked_by_auth_invite_rule(client, mock_db, owner_headers, master_data):
-    """The router-level `referral_partner_management:partners:create` grant is real and
-    reachable (proven by test_employee_denied_partner_list_without_permission passing
-    without it), but `POST /referral-partners` also goes through Auth's own, separate,
-    frozen invite-role check (`INVITER_ROLES_BY_INVITEE_ROLE[REFERRAL_PARTNER] ==
-    {OWNER}`, auth/constants.py) — deliberately untouched, per the "no Auth changes"
-    scope boundary. So today a Create grant on this row is real router-level scaffolding
-    that reaches the endpoint but still can't complete the invite; same class of no-op
-    as Customer's `create` action (see customer/router.py notes) until/unless a product
-    decision widens the Auth invite-role set for Referral Partner.
-
-    Granted with `view` alongside `create` — View->Create/Edit hierarchy (View must be
-    granted for Create/Edit to take effect) means a `create`-only grant would now be
-    rejected by `set_role_permissions` itself, before ever reaching this test's actual
-    target (Auth's invite-role check)."""
+async def test_employee_granted_partner_create_still_requires_owner_credentials_authority(client, mock_db, owner_headers, master_data):
+    """An Employee create grant cannot grant Owner credential-provisioning authority.
+    View and create grants are still validated through the existing permission matrix.
+    """
     employee = await _create_employee(client, owner_headers, master_data, "9500000103", "create.partner@example.com")
     headers = await _login(client, "9500000103", "InitialPass1!")
     await _grant_partner_permission(client, owner_headers, employee["id"], ["view", "create"])
 
     r = await client.post(
-        "/api/v1/referral-partners", json={"full_name": "Employee-Created Partner", "mobile": "9700000103"}, headers=headers
+        "/api/v1/referral-partners", json={"full_name": "Employee-Created Partner", "mobile": "9700000103", "initial_password": "PartnerPass1!", "confirm_password": "PartnerPass1!", "request_id": uuid4().hex}, headers=headers
     )
     assert r.status_code == 403, r.text
-    assert "cannot invite" in r.json()["error"]["message"]
+    assert "Only the Owner" in r.json()["error"]["message"]
 
 
 async def test_employee_cannot_approve_or_deactivate_partner_via_basic_grant(client, mock_db, owner_headers, master_data):
@@ -399,5 +393,15 @@ async def test_owner_partner_management_unaffected_by_new_permission_dependency(
     # for Owner.
     r = await client.get("/api/v1/referral-partners", headers=owner_headers)
     assert r.status_code == 200, r.text
-    r = await client.post("/api/v1/referral-partners", json={"full_name": "Owner Direct", "mobile": "9700000105"}, headers=owner_headers)
+    r = await client.post("/api/v1/referral-partners", json={"full_name": "Owner Direct", "mobile": "9700000105", "initial_password": "PartnerPass1!", "confirm_password": "PartnerPass1!", "request_id": uuid4().hex}, headers=owner_headers)
     assert r.status_code == 200, r.text
+
+
+async def _legacy_lead(client, mock_db, refs, headers, *, json):
+    """Seed historical mappings to retain legacy read/edit/privacy regression coverage."""
+    partner = (await client.get("/api/v1/referral-partners/me", headers=headers)).json()["data"]
+    lead = Lead(lead_code="SYN-LEGACY-" + uuid4().hex, source_id=refs["source_id"], **json)
+    result = await mock_db.leads.insert_one(lead.model_dump(exclude={"id"}))
+    await mock_db.referral_leads.insert_one(ReferralLead(partner_id=partner["id"], lead_id=str(result.inserted_id)).model_dump(exclude={"id"}))
+    rows = (await client.get("/api/v1/referral-partners/me/leads", headers=headers)).json()["data"]
+    return Response(200, json={"data": next(row for row in rows if row["lead_id"] == str(result.inserted_id))})

@@ -66,6 +66,10 @@ class ReportingService:
 
     async def export_report_csv(self, report_key: str, *, date_from: date | None, date_to: date | None, actor: User) -> str:
         result = await self.run_report(report_key, date_from=date_from, date_to=date_to)
+        return await self.export_result_csv(result, report_key=report_key, actor=actor)
+
+    async def export_result_csv(self, result: ReportResult, *, report_key: str, actor: User) -> str:
+        """Shared formatter for an already authorized, scoped report result."""
         buffer = io.StringIO()
         writer = csv.writer(buffer)
         writer.writerow([c.label for c in result.columns])

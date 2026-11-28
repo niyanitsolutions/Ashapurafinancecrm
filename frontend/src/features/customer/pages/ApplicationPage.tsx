@@ -442,6 +442,7 @@ export function ApplicationPage() {
         </div>
       )}
 
+      {application.partner_review_pending && <p role="status" className="mb-4 rounded-xl border border-border bg-card p-4">Your application is waiting for your Partner to review and submit it to AFS.</p>}
       {isSubmitted ? (
         <>
           <div className="bg-card border border-border rounded-card shadow-card p-6 mb-6">

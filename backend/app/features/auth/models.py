@@ -30,6 +30,7 @@ class User(BaseDocument):
         return normalize_mobile(value)
 
     mobile: str
+    provisioning_source: str | None = None
     employee_access: dict[str, Any] | None = Field(default=None, repr=False)
     role: str = Field(pattern=f"^({'|'.join(ALL_ROLES)})$")
     password_hash: str | None = None

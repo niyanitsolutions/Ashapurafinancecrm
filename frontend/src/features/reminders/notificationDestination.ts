@@ -2,6 +2,12 @@ import type { AppNotification } from "./api";
 
 /** References select existing routes; destination APIs remain the authorization boundary. */
 export function notificationDestination(n: Pick<AppNotification, "entity_type" | "entity_id">, role: string | null = "employee"): string {
+  if (role === "referral_partner") {
+    if (n.entity_type === "partner_commission") return "/referral-portal/commissions";
+    if (n.entity_type === "partner_referral") return "/referral-portal/leads";
+    if (n.entity_type === "referral_partner") return "/referral-portal/kyc";
+    return "/referral-portal/notifications";
+  }
   const staff = role === "owner" || role === "employee";
   const fallback = staff ? "/notifications" : "/portal/alerts";
   if (!n.entity_id || !n.entity_type) return fallback;
@@ -12,6 +18,9 @@ export function notificationDestination(n: Pick<AppNotification, "entity_type" |
     return fallback;
   }
   const routes: Record<string, string> = {
+    referral_partner: role === "owner" ? `/referral-partners/kyc-review?partner_id=${id}` : "/notifications",
+    partner_commission: role === "owner" ? "/commission-ledger" : "/notifications",
+    partner_referral: role === "owner" ? "/leads/document-collection?source_id=submission%3Areferral_partner" : "/notifications",
     employee_hr: role === "owner" ? `/employees/${id}/onboarding` : "/profile/onboarding",
     employee_leave: role === "owner" ? `/employees/leave?employee=${id}` : "/profile/leave",
     daily_follow_up: "/daily-operations/follow-ups",

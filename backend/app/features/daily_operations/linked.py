@@ -47,6 +47,8 @@ async def open_linked(
         )
         if application.lead_id:
             lead = await LeadService(db).get_lead_scoped(application.lead_id, actor)
+    if application and application.referral_attribution and not application.referral_attribution.get("submitted_to_afs_at"):
+        raise ConflictError("The Partner must review and submit this referral to AFS first.")
     if application and application.customer_id:
         identity = await db.customers.find_one(
             {

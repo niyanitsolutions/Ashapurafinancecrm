@@ -2,6 +2,9 @@ import { ApiError, apiRequest, apiRequestRaw, type PaginationMeta } from "@/shar
 import { getCurrentCoordinates } from "@/shared/geolocation";
 
 export interface LoanCaseDetails {
+  disbursement_final?: boolean;
+  last_disbursed_at?: string | null;
+  disbursement_events?: {id:string;source:string;amount:number;at:string;reference:string;remarks?:string;final:boolean}[];
   preferred_bank_name: string | null;
   preferred_branch: string | null;
   loan_type: string | null;
@@ -495,7 +498,7 @@ export function recordFinalEvaluation(
   return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/final-evaluation`, { method: "POST", body: JSON.stringify(payload) });
 }
 
-export function disburseLoanCase(caseId: string, payload: { disbursed_amount: number; disbursed_reference: string }) {
+export function disburseLoanCase(caseId: string, payload: { disbursed_amount: number; disbursed_reference: string; final_disbursement?: boolean }) {
   return apiRequest<LoanCaseDetail>(`/loan-cases/${caseId}/disburse`, { method: "POST", body: JSON.stringify(payload) });
 }
 

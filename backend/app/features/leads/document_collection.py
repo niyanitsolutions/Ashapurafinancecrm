@@ -94,7 +94,7 @@ async def pipeline(
     assigned, _ = await LeadService(db)._scope_query(
         actor, f.assigned_to, LeadStage.DOCUMENT_COLLECTION
     )
-    match: dict[str, Any] = {"is_deleted": False, "daily_followup_moved_at": None, "status": {"$in": ["draft", "submitted"]}}
+    match: dict[str, Any] = {"is_deleted": False, "daily_followup_moved_at": None, "$or": [{"referral_attribution": None}, {"referral_attribution.submitted_to_afs_at": {"$ne": None}}], "status": {"$in": ["draft", "submitted"]}}
     if assigned:
         # Use the same actor-derived employee scope as the existing intake list.
         match["assigned_to"] = None if assigned == "__unassigned__" else assigned
@@ -498,7 +498,10 @@ async def grouped(
                                 "customer_code": "$customer.customer_code",
                                 "customer_name": "$name",
                                 "mobile": {"$ifNull": ["$customer.mobile", "$lead.mobile"]},
-                                "source_name": "$source.name",
+                                "source_name": {"$cond": [{"$ne": [{"$ifNull": ["$referral_attribution.partner_id", None]}, None]}, "Referral Partner", "$source.name"]},
+                                "referred_by": "$referral_attribution.partner_name",
+                                "referral_reference": "$referral_attribution.referral_id",
+                                "referral_mode": "$referral_attribution.submission_mode",
                                 "source_id": "$lead.source_id",
                                 "submission_source": 1,
                                 "customer_status": "$customer.status",
@@ -534,7 +537,10 @@ async def grouped(
                             "status": "$status",
                             "assigned_to": "$assigned_to",
                             "assigned_to_name": "$employee.display_name",
-                            "source_name": "$source.name",
+                            "source_name": {"$cond": [{"$ne": [{"$ifNull": ["$referral_attribution.partner_id", None]}, None]}, "Referral Partner", "$source.name"]},
+                                "referred_by": "$referral_attribution.partner_name",
+                                "referral_reference": "$referral_attribution.referral_id",
+                                "referral_mode": "$referral_attribution.submission_mode",
                             "submission_source": "$submission_source",
                             "customer_status": "$customer.status",
                             "created_at": "$created_at",

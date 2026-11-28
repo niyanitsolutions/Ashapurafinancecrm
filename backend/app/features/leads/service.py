@@ -447,7 +447,7 @@ class LeadService:
             search=search, customer_id=None, assigned_to=scoped_assigned_to, unassigned_only=False, status=None,
             product_category="loan", skip=0, limit=1000, sort=[("created_at", -1)], lead_id_is_none=True,
         )
-        candidates = [a for a in candidates if a.status in (ApplicationStatus.DRAFT, ApplicationStatus.SUBMITTED) and a.customer_id and not a.daily_followup_moved_at]
+        candidates = [a for a in candidates if a.status in (ApplicationStatus.DRAFT, ApplicationStatus.SUBMITTED) and a.customer_id and not a.daily_followup_moved_at and (not a.referral_attribution or a.referral_attribution.get("submitted_to_afs_at"))]
         if product_id:
             candidates = [a for a in candidates if a.product_id == product_id]
         if not candidates:

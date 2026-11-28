@@ -1,16 +1,10 @@
 import { useEffect, useState } from "react";
-import { validateFormData } from "@/components/forms/fieldValidation";
-import { ProductSchemaForm } from "@/components/forms/ProductSchemaForm";
-import { SubmitButton } from "@/components/forms/SubmitButton";
+import { Link } from "react-router-dom";
 import { getErrorMessage } from "@/features/customer/errors";
-import { useProductSchema } from "@/features/customer/useProductSchema";
 import {
-  addReferralLead,
-  listOwnAddLeadProducts,
   listOwnLeads,
   updateReferralLead,
   type ReferralLead,
-  type ReferralProductOption,
 } from "@/features/referral_partner_management/api";
 
 const PAGE_SIZE = 20;
@@ -57,10 +51,7 @@ export function ReferralPartnerLeadsPage() {
       {message && <p className="mb-4 text-sm text-success">{message}</p>}
       {error && <p className="mb-4 text-sm text-danger">{error}</p>}
 
-      <div className="mb-6 bg-card border border-border rounded-card shadow-card p-6">
-        <h3 className="text-sm font-semibold text-text/70 mb-3">Add Lead</h3>
-        <AddLeadForm onSubmit={(payload) => run(() => addReferralLead(payload), "Lead submitted.")} />
-      </div>
+      <Link className="mb-6 block text-primary underline" to="/referral-portal/add-customer">Create a reviewed Customer referral</Link>
 
       <div className="bg-card border border-border rounded-card shadow-card overflow-x-auto">
         <table className="w-full text-sm">
@@ -115,126 +106,6 @@ export function ReferralPartnerLeadsPage() {
         </div>
       </div>
     </div>
-  );
-}
-
-function AddLeadForm({
-  onSubmit,
-}: {
-  onSubmit: (payload: {
-    full_name: string;
-    mobile: string;
-    email?: string;
-    product_category: string;
-    product_id: string;
-    remarks?: string;
-    product_form_data?: Record<string, unknown>;
-  }) => void;
-}) {
-  const [fullName, setFullName] = useState("");
-  const [mobile, setMobile] = useState("");
-  const [email, setEmail] = useState("");
-  const [productCategory, setProductCategory] = useState<"loan" | "insurance">("loan");
-  const [products, setProducts] = useState<ReferralProductOption[]>([]);
-  const [productId, setProductId] = useState("");
-  const [remarks, setRemarks] = useState("");
-  const [productFormData, setProductFormData] = useState<Record<string, unknown>>({});
-  const [productFieldErrors, setProductFieldErrors] = useState<Record<string, string>>({});
-  const [validationError, setValidationError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setProductId("");
-    listOwnAddLeadProducts(productCategory)
-      .then(setProducts)
-      .catch(() => setProducts([]));
-  }, [productCategory]);
-
-  useEffect(() => {
-    setProductFormData({});
-    setProductFieldErrors({});
-  }, [productId]);
-
-  // Same Product Schema Engine every portal reads — a Referral Partner sees exactly the
-  // same Basic Information fields for a product as Employee Create Lead / the Customer
-  // Application form.
-  const { data: productSchema } = useProductSchema(productId ? productCategory : undefined, productId || undefined);
-
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        setValidationError(null);
-        if (productSchema && productSchema.fields.length > 0) {
-          const errors = validateFormData(productSchema.fields, productFormData);
-          if (Object.keys(errors).length > 0) {
-            setProductFieldErrors(errors);
-            setValidationError("Please fix the highlighted fields before submitting.");
-            return;
-          }
-        }
-        onSubmit({
-          full_name: fullName,
-          mobile,
-          email: email || undefined,
-          product_category: productCategory,
-          product_id: productId,
-          remarks: remarks || undefined,
-          product_form_data: productSchema && productSchema.fields.length > 0 ? productFormData : undefined,
-        });
-        setFullName("");
-        setMobile("");
-        setEmail("");
-        setProductId("");
-        setRemarks("");
-        setProductFormData({});
-      }}
-    >
-      {validationError && <p className="mb-3 text-sm text-danger">{validationError}</p>}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <input placeholder="Full Name" value={fullName} onChange={(e) => setFullName(e.target.value)} className="rounded border border-border px-3 py-2 text-sm" required />
-        <input placeholder="Mobile" value={mobile} onChange={(e) => setMobile(e.target.value)} className="rounded border border-border px-3 py-2 text-sm" required />
-        <input placeholder="Email (optional)" value={email} onChange={(e) => setEmail(e.target.value)} className="rounded border border-border px-3 py-2 text-sm" />
-        <select
-          value={productCategory}
-          onChange={(e) => setProductCategory(e.target.value as "loan" | "insurance")}
-          className="rounded border border-border px-3 py-2 text-sm"
-        >
-          <option value="loan">Loan</option>
-          <option value="insurance">Insurance</option>
-        </select>
-        <select value={productId} onChange={(e) => setProductId(e.target.value)} className="rounded border border-border px-3 py-2 text-sm" required>
-          <option value="">Select a product</option>
-          {products.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-        <input placeholder="Remarks (optional)" value={remarks} onChange={(e) => setRemarks(e.target.value)} className="rounded border border-border px-3 py-2 text-sm" />
-      </div>
-
-      {productSchema && productSchema.fields.length > 0 && (
-        <div className="mt-4 border-t border-border pt-4">
-          <ProductSchemaForm
-            fields={productSchema.fields}
-            values={productFormData}
-            onChange={(key, value) => {
-              setProductFormData((prev) => ({ ...prev, [key]: value }));
-              setProductFieldErrors((prev) => {
-                if (!prev[key]) return prev;
-                const { [key]: _removed, ...rest } = prev;
-                return rest;
-              });
-            }}
-            errors={productFieldErrors}
-          />
-        </div>
-      )}
-
-      <div className="mt-4">
-        <SubmitButton>Add Lead</SubmitButton>
-      </div>
-    </form>
   );
 }
 

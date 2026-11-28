@@ -32,6 +32,7 @@ from app.features.loan_management.dependencies import (
     get_loan_case_service,
 )
 from app.features.loan_management.schemas import (
+    AdditionalDisbursementRequest,
     AdditionalDocumentRequest,
     AdditionalDocumentResponse,
     AdditionalDocumentUploadUrlRequest,
@@ -522,4 +523,11 @@ async def move_top_up_to_document_collection(
     case_id: str, service: ServiceDep, actor: Annotated[User, _perm("edit")]
 ) -> ApiResponse[LoanCaseDetailResponse]:
     await service.move_top_up_to_document_collection(case_id, actor)
+    return await _detail(service, case_id, actor)
+
+
+@router.post("/{case_id}/disbursements")
+async def additional_disbursement(case_id: str, payload: AdditionalDisbursementRequest, service: ServiceDep, actor: Annotated[User, _any_perm(("approve", "edit"))]) -> ApiResponse[LoanCaseDetailResponse]:
+    from app.features.loan_management.disbursement_events import record
+    await record(service, case_id, payload, actor)
     return await _detail(service, case_id, actor)

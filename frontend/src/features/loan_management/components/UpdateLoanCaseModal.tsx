@@ -628,7 +628,8 @@ function EsignNachKycForm({ details, onSubmit }: { details: LoanCaseDetail["loan
   );
 }
 
-function DisburseForm({ onSubmit }: { onSubmit: (payload: { disbursed_amount: number; disbursed_reference: string }) => void }) {
+function DisburseForm({ onSubmit }: { onSubmit: (payload: { disbursed_amount: number; disbursed_reference: string; final_disbursement?: boolean }) => void }) {
+  const [moreExpected,setMoreExpected]=useState(false);
   const [amount, setAmount] = useState("");
   const [reference, setReference] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -644,6 +645,7 @@ function DisburseForm({ onSubmit }: { onSubmit: (payload: { disbursed_amount: nu
         <FormField label="Disbursed Amount" type="number" value={amount} onChange={(e) => setAmount(e.target.value)} required />
         <FormField label="Reference / UTR" value={reference} onChange={(e) => setReference(e.target.value)} required />
       </div>
+      <label className="mb-3 block text-sm"><input type="checkbox" checked={moreExpected} onChange={e=>setMoreExpected(e.target.checked)}/>More disbursement tranches are expected</label>
       <SubmitButton>Mark Disbursed</SubmitButton>
 
       <ConfirmDialog
@@ -652,7 +654,7 @@ function DisburseForm({ onSubmit }: { onSubmit: (payload: { disbursed_amount: nu
         message={`Mark this case as disbursed for ${amount ? `₹${amount}` : "the entered amount"} (ref: ${reference || "—"})? This cannot be undone here.`}
         confirmLabel="Confirm Disbursement"
         onConfirm={() => {
-          onSubmit({ disbursed_amount: Number(amount), disbursed_reference: reference });
+          onSubmit({ disbursed_amount: Number(amount), disbursed_reference: reference, ...(moreExpected?{final_disbursement:false}:{}) });
           setConfirmOpen(false);
         }}
         onClose={() => setConfirmOpen(false)}

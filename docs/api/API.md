@@ -413,3 +413,8 @@ Every capture funnels through one shared pipeline reusing Module 6A's frozen `Le
 - `POST /communication/webhooks/msg91?secret=...` — SMS delivery-report callback. 200 for anything processed (including unknown/duplicate message ids), 403 for a missing/wrong secret, 400 only for a malformed body.
 
 Endpoints for other modules are documented here as each is built.
+
+
+## Partner portal APIs (27 November 2026)
+
+The existing Partner module adds Owner KYC configuration/review, own Partner onboarding/private document/referral/link APIs, Customer-only referral claim, Owner reports/attribution correction, commission exceptions, holds/adjustments, partial payments and grouped reservations. Existing authentication, Customer forms/documents and Loan Case stage permissions remain canonical. The complete route inventory and access rules are in [Partner architecture and operations](../PARTNER_PORTAL_ARCHITECTURE_AND_OPERATIONS.md#additive-api-surface). No real SMS endpoint or new external payout provider was added.

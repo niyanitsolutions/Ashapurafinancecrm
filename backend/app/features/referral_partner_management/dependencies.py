@@ -39,6 +39,6 @@ def get_referral_partner_management_service(
 
 
 def require_referral_partner(current_user: CurrentUserDep) -> User:
-    if current_user.role != REFERRAL_PARTNER:
+    if current_user.role != REFERRAL_PARTNER or current_user.must_change_password:
         raise ForbiddenError("This action is restricted to Referral Partners.")
     return current_user

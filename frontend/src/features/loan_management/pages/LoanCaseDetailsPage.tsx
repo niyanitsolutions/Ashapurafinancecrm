@@ -25,6 +25,7 @@ import {
   type CaseTimelineEntry,
   type LoanCaseDetail,
 } from "@/features/loan_management/api";
+import { AdditionalDisbursementModal } from "@/features/loan_management/components/AdditionalDisbursementModal";
 import { UpdateLoanCaseModal } from "@/features/loan_management/components/UpdateLoanCaseModal";
 import { LOAN_STATUS_LABELS as STATUS_LABELS } from "@/features/loan_management/constants";
 import { formatISTDate, formatISTDateTime } from "@/shared/dateFormat";
@@ -69,6 +70,7 @@ export function LoanCaseDetailsPage() {
   const [loanCase, setLoanCase] = useState<LoanCaseDetail | null>(null);
   const [timeline, setTimeline] = useState<CaseTimelineEntry[]>([]);
   const [message, setMessage] = useState<string | null>(null);
+  const [additionalDisbursement,setAdditionalDisbursement]=useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   // Requirement 22-24 — the complete application view: every document already uploaded
@@ -303,6 +305,9 @@ export function LoanCaseDetailsPage() {
 
           {status === "disbursed" && (
             <Section title="Disbursement Record">
+              {canDisburse&&details.disbursement_final===false&&<Button variant="secondary" onClick={()=>setAdditionalDisbursement(true)}>Record additional disbursement</Button>}
+              {(details.disbursement_events??[]).map(event=><p className="text-sm" key={event.id}>?{event.amount.toLocaleString("en-IN")} ? {formatISTDateTime(event.at)} ? {event.reference}{event.final?" ? Final":" ? Further disbursement expected"}</p>)}
+              {additionalDisbursement&&<AdditionalDisbursementModal loanCase={loanCase} onClose={()=>setAdditionalDisbursement(false)} onSaved={()=>{setAdditionalDisbursement(false);load();}}/>}
               <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
                 <Field label="Disbursed Amount" value={details.disbursed_amount} />
                 <Field label="Reference" value={details.disbursed_reference} />

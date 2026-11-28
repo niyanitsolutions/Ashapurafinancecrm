@@ -69,3 +69,8 @@ No server-rendered pages, no cookie-dependent auth flow — the API is pure JSON
 ## Deployment
 
 `docker/<service>/Dockerfile` per service; `deployment/docker-compose.yml` composes them. No cloud-specific code anywhere in the app — the same containers run on AWS or GCP, differing only in the env file / secrets source supplied at deploy time.
+
+
+## Partner portal extension (27 November 2026)
+
+The existing Partner module composes User authentication, Customer forms/documents, canonical Applications, Loan disbursement transactions, the existing commission ledger, audit, notifications and report exports. There is no parallel CRM, tenant resolver or second commission calculator. New onboarding/link/payment/event collections reference those identities. The original unique commission Case entry is preserved; additional actual earnings are immutable referencing events. Details, boundaries and rollback rules: [Partner architecture](../PARTNER_PORTAL_ARCHITECTURE_AND_OPERATIONS.md).

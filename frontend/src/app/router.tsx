@@ -129,7 +129,16 @@ import { ProductSchemasPage } from "@/features/customer/pages/ProductSchemasPage
 import { SchemaEditorPage } from "@/features/customer/pages/SchemaEditorPage";
 import { SchemaComparePage } from "@/features/customer/pages/SchemaComparePage";
 
+import { PartnerKycPage } from "@/features/referral_partner_management/pages/PartnerKycPage";
+import { PartnerReportsPage } from "@/features/referral_partner_management/pages/PartnerReportsPage";
+import { PartnerManagementPage } from "@/features/referral_partner_management/pages/PartnerManagementPage";
+import { PartnerReferralsPage, CustomerPartnerReferralPage } from "@/features/referral_partner_management/pages/PartnerReferralsPage";
+import { PartnerDataPage } from "@/features/referral_partner_management/pages/PartnerLedgerViews";
+import { PartnerSecurityPage } from "@/features/referral_partner_management/pages/PartnerSecurityPage";
+
 export const router = createBrowserRouter([
+  { path: "/partner-referral/:token", element: <CustomerPartnerReferralPage /> },
+  { path: "/partner-referral", element: <CustomerPartnerReferralPage /> },
   {
     path: "/login",
     element: <LoginPage />,
@@ -509,7 +518,10 @@ export const router = createBrowserRouter([
                 element: <ReferralPartnersLayout />,
                 children: [
                   { path: "/commission-rules", element: <CommissionRulesPage /> },
+                  { path: "/referral-partners/kyc-review", element: <PartnerManagementPage /> },
+                  { path: "/referral-partners/kyc-settings", element: <PartnerManagementPage configuration /> },
                   { path: "/commission-ledger", element: <CommissionLedgerPage /> },
+                  { path: "/referral-partners/reports", element: <PartnerReportsPage /> },
                 ],
               },
             ],
@@ -572,7 +584,15 @@ export const router = createBrowserRouter([
             element: <ReferralPartnerPortalLayout />,
             children: [
               { path: "/referral-portal", element: <ReferralPartnerDashboardPage /> },
-              { path: "/referral-portal/leads", element: <ReferralPartnerLeadsPage /> },
+              { path: "/referral-portal/leads", element: <PartnerReferralsPage /> },
+              { path: "/referral-portal/legacy-leads", element: <ReferralPartnerLeadsPage /> },
+              { path: "/referral-portal/add-customer", element: <PartnerReferralsPage mode="add" /> },
+              { path: "/referral-portal/links", element: <PartnerReferralsPage mode="links" /> },
+              { path: "/referral-portal/kyc", element: <PartnerKycPage /> },
+              { path: "/referral-portal/security", element: <PartnerSecurityPage /> },
+              { path: "/referral-portal/rules", element: <PartnerDataPage kind="rules" /> },
+              { path: "/referral-portal/payouts", element: <PartnerDataPage kind="payouts" /> },
+              { path: "/referral-portal/notifications", element: <NotificationListPage /> },
               { path: "/referral-portal/commissions", element: <ReferralPartnerCommissionHistoryPage /> },
             ],
           },

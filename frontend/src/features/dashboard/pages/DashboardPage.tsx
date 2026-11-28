@@ -1,3 +1,4 @@
+import { PartnerMetrics } from "@/features/referral_partner_management/pages/PartnerLedgerViews";
 import { FollowUpMetrics } from "@/features/dashboard/components/FollowUpMetrics";
 import { useEffect } from "react";
 import { OperationsMonitor } from "@/features/dashboard/components/OperationsMonitor";
@@ -28,6 +29,7 @@ export function DashboardPage() {
     {isLoading && !widgets ? <div className="rounded-card border border-border bg-card p-8 text-sm text-textSecondary" role="status">Loading dashboard…</div> : null}
     {widgets && <><KpiRow widgets={widgets} /><div className="grid grid-cols-1 gap-6 xl:grid-cols-3"><LeadsOverviewCard widgets={widgets} /><LeadSourcesCard widgets={widgets} /><PipelineOverviewCard widgets={widgets} /></div><div className="grid grid-cols-1 gap-6 xl:grid-cols-3"><DisbursedTrendCard widgets={widgets} /><div className="xl:col-span-2"><RecentActivitiesCard widgets={widgets} /></div></div></>}
     <FollowUpMetrics />
+    <PartnerMetrics owner />
     <OperationsMonitor />
   </div>;
 }

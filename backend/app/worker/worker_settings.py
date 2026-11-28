@@ -25,6 +25,7 @@ from app.worker.tasks.daily_operations import check_daily_operations_notificatio
 from app.worker.tasks.employee_hr import retry_employee_hr_notifications
 from app.worker.tasks.lead_capture import retry_capture_failures
 from app.worker.tasks.meta_token_refresh import refresh_meta_tokens
+from app.worker.tasks.partner_portal import notify_partner_agreements
 from app.worker.tasks.referral_partner import check_commission_triggers
 from app.worker.tasks.reminders import (
     auto_transition_re_eligible_cases,
@@ -75,6 +76,7 @@ class WorkerSettings:
     # they decide is "due" is instant-based for the same reason.
     cron_jobs: ClassVar[list[Any]] = [
         cron(retry_employee_hr_notifications, minute=set(range(60)), unique=True),
+        cron(notify_partner_agreements, minute=set(range(60)), unique=True),
         cron(check_daily_operations_notifications, minute=set(range(60)), run_at_startup=True),  # type: ignore[arg-type]
         cron(review_voice_callbacks, second={10, 40}, run_at_startup=True),
         cron(verify_local_voice_speech, second={5, 20, 35, 50}, run_at_startup=True),

@@ -162,7 +162,7 @@ class LoanCaseService:
         # `ApplicationWorkflowRepository.find_existing_application_ids`).
         existing = await self._workflows.find_existing_application_ids(CaseType.LOAN, include_deleted=True)
         submitted = await self._applications.find_many(
-            {"status": "submitted", "product_category": "loan", "customer_id": {"$ne": None}}, limit=1000
+            {"status": "submitted", "product_category": "loan", "customer_id": {"$ne": None}, "$or": [{"referral_attribution": None}, {"referral_attribution.submitted_to_afs_at": {"$ne": None}}]}, limit=1000
         )
         for application in submitted:
             if application.require_id() not in existing:
@@ -182,6 +182,8 @@ class LoanCaseService:
         application = await self._applications.find_by_id(application_id)
         if application is None or application.status != "submitted" or application.product_category != "loan" or application.customer_id is None:
             raise NotFoundError("No loan case exists for this application.")
+        if application.referral_attribution and not application.referral_attribution.get("submitted_to_afs_at"):
+            raise NotFoundError("Referral is awaiting Partner review.")
         return await self._create_case_for_application(application)
 
     async def ensure_case_for_application(self, application_id: str) -> ApplicationWorkflow | None:
@@ -301,7 +303,7 @@ class LoanCaseService:
 
     async def list_own_cases(self, actor: User) -> list[ApplicationWorkflow]:
         applications = await self._applications.find_for_user(actor.require_id(), status="submitted")
-        loan_apps = [a for a in applications if a.product_category == "loan" and a.customer_id]
+        loan_apps = [a for a in applications if a.product_category == "loan" and a.customer_id and (not a.referral_attribution or a.referral_attribution.get("submitted_to_afs_at"))]
         cases = [await self._get_or_create_for_application_id(a.require_id()) for a in loan_apps]
         # Decision #130: must stay consistent with `get_own_case`'s gate below — a case
         # not yet moved into Loan Management (Lead-originated or Lead-less alike) must
@@ -900,7 +902,9 @@ class LoanCaseService:
         if case.current_status != LoanStatus.DISBURSED:
             raise ValidationError("Only a disbursed case can be scheduled for Top Up.")
         assert case.loan_details is not None
-        disbursed_at = case.loan_details.disbursed_at
+        if not case.loan_details.disbursement_final:
+            raise ValidationError("Complete all expected disbursement tranches before scheduling Top Up.")
+        disbursed_at = case.loan_details.last_disbursed_at or case.loan_details.disbursed_at
         if disbursed_at is None:
             raise ValidationError("This case has no recorded disbursement date.")
         disbursed_at = ensure_utc(disbursed_at)

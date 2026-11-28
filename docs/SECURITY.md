@@ -30,3 +30,8 @@ Marked "ready" per the original brief but the concrete use case isn't defined ye
 ## Two-Factor Authentication
 
 Not implemented; `security/` is structured (separate OTP/JWT/token/hashing modules) so adding a 2FA step later composes with existing primitives rather than requiring a rewrite.
+
+
+## Partner onboarding and finance boundary (27 November 2026)
+
+Partner profile ownership is derived from the authenticated User; KYC review and financial decisions are Owner-only. Sensitive KYC scalar/binary values use existing authenticated encryption, masked reads, reasoned audited reveal and private no-store downloads. PDF passwords are transient. Staging capabilities expire and bind field/size/MIME/User; final documents are additionally encrypted in S3. No public KYC URLs or secondary Customer identity are created. Current agreements, KYC approval and activation gate referrals. Actual financial transactions preserve immutable earning snapshots and atomic reservations/payments. Legal retention, approved agreement wording, storage IAM/CORS/lifecycle and encryption-key continuity require controlled staging/Owner review. See [Partner threat boundaries and operations](PARTNER_PORTAL_ARCHITECTURE_AND_OPERATIONS.md).

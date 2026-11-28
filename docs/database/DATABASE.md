@@ -63,3 +63,8 @@ Mongo runs as a single-node replica set (`docker/mongodb/`) specifically so `bac
 ## Full Collection List
 
 See `docs/database/COLLECTIONS.md`.
+
+
+## Partner portal additive schema (27 November 2026)
+
+The existing Partner index initializer declares versioned KYC, hashed upload/link capabilities, financial-event receipts and payout reservation indexes. No data backfill, automatic identity merge or historical commission recalculation is part of rollout. Replica-set transactions are mandatory for onboarding, referrals, disbursement earnings and payouts. Retain the unique commission_entries.case_id constraint. Original earning snapshots remain immutable; additional earnings/adjustments reference the same entry. See [Partner data and rollout rules](../PARTNER_PORTAL_ARCHITECTURE_AND_OPERATIONS.md).

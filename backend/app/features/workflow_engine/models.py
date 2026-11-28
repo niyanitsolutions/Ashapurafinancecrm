@@ -111,6 +111,9 @@ class LoanCaseDetails(BaseModel):
     re_eligibility_scheduled_by: str | None = None
     re_eligibility_auto_transitioned: bool = False
 
+    disbursement_final: bool = True
+    disbursement_events: list[dict[str, Any]] = Field(default_factory=list)
+    last_disbursed_at: datetime | None = None
     disbursed_amount: float | None = None
     disbursed_at: datetime | None = None
     disbursed_reference: str | None = None

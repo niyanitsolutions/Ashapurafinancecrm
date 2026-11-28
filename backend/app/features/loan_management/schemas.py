@@ -1,6 +1,7 @@
 from datetime import date, datetime
+from typing import Any
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.features.workflow_engine.constants import (
     BankOfferDecision,
@@ -165,6 +166,8 @@ class FinalEvaluationRequest(_ReEligibilitySchedulingFields):
 
 
 class DisburseRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    final_disbursement: bool = True
     disbursed_amount: float = Field(gt=0, allow_inf_nan=False)
     disbursed_reference: str = Field(min_length=1, max_length=200)
     approved_amount: float | None = Field(default=None, gt=0, allow_inf_nan=False)
@@ -173,6 +176,9 @@ class DisburseRequest(BaseModel):
 
 
 class LoanCaseDetailsResponse(BaseModel):
+    disbursement_final: bool = True
+    disbursement_events: list[dict[str, Any]] = Field(default_factory=list)
+    last_disbursed_at: datetime | None = None
     preferred_bank_name: str | None
     preferred_branch: str | None
     loan_type: str | None
@@ -445,3 +451,13 @@ class LoanCaseCountsResponse(BaseModel):
     # this one response so the Top Up Loan tab badge is fetched from the exact same call
     # as every other tab's.
     top_up_eligible: int = 0
+
+
+class AdditionalDisbursementRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: str = Field(min_length=16, max_length=100)
+    amount: float = Field(gt=0, allow_inf_nan=False)
+    disbursement_date: date
+    reference: str = Field(min_length=1, max_length=200)
+    remarks: str = Field(min_length=1, max_length=2000)
+    final_disbursement: bool = True

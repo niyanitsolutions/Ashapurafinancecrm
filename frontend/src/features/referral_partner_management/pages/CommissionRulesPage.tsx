@@ -1,4 +1,7 @@
 import { useEffect, useState } from "react";
+import { apiRequest } from "@/shared/api/client";
+import { listReferralPartners, updateCommissionRule } from "../api";
+import { istDateKey } from "@/shared/dateFormat";
 import { Button } from "@/components/buttons/Button";
 import { ErrorBanner } from "@/components/forms/ErrorBanner";
 import { FormField } from "@/components/forms/FormField";
@@ -15,13 +18,25 @@ import {
   type CommissionRule,
 } from "@/features/referral_partner_management/api";
 
-function CreateRuleModal({ onClose, onSaved }: { onClose: () => void; onSaved: (message: string) => void }) {
-  const [label, setLabel] = useState("");
-  const [productCategory, setProductCategory] = useState("");
-  const [partnerId, setPartnerId] = useState("");
-  const [calculationType, setCalculationType] = useState("percentage");
-  const [rateOrAmount, setRateOrAmount] = useState("0");
-  const [triggerEvent, setTriggerEvent] = useState("loan_disbursed");
+function CreateRuleModal({ onClose, onSaved, existing }: { onClose: () => void; onSaved: (message: string) => void; existing?: CommissionRule | null }) {
+  const [label, setLabel] = useState(existing?.label??"");
+  const [productCategory, setProductCategory] = useState(existing?.product_category??"");
+  const [partnerId, setPartnerId] = useState(existing?.partner_id??"");
+  const [calculationType, setCalculationType] = useState(existing?.calculation_type??"percentage");
+  const [rateOrAmount, setRateOrAmount] = useState(String(existing?.rate_or_amount??0));
+  const [triggerEvent, setTriggerEvent] = useState(existing?.trigger_event??"loan_disbursed");
+  const [products,setProducts]=useState<{id:string;name:string}[]>([]);
+  const [partnerSearch,setPartnerSearch]=useState("");
+  const [partners,setPartners]=useState<{id:string;full_name:string}[]>([]);
+  const [productId,setProductId]=useState(existing?.product_id??"");
+  const [effectiveFrom,setEffectiveFrom]=useState(existing?.effective_from?istDateKey(existing.effective_from):"");
+  const [effectiveUntil,setEffectiveUntil]=useState(existing?.effective_until?istDateKey(existing.effective_until):"");
+  const [terms,setTerms]=useState(existing?.terms??"");
+  const [fixedConfirmed,setFixedConfirmed]=useState(existing?.fixed_contract_confirmed??false);
+  const [fixedPolicy,setFixedPolicy]=useState(existing?.fixed_event_policy??"");
+  const [active,setActive]=useState(existing?.status!=="inactive");
+  useEffect(()=>{void apiRequest<{id:string;name:string}[]>("/loan-products").then(setProducts).catch(e=>setError(e.message));},[]);
+  useEffect(()=>{let current=true;void listReferralPartners({page_size:100,search:partnerSearch||undefined}).then(r=>{if(current)setPartners(r.data);}).catch(e=>{if(current)setError(e.message);});return()=>{current=false;};},[partnerSearch]);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -30,9 +45,10 @@ function CreateRuleModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
     setError(null);
     setIsSubmitting(true);
     try {
-      await createCommissionRule({
-        label, product_category: productCategory || undefined, partner_id: partnerId || undefined,
+      await (existing ? (payload: Parameters<typeof createCommissionRule>[0])=>updateCommissionRule(existing.id,payload) : createCommissionRule)({
+        label, product_category: productCategory || null, partner_id: partnerId || null,
         calculation_type: calculationType, rate_or_amount: Number(rateOrAmount), trigger_event: triggerEvent,
+        product_id: productId||null, effective_from: effectiveFrom?new Date(effectiveFrom+"T00:00:00+05:30").toISOString():null, effective_until: effectiveUntil?new Date(effectiveUntil+"T00:00:00+05:30").toISOString():null, terms, fixed_contract_confirmed: calculationType==="flat"&&fixedConfirmed, fixed_event_policy: calculationType==="flat"?(fixedPolicy||null):null, status: active?"active":"inactive",
       });
       onSaved("Commission rule created.");
     } catch (err) {
@@ -46,21 +62,32 @@ function CreateRuleModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
     <Modal
       open
       onClose={onClose}
-      title="Create Commission Rule"
+      title={existing?"Publish new commission rule version":"Create Commission Rule"}
       footer={
         <>
           <Button variant="secondary" size="sm" onClick={onClose}>
             Cancel
           </Button>
           <Button type="submit" form="create-rule-form" size="sm" loading={isSubmitting}>
-            Create Rule
+            {existing?"Publish new version":"Create Rule"}
           </Button>
         </>
       }
     >
       <form id="create-rule-form" onSubmit={onSubmit}>
         <ErrorBanner message={error} />
-        <FormField label="Label" value={label} onChange={(e) => setLabel(e.target.value)} required />
+        <FormField label="Search applicable Partners" value={partnerSearch} onChange={e=>setPartnerSearch(e.target.value)}/>
+        <SelectField label="Applicable Partner" value={partnerId} onChange={e=>setPartnerId(e.target.value)} options={[{value:"",label:"All Partners"},...(partnerId&&!partners.some(partner=>partner.id===partnerId)?[{value:partnerId,label:`Selected Partner ${partnerId}`}]:[]),...partners.map(p=>({value:p.id,label:p.full_name}))]}/>
+        <SelectField label="Loan Product" value={productId} onChange={e=>{setProductId(e.target.value);if(e.target.value)setProductCategory("loan");}} options={[{value:"",label:"All products in the selected category"},...products.map(p=>({value:p.id,label:p.name}))]}/>
+        <p className="text-sm">{triggerEvent==="insurance_policy_issued"?"Calculation basis: confirmed policy premium.":"Calculation basis: actual eligible disbursed amount."} Partner-specific rules take precedence.</p>
+        <FormField label="Effective From" required type="date" value={effectiveFrom} onChange={e=>setEffectiveFrom(e.target.value)}/>
+        <FormField label="Effective Until (exclusive, optional)" type="date" value={effectiveUntil} onChange={e=>setEffectiveUntil(e.target.value)}/>
+        <label className="mb-3 block"><input type="checkbox" checked={active} onChange={e=>setActive(e.target.checked)}/>Rule active</label>
+        <FormField label="Commission terms and conditions" value={terms} onChange={e=>setTerms(e.target.value)}/>
+        {calculationType==="flat"&&<SelectField label="Confirmed fixed-amount contract basis" value={fixedPolicy} onChange={e=>setFixedPolicy(e.target.value)} options={[{value:"",label:"Select the approved contract basis"},{value:"per_case",label:"Once per Loan Case"},{value:"per_event",label:"Each eligible disbursement event"}]}/>}
+        <label className="mb-3 block text-sm"><input type="checkbox" checked={fixedConfirmed} onChange={e=>setFixedConfirmed(e.target.checked)}/>A fixed amount is explicitly supported by the approved commission contract</label>
+        <p className="mb-3 text-sm">1. Select Partner and product. 2. Set the actual disbursement rate. 3. Confirm effective dates and terms.</p>
+        <FormField label="Rule Name" value={label} onChange={(e) => setLabel(e.target.value)} required />
         <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
           <SelectField
             label="Product"
@@ -71,12 +98,6 @@ function CreateRuleModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
               { value: "loan", label: "Loan" },
               { value: "insurance", label: "Insurance" },
             ]}
-          />
-          <FormField
-            label="Referral Partner ID (optional)"
-            value={partnerId}
-            onChange={(e) => setPartnerId(e.target.value)}
-            placeholder="Blank = default for all partners"
           />
           <SelectField
             label="Calculation Type"
@@ -109,6 +130,7 @@ export function CommissionRulesPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [editingRule,setEditingRule]=useState<CommissionRule|null>(null);
 
   const load = () => {
     setIsLoading(true);
@@ -163,7 +185,10 @@ export function CommissionRulesPage() {
                     {rule.calculation_type === "percentage" ? `${rule.rate_or_amount}%` : `₹${rule.rate_or_amount}`} ({rule.calculation_type})
                   </div>
                 </div>
+                {!rules.some(candidate=>candidate.previous_rule_id===rule.id)&&<Button variant="secondary" onClick={()=>setEditingRule(rule)}>Edit new version</Button>}
+                <span className="text-xs">Version {rule.rule_version??1}</span>
                 <Button
+                  disabled={rules.some(candidate=>candidate.previous_rule_id===rule.id)}
                   variant={rule.status === "active" ? "secondary" : "ghost"}
                   size="sm"
                   onClick={() => run(() => (rule.status === "active" ? deactivateCommissionRule(rule.id) : activateCommissionRule(rule.id)), "Rule status updated.")}
@@ -175,11 +200,13 @@ export function CommissionRulesPage() {
         </div>
       )}
 
-      {isCreateOpen && (
+      {(isCreateOpen||editingRule) && (
         <CreateRuleModal
-          onClose={() => setIsCreateOpen(false)}
+          existing={editingRule}
+          onClose={() => {setIsCreateOpen(false);setEditingRule(null);}}
           onSaved={(msg) => {
             setIsCreateOpen(false);
+            setEditingRule(null);
             setMessage(msg);
             load();
           }}

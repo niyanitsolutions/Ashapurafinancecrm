@@ -151,6 +151,7 @@ def _is_blank(value: Any) -> bool:
 class CustomerService:
     def __init__(self, db: AsyncIOMotorDatabase[Any], redis: Redis) -> None:
         self._db = db
+        self._redis = redis
         self._customers = CustomerRepository(db)
         self._applications = ApplicationRepository(db)
         self._documents = ApplicationDocumentRepository(db)
@@ -473,6 +474,9 @@ class CustomerService:
             proof.get("used_otp_hash", ""), otp_digest(proof["challenge_id"], payload.pin)
         ):
             raise ValidationError("Choose a PIN different from the verification code.")
+        from app.features.referral_partner_management.referrals import activate_reserved_identity
+        if await activate_reserved_identity(self._db, payload, proof, proof_filter):
+            return
         if await self._db.users.find_one({"mobile": payload.mobile}, {"_id": 1}):
             raise ConflictError("An account already exists. Log in or recover your PIN.")
         from app.shared.customer_identity import mobile_match_pattern
@@ -864,7 +868,8 @@ class CustomerService:
     async def _create_application(
         self, *, user_id: str, customer_id: str | None, lead_id: str | None, product_category: str, product_id: str,
         form_definition: ApplicationFormDefinition, actor: User, initial_assigned_to: str | None = None,
-        request_key: str | None = None,
+        request_key: str | None = None, referral_attribution: dict[str, Any] | None = None,
+        session: Any = None,
     ) -> Application:
         from pymongo.errors import DuplicateKeyError
         if lead_id and initial_assigned_to is None:
@@ -887,13 +892,23 @@ class CustomerService:
         application = Application(
             auto_assignment_eligible=not bool(initial_assigned_to),
             assignment_pending=not bool(initial_assigned_to) and await AutoAssignment(self._db).pending_on_intake(),
+            referral_attribution=referral_attribution,
             application_code=code, user_id=user_id, customer_id=customer_id, lead_id=lead_id,
             product_category=product_category, product_id=product_id, form_definition_id=form_definition.require_id(),
             assigned_to=initial_assigned_to, created_by=actor.require_id(),
             creation_key=creation_key,
-            submission_source="staff_assisted" if actor.role in (OWNER, EMPLOYEE) else ("secure_link" if lead_id else "customer_portal"),
+            submission_source="referral_partner" if referral_attribution else ("staff_assisted" if actor.role in (OWNER, EMPLOYEE) else ("secure_link" if lead_id else "customer_portal")),
             last_customer_activity_at=utc_now() if actor.role == CUSTOMER else None,
         )
+        if session is not None:
+            # Referral identity, canonical Application and locked attribution share the caller transaction.
+            from app.shared.audit_log import AuditLog
+            application.auto_assignment_eligible = False
+            result = await self._db.applications.insert_one(application.model_dump(exclude={"id"}), session=session)
+            application.id = str(result.inserted_id)
+            audit = AuditLog(event_type=AuditEvent.APPLICATION_STARTED, user_id=actor.require_id(), metadata={"application_id": application.id})
+            await self._db.audit_logs.insert_one(audit.model_dump(exclude={"id"}), session=session)
+            return application
         try:
             application_id = await self._applications.insert(application)
         except DuplicateKeyError:
@@ -1518,14 +1533,8 @@ class CustomerService:
             await self._log_lead_timeline(application.lead_id, LeadTimelineEvent.CUSTOMER_SAVED_DRAFT, {"application_id": application_id})
         return updated or application
 
-    async def submit_application(self, application_id: str, payload: SubmitApplicationRequest, actor: User) -> Application:
-        application = await self.get_own_application(application_id, actor)
-        if application.status == ApplicationStatus.SUBMITTED:
-            await self._ensure_submitted_case(application)
-            return await self._applications.find_by_id(application_id) or application
-        if application.status != ApplicationStatus.DRAFT:
-            raise ConflictError("This application cannot be submitted.")
-
+    async def validate_submission(self, application: Application) -> None:
+        application_id = application.require_id()
         form_def = await self._form_defs.find_by_id(application.form_definition_id)
         if form_def is None:
             raise ValidationError("This application's form definition no longer exists.")
@@ -1567,6 +1576,17 @@ class CustomerService:
         if missing_docs:
             raise ValidationError("Please upload all required documents before submitting.")
 
+
+    async def submit_application(self, application_id: str, payload: SubmitApplicationRequest, actor: User) -> Application:
+        application = await self.get_own_application(application_id, actor)
+        if application.status == ApplicationStatus.SUBMITTED:
+            await self._ensure_submitted_case(application)
+            return await self._applications.find_by_id(application_id) or application
+        if application.status != ApplicationStatus.DRAFT:
+            raise ConflictError("This application cannot be submitted.")
+
+        await self.validate_submission(application)
+
         customer_id = application.customer_id
         if customer_id is None:
             if payload.profile is None:
@@ -1577,15 +1597,36 @@ class CustomerService:
         from pymongo import ReturnDocument
 
         submitted_at = utc_now()
-        row = await self._db.applications.find_one_and_update(
-            {"_id": to_object_id(application_id), "user_id": actor.require_id(),
-             "status": ApplicationStatus.DRAFT, "is_deleted": False},
-            {"$set": {"status": ApplicationStatus.SUBMITTED, "submitted_at": submitted_at,
-                      "customer_id": customer_id, "pending_profile": None,
-                      "last_customer_activity_at": submitted_at, "updated_at": submitted_at,
-                      "updated_by": actor.require_id()}, "$inc": {"version": 1}},
-            return_document=ReturnDocument.AFTER,
-        )
+        referral_updates = {}
+        if application.referral_attribution:
+            from app.features.referral_partner_management.referrals import (
+                customer_submission_updates,
+            )
+            referral_updates = await customer_submission_updates(self._db, application, actor, submitted_at)
+        async def persist_submission(session: Any = None) -> Any:
+            return await self._db.applications.find_one_and_update(
+                {"_id": to_object_id(application_id), "user_id": actor.require_id(),
+                 "status": ApplicationStatus.DRAFT, "is_deleted": False},
+                {"$set": {**referral_updates, "status": ApplicationStatus.SUBMITTED, "submitted_at": submitted_at,
+                          "customer_id": customer_id, "pending_profile": None,
+                          "last_customer_activity_at": submitted_at, "updated_at": submitted_at,
+                          "updated_by": actor.require_id()}, "$inc": {"version": 1}},
+                return_document=ReturnDocument.AFTER, session=session,
+            )
+
+        if application.referral_attribution:
+            from app.features.referral_partner_management.kyc import event, oid
+            from app.features.referral_partner_management.referrals import PartnerReferrals
+            async with await self._db.client.start_session() as session, session.start_transaction():
+                partner = await self._db.referral_partners.find_one({"_id": oid(application.referral_attribution["partner_id"]), "is_deleted": False}, session=session)
+                if not partner or partner.get("kyc_status") != "approved" or partner.get("approval_status") != "active" or not partner.get("account_active", True):
+                    raise ForbiddenError("The referring Partner is unavailable for submission.")
+                await PartnerReferrals(self._db, self._redis).guard(partner, session)
+                row = await persist_submission(session)
+                if row is not None:
+                    await event(self._db, actor, "partner_customer_application_submitted", str(partner["_id"]), session=session, detail={"application_id": application_id})
+        else:
+            row = await persist_submission()
         if row is None:
             current = await self.get_own_application(application_id, actor)
             if current.status != ApplicationStatus.SUBMITTED:
@@ -1593,9 +1634,10 @@ class CustomerService:
             await self._ensure_submitted_case(current)
             return await self._applications.find_by_id(application_id) or current
         updated = Application.model_validate(row)
-        await write_audit_log(
-            self._db, event_type=AuditEvent.APPLICATION_SUBMITTED, user_id=actor.require_id(), metadata={"application_id": application_id}
-        )
+        if not application.referral_attribution:
+            await write_audit_log(
+                self._db, event_type=AuditEvent.APPLICATION_SUBMITTED, user_id=actor.require_id(), metadata={"application_id": application_id}
+            )
         if application.lead_id:
             await self._log_lead_timeline(application.lead_id, LeadTimelineEvent.CUSTOMER_SUBMITTED_APPLICATION, {"application_id": application_id})
 
@@ -1603,6 +1645,8 @@ class CustomerService:
         return await self._applications.find_by_id(application_id) or updated
 
     async def _ensure_submitted_case(self, application: Application) -> None:
+        if application.referral_attribution and not application.referral_attribution.get("submitted_to_afs_at"):
+            return
         # Existing case creation is idempotent. Reconcile on a repeated request too,
         # so a transport failure after committing submission can be safely resumed.
         from pymongo.errors import DuplicateKeyError
@@ -1646,6 +1690,9 @@ class CustomerService:
             return await self.get_own_application(application_id, actor)
         if actor.role in (OWNER, EMPLOYEE):
             return await self.get_application_for_staff(application_id, actor)
+        if actor.role == "referral_partner":
+            from app.features.referral_partner_management.referrals import PartnerReferrals
+            return Application.model_validate(await PartnerReferrals(self._db, self._redis).own(application_id, actor, edit=True))
         raise ForbiddenError("You do not have access to this application.")
 
     async def _required_document_definition(self, application: Application, document_type_id: str) -> RequiredDocumentDefinition | None:

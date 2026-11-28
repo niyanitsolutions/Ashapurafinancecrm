@@ -44,7 +44,8 @@ class CommissionEntryStatus:
     APPROVED = "approved"
     PAID = "paid"
 
-    ALL = (PENDING, APPROVED, PAID)
+    ON_HOLD = "on_hold"
+    ALL = (PENDING, APPROVED, PAID, ON_HOLD)
 
 
 class ExternalLeadStatus:

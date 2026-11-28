@@ -237,6 +237,7 @@ export interface FormDefinitionUpdateInput {
 }
 
 export interface ApplicationListItem {
+  partner_review_pending?: boolean;
   submission_source?: string;
   last_customer_activity_at?: string | null;
   id: string;

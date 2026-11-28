@@ -1,17 +1,42 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
+
+from app.security.password import PasswordStr
 
 
 class CreateReferralPartnerRequest(BaseModel):
-    full_name: str
+    initial_password: PasswordStr | None = Field(default=None, repr=False)
+    confirm_password: str | None = Field(default=None, repr=False)
+    reuse_existing_identity: bool = False
+    temporary_password: bool = False
+    request_id: str = Field(min_length=16, max_length=100)
+
+    @model_validator(mode="after")
+    def matching_passwords(self) -> "CreateReferralPartnerRequest":
+        if self.reuse_existing_identity:
+            if self.initial_password or self.confirm_password:
+                raise ValueError("Do not provide passwords when associating an existing identity.")
+        elif not self.initial_password or self.initial_password != self.confirm_password:
+            raise ValueError("Matching initial and confirmation passwords are required.")
+        if self.initial_password and len(self.initial_password.encode("utf-8")) > 72:
+            raise ValueError("Password must not exceed 72 UTF-8 bytes.")
+        self.full_name = self.full_name.strip()
+        if not self.full_name:
+            raise ValueError("Full name is required.")
+        return self
+
+    full_name: str = Field(min_length=1, max_length=150)
     mobile: str = Field(pattern=r"^[6-9]\d{9}$")
     email: EmailStr | None = None
     business_name: str | None = None
 
 
 class ReferralPartnerResponse(BaseModel):
+    kyc_status: str = "pending"
+    account_active: bool = True
+    submission_mode: str = "partner_review"
     id: str
     partner_code: str
     full_name: str
@@ -61,6 +86,13 @@ class ReferralLeadResponse(BaseModel):
 
 
 class CreateCommissionRuleRequest(BaseModel):
+    status: str = Field(default="active", pattern=r"^(active|inactive)$")
+    fixed_event_policy: str | None = None
+    product_id: str | None = None
+    effective_from: datetime
+    effective_until: datetime | None = None
+    terms: str = ""
+    fixed_contract_confirmed: bool = False
     label: str
     product_category: str | None = None
     partner_id: str | None = None
@@ -70,6 +102,22 @@ class CreateCommissionRuleRequest(BaseModel):
 
 
 class UpdateCommissionRuleRequest(BaseModel):
+    status: str | None = Field(default=None, pattern=r"^(active|inactive)$")
+
+    @model_validator(mode="after")
+    def preserve_required_values(self) -> "UpdateCommissionRuleRequest":
+        for key in {"label", "calculation_type", "rate_or_amount", "trigger_event", "status", "fixed_contract_confirmed"} & self.model_fields_set:
+            if getattr(self, key) is None:
+                raise ValueError(f"{key} cannot be cleared.")
+        if "terms" in self.model_fields_set and self.terms is None:
+            self.terms = ""
+        return self
+    fixed_event_policy: str | None = None
+    product_id: str | None = None
+    effective_from: datetime | None = None
+    effective_until: datetime | None = None
+    terms: str | None = None
+    fixed_contract_confirmed: bool | None = None
     label: str | None = None
     product_category: str | None = None
     partner_id: str | None = None
@@ -79,6 +127,14 @@ class UpdateCommissionRuleRequest(BaseModel):
 
 
 class CommissionRuleResponse(BaseModel):
+    previous_rule_id: str | None = None
+    fixed_contract_confirmed: bool = False
+    fixed_event_policy: str | None = None
+    product_id: str | None = None
+    effective_from: datetime | None = None
+    effective_until: datetime | None = None
+    rule_version: int = 1
+    terms: str = ""
     id: str
     label: str
     product_category: str | None
@@ -92,6 +148,19 @@ class CommissionRuleResponse(BaseModel):
 
 
 class CommissionEntryResponse(BaseModel):
+    approved_amount: float | None = None
+    reserved_amount: float = 0
+    additional_earned_amount: float = 0
+    total_earned_amount: float = 0
+    disbursement_event_source: str = "application_status_history"
+    version: int = 1
+    adjusted_amount: float = 0
+    recovery_due_amount: float = 0
+    application_id: str | None = None
+    disbursement_event_id: str | None = None
+    paid_amount: float = 0
+    outstanding_amount: float | None = None
+    rule_version: int = 1
     id: str
     partner_id: str
     partner_name: str | None

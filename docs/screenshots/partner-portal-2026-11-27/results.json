@@ -1,0 +1,179 @@
+{
+  "results": [
+    {
+      "screen": "owner-partners",
+      "width": 390,
+      "result": "passed"
+    },
+    {
+      "screen": "owner-partners",
+      "width": 768,
+      "result": "passed"
+    },
+    {
+      "screen": "owner-partners",
+      "width": 1366,
+      "result": "passed"
+    },
+    {
+      "screen": "partner-completed-kyc",
+      "width": 390,
+      "result": "passed"
+    },
+    {
+      "screen": "partner-completed-kyc",
+      "width": 768,
+      "result": "passed"
+    },
+    {
+      "screen": "partner-completed-kyc",
+      "width": 1366,
+      "result": "passed"
+    },
+    {
+      "screen": "owner-kyc-review",
+      "width": 390,
+      "result": "passed"
+    },
+    {
+      "screen": "owner-kyc-review",
+      "width": 768,
+      "result": "passed"
+    },
+    {
+      "screen": "owner-kyc-review",
+      "width": 1366,
+      "result": "passed"
+    },
+    {
+      "screen": "partner-submitted-referral",
+      "width": 390,
+      "result": "passed"
+    },
+    {
+      "screen": "partner-submitted-referral",
+      "width": 768,
+      "result": "passed"
+    },
+    {
+      "screen": "partner-submitted-referral",
+      "width": 1366,
+      "result": "passed"
+    },
+    {
+      "screen": "partner-links",
+      "width": 390,
+      "result": "passed"
+    },
+    {
+      "screen": "partner-links",
+      "width": 768,
+      "result": "passed"
+    },
+    {
+      "screen": "partner-links",
+      "width": 1366,
+      "result": "passed"
+    },
+    {
+      "screen": "customer-linked-application",
+      "width": 390,
+      "result": "passed"
+    },
+    {
+      "screen": "customer-linked-application",
+      "width": 768,
+      "result": "passed"
+    },
+    {
+      "screen": "customer-linked-application",
+      "width": 1366,
+      "result": "passed"
+    },
+    {
+      "screen": "owner-partial-payment",
+      "width": 390,
+      "result": "passed"
+    },
+    {
+      "screen": "owner-partial-payment",
+      "width": 768,
+      "result": "passed"
+    },
+    {
+      "screen": "owner-partial-payment",
+      "width": 1366,
+      "result": "passed"
+    },
+    {
+      "screen": "owner-referral-report",
+      "width": 390,
+      "result": "passed"
+    },
+    {
+      "screen": "owner-referral-report",
+      "width": 768,
+      "result": "passed"
+    },
+    {
+      "screen": "owner-referral-report",
+      "width": 1366,
+      "result": "passed"
+    },
+    {
+      "screen": "partner-dashboard",
+      "width": 390,
+      "result": "passed"
+    },
+    {
+      "screen": "partner-dashboard",
+      "width": 768,
+      "result": "passed"
+    },
+    {
+      "screen": "partner-dashboard",
+      "width": 1366,
+      "result": "passed"
+    },
+    {
+      "screen": "partner-commission-history",
+      "width": 390,
+      "result": "passed"
+    },
+    {
+      "screen": "partner-commission-history",
+      "width": 768,
+      "result": "passed"
+    },
+    {
+      "screen": "partner-commission-history",
+      "width": 1366,
+      "result": "passed"
+    },
+    {
+      "screen": "partner-payout-history",
+      "width": 390,
+      "result": "passed"
+    },
+    {
+      "screen": "partner-payout-history",
+      "width": 768,
+      "result": "passed"
+    },
+    {
+      "screen": "partner-payout-history",
+      "width": 1366,
+      "result": "passed"
+    }
+  ],
+  "checks": [
+    "Owner password account without OTP",
+    "Partner conditional KYC private uploads and reupload",
+    "Owner review and activation",
+    "manual review despite Direct to AFS",
+    "secure fragment link and existing Customer PIN login",
+    "real disbursement commission and partial payout",
+    "Owner and Partner report isolation"
+  ],
+  "external_calls": "blocked; synthetic storage only"
+}

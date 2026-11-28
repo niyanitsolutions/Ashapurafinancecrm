@@ -76,3 +76,19 @@ Names and purpose only — schemas are defined when each owning feature module i
 | `counters` | Atomic sequence state for human-readable IDs | (infra, used by `utils/id_generator.py`) | One doc per prefix |
 
 This list will grow; add a row here in the same PR that introduces a new collection.
+
+
+### Partner portal additions (27 November 2026)
+
+| Collection | Purpose and protection |
+| --- | --- |
+| partner_kyc_forms | Immutable published configuration versions; protected fields and agreement references |
+| partner_kyc_submissions | Encrypted KYC values, identity/form/consent snapshots and append-only review history |
+| partner_kyc_documents | Immutable encrypted private object versions and individual review history |
+| partner_kyc_uploads | Hashed single-confirmation staging capabilities; ten-minute expiry plus cleanup TTL |
+| partner_referral_links | Hashed expiring tokens, encrypted retry copy, captured mode and single Customer/Application binding |
+| commission_entry_events | Immutable additional actual earnings and signed authorized adjustments referencing existing unique Case entries |
+| commission_payouts | Idempotent partial/grouped allocation records, initiated reservations, confirmations and cancellations |
+| commission_exceptions | Unique source/event review exceptions; no guessed commission or historical backfill |
+
+Existing User, Partner, Application, Loan details and commission-entry fields are additive. Normal audit_logs, counters, notifications and notification_checkpoints are reused. Indexes and rollback constraints are documented in [Partner architecture and operations](../PARTNER_PORTAL_ARCHITECTURE_AND_OPERATIONS.md).

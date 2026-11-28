@@ -248,7 +248,19 @@ class PinService:
         )
         if not used.modified_count:
             raise ValidationError("This code was already used. Request another code.")
-        if registration and await self.db.users.find_one({"mobile": body.mobile}, {"_id": 1}):
+        existing_identity = await self.db.users.find_one({"mobile": body.mobile}) if registration else None
+        reserved_referral = bool(
+            existing_identity and account and doc
+            and str(existing_identity["_id"]) == doc.get("user_id")
+            and existing_identity.get("role") == "customer"
+            and existing_identity.get("status") == "pending_password"
+            and existing_identity.get("provisioning_source") == "partner_manual_referral"
+            and not existing_identity.get("is_deleted")
+            and not existing_identity.get("password_hash")
+            and not existing_identity.get("pin_hash")
+            and not existing_identity.get("is_mobile_verified")
+        )
+        if registration and existing_identity and not reserved_referral:
             await self.db.auth_pin_challenges.update_one(
                 {"_id": slot, "authorization_hash": digest(token), "state": "verified"},
                 {"$set": {"state": "consumed"}, "$unset": {"authorization_hash": ""}},

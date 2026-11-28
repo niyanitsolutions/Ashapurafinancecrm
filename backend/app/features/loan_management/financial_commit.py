@@ -44,9 +44,13 @@ async def disburse(
     date = payload.disbursement_date
     if date and date > to_ist(utc_now()).date():
         raise ValidationError("Disbursement date cannot be in the future.")
+    if not payload.final_disbursement and payload.disbursed_amount >= approved:
+        raise ValidationError("No further disbursement can be expected when the approved amount is fully disbursed.")
     updated_details = details.model_copy(
         update={
             "offered_amount": approved,
+            "disbursement_final": payload.final_disbursement,
+            "last_disbursed_at": ist_date_to_utc_midnight(date) if date else utc_now(),
             "disbursed_amount": payload.disbursed_amount,
             "disbursed_reference": payload.disbursed_reference,
             "disbursed_at": ist_date_to_utc_midnight(date) if date else utc_now(),
@@ -63,6 +67,17 @@ async def disburse(
                 remarks=payload.remarks,
                 session=session,
             )
+            from app.features.referral_partner_management.finance import calculate
+
+            financial_event = await service._db.application_status_history.find_one(
+                {"application_workflow_id": case_id, "to_status": LoanStatus.DISBURSED},
+                sort=[("created_at", -1)], session=session)
+            if not financial_event:
+                raise ConflictError("Disbursement history is required for commission traceability.")
+            financial_snapshot = {"id": str(financial_event["_id"]), "source": "application_status_history", "amount": payload.disbursed_amount, "at": updated_details.disbursed_at, "reference": payload.disbursed_reference, "remarks": payload.remarks, "actor_id": actor.require_id(), "final": payload.final_disbursement}
+            await service._db.application_workflows.update_one({"_id": ObjectId(case_id)}, {"$push": {"loan_details.disbursement_events": financial_snapshot}}, session=session)
+            updated = updated.model_copy(update={"loan_details": updated_details.model_copy(update={"disbursement_events": [financial_snapshot]})})
+            await calculate(service._db, updated.model_dump(by_alias=True), actor, session, str(financial_event["_id"]))
             workspace = await service._db.daily_follow_ups.find_one(
                 {
                     "application_id": case.application_id,
